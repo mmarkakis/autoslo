@@ -1,0 +1,18 @@
+benchmarking_traces:
+  - name: query_id
+    type: str
+    description: The unique identifier of the query (within this trace).
+  - name: rel_start_time_s
+    type: float
+    description: The relative start time of the query in seconds.
+  - name: query_template
+    type: str
+    description: The template of the query executed.
+  - name: query_num_within_template
+    type: int
+    description: The number of the query within its template.
+  - name: query_text
+    type: str
+    description: The SQL text of the query executed.
+  
+  
