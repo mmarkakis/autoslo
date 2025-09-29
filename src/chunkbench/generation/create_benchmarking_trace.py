@@ -5,11 +5,12 @@ import random
 import pandas as pd
 from tqdm.auto import tqdm
 
-import path_utils as pu
+import chunkbench.path_utils as pu
 
 
 def create_benchmarking_trace(
     queries_path: str,
+    num_templates: int,
     queries_per_template: int,
     copies_per_query: int,
     shuffle: bool = False,
@@ -20,6 +21,7 @@ def create_benchmarking_trace(
 
     Parameters:
         queries_path: Path to the directory containing TPC-DS queries.
+        num_templates: Number of templates to include in the trace.
         queries_per_template: Number of queries to select per template.
         copies_per_query: Number of copies of each query to include in the trace.
         shuffle: Whether to shuffle the trace.
@@ -28,7 +30,7 @@ def create_benchmarking_trace(
 
     # Generate the entries of the benchmarking trace.
     l = []
-    for template_id in tqdm(range(1, 99), desc="Processing templates"):
+    for template_id in tqdm(range(1, num_templates + 1), desc="Processing templates"):
         template_str = f"query{template_id:03d}"
         template_dir = os.path.join(queries_path, template_str)
         if not os.path.exists(template_dir):
@@ -42,8 +44,8 @@ def create_benchmarking_trace(
                 query_text = f.read()
             for _ in range(copies_per_query):
                 l.append(
-                    {   
-                        "query_id" : "",  # Placeholder, will be filled later.
+                    {
+                        "query_id": "",  # Placeholder, will be filled later.
                         "rel_start_time_s": 0,
                         "query_template": template_id,
                         "query_num_within_template": query_num,
@@ -66,13 +68,21 @@ def create_benchmarking_trace(
     os.makedirs(out_dir, exist_ok=True)
     shuffle_suffix = f"_shuffled_{seed}" if shuffle else ""
     out_path = os.path.join(
-        out_dir, f"benchmarking_trace_{queries_per_template}_{copies_per_query}{shuffle_suffix}.parquet"
+        out_dir,
+        f"benchmarking_trace_{num_templates}_{queries_per_template}_{copies_per_query}{shuffle_suffix}.parquet",
     )
     df.to_parquet(out_path, index=False)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--num_templates",
+        "-nt",
+        type=int,
+        default=99,
+        help="Number of templates to include in the trace.",
+    )
     parser.add_argument(
         "--queries_per_template",
         "-qpt",
@@ -97,6 +107,7 @@ if __name__ == "__main__":
 
     create_benchmarking_trace(
         pu.QUERIES_PATH,
+        args.num_templates,
         args.queries_per_template,
         args.copies_per_query,
         args.shuffle,
