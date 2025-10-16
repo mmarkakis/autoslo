@@ -1,5 +1,3 @@
-## Runs queries from a benchmarking trace in an open loop against some endpoint using psycopg2
-
 import argparse
 import asyncio
 import logging
@@ -113,6 +111,8 @@ class QueryRunner:
         if args.maxconns < 1:
             raise ValueError("maxconns must be at least 1.")
         self.maxconns = args.maxconns
+
+        self.closed_loop = args.closed_loop
 
     def _setup_run_directory(self):
         """
@@ -233,13 +233,9 @@ class QueryRunner:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, fn)
 
-    async def run(self, closed_loop: bool = False) -> None:
+    async def run(self) -> None:
         """
         Run the queries from the benchmarking trace.
-
-        Parameters:
-            closed_loop: If True, run in closed loop (wait for each query to finish before starting the next).
-                         If False, run in open loop (start queries based on their scheduled times
         """
         run_id = self._setup_run_directory()
         print(f"Run started with ID {run_id}.")
@@ -254,7 +250,7 @@ class QueryRunner:
             query_text = row["query_text"]
             rel_start_time_s = row["rel_start_time_s"]
 
-            if not closed_loop:
+            if not self.closed_loop:
                 task = self._run_query_async(
                     run_id, async_reference_ts, rel_start_time_s, query_id, query_text
                 )
@@ -272,9 +268,7 @@ class QueryRunner:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run queries from a benchmarking trace in an open loop."
-    )
+    parser = argparse.ArgumentParser(description="Run queries from a trace.")
     parser.add_argument(
         "--trace_path",
         type=str,
@@ -318,4 +312,4 @@ if __name__ == "__main__":
 
     # Create and run the QueryRunner.
     qr = QueryRunner(args)
-    asyncio.run(qr.run(closed_loop=args.closed_loop))
+    asyncio.run(qr.run())
