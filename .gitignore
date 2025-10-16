@@ -6,4 +6,4 @@
 
 scratch.ipynb
 config/conn.yml
-data/**/*.log
+data/*
