@@ -233,9 +233,12 @@ class QueryRunner:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, fn)
 
-    async def run(self) -> None:
+    async def run(self) -> str:
         """
         Run the queries from the benchmarking trace.
+
+        Returns:
+            The ID of the run.
         """
         run_id = self._setup_run_directory()
         print(f"Run started with ID {run_id}.")
@@ -266,6 +269,8 @@ class QueryRunner:
         self._pbar.close()
         logging.info(f"Run finished at {self._ts()}.")
 
+        return run_id
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run queries from a trace.")
@@ -277,7 +282,7 @@ if __name__ == "__main__":
             "benchmarking_traces",
             "benchmarking_trace_99_3_3_shuffled_42.parquet",
         ),
-        help="Path to the Parquet file containing the benchmarking trace.",
+        help="Path to the Parquet file containing the trace.",
     )
     parser.add_argument(
         "--conn_info_path",
