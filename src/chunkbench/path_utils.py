@@ -1,16 +1,41 @@
 import os
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import yaml
 
 QUERIES_PATH = "/home/markakis/tpc-ds-generator/queries/1721657313/redshift"
 
-CHUNKBENCH_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CHUNKBENCH_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
 DATA_PATH = os.path.join(CHUNKBENCH_ROOT, "data")
 RUNS_PATH = os.path.join(DATA_PATH, "runs")
 
-HEAVY_TEMPLATES_FILES = {"tpcds": os.path.join(DATA_PATH, "tpcds_heavy_templates.txt")}
+HEAVY_TEMPLATES_FILES = {
+    "tpcds": os.path.join(DATA_PATH, "tpcds_heavy_templates.txt")
+}
+
+
+def get_data_path() -> str:
+    """
+    Return the absolute DATA_PATH used by chunkbench.
+    Useful for API routes that need to expose this to the UI.
+    """
+    return DATA_PATH
+
+
+def list_composite_workloads() -> list[str]:
+    """
+    Return the names of subdirectories under DATA_PATH/composite_workloads.
+    """
+    base = os.path.join(DATA_PATH, "composite_workloads")
+    if not os.path.isdir(base):
+        return []
+    return sorted(
+        d for d in os.listdir(base)
+        if os.path.isdir(os.path.join(base, d))
+    )
 
 
 class RunLocator:
@@ -20,16 +45,21 @@ class RunLocator:
     """
 
     @staticmethod
-    def get_runs_df() -> pd.DataFrame:
+    def get_runs_df(columns: Optional[list[str]] = None) -> pd.DataFrame:
         """
         Returns a DataFrame indicating the most recent run for each set of configuration parameters.
+
+        Parameters:
+            columns: Optional list of columns to include in the returned DataFrame. If None, all columns are included.
 
         Returns:
             A pandas DataFrame with one row per unique run configuration.
         """
         last_run_id = RunLocator._check_refresh()
-        run_summary_path = os.path.join(RUNS_PATH, f"run_summary_{last_run_id}.parquet")
-        run_summary = pd.read_parquet(run_summary_path)
+        run_summary_path = os.path.join(
+            RUNS_PATH, f"run_summary_{last_run_id}.parquet"
+        )
+        run_summary = pd.read_parquet(run_summary_path, columns=columns)
 
         return run_summary
 
@@ -45,10 +75,7 @@ class RunLocator:
         Returns:
             A list of run IDs that match the filter criteria.
         """
-
-        run_summary = RunLocator.get_runs_df()
-        for k in kwargs.keys():
-            assert k in run_summary.columns, f"Invalid filter column {k}."
+        run_summary = RunLocator.get_runs_df(list(kwargs.keys()) + ["run_id"])
 
         filtered_summary = run_summary
         for k, v in kwargs.items():
@@ -82,7 +109,9 @@ class RunLocator:
             for f in os.listdir(RUNS_PATH)
             if f.startswith("run_summary_") and f.endswith(".parquet")
         ]
-        if (len(run_summary_files) != 1) or (last_run_id not in run_summary_files[0]):
+        if (len(run_summary_files) != 1) or (
+            last_run_id not in run_summary_files[0]
+        ):
             RunLocator._regenerate(run_dirs)
             for f in run_summary_files:
                 os.remove(os.path.join(RUNS_PATH, f))
@@ -110,11 +139,15 @@ class RunLocator:
 
         # Deduplicate; ignoring the 'run_dir' and 'run_id' columns, only keep the last entry.
         run_summary = run_summary.drop_duplicates(
-            subset=[c for c in run_summary.columns if c not in ["run_dir", "run_id"]],
+            subset=[
+                c for c in run_summary.columns if c not in ["run_dir", "run_id"]
+            ],
             keep="last",
         ).reset_index(drop=True)
 
         # Write out the summary dataframe.
         last_run_id = run_dirs[-1]
-        run_summary_path = os.path.join(RUNS_PATH, f"run_summary_{last_run_id}.parquet")
+        run_summary_path = os.path.join(
+            RUNS_PATH, f"run_summary_{last_run_id}.parquet"
+        )
         run_summary.to_parquet(run_summary_path, index=False)
