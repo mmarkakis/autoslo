@@ -1,0 +1,14 @@
+chunk_id: tpcds_99templates_25pctheavy_10meaninterarrivals
+chunk_duration_s: 3600
+expected__num_queries: 360
+actual__num_queries: 347
+expected__num_templates: 99
+actual__num_templates: 96
+expected__num_queries_per_template: 3
+actual__num_queries_per_template: 3
+expected__pct_heavy: 25
+actual__pct_heavy: 25.072046109510087
+expected__mean_interarrival_time_s: 10
+actual__mean_interarrival_time_s: 10.386453562048612
+expected__stddev_interarrival_time_s: 5.0
+actual__stddev_interarrival_time_s: 5.133780117898061

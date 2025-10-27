@@ -1,9 +1,0 @@
-schema: tpcds
-chunk_id: tpcds_66templates_25pctheavy_05meaninterarrivals
-chunk_duration_s: 3600
-random_seed: 42
-num_templates: 66
-num_queries_per_template: 3
-pct_heavy: 25
-mean_interarrival_time_s: 5
-stddev_interarrival_time_s: 2.5

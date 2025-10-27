@@ -1,0 +1,8 @@
+H: 10
+T: 30
+chunk_duration_s: 3600
+num_queries_per_template: 3
+num_templates: 99
+random_seed: 42
+schema: tpcds
+stddev_interarrival_s: 15.0
