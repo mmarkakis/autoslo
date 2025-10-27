@@ -1,0 +1,436 @@
+:root {
+  --bg: #ffffff;        /* light background */
+  --muted: #e2e8f0;      /* light gray border */
+  --text: #1e293b;       /* slate-800 text */
+  --brand: #2563eb;      /* blue-600 */
+  --accent: #10b981;     /* emerald-500 */
+  --warn: #f59e0b;       /* amber-500 */
+  --drop: #10b98133;     /* emerald alpha */
+  /* spacing */
+  --col-gap: 16px;       /* keep column and left-stack gaps in sync */
+}
+
+
+
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+}
+
+
+.app {
+  max-width: 1100px;
+  margin: 24px auto;
+  padding: 16px;
+}
+
+.hdr {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.hdr h1 { font-size: 36px; margin: 0; }
+.hdr small { opacity: 0.7; }
+
+.row {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--col-gap);
+  align-items: start; /* prevent palette card from growing to match workload card */
+}
+
+/* stack palette + library with a small gap equal to column gap */
+.left-col {
+  display: grid;
+  grid-auto-rows: max-content;
+  gap: var(--col-gap);
+  align-content: start;
+}
+
+.card {
+  background: var(--bg);
+  border: 1px solid #0b1022;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+.card h2, .card h3 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: #cbd5e1;
+}
+
+.palette {
+  display: grid;
+  gap: 8px;
+}
+
+.chunk {
+  user-select: none;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #0b1022;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: grab;
+}
+.chunk:active { cursor: grabbing; }
+.badge {
+  width: 12px; height: 12px;
+  border-radius: 3px;
+  outline: 1px solid #0006;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+}
+
+.trash-zone {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  user-select: none;
+  transition: background 120ms ease, border-color 120ms ease;
+  border: 1px solid #0b1022;  /* match button outline */
+}
+
+/* keep the red highlight on drag-over */
+.trash-zone.over {
+  background: #fee2e2;         /* light red when dragging over */
+  border-color: #ef4444;        /* red-500 */
+}
+
+/* Shared action label styles used by both trash-zone and buttons */
+.action-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+.action-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Optional: keep legacy selectors harmless if still present anywhere */
+.trash-zone .trash-emoji,
+.trash-zone .trash-text {
+  /* neutralize legacy styles if any remain */
+  font-size: inherit;
+  color: inherit;
+}
+
+.day {
+  background: var(--bg);
+  border: 1px dashed #1f2a47;
+  border-radius: 12px;
+  min-height: 120px;
+  padding: 8px;
+  transition: background 120ms ease;
+}
+.day.drag-over { background:var(--muted); box-shadow: inset 0 0 0 2px var(--drop); }
+
+.day h4 {
+  margin: 0 0 8px 0;
+  font-weight: 600;
+  font-size: 12px;
+  color: #9aa7c7;
+}
+
+.day .slot {
+  display: grid;
+  gap: 6px;
+}
+
+.btns {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+/* Right-align the create controls row */
+.create-row {
+  justify-content: flex-end;
+}
+
+/* Smaller, rounded workload name input on the Workload tile */
+.workload-card .name-input {
+  width: 200px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  outline: none;
+}
+
+button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid #0b1022;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.1); }
+button.secondary { background: var(--bg); }
+
+/* Palette 4×4 grid */
+.palette-grid {
+  display: grid;
+  grid-template-columns: auto repeat(4, 44px); /* left label col + 4 icon cols */
+  grid-auto-rows: 44px;                        /* header row + icon rows same height for simplicity */
+  gap: 10px;
+  align-items: center;
+  justify-content: start;
+  padding: 4px;
+}
+.palette-cell {
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: grab;
+}
+
+.palette-cell:active { cursor: grabbing; }
+
+/* header/label cells */
+.palette-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #334155;              /* slate-700 */
+  background: #f8fafc;         /* light background */
+  border: 1px solid #e2e8f0;   /* light gray border */
+  border-radius: 8px;
+}
+.palette-corner {
+  width: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+}
+.palette-collabel {
+  justify-content: center;
+}
+.palette-rowlabel {
+  justify-content: flex-start;
+}
+.label-title {
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.label-value {
+  font-variant-numeric: tabular-nums;
+}
+.label-note {
+  opacity: .7;
+  margin-left: 2px;
+}
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+/* Day icons flow */
+.icons-flow {
+  display: grid;
+  grid-template-columns: repeat(2, 36px);
+  gap: 8px 10px;
+  align-items: start;
+  justify-content: start;
+}
+.day-icon-wrap {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+}
+.day-icon-wrap:active { cursor: grabbing; }
+.tiny-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+/* Make the palette grid fit nicely inside its card */
+.palette-grid {
+  width: 100%;
+  overflow-x: auto;        /* allow scroll if still too wide on small screens */
+  box-sizing: border-box;
+}
+
+/* Keep header cells and icon cells visually compact */
+.palette-head,
+.palette-cell {
+  min-width: 44px;
+  height: 44px;
+}
+
+/* Slightly reduce gaps to tighten spacing inside the card */
+.palette-grid {
+  gap: 6px;
+  padding: 4px 0;
+}
+
+/* toolbar above the strip */
+.days-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Compact grouped controls: − label + */
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+}
+
+.toolbar-label {
+  font-weight: 700;
+  font-size: 12px;
+  color: #334155;
+}
+
+/* Small circular icon buttons */
+.btn-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #e2e8f0;
+  color: #1e293b;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-icon:hover { filter: brightness(1.05); }
+
+.btn-icon.minus {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+.btn-icon.plus {
+  background: #dcfce7;
+  border-color: #22c55e;
+  color: #166534;
+}
+
+/* calendar-like grid: 7 columns per row */
+.days-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 100px);
+  gap: 10px;
+  grid-auto-flow: row; /* fill rows left→right, then start a new row below */
+}
+
+.day {
+  min-width: 0px;         
+}
+
+/* Light shading for weekend days (works with any number of days) */
+.day.weekend {
+  background: #f0f4f8;
+  border-color: #cbd5e1;
+}
+
+.workload-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.add-day-btn {
+  background: #e2e8f0;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.add-day-btn:hover {
+  background: #dbeafe;
+}
+
+.library-card select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1e293b;
+  font-weight: 600;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+.library-card select:hover { filter: brightness(1.02); }
+
+.library-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
+  opacity: 0.9;
+}
+
+.palette-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.palette-actions .trash-zone {
+  margin-top: 0; /* override default top margin when inline */
+}
+
+
+
+
+
+
