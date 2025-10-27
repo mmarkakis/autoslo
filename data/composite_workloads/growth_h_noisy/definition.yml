@@ -1,0 +1,495 @@
+days:
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 50
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 50
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 50
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 50
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 25
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 10
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 50
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+  - H: 0
+    T: 30
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 15.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+- chunks:
+  - H: 50
+    T: 120
+    chunk_duration_s: 3600
+    num_queries_per_template: 3
+    num_templates: 99
+    random_seed: 42
+    schema: tpcds
+    stddev_interarrival_s: 60.0
+monday_index: 0
+name: growth_h_noisy
