@@ -3,7 +3,10 @@
 *.egg
 *.whl
 
+.ui-meta/
 
 scratch.ipynb
 config/conn.yml
-data/*
+
+data/composite_workloads/**/day_traces/
+data/runs/**/*.log
