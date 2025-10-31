@@ -253,11 +253,25 @@ export default function App() {
     })
   }
 
+  // New: open ReDoc docs in a new tab
+  const openRedoc = () => {
+    window.open('/api/redoc', '_blank', 'noopener,noreferrer')
+  }
+
   const [workloads, setWorkloads] = useState([])
   const [selectedWorkload, setSelectedWorkload] = useState('')
   const [dataPath, setDataPath] = useState('')
-  const [newWorkloadName, setNewWorkloadName] = useState('') // new: name input state
-  const [loadingWorkloads, setLoadingWorkloads] = useState(false) // NEW
+  const [newWorkloadName, setNewWorkloadName] = useState('')
+  const [loadingWorkloads, setLoadingWorkloads] = useState(false)
+
+  // SLO pane state
+  const [sloWorkloadName, setSloWorkloadName] = useState('')
+  const [sloSeconds, setSloSeconds] = useState('')
+  const [sloPercentile, setSloPercentile] = useState('95')
+  // NEW: calculate state
+  const [sloLoading, setSloLoading] = useState(false)
+  const [sloSeries, setSloSeries] = useState([])
+  const [sloError, setSloError] = useState('')
 
   // load list of composite workloads from the Python API
   useEffect(() => {
@@ -274,8 +288,9 @@ export default function App() {
       const list = await res.json()
       const names = Array.isArray(list) ? list : []
       setWorkloads(names)
-      // preserve selection if still present, else pick first (or empty)
       setSelectedWorkload(prev => (prev && names.includes(prev)) ? prev : (names[0] ?? ''))
+      // sync SLO workload selection
+      setSloWorkloadName(prev => (prev && names.includes(prev)) ? prev : (names[0] ?? ''))
     } catch (err) {
       console.error('Failed to load composite workloads:', err)
     } finally {
@@ -475,10 +490,55 @@ export default function App() {
     }
   }
 
+  const sloSecondsNum = Number(sloSeconds)
+  const sloPercentileNum = Number(sloPercentile)
+  const validSloSeconds = sloSeconds.trim() !== '' && Number.isFinite(sloSecondsNum) && sloSecondsNum > 0
+  const validSloPercentile = [90, 95, 99].includes(sloPercentileNum)
+
+  // NEW: calculate SLO adherence series
+  const handleCalculateSLO = async () => {
+    if (!sloWorkloadName || !validSloSeconds || !validSloPercentile) return
+    try {
+      setSloLoading(true)
+      setSloError('')
+      const qs = new URLSearchParams({
+        workload_name: sloWorkloadName,
+        tail_slo_s: String(sloSecondsNum),
+        percentile: String(sloPercentileNum),
+      }).toString()
+      const res = await fetch(`/api/composite/ground_truth_smallest_adherent_endpoint?${qs}`, { method: 'POST' })
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '')
+        throw new Error(`HTTP ${res.status} ${msg}`)
+      }
+      const data = await res.json()
+      setSloSeries(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.error('SLO calculate error:', err)
+      setSloError('Failed to calculate. See console.')
+      setSloSeries([])
+    } finally {
+      setSloLoading(false)
+    }
+  }
+
+  // NEW: auto-invoke calculate on workload/SLO/percentile changes (debounced)
+  useEffect(() => {
+    if (sloLoading) return
+    if (!sloWorkloadName || !validSloSeconds || !validSloPercentile) return
+    const t = setTimeout(() => { handleCalculateSLO() }, 200)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sloWorkloadName, sloSeconds, sloPercentile, validSloSeconds, validSloPercentile, sloLoading])
+
   return (
     <div className="app">
       <header className="hdr">
         <h1>Chunkload Studio</h1>
+        {/* New: API docs button */}
+        <button className="secondary" onClick={openRedoc} title="Open API docs (ReDoc)">
+          API docs
+        </button>
       </header>
 
       <div className="row">
@@ -599,6 +659,81 @@ export default function App() {
           </div>
         </section>
       </div>
+
+      {/* SLO adherence full-width pane */}
+      <section className="card slo-card">
+        <h2>SLO adherence</h2>
+        <div className="slo-grid">
+          <div className="form-col">
+            <label className="form-label">Workload</label>
+            <select
+              className="input-field"
+              value={sloWorkloadName}
+              onChange={(e) => setSloWorkloadName(e.target.value)}
+              aria-label="Select workload for SLO"
+            >
+              {workloads.map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+              {workloads.length === 0 && <option value="" disabled>(none found)</option>}
+            </select>
+
+            <label className="form-label">SLO (seconds)</label>
+            <div className="slo-slider-row">
+              <input
+                type="range"
+                min="0.1"
+                max="600"
+                step="0.1"
+                value={Number.isFinite(sloSecondsNum) && sloSecondsNum > 0 ? sloSecondsNum : 0.1}
+                onChange={(e) => setSloSeconds(e.target.value)}
+                aria-label="SLO seconds slider"
+              />
+              <input
+                type="number"
+                className={`input-field tight ${validSloSeconds ? '' : 'invalid'}`}
+                min="0.1"
+                step="0.1"
+                value={sloSeconds}
+                onChange={(e) => setSloSeconds(e.target.value)}
+                aria-label="SLO seconds value"
+                style={{ width: 90 }}
+              />
+            </div>
+            {!validSloSeconds && sloSeconds !== '' && (
+              <small className="error-text">Enter a positive number.</small>
+            )}
+
+            <label className="form-label">Percentile</label>
+            <div className="segmented" role="group" aria-label="Percentile">
+              {[90, 95, 99].map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`seg-btn ${Number(sloPercentile) === p ? 'selected' : ''}`}
+                  aria-pressed={Number(sloPercentile) === p}
+                  onClick={() => setSloPercentile(String(p))}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            {!validSloPercentile && (
+              <small className="error-text">Pick 90, 95 or 99.</small>
+            )}
+
+            {/* Removed Calculate button; auto-calc is active */}
+            {sloError && <small className="error-text">{sloError}</small>}
+          </div>
+
+          {/* Right side: simple SVG line plot */}
+          <div>
+            {sloSeries?.length > 0
+              ? <SLOLineChart data={sloSeries} />
+              : <div style={{ opacity: 0.6, fontSize: 12 }}>{sloLoading ? 'Calculating…' : 'No results yet.'}</div>}
+          </div>
+        </div>
+      </section>
     </div>
   )
 }
@@ -774,6 +909,78 @@ function ChunkIcon({ color, shapeChar, ...svgProps }) {
           strokeLinejoin="round"
         />
       )}
+    </svg>
+  )
+}
+
+// NEW: tiny inline SVG line chart
+function SLOLineChart({ data }) {
+  const w = 640, h = 220, pad = 28
+
+  // x scale
+  const xs = (i) => pad + (data.length > 1 ? (i * (w - 2 * pad)) / (data.length - 1) : 0)
+
+  // keep only positive values for log scale
+  const pos = data.filter(v => v != null && isFinite(v) && v > 0)
+
+  // fixed log2 domain [4, 32]
+  const axisMin = 4
+  const axisMax = 32
+  const log2 = (v) => Math.log2(v)
+  const tOf = (v) => (log2(v) - log2(axisMin)) / Math.max(log2(axisMax) - log2(axisMin), 1e-9)
+  const ys = (v) => {
+    const vv = Math.min(Math.max(v, axisMin), axisMax) // clamp
+    return pad + (h - 2 * pad) * (1 - tOf(vv))
+  }
+
+  // ticks at 4, 8, 16, 32
+  const ticks = [4, 8, 16, 32]
+  const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
+  const fmtTick = (v) => (v >= 1 ? nf.format(v) : String(v))
+
+  // path (skip nonpositive points)
+  let d = ''
+  let penDown = false
+  data.forEach((v, i) => {
+    if (!(v != null && isFinite(v) && v > 0)) { penDown = false; return }
+    const x = xs(i), y = ys(v)
+    d += penDown ? ` L ${x} ${y}` : ` M ${x} ${y}`
+    penDown = true
+  })
+
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-label="SLO line chart">
+      {/* axes */}
+      <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke="#94a3b8" strokeWidth="1" />
+      <line x1={pad} y1={pad} x2={pad} y2={h - pad} stroke="#94a3b8" strokeWidth="1" />
+
+      {/* y grid + tick labels */}
+      {ticks.map((tv) => {
+        const y = ys(tv)
+        return (
+          <g key={`ty-${tv}`}>
+            <line x1={pad} y1={y} x2={w - pad} y2={y} stroke="#e2e8f0" strokeWidth="1" />
+            <text x={pad - 6} y={y + 3} fontSize="10" fill="#475569" textAnchor="end">{fmtTick(tv)}</text>
+          </g>
+        )
+      })}
+
+      {/* line path */}
+      <path d={d} fill="none" stroke="#2563eb" strokeWidth="2" />
+
+      {/* points */}
+      {data.map((v, i) => (v != null && isFinite(v) && v > 0) ? (
+        <circle key={i} cx={xs(i)} cy={ys(v)} r="3" fill="#2563eb" stroke="#1e293b" strokeWidth="1" />
+      ) : null)}
+
+      {/* x axis labels: day indices */}
+      {data.map((_, i) => (
+        <text key={`t${i}`} x={xs(i)} y={h - pad + 14} fontSize="10" fill="#475569" textAnchor="middle">{i + 1}</text>
+      ))}
+
+      {/* axis titles */}
+      <text x={w - pad} y={h - 6} fontSize="11" fill="#475569" textAnchor="end">day</text>
+      <text x={pad} y={12} fontSize="11" fill="#475569">RPU (log2)</text>
     </svg>
   )
 }

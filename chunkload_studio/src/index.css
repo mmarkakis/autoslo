@@ -429,6 +429,93 @@ button.secondary { background: var(--bg); }
   margin-top: 0; /* override default top margin when inline */
 }
 
+/* SLO adherence full-width pane layout */
+.slo-grid {
+  display: grid;
+  /* match top row: left column 280px including card padding+border -> inner width = 280 - 2*(12+1) = 254px */
+  grid-template-columns: calc(280px - 2 * (12px + 1px)) 1fr;
+  gap: var(--col-gap);
+  align-items: start;
+}
+
+/* Ensure SLO pane has same vertical spacing as palette↔library
+   and is full-width with flush external sides */
+.slo-card {
+  margin-top: var(--col-gap);
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%;
+}
+
+.form-col {
+  display: grid;
+  gap: 8px;
+}
+.form-label {
+  font-weight: 700;
+  font-size: 12px;
+  color: #334155;
+}
+
+/* Shared input styling */
+.input-field {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  outline: none;
+}
+.input-field.invalid {
+  border-color: #ef4444;
+}
+.error-text {
+  color: #ef4444;
+  font-size: 12px;
+}
+
+/* Segmented 3-way control */
+.segmented {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f8fafc;
+  /* keep width tight and aligned left inside the grid cell */
+  width: max-content;
+  justify-self: start;
+}
+.seg-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 6px 10px;
+  font-weight: 700;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn {
+  border-left: 1px solid #e2e8f0;
+}
+.seg-btn.selected {
+  background: #cbd5e1; /* slightly darker than #e2e8f0 */
+  color: #1e293b;
+}
+
+/* Slider row with numeric value */
+.slo-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.input-field.tight {
+  padding: 4px 8px;
+}
+
 
 
 
