@@ -1,9 +1,9 @@
 import os
-from chunkbench.building_blocks.chunk import Chunk
+from chunkload.building_blocks.chunk import Chunk
 from datetime import datetime, timedelta
 from typing import Optional, Any
 import pandas as pd
-import chunkbench.path_utils as pu
+import chunkload.utils.paths as pu
 import yaml
 
 

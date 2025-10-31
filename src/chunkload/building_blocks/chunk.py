@@ -4,9 +4,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-import chunkbench.path_utils as pu
+import chunkload.utils.paths as pu
+import chunkload.utils.colors as cu
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from typing import Optional, Any
 
@@ -26,12 +27,12 @@ class Chunk:
        # 75: "*",
     }
     T_COLOR_MAP = {
-        120: "#8FD694",  # soft green
-        60: "#8DB8FF",  # light blue
-        30: "#F7E17D",  # soft yellow
-        10: "#F4B383",  # warm peach/orange
-        #5: "#E78C84",  # muted red
-       # 1: "#4A4A4A",  # soft black / dark gray
+        120: cu.Palette.light_green,
+        60: cu.Palette.light_blue,
+        30: cu.Palette.light_yellow,
+        10: cu.Palette.light_orange,
+        #5: cu.Palette.light_red,
+       # 1: cu.Palette.gray,
     }
 
     DEFAULT_SCHEMA = "tpcds"

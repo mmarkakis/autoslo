@@ -5,9 +5,9 @@ import yaml
 import json
 from fastapi import Body
 
-from chunkbench.building_blocks.composite import Composite
+from chunkload.building_blocks.composite import Composite
 
-import chunkbench.path_utils as pu
+import chunkload.utils.paths as pu
 
 router = APIRouter()
 
@@ -113,9 +113,9 @@ def create_composite_workload_def_post(workload_definition: dict = Body(...)):
                 )
             if "H" not in chunk or "T" not in chunk:
                 raise HTTPException(
-                    status_code=400, detail='Each chunk must have "H" and "T" fields'
+                    status_code=400,
+                    detail='Each chunk must have "H" and "T" fields',
                 )
-
 
     workload_definition["days"] = days
 
@@ -123,3 +123,26 @@ def create_composite_workload_def_post(workload_definition: dict = Body(...)):
     workload = Composite.from_dict(workload_definition)
     workload.save()
     return name
+
+
+@router.post(
+    "/composite/ground_truth_smallest_adherent_endpoint", response_model=list
+)
+def ground_truth_smallest_adherent_endpoint_post(
+    workload_name: str, tail_slo_s: float, percentile: float = 95.0
+):
+    """
+    Get the ground truth smallest adherent endpoint for a given workload.
+
+    Parameters:
+        workload_name: The name of the workload.
+        tail_slo_s: The tail SLO in seconds.
+        percentile: The percentile to consider (default is 95.0).
+
+    Returns:
+       For each day in the workload, the smallest endpoint RPU that meets the
+       tail SLO, or None if no suitable RPU is found.
+    """
+    return Composite.ground_truth_smallest_adherent_endpoint(
+        workload_name, tail_slo_s, percentile
+    )

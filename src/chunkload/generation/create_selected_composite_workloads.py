@@ -1,6 +1,6 @@
-from chunkbench.building_blocks.chunk import Chunk
-from chunkbench.building_blocks.day import Day
-from chunkbench.building_blocks.composite import Composite
+from chunkload.building_blocks.chunk import Chunk
+from chunkload.building_blocks.day import Day
+from chunkload.building_blocks.composite import Composite
 import os
 import numpy as np
 

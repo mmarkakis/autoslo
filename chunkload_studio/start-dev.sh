@@ -10,10 +10,10 @@ mkdir -p "$LOG_DIR"
 
 # Configuration (override via env)
 export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
-BACKEND_APP="${BACKEND_APP:-chunkbench.api:app}"   # e.g. chunkbench.api.app:app if your app module lives there
+BACKEND_APP="${BACKEND_APP:-chunkload.api:app}"   # e.g. chunkload.api.app:app if your app module lives there
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+BACKEND_PORT="${BACKEND_PORT:-1998}"
+FRONTEND_PORT="${FRONTEND_PORT:-8991}"
 
 # Prevent duplicate runs
 if [[ -f "$PID_FILE" ]]; then
@@ -32,7 +32,7 @@ sleep 0.5
 
 # Start frontend
 echo "Starting frontend on http://localhost:${FRONTEND_PORT} ..."
-pushd "$ROOT/chunkbench_studio" >/dev/null
+pushd "$ROOT/chunkload_studio" >/dev/null
 nohup npm run dev -- --port "$FRONTEND_PORT" \
   > "$LOG_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
@@ -49,3 +49,9 @@ echo "Started. PIDs saved to $PID_FILE"
 echo "Logs:"
 echo "  Backend:  $LOG_DIR/backend.log"
 echo "  Frontend: $LOG_DIR/frontend.log"
+
+echo
+echo "API reference:"
+echo "  Swagger UI: http://${BACKEND_HOST}:${BACKEND_PORT}/api/docs"
+echo "  ReDoc:      http://${BACKEND_HOST}:${BACKEND_PORT}/api/redoc"
+echo "  OpenAPI:    http://${BACKEND_HOST}:${BACKEND_PORT}/api/openapi.json"

@@ -6,7 +6,12 @@ from .routes import chunk as chunk_router
 from .routes import composite as composite_router
 
 def create_app(ui_dir: str | None = None, allow_origins: list[str] | None = None):
-    app = FastAPI(title="chunkbench API")
+    app = FastAPI(
+        title="chunkload API",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins or ["*"],
@@ -21,5 +26,5 @@ def create_app(ui_dir: str | None = None, allow_origins: list[str] | None = None
 
     return app
 
-# expose a default app for uvicorn: `uvicorn chunkbench.api:app --reload`
+# expose a default app for uvicorn: `uvicorn chunkload.api:app --reload`
 app = create_app()

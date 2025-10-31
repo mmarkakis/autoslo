@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from chunkbench.building_blocks.chunk import Chunk
+from chunkload.building_blocks.chunk import Chunk
 
 router = APIRouter()
 

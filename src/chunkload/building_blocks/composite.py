@@ -2,9 +2,9 @@ import os
 
 import matplotlib.pyplot as plt
 
-import chunkbench.path_utils as pu
-from chunkbench.building_blocks.chunk import Chunk
-from chunkbench.building_blocks.day import Day
+import chunkload.utils.paths as pu
+from chunkload.building_blocks.chunk import Chunk
+from chunkload.building_blocks.day import Day
 
 from typing import Optional, Any
 from datetime import datetime, timedelta
@@ -91,6 +91,8 @@ class Composite:
         )
 
         # For each day, create and save its trace on each endpoint.
+        l = []
+        US_TO_S = 1_000_000.0
         for day_idx, day in tqdm(
             enumerate(self.days),
             desc="Saving day traces...",
@@ -98,14 +100,36 @@ class Composite:
         ):
             day_dir = os.path.join(out_dir, "day_traces", f"day_{day_idx}")
             os.makedirs(day_dir, exist_ok=True)
+            # FIXME: Hardcoded endpoint names and RPUs
             for endpoint_name in ["4", "8", "16", "32"]:
+                endpoint_rpu = int(endpoint_name)
                 trace_out_path = os.path.join(
                     day_dir, f"{self.name}_day{day_idx}_{endpoint_name}.parquet"
                 )
-                day.get_trace_on(
+                day_df = day.get_trace_on(
                     endpoint_name=endpoint_name,
                     save_path=trace_out_path,
                 )
+                for percentile in [90, 95, 99]:
+                    tail_value = (
+                        day_df["elapsed_time"].quantile(percentile / 100.0)
+                        / US_TO_S
+                    )
+                    l.append(
+                        {
+                            "composite_name": self.name,
+                            "day_idx": day_idx,
+                            "endpoint_name": endpoint_name,
+                            "endpoint_rpu": endpoint_rpu,
+                            "percentile": percentile,
+                            "tail_s": tail_value,
+                        }
+                    )
+
+        # Save out tail statistics for each day on each endpoint.
+        stats_df = pd.DataFrame(l)
+        stats_out_path = os.path.join(out_dir, "day_tail_stats.parquet")
+        stats_df.to_parquet(stats_out_path)
 
     def day_initials(self) -> list[str]:
         """
@@ -157,7 +181,7 @@ class Composite:
             A pandas DataFrame representing the synthesized trace for the
                 composite workload.
         """
-        
+
         l = [
             self.days[0].get_trace_on(
                 endpoint_name=endpoint_name,
@@ -261,7 +285,6 @@ class Composite:
         """
         Chunk.plot_legend(show=show, save_path=save_path)
 
-
     def calculate_day_tail_on_endpoint(
         self,
         day_idx: int,
@@ -291,3 +314,63 @@ class Composite:
             tail_percentile / 100.0
         )
         return tail_value
+
+    @staticmethod
+    def ground_truth_smallest_adherent_endpoint(
+        composite_name: str,
+        tail_slo_s: float,
+        tail_percentile: float = 95.0,
+        day_idx: Optional[int] = None,
+    ) -> list[Optional[int]]:
+        """
+        Determine the smallest endpoint RPU that meets the tail SLO for the
+        specified day within the composite workload.
+
+        Parameters:
+            composite_name: The name of the composite workload.
+            tail_slo_s: The tail SLO in seconds.
+            tail_percentile: The percentile to consider for the SLO (e.g., 95.0
+                for 95th percentile).
+            day_idx: The index of the day within the composite workload.
+                If None, evaluates all days in the composite workload.
+
+        Returns:
+            The smallest endpoint RPU that meets the tail SLO, or None if no
+            suitable RPU is found, for each day (if day_idx is None) or for the
+            specified day (if day_idx is provided).
+        """
+
+        # Read in the day tail statistics
+        base = pu.get_data_path()
+        workload_dir = os.path.join(base, "composite_workloads", composite_name)
+        stats_file = os.path.join(workload_dir, "day_tail_stats.parquet")
+        if not os.path.exists(stats_file):
+            raise ValueError(
+                "Day tail stats file not found for the "
+                f"composite workload {composite_name}."
+            )
+        stats_df = pd.read_parquet(stats_file)
+
+        # Check that the given percentile is in the stats
+        if tail_percentile not in stats_df["percentile"].unique():
+            raise ValueError(
+                f"Percentile {tail_percentile} not found in day tail stats."
+            )
+
+        # Find the smallest endpoint RPU that meets the tail SLO, for each day.
+        if day_idx is not None:
+            stats_df = stats_df[stats_df["day_idx"] == day_idx]
+        stats_df = stats_df[
+            stats_df["percentile"] == tail_percentile
+        ].sort_values(by=['day_idx', 'endpoint_rpu'], ascending=True)
+
+        ans = []
+        for _, group in stats_df.groupby('day_idx'):
+            suitable_rpus = group[
+                group["tail_s"] <= tail_slo_s
+            ]["endpoint_rpu"].tolist()
+            if suitable_rpus:
+                ans.append(suitable_rpus[0])
+            else:
+                ans.append(None)
+        return ans

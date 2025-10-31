@@ -5,7 +5,7 @@ import random
 import pandas as pd
 from tqdm.auto import tqdm
 
-import chunkbench.path_utils as pu
+import chunkload.utils.paths as pu
 
 
 def create_benchmarking_trace(

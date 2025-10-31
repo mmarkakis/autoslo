@@ -7,8 +7,8 @@ import pandas as pd
 import psycopg2 as pg2
 import yaml
 
-import chunkbench.path_utils as pu
-from chunkbench.execution.conn_utils import form_hostname
+import chunkload.utils.paths as pu
+from chunkload.execution.conn_utils import form_hostname
 
 SYS_QUERY_HISTORY_QUERY = """
     SELECT *
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--conn_info_path",
         type=str,
-        default=os.path.join(pu.CHUNKBENCH_ROOT, "config", "conn.yml"),
+        default=os.path.join(pu.CHUNKLOAD_ROOT, "config", "conn.yml"),
         help="Path to the YAML file containing the connection info for psycopg2.",
     )
     parser.add_argument(

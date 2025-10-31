@@ -1,9 +1,9 @@
-from chunkbench.building_blocks.chunk import Chunk
+from chunkload.building_blocks.chunk import Chunk
 import os
 from tqdm.auto import tqdm
 import pandas as pd
 
-import chunkbench.path_utils as pu
+import chunkload.utils.paths as pu
 
 NUM_TEMPLATES = [99]
 PCT_HEAVY = [0, 10, 25, 50]

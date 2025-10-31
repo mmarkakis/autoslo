@@ -4,9 +4,9 @@ import os
 from datetime import datetime
 import shutil
 
-import chunkbench.path_utils as pu
-from chunkbench.execution.query_runner import QueryRunner
-from chunkbench.execution.collect_stats import StatsCollector
+import chunkload.utils.paths as pu
+from chunkload.execution.query_runner import QueryRunner
+from chunkload.execution.collect_stats import StatsCollector
 import yaml
 
 NUM_TEMPLATES_OPTIONS = [99]
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--conn_info_path",
         type=str,
-        default=os.path.join(pu.CHUNKBENCH_ROOT, "config", "conn.yml"),
+        default=os.path.join(pu.CHUNKLOAD_ROOT, "config", "conn.yml"),
         help="Path to the YAML file containing the connection info for psycopg2.",
     )
     parser.add_argument(

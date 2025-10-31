@@ -4,7 +4,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chunkbench"
+name = "chunkload"
 version = "0.1.0"
 requires-python = ">=3.9"
 
@@ -12,4 +12,7 @@ requires-python = ">=3.9"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"chunkbench" = ["py.typed"]
+"chunkload" = ["py.typed"]
+
+[tool.black]
+line-length = 80
