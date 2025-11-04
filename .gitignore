@@ -10,3 +10,8 @@ config/conn.yml
 
 data/composite_workloads/**/day_traces/
 data/runs/**/*.log
+
+site/
+docs/reference/
+docs/index.md
+docs/assets/
