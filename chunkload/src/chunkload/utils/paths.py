@@ -7,7 +7,7 @@ import yaml
 QUERIES_PATH = "/home/markakis/tpc-ds-generator/queries/1721657313/redshift"
 
 CHUNKLOAD_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
 DATA_PATH = os.path.join(CHUNKLOAD_ROOT, "data")
 RUNS_PATH = os.path.join(DATA_PATH, "runs")
