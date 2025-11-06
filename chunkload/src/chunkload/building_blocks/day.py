@@ -1,10 +1,12 @@
 import os
-from chunkload.building_blocks.chunk import Chunk
 from datetime import datetime, timedelta
-from typing import Optional, Any
+from typing import Any, Optional
+
 import pandas as pd
-import chunkload.utils.paths as pu
 import yaml
+
+import chunkload.utils.paths as pu
+from chunkload.building_blocks.chunk import Chunk
 
 
 class Day:
@@ -19,33 +21,29 @@ class Day:
         Parameters:
             chunks: A list of Chunks.
         """
-        self.chunks = chunks
-        self.day_id = "_".join([f"H{chunk.H}T{chunk.T}" for chunk in chunks])
+        self._chunks = chunks
+        self._day_id = "_".join([f"H{chunk.H}T{chunk.T}" for chunk in chunks])
 
     def day_id(self) -> str:
         """Get the unique identifier for the day."""
-        return self.day_id
-
-    def save_dir(self) -> str:
-        """Get the directory path where the day is saved."""
-        return os.path.join(pu.DATA_PATH, "day_workloads", self.day_id)
+        return self._day_id
 
     def chunks(self) -> list[Chunk]:
         """Get the list of chunks in the day."""
-        return self.chunks
+        return self._chunks
 
     def colors(self) -> list[str]:
         """Get a list of colors for all chunks in the day."""
-        return [chunk.color() for chunk in self.chunks]
+        return [chunk.color() for chunk in self.chunks()]
 
     def shapes(self) -> list[str]:
         """Get a list of shapes for all chunks in the day."""
-        return [chunk.shape() for chunk in self.chunks]
+        return [chunk.shape() for chunk in self.chunks()]
 
     def to_dict(self) -> dict[str, Any]:
         """Get the day representation as a dictionary."""
         return {
-            "chunks": [chunk.to_dict() for chunk in self.chunks],
+            "chunks": [chunk.to_dict() for chunk in self.chunks()],
         }
 
     @staticmethod
@@ -53,7 +51,7 @@ class Day:
         """Create a Day instance from a dictionary representation."""
         chunks = [Chunk.from_dict(chunk_data) for chunk_data in data["chunks"]]
         return Day(chunks=chunks)
-        
+
     def get_trace_on(
         self,
         endpoint_name: str,
@@ -89,12 +87,12 @@ class Day:
         """
 
         l = [
-            self.chunks[0].get_trace_on(
+            self.chunks()[0].get_trace_on(
                 endpoint_name=endpoint_name,
                 normalize_start_to=normalize_start_to,
             )
         ]
-        for chunk in self.chunks[1:]:
+        for chunk in self.chunks()[1:]:
             prev_latest_timestamp = l[-1]["end_time"].max()
             chunk_trace = chunk.get_trace_on(
                 endpoint_name=endpoint_name,

@@ -23,6 +23,7 @@ class Trace:
         self._trace_df = trace_df.sort_values(
             by="start_time", ascending=True
         ).reset_index(drop=True)
+        self._original_start = self._trace_df["start_time"].min()
 
     @staticmethod
     def _validate(trace_df: pd.DataFrame) -> None:
@@ -58,6 +59,35 @@ class Trace:
                 '"start_time" and "end_time".'
             )
 
+    def normalize_start_to(self, new_start: pd.Timestamp) -> "Trace":
+        """
+        Normalize start and end times of the trace so that the earliest start
+        time is equal to `new_start`.
+
+        Parameters:
+            new_start: A pandas Timestamp to which the earliest start time
+                will be normalized.
+
+        Returns:
+            A new Trace instance with normalized start times.
+        """
+        earliest_start = self._trace_df["start_time"].min()
+        shift = new_start - earliest_start
+        normalized_df = self._trace_df.copy()
+        normalized_df["start_time"] = normalized_df["start_time"] + shift
+        normalized_df["end_time"] = normalized_df["end_time"] + shift
+        self._trace_df = normalized_df
+        return self
+
+    def reset_start(self) -> "Trace":
+        """
+        Reset start and end times of the trace to their original values.
+
+        Returns:
+            A new Trace instance with original start times.
+        """
+        return self.normalize_start_to(self._original_start)
+
     def latency_s_at(self, quantile: float) -> float:
         """
         Get the query latency at a given quantile, in seconds.
@@ -71,7 +101,7 @@ class Trace:
         Raises:
             ValueError: If the quantile is not between 0 and 1.
         """
-        if not (0 < quantile < 1):
+        if not (0 <= quantile <= 1):
             raise ValueError("Quantile must be between 0 and 1.")
         return (
             self._trace_df["elapsed_time"].quantile(quantile)

@@ -64,7 +64,7 @@ class RunLocator:
         return run_summary
 
     @staticmethod
-    def get_run_id(**kwargs: dict[str, Any]) -> list[str]:
+    def get_run_id(**kwargs) -> list[str]:
         """
         Returns a list of run IDs that match the given filter criteria. For integer or float values, an exact match is performed.
         For string values, a substring match is performed.

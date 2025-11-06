@@ -1,17 +1,14 @@
 import os
+from datetime import datetime
+from typing import Any, Optional
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
-
-import chunkload.utils.paths as pu
-import chunkload.utils.colors as cu
-
-from datetime import datetime
-
-from typing import Optional, Any
-
+import pandas as pd
 import yaml
+
+import chunkload.utils.colors as cu
+import chunkload.utils.paths as pu
 
 
 class Chunk:
@@ -24,16 +21,18 @@ class Chunk:
         10: "H",
         25: "s",
         50: "^",
-       # 75: "*",
+        # 75: "*",
     }
     T_COLOR_MAP = {
         120: cu.Palette.light_green,
         60: cu.Palette.light_blue,
         30: cu.Palette.light_yellow,
         10: cu.Palette.light_orange,
-        #5: cu.Palette.light_red,
-       # 1: cu.Palette.gray,
+        # 5: cu.Palette.light_red,
+        # 1: cu.Palette.gray,
     }
+
+    SUPPORTED_SCHEMAS = ["tpcds"]
 
     DEFAULT_SCHEMA = "tpcds"
     DEFAULT_CHUNK_DURATION_S = 3600  # 1 hour
@@ -74,8 +73,11 @@ class Chunk:
             raise ValueError("H must be between 0 and 100.")
         if T <= 0:
             raise ValueError("T must be a positive number.")
-        if schema.lower() != "tpcds":
-            raise ValueError("Only 'tpcds' schema is supported for now.")
+        if schema.lower() not in self.SUPPORTED_SCHEMAS:
+            raise ValueError(
+                f"Schema '{schema}' is not supported. Supported schemas: "
+                f"{self.SUPPORTED_SCHEMAS}."
+            )
         if chunk_duration_s <= 0:
             raise ValueError("chunk_duration_s must be a positive integer.")
         if num_templates <= 0:
@@ -101,7 +103,7 @@ class Chunk:
             if stddev_interarrival_s is not None
             else T / 2
         )
-        self.chunk_id = "_".join(
+        self._chunk_id = "_".join(
             [
                 self.schema,
                 f"{self.num_templates}templates",
@@ -112,14 +114,14 @@ class Chunk:
 
     def chunk_id(self) -> str:
         """Get the chunk ID string."""
-        return self.chunk_id
+        return self._chunk_id
 
     def save_dir(self) -> str:
         """Get the directory path where the chunk workload is saved."""
         return os.path.join(
             pu.DATA_PATH,
             "chunk_workloads",
-            self.chunk_id,
+            self.chunk_id(),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,7 +190,7 @@ class Chunk:
         self,
     ) -> None:
         # Retrieve the query texts for the specified number of templates.
-        query_texts = {}
+        query_texts: dict[int, list[str]] = {}
         for template_id in range(1, self.num_templates + 1):
             template_str = f"query{template_id:03d}"
             template_dir = os.path.join(pu.QUERIES_PATH, template_str)
@@ -238,7 +240,7 @@ class Chunk:
 
             chunk_trace.append(
                 {
-                    "chunk_id": self.chunk_id,
+                    "chunk_id": self.chunk_id(),
                     "query_id": query_id,
                     "rel_start_time_s": current_time_s,
                     "query_template": template_id,
@@ -269,7 +271,7 @@ class Chunk:
 
         # Save sanity check statistics from the file we just wrote out and return.
         stats = {
-            "chunk_id": self.chunk_id,
+            "chunk_id": self.chunk_id(),
             "chunk_duration_s": self.chunk_duration_s,
             "expected__num_queries": int(self.chunk_duration_s / self.T),
             "actual__num_queries": df.shape[0],
@@ -316,8 +318,7 @@ class Chunk:
             ValueError: If no matching run ID is found.
         """
         run_ids = pu.RunLocator.get_run_id(
-            trace_path=f"{self.chunk_id}.parquet",
-            endpoint_name=endpoint_name,
+            trace_path=f"{self.chunk_id()}.parquet", endpoint_name=endpoint_name
         )
         if len(run_ids) == 0:
             raise ValueError(
