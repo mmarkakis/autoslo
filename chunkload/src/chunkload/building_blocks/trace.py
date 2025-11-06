@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-class Trace():
+class Trace:
     """
     A query execution trace. This class is used to abstract away the details of
     the trace data as collected from the database engine.
@@ -39,7 +39,7 @@ class Trace():
         """
         # Check for required columns
         missing_columns = [
-            col for col in Trace.REQUIRED_COLUMNS if col not in obj.columns
+            col for col in Trace.REQUIRED_COLUMNS if col not in trace_df.columns
         ]
         if missing_columns:
             raise ValueError(
@@ -48,8 +48,10 @@ class Trace():
             )
 
         # Check that elapsed_time is in microseconds.
-        manual_diff_timedelta = obj["end_time"] - obj["start_time"]
-        elapsed_time_timedelta = pd.to_timedelta(obj["elapsed_time"], unit="us")
+        manual_diff_timedelta = trace_df["end_time"] - trace_df["start_time"]
+        elapsed_time_timedelta = pd.to_timedelta(
+            trace_df["elapsed_time"], unit="us"
+        )
         if not all(manual_diff_timedelta == elapsed_time_timedelta):
             raise ValueError(
                 '"elapsed_time" column does not match the difference between '
@@ -72,9 +74,31 @@ class Trace():
         if not (0 < quantile < 1):
             raise ValueError("Quantile must be between 0 and 1.")
         return (
-            self._obj["elapsed_time"].quantile(quantile)
+            self._trace_df["elapsed_time"].quantile(quantile)
             / self.MICROSECONDS_IN_SECOND
         )
+
+    def num_queries(self) -> int:
+        """
+        Get the total number of queries in the trace.
+
+        Returns:
+            The total number of queries.
+        """
+        return len(self._trace_df)
+
+    def num_queries_with_latency_over(self, latency_s: float) -> int:
+        """
+        Get the number of queries with latency over a given threshold.
+
+        Parameters:
+            latency_s: The latency threshold in seconds.
+
+        Returns:
+            The number of queries with latency over the specified threshold.
+        """
+        latency_us = latency_s * self.MICROSECONDS_IN_SECOND
+        return (self._trace_df["elapsed_time"] > latency_us).sum()
 
     def _round_up(self, value: float, granularity: float) -> float:
         """
@@ -106,16 +130,16 @@ class Trace():
         """
 
         total_billed_s = 0.0
-        if self._obj.empty:
+        if self._trace_df.empty:
             return total_billed_s
 
-        current_interval_start = self._obj.iloc[0]["start_time"]
+        current_interval_start = self._trace_df.iloc[0]["start_time"]
         current_interval_end = max(
-            self._obj.iloc[0]["end_time"],
+            self._trace_df.iloc[0]["end_time"],
             current_interval_start + pd.Timedelta(seconds=threshold_s),
         )
 
-        for _, row in self._obj.iterrows():
+        for _, row in self._trace_df.iterrows():
             start_time = row["start_time"]
             end_time = row["end_time"]
 
