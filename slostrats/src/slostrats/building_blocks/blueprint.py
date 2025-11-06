@@ -1,4 +1,4 @@
-from slostrats.enumeration.cluster import Cluster
+from slostrats.building_blocks.cluster import Cluster
 
 
 class Blueprint:

@@ -1,4 +1,4 @@
-from slostrats.enumeration.blueprint import Blueprint
+from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.prediction.prediction import Prediction
 from slostrats.strategies_selection.selection_strategy import SelectionStrategy
 from slostrats.strategies_selection.ss_min_slo_violation_rate import (

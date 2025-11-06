@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from slostrats.enumeration.blueprint import Blueprint
+from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.prediction.prediction import Prediction
 
 class PredictionStrategy(ABC):

@@ -1,4 +1,4 @@
-from slostrats.enumeration.blueprint import Blueprint
+from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.prediction.prediction import Prediction
 from slostrats.prediction.p_exact import PExact
 from slostrats.strategies_prediction.prediction_strategy import (

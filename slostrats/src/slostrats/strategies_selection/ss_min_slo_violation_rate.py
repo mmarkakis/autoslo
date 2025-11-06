@@ -1,4 +1,4 @@
-from slostrats.enumeration.blueprint import Blueprint
+from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.prediction.prediction import Prediction
 from slostrats.strategies_selection.selection_strategy import SelectionStrategy
 
@@ -17,8 +17,8 @@ class SSMinSLOViolationRate(SelectionStrategy):
     ) -> Blueprint:
         """
         Select the blueprint with the minimum number of predicted SLO
-        violations.
-
+        violations. Break ties arbitrarily.
+        
         Parameters:
             bp_to_pred: A dictionary mapping Blueprint instances to their
                 corresponding Prediction instances.

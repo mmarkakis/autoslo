@@ -1,5 +1,5 @@
-from slostrats.enumeration.blueprint import Blueprint
-from slostrats.enumeration.cluster import Cluster
+from slostrats.building_blocks.blueprint import Blueprint
+from slostrats.building_blocks.cluster import Cluster
 from slostrats.strategies_enumeration.enumeration_strategy import (
     EnumerationStrategy,
 )

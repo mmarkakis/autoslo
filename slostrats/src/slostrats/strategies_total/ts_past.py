@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Type
 
 from chunkload.building_blocks.trace import Trace
-from slostrats.enumeration.blueprint import Blueprint
+from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.prediction.prediction import Prediction
 from slostrats.strategies_enumeration.es_up_to_32 import ESUpTo32
 from slostrats.strategies_prediction.ps_past_window import PSPastWindow

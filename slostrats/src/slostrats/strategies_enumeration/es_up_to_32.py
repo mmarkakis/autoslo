@@ -1,4 +1,4 @@
-from slostrats.enumeration.blueprint import Blueprint
+from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.strategies_enumeration.enumeration_strategy import EnumerationStrategy
 
 
@@ -6,7 +6,7 @@ class ESUpTo32(EnumerationStrategy):
     """
     Enumeration strategy that always enumerates the same set of Blueprints for
     the next period. Each blueprint contains a single cluster with RPU
-    capacities ranging from 4 to 32, in powers of two.
+    capacities ranging from 4 to 32, in powers of two. 
     """
 
     def enumerate(self, *args, **kwargs) -> list[Blueprint]:
