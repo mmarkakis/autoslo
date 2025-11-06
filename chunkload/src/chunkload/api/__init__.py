@@ -2,10 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .routes import chunk as chunk_router
-from .routes import composite as composite_router
+from chunkload.api.routers import chunk_router, composite_router
 
-def create_app(ui_dir: str | None = None, allow_origins: list[str] | None = None):
+def create_app(
+    ui_dir: str | None = None, allow_origins: list[str] | None = None
+):
     app = FastAPI(
         title="chunkload API",
         docs_url="/api/docs",
@@ -25,6 +26,7 @@ def create_app(ui_dir: str | None = None, allow_origins: list[str] | None = None
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
 
     return app
+
 
 # expose a default app for uvicorn: `uvicorn chunkload.api:app --reload`
 app = create_app()
