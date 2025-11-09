@@ -5,7 +5,7 @@ from chunkload.building_blocks.trace import Trace
 from slostrats.building_blocks.blueprint import Blueprint
 from slostrats.prediction.prediction import Prediction
 from slostrats.strategies_enumeration.es_up_to_32 import ESUpTo32
-from slostrats.strategies_prediction.ps_past_window import PSPastWindow
+from slostrats.strategies_prediction.ps_replay_past import PSReplayPast
 from slostrats.strategies_selection.ss_min_cost_once_acceptable import (
     SSMinCostOnceAcceptable,
 )
@@ -16,7 +16,7 @@ from slostrats.strategies_total.total_strategy import TotalStrategy
 from slostrats.strategies_selection.selection_strategy import SelectionStrategy
 
 
-class TSPast(TotalStrategy):
+class TSReplayPast(TotalStrategy):
     """
     Total strategy that uses past data from the most recent periods to
     predict and select the best blueprint for the next period.
@@ -31,7 +31,7 @@ class TSPast(TotalStrategy):
         **kwargs,
     ) -> None:
         """
-        Initialize the TSPast strategy.
+        Initialize the TSReplayPast strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate
@@ -48,23 +48,26 @@ class TSPast(TotalStrategy):
         self.violation_rate_threshold = slo_violation_rate_threshold
 
         self.es = ESUpTo32()
-        self.ps = PSPastWindow(window_size=window_size, per_period_average=True)
+        self.ps = PSReplayPast(window_size=window_size, per_period_average=True)
         self.ss = selection_strategy(
             slo_violation_rate_threshold=self.violation_rate_threshold,
         )
 
     def suggest_blueprint(
         self,
+        workload_name: str,
+        day_idx: int,
         latency_slo_s: float,
-        past_traces: dict[datetime, Trace],
         *args,
         **kwargs,
     ):
         """
-        Suggest the best blueprint for the next period based on the provided
-        latency SLO, using data from the most recent past period.
+        Suggest the best blueprint for the specified workload and day based on
+        the provided latency SLO, using data from past periods.
 
         Parameters:
+            workload_name: The name of the workload to suggest for.
+            day_idx: The index of the day for which the suggestion is made.
             latency_slo_s: The latency SLO in seconds to evaluate against.
             args: Positional arguments (as needed by specific strategies).
             kwargs: Keyword arguments (as needed by specific strategies).
@@ -76,27 +79,30 @@ class TSPast(TotalStrategy):
         bp_to_prediction: dict[Blueprint, Prediction] = {}
         for blueprint in candidate_blueprints:
             prediction = self.ps.predict(
+                workload_name,
+                day_idx,
                 blueprint,
                 latency_slo_s,
-                past_traces,
             )
             bp_to_prediction[blueprint] = prediction
         selected_blueprint = self.ss.select(bp_to_prediction)
         return selected_blueprint
 
 
-class TSPast1Cost(TSPast):
+class TSReplayPast1Cost(TSReplayPast):
     """
-    A TSPast strategy that uses a past window size of 1 period and the
+    A TSReplayPast strategy that uses a past window size of 1 period and the
     SSMinCostOnceAcceptable selection strategy.
     """
 
     def __init__(
         self,
         slo_violation_rate_threshold: float,
+        *args,
+        **kwargs,
     ) -> None:
         """
-        Initialize the TSPast1Cost strategy.
+        Initialize the TSReplayPast1Cost strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate
@@ -110,18 +116,20 @@ class TSPast1Cost(TSPast):
         )
 
 
-class TSPast7Cost(TSPast):
+class TSReplayPast7Cost(TSReplayPast):
     """
-    A TSPast strategy that uses a past window size of 7 periods and the
+    A TSReplayPast strategy that uses a past window size of 7 periods and the
     SSMinCostOnceAcceptable selection strategy.
     """
 
     def __init__(
         self,
         slo_violation_rate_threshold: float,
+        *args,
+        **kwargs,
     ) -> None:
         """
-        Initialize the TSPast7Cost strategy.
+        Initialize the TSReplayPast7Cost strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate
@@ -135,18 +143,20 @@ class TSPast7Cost(TSPast):
         )
 
 
-class TSPast14Cost(TSPast):
+class TSReplayPast14Cost(TSReplayPast):
     """
-    A TSPast strategy that uses a past window size of 14 periods and the
+    A TSReplayPast strategy that uses a past window size of 14 periods and the
     SSMinCostOnceAcceptable selection strategy.
     """
 
     def __init__(
         self,
         slo_violation_rate_threshold: float,
+        *args,
+        **kwargs,
     ) -> None:
         """
-        Initialize the TSPast14Cost strategy.
+        Initialize the TSReplayPast14Cost strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate
@@ -160,18 +170,20 @@ class TSPast14Cost(TSPast):
         )
 
 
-class TSPast1Perf(TSPast):
+class TSReplayPast1Perf(TSReplayPast):
     """
-    A TSPast strategy that uses a past window size of 1 period and the
+    A TSReplayPast strategy that uses a past window size of 1 period and the
     SSMinSLOViolationRate selection strategy.
     """
 
     def __init__(
         self,
         slo_violation_rate_threshold: float,
+        *args,
+        **kwargs,
     ) -> None:
         """
-        Initialize the TSPast1Perf strategy.
+        Initialize the TSReplayPast1Perf strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate
@@ -185,18 +197,20 @@ class TSPast1Perf(TSPast):
         )
 
 
-class TSPast7Perf(TSPast):
+class TSReplayPast7Perf(TSReplayPast):
     """
-    A TSPast strategy that uses a past window size of 7 periods and the
+    A TSReplayPast strategy that uses a past window size of 7 periods and the
     SSMinSLOViolationRate selection strategy.
     """
 
     def __init__(
         self,
         slo_violation_rate_threshold: float,
+        *args,
+        **kwargs,
     ) -> None:
         """
-        Initialize the TSPast7Perf strategy.
+        Initialize the TSReplayPast7Perf strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate
@@ -210,18 +224,20 @@ class TSPast7Perf(TSPast):
         )
 
 
-class TSPast14Perf(TSPast):
+class TSReplayPast14Perf(TSReplayPast):
     """
-    A TSPast strategy that uses a past window size of 14 periods and the
+    A TSReplayPast strategy that uses a past window size of 14 periods and the
     SSMinSLOViolationRate selection strategy.
     """
 
     def __init__(
         self,
         slo_violation_rate_threshold: float,
+        *args,
+        **kwargs,
     ) -> None:
         """
-        Initialize the TSPast14Perf strategy.
+        Initialize the TSReplayPast14Perf strategy.
 
         Parameters:
             slo_violation_rate_threshold: The acceptable SLO violation rate

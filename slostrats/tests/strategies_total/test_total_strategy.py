@@ -48,3 +48,33 @@ def test_suggest_blueprint_receives_args_and_kwargs():
     assert r.called[0] == 1.0
     assert r.called[1] == (42, "x")
     assert r.called[2] == {"flag": True}
+
+
+def test_strategy_name_and_class_methods():
+    """
+    Test that the strategy name and class methods return expected values.
+    """
+
+    class DummyTotal(TotalStrategy):
+        def __init__(self):
+            self.es = type("DummyES", (), {})()
+            self.ps = type("DummyPS", (), {})()
+            self.ss = type("DummySS", (), {})()
+
+        def suggest_blueprint(self, latency_slo_s, *args, **kwargs):
+            return Blueprint([Cluster(rpu=2)])
+
+    d = DummyTotal()
+    es_name = d.es_name()
+    es_class = d.es_class()
+    ps_name = d.ps_name()
+    ps_class = d.ps_class()
+    ss_name = d.ss_name()
+    ss_class = d.ss_class()
+
+    assert es_name == "DummyES"
+    assert es_class.__name__ == "DummyES"
+    assert ps_name == "DummyPS"
+    assert ps_class.__name__ == "DummyPS"
+    assert ss_name == "DummySS"
+    assert ss_class.__name__ == "DummySS"
