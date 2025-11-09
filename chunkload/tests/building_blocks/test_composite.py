@@ -134,9 +134,9 @@ def test_to_from_dict_roundtrip():
     assert comp2.monday_index == comp.monday_index
     assert len(comp2.days) == len(comp.days)
     for original_day, roundtrip_day in zip(comp.days, comp2.days):
-        assert len(original_day.chunks()) == len(roundtrip_day.chunks())
+        assert len(original_day.chunks) == len(roundtrip_day.chunks)
         for original_chunk, roundtrip_chunk in zip(
-            original_day.chunks(), roundtrip_day.chunks()
+            original_day.chunks, roundtrip_day.chunks
         ):
             assert original_chunk.H == roundtrip_chunk.H
             assert original_chunk.T == roundtrip_chunk.T

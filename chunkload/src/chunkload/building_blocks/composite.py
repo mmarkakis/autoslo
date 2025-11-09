@@ -1,22 +1,75 @@
 import os
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
 import matplotlib.pyplot as plt
+import pandas as pd
+import yaml
+from tqdm.auto import tqdm
 
 import chunkload.utils.paths as pu
 from chunkload.building_blocks.chunk import Chunk
 from chunkload.building_blocks.day import Day
 
-from typing import Optional, Any
-from datetime import datetime, timedelta
-
-import pandas as pd
-
-import yaml
-
-from tqdm.auto import tqdm
-
 
 class Composite:
+
+    @staticmethod
+    def outputs_parent_dir() -> str:
+        """
+        Get the directory path where composite workloads are stored.
+        """
+        return os.path.join(
+            pu.DATA_PATH,
+            "composite_workloads",
+        )
+
+    @staticmethod
+    def all_composite_workload_names() -> list[str]:
+        """
+        Get a list of all available composite workload names.
+
+        Returns:
+            A list of composite workload names.
+        """
+        composite_dir = Composite.outputs_parent_dir()
+        if not os.path.exists(composite_dir):
+            return []
+        return [
+            name
+            for name in os.listdir(composite_dir)
+            if os.path.isdir(os.path.join(composite_dir, name))
+        ]
+
+    @staticmethod
+    def dir_for_composite_workload(workload_name: str) -> str:
+        """
+        Get the directory path for a specific composite workload.
+
+        Parameters:
+            workload_name: The name of the composite workload.
+
+        Returns:
+            The directory path for the specified composite workload.
+        """
+        return os.path.join(Composite.outputs_parent_dir(), workload_name)
+
+    @staticmethod
+    def dir_for_workload_day(workload_name: str, day_idx: int) -> str:
+        """
+        Get the directory path for a specific day within a composite workload.
+
+        Parameters:
+            workload_name: The name of the composite workload.
+            day_idx: The index of the day within the composite workload.
+
+        Returns:
+            The directory path for the specified day of the composite workload.
+        """
+        return os.path.join(
+            Composite.dir_for_composite_workload(workload_name),
+            f"day_{day_idx}",
+        )
 
     def __init__(
         self,
@@ -48,7 +101,7 @@ class Composite:
 
     def save_dir(self) -> str:
         """Get the directory path where the composite workload is saved."""
-        return os.path.join(pu.DATA_PATH, "composite_workloads", self.name)
+        return os.path.join(Composite.outputs_parent_dir(), self.name)
 
     def to_dict(self) -> dict[str, Any]:
         """Get the composite workload representation as a dictionary."""
@@ -67,6 +120,42 @@ class Composite:
             days=days,
             monday_index=data["monday_index"],
         )
+
+    @staticmethod
+    def load(workload_name: str) -> "Composite":
+        """
+        Load a composite workload from its saved directory.
+
+        Parameters:
+            workload_name: The name of the composite workload to load.
+
+        Returns:
+            A Composite instance corresponding to the loaded workload.
+
+        Raises:
+            FileNotFoundError: If the composite workload definition file does
+            not exist.
+        """
+        definition_path = os.path.join(
+            Composite.dir_for_composite_workload(workload_name),
+            "definition.yml",
+        )
+        if not os.path.exists(definition_path):
+            raise FileNotFoundError(
+                f"Composite workload definition file '{definition_path}' does not exist."
+            )
+        with open(definition_path, "r") as f:
+            data = yaml.safe_load(f)
+        return Composite.from_dict(data)
+
+    def num_days(self) -> int:
+        """
+        Get the number of days in the composite workload.
+
+        Returns:
+            The number of days in the composite workload.
+        """
+        return len(self.days)
 
     def save(self):
         """
@@ -209,7 +298,11 @@ class Composite:
         return synthesized_trace
 
     def plot_definition(
-        self, show: bool = False, save_path: Optional[str] = None
+        self,
+        show: bool = False,
+        save_path: Optional[str] = None,
+        ax: Optional[plt.Axes] = None,
+        start_day_idx: int = 0,
     ):
         """
         Plot the composite workload definition.
@@ -218,15 +311,35 @@ class Composite:
             show: If True, display the plot after saving (for interactive use).
             save_path: Optional path to save the plot image. If None, does not
                 save the plot image.
+            ax: Optional Matplotlib Axes to plot on. If None, creates a new
+                figure and axes.
+            start_day_idx: The starting index for the days to plot (useful for
+                plotting a subset of days).
         """
-        eff_num_days = max(7, len(self.days))
-        fig_width = eff_num_days * 0.25 + 0.5
-        fig_height = max(5, max(len(day.chunks) for day in self.days)) * 0.2 + 1
+        eff_num_days = max(7, len(self.days) - start_day_idx)
 
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        if ax is not None:
+            fig = ax.figure
+        else:
+            fig_width = eff_num_days * 0.25 + 0.5
+            most_chunks_in_a_day = max(
+                len(day.chunks) for day in self.days[start_day_idx:]
+            )
+            fig_height = (
+                max(
+                    5,
+                    most_chunks_in_a_day,
+                )
+                * 0.2
+                + 1
+            )
+
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
         # Plot each chunk in its respective day position
-        for day_idx, day in enumerate(self.days):
+        for day_idx, day in enumerate(
+            self.days[start_day_idx:], start=start_day_idx
+        ):
             for chunk_idx, chunk in enumerate(day.chunks):
                 ax.scatter(
                     [day_idx],
@@ -240,12 +353,15 @@ class Composite:
         # Shade the background of the weekends.
         weekend_day_idxs = [
             i
-            for i in range(len(self.days))
+            for i in range(start_day_idx, len(self.days))
             if (self.monday_index + i) % 7 in [5, 6]
         ]
         weekend_starts_ends = []
         for i in range(len(weekend_day_idxs)):
-            if i == 0 or weekend_day_idxs[i] != weekend_day_idxs[i - 1] + 1:
+            if (
+                i == start_day_idx
+                or weekend_day_idxs[i] != weekend_day_idxs[i - 1] + 1
+            ):
                 weekend_starts_ends.append(
                     [weekend_day_idxs[i], weekend_day_idxs[i]]
                 )
@@ -256,22 +372,27 @@ class Composite:
             ax.axvspan(start - 0.5, end + 0.5, color="lightgray", alpha=0.5)
 
         ax.set_xlabel("Day")
-        ax.set_xticks(range(eff_num_days))
+        ax.set_xticks(range(start_day_idx, start_day_idx + eff_num_days))
         ax.set_xticklabels(
-            self.day_initials() + [""] * (eff_num_days - len(self.days))
+            self.day_initials()[start_day_idx : start_day_idx + eff_num_days]
+            + [""] * (eff_num_days - len(self.days[start_day_idx:]))
         )
         ax.set_yticks([])
         ax.set_title(self.name)
-        ax.set_ylim(-1, max(len(day.chunks) for day in self.days))
-        ax.set_xlim(-0.5, eff_num_days - 0.5)
-        plt.tight_layout()
+        ax.set_ylim(
+            -1, max(len(day.chunks) for day in self.days[start_day_idx:])
+        )
+        ax.set_xlim(start_day_idx - 0.5, start_day_idx + eff_num_days - 0.5)
+
         if save_path is not None:
+            plt.tight_layout()
             plt.savefig(
                 save_path,
                 dpi=300,
                 bbox_inches="tight",
             )
         if show:
+            plt.tight_layout()
             plt.show()
 
     def plot_legend(self, show: bool = False, save_path: Optional[str] = None):
@@ -362,13 +483,13 @@ class Composite:
             stats_df = stats_df[stats_df["day_idx"] == day_idx]
         stats_df = stats_df[
             stats_df["percentile"] == tail_percentile
-        ].sort_values(by=['day_idx', 'endpoint_rpu'], ascending=True)
+        ].sort_values(by=["day_idx", "endpoint_rpu"], ascending=True)
 
         ans = []
-        for _, group in stats_df.groupby('day_idx'):
-            suitable_rpus = group[
-                group["tail_s"] <= tail_slo_s
-            ]["endpoint_rpu"].tolist()
+        for _, group in stats_df.groupby("day_idx"):
+            suitable_rpus = group[group["tail_s"] <= tail_slo_s][
+                "endpoint_rpu"
+            ].tolist()
             if suitable_rpus:
                 ans.append(suitable_rpus[0])
             else:

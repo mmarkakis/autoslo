@@ -68,12 +68,11 @@ def test_to_from_dict_roundtrip():
     day = Day(chunks=[c1, c2])
     d = day.to_dict()
     day2 = Day.from_dict(d)
-    assert len(day2.chunks()) == 2
-    assert day2.chunks()[0].H == c1.H
-    assert day2.chunks()[0].T == c1.T
-    assert day2.chunks()[1].H == c2.H
-    assert day2.chunks()[1].T == c2.T
-
+    assert len(day2.chunks) == 2
+    assert day2.chunks[0].H == c1.H
+    assert day2.chunks[0].T == c1.T
+    assert day2.chunks[1].H == c2.H
+    assert day2.chunks[1].T == c2.T
 
 def test_colors_and_shapes_delegate_to_chunks():
     """
@@ -103,7 +102,7 @@ def test_day_id_formatting():
         H=50, T=120, base_start=datetime(2020, 1, 1), minutes_offsets=[0]
     )
     day = Day(chunks=[c1, c2])
-    did = day.day_id()
+    did = day.day_id
     assert "H5T7" in did
     assert "H50T120" in did
     assert "_" in did

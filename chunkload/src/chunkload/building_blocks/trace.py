@@ -26,6 +26,26 @@ class Trace:
         self._original_start = self._trace_df["start_time"].min()
 
     @staticmethod
+    def from_path(trace_path: str) -> "Trace":
+        """
+        Create a Trace instance from a Parquet filepath, reading in only the
+        required columns.
+
+        Parameters:
+            trace_path: The path to the Parquet file containing the trace data.
+
+        Returns:
+            A Trace instance.
+
+        Raises:
+            ValueError: If the file is not a Parquet file.
+        """
+        if not trace_path.endswith(".parquet"):
+            raise ValueError("Trace file must be a Parquet file.")
+        trace_df = pd.read_parquet(trace_path, columns=Trace.REQUIRED_COLUMNS)
+        return Trace(trace_df)
+
+    @staticmethod
     def _validate(trace_df: pd.DataFrame) -> None:
         """
         Validate that the DataFrame contains the required columns and that the

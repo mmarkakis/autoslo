@@ -34,6 +34,20 @@ class Blueprint:
         for cluster in clusters:
             self._clusters[cluster.name] = cluster
 
+    @staticmethod
+    def one_cluster_with(cluster_rpu: float) -> "Blueprint":
+        """
+        Create a Blueprint instance with a single cluster of the specified RPU.
+
+        Parameters:
+            cluster_rpu: The RPU of the single cluster.
+
+        Returns:
+            A Blueprint instance with the specified configuration.
+        """
+        cluster = Cluster(rpu=int(cluster_rpu))
+        return Blueprint(clusters=[cluster])
+
     @property
     def clusters(self) -> list[Cluster]:
         """
