@@ -23,8 +23,28 @@ class PExact(Prediction):
             kwargs: Keyword arguments (not used).
         """
         super().__init__(*args, **kwargs)
-        self.slo_violation_rate = slo_violation_rate
-        self.cost = cost
+        self._slo_violation_rate = slo_violation_rate
+        self._cost = cost
+
+    @property
+    def slo_violation_rate(self) -> float:
+        """
+        Get the predicted SLO violation rate.
+
+        Returns:
+            The predicted SLO violation rate.
+        """
+        return self._slo_violation_rate
+
+    @property
+    def cost(self) -> float:
+        """
+        Get the predicted cost for operating the blueprint.
+
+        Returns:
+            The predicted cost.
+        """
+        return self._cost
 
     def has_lower_predicted_slo_violation_rate(self, other: Self) -> bool:
         """
