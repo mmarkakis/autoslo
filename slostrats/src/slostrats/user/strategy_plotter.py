@@ -29,7 +29,6 @@ class StrategyPlotter:
         """
         if ax is not None:
             return ax.figure, ax, False
-        print("creating new ax")
         fig, ax = plt.figure(figsize=figsize), plt.axes()
         return fig, ax, True
 
@@ -94,7 +93,6 @@ class StrategyPlotter:
         filename: str,
     ) -> None:
         plt_path = os.path.join(output_dir, filename)
-        print("saving at ", plt_path)
         fig.savefig(plt_path)
         plt.close(fig)
 
