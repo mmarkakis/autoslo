@@ -9,6 +9,8 @@ from tqdm.auto import tqdm
 import chunkload.utils.paths as pu
 import slostrats.user.strategies_metadata as smd
 from chunkload.building_blocks.composite import Composite
+from chunkload.building_blocks.trace import Trace
+from slostrats.building_blocks.cluster import Cluster
 from slostrats.user.strategy_plotter import StrategyPlotter
 
 
@@ -29,6 +31,7 @@ class StrategyRunner:
         slo_violation_rate_threshold: float,
         workload_name: str,
         num_training_days: int,
+        rpu_during_training: int,
     ):
         """
         Instantiate a new StrategyRunner.
@@ -42,15 +45,19 @@ class StrategyRunner:
             workload_name: The workload to run the strategies against.
             num_training_days: The number of training days to use. The strategy
                 is evaluated only on days after the training period.
+            rpu_during_training: During the training period, we assume a
+                constant blueprint including a single cluster with the specified
+                RPU.
         """
 
-        self._validate_args(
-            include_strategy_names,
-            exclude_strategy_names,
-            latency_slo_s,
-            slo_violation_rate_threshold,
-            workload_name,
-            num_training_days,
+        StrategyRunner._validate_args(
+            include_strategy_names=include_strategy_names,
+            exclude_strategy_names=exclude_strategy_names,
+            latency_slo_s=latency_slo_s,
+            slo_violation_rate_threshold=slo_violation_rate_threshold,
+            workload_name=workload_name,
+            num_training_days=num_training_days,
+            rpu_during_training=rpu_during_training,
         )
         self.include_strategy_names = include_strategy_names
         self.exclude_strategy_names = exclude_strategy_names
@@ -58,74 +65,90 @@ class StrategyRunner:
         self.slo_violation_rate_threshold = slo_violation_rate_threshold
         self.workload_name = workload_name
         self.num_training_days = num_training_days
+        self.rpu_during_training = rpu_during_training
 
         # Determine which strategies to run based on include/exclude lists.
         self.strategy_names_to_run = self._strategy_names_to_run()
 
+    @staticmethod
     def _validate_args(
-        self,
-        include_strategy_names: Optional[list[str]],
-        exclude_strategy_names: Optional[list[str]],
-        latency_slo_s: float,
-        slo_violation_rate_threshold: float,
-        workload_name: str,
-        num_training_days: int,
+        **kwargs,
     ) -> None:
         """
-        Validate the provided arguments to the constructor.
+        Validate the provided arguments.
 
         Parameters:
-            include_strategy_names: List of strategy names to include.
-            exclude_strategy_names: List of strategy names to exclude.
-            latency_slo_s: The latency SLO in seconds.
-            slo_violation_rate_threshold: The acceptable SLO violation rate
-                threshold.
-            workload_name: The workload to run the strategies against.
-            num_training_days: The number of training days to use. The strategy
-                is evaluated only on days after the training period.
+            **kwargs: The arguments to validate.
 
         Raises:
             ValueError: If any argument is invalid.
         """
         # Validate include/exclude strategy names.
-        if include_strategy_names and exclude_strategy_names:
-            raise ValueError(
-                "Cannot specify both include_strategy_names and "
-                "exclude_strategy_names."
-            )
-        if include_strategy_names:
-            for name in include_strategy_names:
-                if name not in smd.STRATEGIES:
-                    raise ValueError(
-                        f"Included strategy name '{name}' is not recognized."
-                    )
-        if exclude_strategy_names:
-            for name in exclude_strategy_names:
-                if name not in smd.STRATEGIES:
-                    raise ValueError(
-                        f"Excluded strategy name '{name}' is not recognized."
-                    )
+        if (
+            "include_strategy_names" in kwargs
+            and "exclude_strategy_names" in kwargs
+        ):
+            include_strategy_names = kwargs["include_strategy_names"]
+            exclude_strategy_names = kwargs["exclude_strategy_names"]
+            if include_strategy_names and exclude_strategy_names:
+                raise ValueError(
+                    "Cannot specify both include_strategy_names and "
+                    "exclude_strategy_names."
+                )
+        if "include_strategy_names" in kwargs:
+            include_strategy_names = kwargs["include_strategy_names"]
+            if include_strategy_names:
+                for name in include_strategy_names:
+                    if name not in smd.STRATEGIES:
+                        raise ValueError(
+                            f"Included strategy name '{name}' is not recognized."
+                        )
+
+        if "exclude_strategy_names" in kwargs:
+            exclude_strategy_names = kwargs["exclude_strategy_names"]
+            if exclude_strategy_names:
+                for name in exclude_strategy_names:
+                    if name not in smd.STRATEGIES:
+                        raise ValueError(
+                            f"Excluded strategy name '{name}' is not recognized."
+                        )
 
         # Validate latency_slo_s and slo_violation_rate_threshold.
-        if latency_slo_s <= 0:
-            raise ValueError("latency_slo_s must be positive.")
-        if not (0 <= slo_violation_rate_threshold <= 1):
-            raise ValueError(
-                "slo_violation_rate_threshold must be between 0 and 1."
-            )
+        if "latency_slo_s" in kwargs:
+            if kwargs["latency_slo_s"] <= 0:
+                raise ValueError("latency_slo_s must be positive.")
+
+        if "slo_violation_rate_threshold" in kwargs:
+            if not (0 <= kwargs["slo_violation_rate_threshold"] <= 1):
+                raise ValueError(
+                    "slo_violation_rate_threshold must be between 0 and 1."
+                )
 
         # Validate workload_name.
-        if not workload_name:
-            raise ValueError("workload_name must be a non-empty string.")
-        if workload_name not in Composite.all_composite_workload_names():
-            raise ValueError(
-                f"workload_name '{workload_name}' is not a recognized "
-                "composite workload."
-            )
+        if "workload_name" in kwargs:
+            workload_name = kwargs["workload_name"]
+            if not workload_name:
+                raise ValueError("workload_name must be a non-empty string.")
+            if workload_name not in Composite.all_composite_workload_names():
+                raise ValueError(
+                    f"workload_name '{workload_name}' is not a recognized "
+                    "composite workload."
+                )
 
         # Validate num_training_days.
-        if num_training_days < 0:
-            raise ValueError("num_training_days must be non-negative.")
+        if "num_training_days" in kwargs:
+            if kwargs["num_training_days"] < 0:
+                raise ValueError("num_training_days must be non-negative.")
+
+        # Validate rpu_during_training.
+        if "rpu_during_training" in kwargs:
+            rpu_during_training = kwargs["rpu_during_training"]
+            if rpu_during_training not in Cluster.ALL_ALLOWED_RPU_SIZES:
+                raise ValueError(
+                    f"rpu_during_training '{rpu_during_training}' is not an "
+                    "allowed RPU size. The allowed sizes are: "
+                    f"{Cluster.ALL_ALLOWED_RPU_SIZES}."
+                )
 
     def _strategy_names_to_run(self) -> list[str]:
         """
@@ -159,15 +182,75 @@ class StrategyRunner:
             f"{int(self.latency_slo_s)}s_slo",
         )
 
-    def run_one(self, strategy_name: str):
+    def _collect_training_period_data(self) -> None:
+        """
+        Collect and store the trajectory of the workload during the training
+        period. For each day in the training period, we retrieve the trace on
+        the size defined by rpu_during_training.
+        """
+        workload = Composite.load(workload_name=self.workload_name)
+        records = []
+        for day_idx in range(self.num_training_days):
+            day_dir = Composite.dir_for_workload_day(
+                workload_name=self.workload_name, day_idx=day_idx
+            )
+            trace = Trace.from_path(
+                os.path.join(
+                    day_dir,
+                    f"{self.workload_name}_day{day_idx}_{self.rpu_during_training}.parquet",  # TODO: probably should have a more elegant way to do this
+                )
+            )
+
+            violating_queries = trace.num_queries_with_latency_over(
+                self.latency_slo_s
+            )
+            total_queries = trace.num_queries()
+            slo_violation_rate = (
+                violating_queries / total_queries if total_queries > 0 else 0.0
+            )
+
+            records.append(
+                {
+                    "strategy_name": "training_period",
+                    "workload_name": self.workload_name,
+                    "day_idx": day_idx,
+                    "latency_slo_s": self.latency_slo_s,
+                    "slo_violation_rate_threshold": (
+                        self.slo_violation_rate_threshold
+                    ),
+                    "suggested_blueprint_0_rpu": self.rpu_during_training,
+                    "slo_violation_rate": slo_violation_rate,
+                    "total_cost": Cluster(self.rpu_during_training).cost(
+                        trace.billed_s()
+                    ),
+                    "num_training_days": self.num_training_days,
+                }
+            )
+
+        # Save the training period data as a Parquet file.
+        output_dir = self.output_dir()
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(
+            output_dir, f"training_period_{self.rpu_during_training}.parquet"
+        )
+        records_df = pd.DataFrame(records)
+        records_df.to_parquet(output_path, index=False)
+
+    def _run_one(self, strategy_name: str):
         """
         Run a single strategy by name.
 
         Parameters:
             strategy_name: The name of the strategy to run.
         """
+        strategy_class: Optional[Callable] = cast(
+            Optional[Callable], smd.STRATEGIES[strategy_name]["class"]
+        )
+        if strategy_class is None:
+            # Skip placeholder strategies like "training_period".
+            return
+
         # Instantiate the strategy.
-        strategy_class = cast(Callable, smd.STRATEGIES[strategy_name]["class"])
         strategy_instance = strategy_class(
             latency_slo_s=self.latency_slo_s,
             slo_violation_rate_threshold=self.slo_violation_rate_threshold,
@@ -235,6 +318,11 @@ class StrategyRunner:
         Run all strategies determined by the include/exclude lists, and plot the
         results.
         """
+
+        # Retrieve the trajectory of the workload during the training period.
+        self._collect_training_period_data()
+
+        # Run the strategies over the test period in parallel.
         num_cpus = min(
             max(1, mp.cpu_count() - 1), len(self.strategy_names_to_run)
         )
@@ -242,26 +330,45 @@ class StrategyRunner:
             list(
                 tqdm(
                     pool.imap_unordered(
-                        self.run_one, self.strategy_names_to_run
+                        self._run_one, self.strategy_names_to_run
                     ),
                     total=len(self.strategy_names_to_run),
                     desc="Running strategies",
                 )
             )
 
+        # Plot the results.
         StrategyRunner.plot_results(
-            self.workload_name, latency_slo_s=self.latency_slo_s
+            workload_name=self.workload_name,
+            latency_slo_s=self.latency_slo_s,
+            num_training_days=self.num_training_days,
+            rpu_during_training=self.rpu_during_training,
         )
 
     @staticmethod
-    def plot_results(workload_name: str, latency_slo_s: float):
+    def plot_results(
+        workload_name: str,
+        latency_slo_s: float,
+        num_training_days: Optional[int] = None,
+        rpu_during_training: Optional[int] = None,
+    ):
         """
         Plot the results of all strategy runs for the specified workload.
 
         Parameters:
             workload_name: The name of the workload to plot results for.
             latency_slo_s: The latency SLO in seconds.
+            num_training_days: The number of training days used in the runs.
+            rpu_during_training: The RPU used during the training period.
         """
+
+        # Validate input arguments.
+        StrategyRunner._validate_args(
+            workload_name=workload_name,
+            latency_slo_s=latency_slo_s,
+            num_training_days=num_training_days,
+            rpu_during_training=rpu_during_training,
+        )
 
         # Read in all strategy results for the workload.
         output_dir = os.path.join(

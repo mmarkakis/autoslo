@@ -68,6 +68,7 @@ class Composite:
         """
         return os.path.join(
             Composite.dir_for_composite_workload(workload_name),
+            "day_traces",
             f"day_{day_idx}",
         )
 
@@ -91,7 +92,7 @@ class Composite:
                 min(7, len(`days`)).
         """
         self.name = name
-        self.days = days
+        self._days = days
         self.monday_index = monday_index
 
         if not (0 <= self.monday_index < min(len(self.days), 7)):
@@ -110,6 +111,11 @@ class Composite:
             "monday_index": self.monday_index,
             "days": [day.to_dict() for day in self.days],
         }
+    
+    @property
+    def days(self) -> list[Day]:
+        """Get the list of days in the composite workload."""
+        return self._days
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "Composite":
@@ -240,7 +246,7 @@ class Composite:
         normalize_start_to: datetime = DEFAULT_TRACE_START_DATE,
         inter_chunk_gap: timedelta = timedelta(0),
         save_path: Optional[str] = None,
-        force_recompose: bool = False,
+        force_recompose: bool = False, #TODO TODO
     ) -> pd.DataFrame:
         """
         Get the synthesized trace for the entire composite workload on the
@@ -270,7 +276,7 @@ class Composite:
             A pandas DataFrame representing the synthesized trace for the
                 composite workload.
         """
-
+    
         l = [
             self.days[0].get_trace_on(
                 endpoint_name=endpoint_name,

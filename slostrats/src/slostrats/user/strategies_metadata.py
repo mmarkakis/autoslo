@@ -9,7 +9,12 @@ from slostrats.strategies_total.ts_replay_past import (
 )
 
 # Maps strategy names to their corresponding TotalStrategy classes.
-STRATEGIES = {
+STRATEGIES: dict[str, dict[str, object]] = {
+    "training_period": {
+        "class": None,  # Placeholder
+        "color": cu.Palette.gray,
+        "marker": "o",
+    },
     "TSReplayPast1Cost": {
         "class": TSReplayPast1Cost,
         "color": cu.Palette.light_yellow,

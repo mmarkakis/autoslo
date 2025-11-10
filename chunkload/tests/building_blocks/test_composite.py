@@ -117,6 +117,17 @@ class FakeDay:
                 fh.write(b"PARQUET_PLACEHOLDER")
         return df
 
+def test_days():
+    """
+    Test that Composite.days returns the correct list of Day objects.
+    """
+    d1 = FakeDay("day1", datetime(2025, 9, 1), [(0, 10)])
+    d2 = FakeDay("day2", datetime(2025, 9, 2), [(0, 20)])
+    comp = Composite(name="test_comp", days=[d1, d2], monday_index=0)
+    days = comp.days
+    assert len(days) == 2
+    assert days[0].name == "day1"
+    assert days[1].name == "day2"
 
 def test_to_from_dict_roundtrip():
     """
@@ -206,7 +217,12 @@ def test_save_writes_definition_and_stats(tmp_path, monkeypatch):
     comp = Composite(name="comp_save_test", days=[d1, d2], monday_index=0)
 
     # Patch pandas.DataFrame.to_parquet to create a placeholder file
-    def fake_to_parquet(self, path, index=False):
+    def fake_to_parquet(self, path: str, *args, **kwargs) -> None:
+        """
+        Simple replacement for DataFrame.to_parquet that writes a small
+        placeholder file. Accepts arbitrary args/kwargs to be robust to
+        pandas engine keyword changes.
+        """
         with open(path, "wb") as fh:
             fh.write(b"PARQUET_PLACEHOLDER")
 

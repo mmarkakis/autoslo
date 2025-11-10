@@ -54,6 +54,15 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--rpu_during_training",
+        type=int,
+        help=(
+            "During the training period, we assume a constant blueprint "
+            "including a single cluster with the specified RPU."
+        ),
+        required=True,
+    )
+    parser.add_argument(
         "--only_plots",
         action="store_true",
         help="Generate only plots without running the strategies.",
@@ -68,10 +77,14 @@ if __name__ == "__main__":
         slo_violation_rate_threshold=args.slo_violation_rate_threshold,
         workload_name=args.workload_name,
         num_training_days=args.num_training_days,
+        rpu_during_training=args.rpu_during_training,
     )
     if not args.only_plots:
         runner.run_all()
     else:
         StrategyRunner.plot_results(
-            args.workload_name, args.latency_slo_s
+            args.workload_name,
+            args.latency_slo_s,
+            args.num_training_days,
+            args.rpu_during_training,
         )
