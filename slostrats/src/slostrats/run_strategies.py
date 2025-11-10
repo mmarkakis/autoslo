@@ -73,5 +73,5 @@ if __name__ == "__main__":
         runner.run_all()
     else:
         StrategyRunner.plot_results(
-            args.workload_name,
+            args.workload_name, args.latency_slo_s
         )

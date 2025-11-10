@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -25,15 +25,16 @@ class StrategyPlotter:
 
         Returns:
             A tuple containing the figure, axes, and a boolean indicating
-            whether a new figure was created.
+            whether a new axes was created.
         """
         if ax is not None:
             return ax.figure, ax, False
-        fig, ax = plt.subplots(figsize=figsize)
+        print("creating new ax")
+        fig, ax = plt.figure(figsize=figsize), plt.axes()
         return fig, ax, True
 
     @staticmethod
-    def _lineplot_kwargs() -> dict:
+    def _lineplot_kwargs(scatter: bool = False) -> dict:
         """
         Common plot keyword arguments.
         """
@@ -43,17 +44,22 @@ class StrategyPlotter:
         strategy_markers = {
             name: info["marker"] for name, info in smd.STRATEGIES.items()
         }
-        return {
-            "markersize": 8,
-            "markeredgewidth": 1.0,
-            "markeredgecolor": "black",
+        d: dict[str, Any] = {
             "style": "strategy_name",
-            "dashes": False,
             "markers": strategy_markers,
-            "palette": strategy_colors,
             "hue": "strategy_name",
-            "x": "day_idx",
+            "palette": strategy_colors,
         }
+        if scatter:
+            d["s"] = 100
+            d["edgecolor"] = "black"
+            d["linewidth"] = 1.0
+        else:
+            d["markersize"] = 8
+            d["markeredgewidth"] = 1.0
+            d["markeredgecolor"] = "black"
+            d["dashes"] = False
+        return d
 
     @staticmethod
     def _finalize_axes(
@@ -88,6 +94,7 @@ class StrategyPlotter:
         filename: str,
     ) -> None:
         plt_path = os.path.join(output_dir, filename)
+        print("saving at ", plt_path)
         fig.savefig(plt_path)
         plt.close(fig)
 
@@ -101,11 +108,12 @@ class StrategyPlotter:
         """
         Plot daily SLO violation rates for all workloads and strategies.
         """
-        fig, ax, externally_provided_ax = StrategyPlotter._maybe_create_ax(ax)
+        fig, ax, new_ax = StrategyPlotter._maybe_create_ax(ax)
 
         sns.lineplot(
             data=results_df,
             ax=ax,
+            x="day_idx",
             y="slo_violation_rate",
             **StrategyPlotter._lineplot_kwargs(),
         )
@@ -122,7 +130,7 @@ class StrategyPlotter:
             max_y_val=results_df["slo_violation_rate"].max(),
         )
 
-        if not externally_provided_ax:
+        if new_ax:
             assert type(fig) is plt.Figure  # for mypy
             StrategyPlotter._save_and_close(
                 fig,
@@ -140,11 +148,12 @@ class StrategyPlotter:
         """
         Plot daily total costs for all workloads and strategies.
         """
-        fig, ax, externally_provided_ax = StrategyPlotter._maybe_create_ax(ax)
+        fig, ax, new_ax = StrategyPlotter._maybe_create_ax(ax)
 
         sns.lineplot(
             data=results_df,
             ax=ax,
+            x="day_idx",
             y="total_cost",
             **StrategyPlotter._lineplot_kwargs(),
         )
@@ -159,7 +168,7 @@ class StrategyPlotter:
             max_x_val=results_df["day_idx"].max(),
             max_y_val=results_df["total_cost"].max(),
         )
-        if not externally_provided_ax:
+        if new_ax:
             assert type(fig) is plt.Figure  # for mypy
             StrategyPlotter._save_and_close(fig, output_dir, "total_costs.png")
 
@@ -173,11 +182,12 @@ class StrategyPlotter:
         """
         Plot daily chosen RPU for all workloads and strategies.
         """
-        fig, ax, externally_provided_ax = StrategyPlotter._maybe_create_ax(ax)
+        fig, ax, new_ax = StrategyPlotter._maybe_create_ax(ax)
 
         sns.lineplot(
             data=results_df,
             ax=ax,
+            x="day_idx",
             y="suggested_blueprint_0_rpu",
             **StrategyPlotter._lineplot_kwargs(),
         )
@@ -195,7 +205,7 @@ class StrategyPlotter:
         )
         ax.set_yscale("log", base=2)
 
-        if not externally_provided_ax:
+        if new_ax:
             assert type(fig) is plt.Figure  # for mypy
             StrategyPlotter._save_and_close(fig, output_dir, "chosen_rpus.png")
 
@@ -209,9 +219,7 @@ class StrategyPlotter:
         """
         Plot scatter plot of mean SLO violation rate vs. total cost.
         """
-        fig, ax, externally_provided_ax = StrategyPlotter._maybe_create_ax(
-            ax, figsize=(8, 6)
-        )
+        fig, ax, new_ax = StrategyPlotter._maybe_create_ax(ax, figsize=(8, 6))
 
         strategy_colors = {
             name: info["color"] for name, info in smd.STRATEGIES.items()
@@ -230,11 +238,8 @@ class StrategyPlotter:
             data=summary_df,
             x="sum_total_cost",
             y="mean_slo_violation_rate",
-            hue="strategy_name",
-            palette=strategy_colors,
-            alpha=0.7,
-            s=100,
             ax=ax,
+            **StrategyPlotter._lineplot_kwargs(scatter=True),
         )
         ax.set_title(
             "Mean SLO Violation Rate vs. Total Cost for Workload "
@@ -249,7 +254,7 @@ class StrategyPlotter:
             max_y_val=summary_df["mean_slo_violation_rate"].max(),
         )
 
-        if not externally_provided_ax:
+        if new_ax:
             assert type(fig) is plt.Figure  # for mypy
             StrategyPlotter._save_and_close(fig, output_dir, "slo_vs_cost.png")
         # Also return the summary DataFrame for further analysis if needed.

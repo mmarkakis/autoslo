@@ -145,7 +145,7 @@ class StrategyRunner:
                 if name not in self.exclude_strategy_names
             ]
         return strategy_names
-    
+
     def output_dir(self) -> str:
         """
         Return the output directory for the current strategy run.
@@ -200,7 +200,7 @@ class StrategyRunner:
             )
 
         # Save the results as a Parquet file.
-        output_dir = self.output_dir()  
+        output_dir = self.output_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, f"{strategy_name}.parquet")
         records_df = pd.DataFrame(records)
