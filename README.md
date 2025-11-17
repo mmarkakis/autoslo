@@ -1,4 +1,4 @@
-# chunkload
+# AutoSLO
 Mock extended benchmark workloads by composing chunks
 
 

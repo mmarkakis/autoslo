@@ -1,7 +1,7 @@
-site_name: Chunkload
+site_name: Autoslo
 
-repo_url: https://github.com/mmarkakis/chunkload
-repo_name: mmarkakis/chunkload
+repo_url: https://github.com/mmarkakis/autoslo
+repo_name: mmarkakis/autoslo
 
 theme:
   name: material
@@ -72,12 +72,9 @@ nav:
   - Home: index.md
   - Docs: 
     - Building Blocks: 
-      - "Chunk": reference/chunkload/building_blocks/chunk.md
-      - "Day": reference/chunkload/building_blocks/day.md
-      - "Composite": reference/chunkload/building_blocks/composite.md
-    
-
-  
+      - "Chunk": reference/autoslo/workload_definition/chunk.md
+      - "Day": reference/autoslo/workload_definition/day.md
+      - "Composite": reference/autoslo/workload_definition/composite.md
 markdown_extensions:
     - markdown_include.include:
         base_path: .
