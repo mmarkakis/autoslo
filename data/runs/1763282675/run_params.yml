@@ -1,0 +1,11 @@
+aws_account_id: 941474060611
+aws_region: us-east-1
+conn_info_path: /home/markakis/chunkbench/config/conn.yml
+endpoint_name: '16'
+maxconns: 1000
+num_queries: 119
+run_dir: /home/markakis/chunkbench/data/runs/1763282675
+run_id: '1763282675'
+schema_name: ext_tpcds1000
+tpcds_scale_factor: 1000
+trace_path: /home/markakis/chunkbench/data/chunks/tpcds_99templates_25pctheavy_30meaninterarrivals/chunk_workload.parquet
