@@ -1,4 +1,4 @@
-from slostrats.building_blocks.cluster import Cluster
+from autoslo.blueprints.cluster import Cluster
 
 
 class Blueprint:

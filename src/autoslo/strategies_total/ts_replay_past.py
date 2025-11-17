@@ -1,19 +1,19 @@
 from datetime import datetime
 from typing import Type
 
-from chunkload.building_blocks.trace import Trace
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.prediction.prediction import Prediction
-from slostrats.strategies_enumeration.es_up_to_32 import ESUpTo32
-from slostrats.strategies_prediction.ps_replay_past import PSReplayPast
-from slostrats.strategies_selection.ss_min_cost_once_acceptable import (
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.prediction.prediction import Prediction
+from autoslo.strategies_enumeration.es_up_to_32 import ESUpTo32
+from autoslo.strategies_prediction.ps_replay_past import PSReplayPast
+from autoslo.strategies_selection.selection_strategy import SelectionStrategy
+from autoslo.strategies_selection.ss_min_cost_once_acceptable import (
     SSMinCostOnceAcceptable,
 )
-from slostrats.strategies_selection.ss_min_slo_violation_rate import (
+from autoslo.strategies_selection.ss_min_slo_violation_rate import (
     SSMinSLOViolationRate,
 )
-from slostrats.strategies_total.total_strategy import TotalStrategy
-from slostrats.strategies_selection.selection_strategy import SelectionStrategy
+from autoslo.strategies_total.total_strategy import TotalStrategy
+from autoslo.workload_execution.trace import Trace
 
 
 class TSReplayPast(TotalStrategy):

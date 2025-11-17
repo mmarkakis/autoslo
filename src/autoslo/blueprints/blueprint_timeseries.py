@@ -1,4 +1,4 @@
-from slostrats.building_blocks.blueprint import Blueprint
+from autoslo.blueprints.blueprint import Blueprint
 
 
 class BlueprintTimeseries:

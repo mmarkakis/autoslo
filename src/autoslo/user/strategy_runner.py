@@ -6,12 +6,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm.auto import tqdm
 
-import chunkload.utils.paths as pu
-import slostrats.user.strategies_metadata as smd
-from chunkload.building_blocks.composite import Composite
-from chunkload.building_blocks.trace import Trace
-from slostrats.building_blocks.cluster import Cluster
-from slostrats.user.strategy_plotter import StrategyPlotter
+import autoslo.user.strategies_metadata as smd
+import autoslo.utils.paths as pu
+from autoslo.blueprints.cluster import Cluster
+from autoslo.user.strategy_plotter import StrategyPlotter
+from autoslo.workload_definition.composite import Composite
+from src.autoslo.workload_execution.trace import Trace
 
 
 class StrategyRunner:

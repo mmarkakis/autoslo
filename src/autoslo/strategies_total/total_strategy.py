@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
 
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.prediction.p_exact import PExact
-from slostrats.strategies_enumeration.enumeration_strategy import (
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.prediction.p_exact import PExact
+from autoslo.strategies_enumeration.enumeration_strategy import (
     EnumerationStrategy,
 )
-from slostrats.strategies_prediction.prediction_strategy import (
+from autoslo.strategies_prediction.prediction_strategy import (
     PredictionStrategy,
 )
-from slostrats.strategies_selection.selection_strategy import SelectionStrategy
+from autoslo.strategies_selection.selection_strategy import SelectionStrategy
 
 
 class TotalStrategy(ABC):

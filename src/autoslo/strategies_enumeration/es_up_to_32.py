@@ -1,5 +1,5 @@
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.strategies_enumeration.enumeration_strategy import EnumerationStrategy
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.strategies_enumeration.enumeration_strategy import EnumerationStrategy
 
 
 class ESUpTo32(EnumerationStrategy):

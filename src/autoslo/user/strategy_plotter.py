@@ -6,7 +6,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import SubFigure
 
-import slostrats.user.strategies_metadata as smd
+import autoslo.user.strategies_metadata as smd
 
 
 class StrategyPlotter:

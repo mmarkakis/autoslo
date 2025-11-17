@@ -1,6 +1,6 @@
 from typing import Self
 
-from slostrats.prediction.prediction import Prediction
+from autoslo.prediction.prediction import Prediction
 
 
 class PExact(Prediction):

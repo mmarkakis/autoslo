@@ -1,6 +1,6 @@
 import argparse
 
-from slostrats.user.strategy_runner import StrategyRunner
+from autoslo.user.strategy_runner import StrategyRunner
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

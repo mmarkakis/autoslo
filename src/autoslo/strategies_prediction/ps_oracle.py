@@ -1,6 +1,6 @@
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.prediction.prediction import Prediction
-from slostrats.strategies_prediction.prediction_strategy import (
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.prediction.prediction import Prediction
+from autoslo.strategies_prediction.prediction_strategy import (
     PredictionStrategy,
 )
 

@@ -1,6 +1,6 @@
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.building_blocks.cluster import Cluster
-from slostrats.strategies_enumeration.enumeration_strategy import (
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.strategies_enumeration.enumeration_strategy import (
     EnumerationStrategy,
 )
 

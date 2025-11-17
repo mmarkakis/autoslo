@@ -2,13 +2,11 @@ import os
 
 import pandas as pd
 
-from chunkload.building_blocks.composite import Composite
-from chunkload.building_blocks.trace import Trace
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.prediction.p_exact import PExact
-from slostrats.strategies_prediction.prediction_strategy import (
-    PredictionStrategy,
-)
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.prediction.p_exact import PExact
+from autoslo.strategies_prediction.prediction_strategy import PredictionStrategy
+from autoslo.workload_definition.composite import Composite
+from autoslo.workload_execution.trace import Trace
 
 
 class PSReplayPast(PredictionStrategy):

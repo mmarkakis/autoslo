@@ -1,5 +1,5 @@
-from chunkload.building_blocks.trace import Trace
-from slostrats.featurization.featurizer import Featurizer
+from autoslo.featurization.featurizer import Featurizer
+from autoslo.workload_execution.trace import Trace
 
 
 class SimpleFeaturizer(Featurizer):

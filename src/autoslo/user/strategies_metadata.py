@@ -1,5 +1,5 @@
-import chunkload.utils.colors as cu
-from slostrats.strategies_total.ts_replay_past import (
+import autoslo.utils.colors as cu
+from autoslo.strategies_total.ts_replay_past import (
     TSReplayPast1Cost,
     TSReplayPast1Perf,
     TSReplayPast7Cost,

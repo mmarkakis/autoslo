@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from chunkload.building_blocks.trace import Trace
+from autoslo.workload_execution.trace import Trace
 
 
 class Featurizer(ABC):
