@@ -1,9 +1,9 @@
-from chunkload.building_blocks.chunk import Chunk
+from autoslo.workload_definition.chunk import Chunk
 import os
 from tqdm.auto import tqdm
 import pandas as pd
 
-import chunkload.utils.paths as pu
+import autoslo.utils.paths as pu
 
 NUM_TEMPLATES = [99]
 PCT_HEAVY = [0, 10, 25, 50]

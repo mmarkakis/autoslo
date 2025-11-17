@@ -2,12 +2,11 @@ from fastapi import APIRouter, HTTPException
 from typing import List
 import os
 import yaml
-import json
 from fastapi import Body
 
-from chunkload.building_blocks.composite import Composite
+from autoslo.workload_definition.composite import Composite
 
-import chunkload.utils.paths as pu
+import autoslo.utils.paths as pu
 
 router = APIRouter()
 

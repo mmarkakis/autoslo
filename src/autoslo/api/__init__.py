@@ -2,13 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from chunkload.api.routers import chunk_router, composite_router
+from autoslo.api.routers import chunk_router, composite_router
 
 def create_app(
     ui_dir: str | None = None, allow_origins: list[str] | None = None
 ):
     app = FastAPI(
-        title="chunkload API",
+        title="AutoSLO API",
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",
@@ -28,5 +28,5 @@ def create_app(
     return app
 
 
-# expose a default app for uvicorn: `uvicorn chunkload.api:app --reload`
+# expose a default app for uvicorn: `uvicorn autoslo.api:app --reload`
 app = create_app()

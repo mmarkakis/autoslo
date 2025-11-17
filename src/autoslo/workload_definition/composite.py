@@ -7,9 +7,9 @@ import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
-import chunkload.utils.paths as pu
-from chunkload.building_blocks.chunk import Chunk
-from chunkload.building_blocks.day import Day
+import autoslo.utils.paths as pu
+from autoslo.workload_definition.chunk import Chunk
+from autoslo.workload_definition.day import Day
 
 
 class Composite:

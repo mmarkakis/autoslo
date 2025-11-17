@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-import chunkload.utils.colors as cu
-import chunkload.utils.paths as pu
+import autoslo.utils.colors as cu
+import autoslo.utils.paths as pu
 
 
 class Chunk:

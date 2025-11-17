@@ -220,3 +220,33 @@ class Trace:
         total_billed_s += billed_duration_s
 
         return total_billed_s
+    
+    def mbytes_scanned_mean(self) -> float:
+        """
+        Placeholder method to return mean MB scanned.
+        """
+        # Placeholder implementation - need to get from SYS_QUERY_DETAIL
+        return 0.0
+    
+    def num_joins_mean(self) -> float:
+        """
+        Placeholder method to return mean number of joins.
+        """
+        # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
+        return 0.0
+    
+
+    def num_scans_mean(self) -> float:
+        """
+        Placeholder method to return mean number of scans.
+        """
+        # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
+        return 0.0
+    
+
+    def num_aggregations_mean(self) -> float:
+        """
+        Placeholder method to return mean number of aggregations.
+        """
+        # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
+        return 0.0

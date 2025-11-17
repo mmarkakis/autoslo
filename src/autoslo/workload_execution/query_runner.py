@@ -11,8 +11,8 @@ import yaml
 from psycopg2.pool import ThreadedConnectionPool
 from tqdm.auto import tqdm
 
-import chunkload.utils.paths as pu
-from chunkload.execution.conn_utils import ConnWithSetup, form_hostname
+import autoslo.utils.paths as pu
+from autoslo.execution.conn_utils import ConnWithSetup, form_hostname
 
 
 class QueryRunner:
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--conn_info_path",
         type=str,
-        default=os.path.join(pu.CHUNKLOAD_ROOT, "config", "conn.yml"),
+        default=os.path.join(pu.AUTOSLO_ROOT, "config", "conn.yml"),
         help="Path to the YAML file containing the connection info for psycopg2.",
     )
     parser.add_argument(

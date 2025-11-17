@@ -6,10 +6,10 @@ import yaml
 
 QUERIES_PATH = "/home/markakis/tpc-ds-generator/queries/1721657313/redshift"
 
-CHUNKLOAD_ROOT = os.path.abspath(
+AUTOSLO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
-DATA_PATH = os.path.join(CHUNKLOAD_ROOT, "data")
+DATA_PATH = os.path.join(AUTOSLO_ROOT, "data")
 RUNS_PATH = os.path.join(DATA_PATH, "runs")
 
 HEAVY_TEMPLATES_FILES = {
@@ -19,7 +19,7 @@ HEAVY_TEMPLATES_FILES = {
 
 def get_data_path() -> str:
     """
-    Return the absolute DATA_PATH used by chunkload.
+    Return the absolute DATA_PATH used by autoslo.
     Useful for API routes that need to expose this to the UI.
     """
     return DATA_PATH

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from chunkload.building_blocks.chunk import Chunk
+from autoslo.workload_definition.chunk import Chunk
 
 router = APIRouter()
 

@@ -5,8 +5,8 @@ from typing import Any, Optional
 import pandas as pd
 import yaml
 
-import chunkload.utils.paths as pu
-from chunkload.building_blocks.chunk import Chunk
+import autoslo.utils.paths as pu
+from autoslo.workload_definition.chunk import Chunk
 
 
 class Day:

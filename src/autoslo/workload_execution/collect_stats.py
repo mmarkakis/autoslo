@@ -7,14 +7,38 @@ import pandas as pd
 import psycopg2 as pg2
 import yaml
 
-import chunkload.utils.paths as pu
-from chunkload.execution.conn_utils import form_hostname
+import autoslo.utils.paths as pu
+from autoslo.execution.conn_utils import form_hostname
 
 SYS_QUERY_HISTORY_QUERY = """
     SELECT *
     FROM sys_query_history
     WHERE query_text LIKE '--{}%'
     ORDER BY start_time ASC;
+"""
+
+SYS_QUERY_EXPLAIN_QUERY = """
+    SELECT *
+    FROM sys_query_explain
+    WHERE query_id BETWEEN {} AND {};
+"""
+
+SYS_QUERY_DETAIL_QUERY = """
+    SELECT *
+    FROM sys_query_detail
+    WHERE start_time BETWEEN '{}' AND '{}';
+"""
+
+SYS_EXTERNAL_QUERY_DETAIL_QUERY = """
+    SELECT *
+    FROM sys_external_query_detail
+    WHERE start_time BETWEEN '{}' AND '{}';
+"""
+
+SYS_SERVERLESS_USAGE_QUERY = """
+    SELECT *
+    FROM sys_serverless_usage
+    WHERE start_time BETWEEN '{}' AND '{}';
 """
 
 
@@ -78,6 +102,46 @@ class StatsCollector:
                 ):
                     self.run_params[run_dir] = run_params
 
+    async def run_one_query(
+        self, conn: pg2.extensions.connection, query: str
+    ) -> tuple[pd.DataFrame, int]:
+        """
+        Run a single query and return the results as a DataFrame.
+
+        Parameters:
+            conn: An open psycopg2 connection.
+            query: The SQL query to execute.
+
+        Returns:
+            df: A DataFrame containing the query results.
+            num_rows: The number of rows returned by the query.
+        """
+        with conn.cursor() as cur:
+            print(f"\tExecuting query:\n{query}")
+            cur.execute(query)
+            rows = cur.fetchall()
+            cols = (
+                [desc[0] for desc in cur.description] if cur.description else []
+            )
+        num_rows = len(rows)
+        print(f"\tRetrieved {num_rows} rows.")
+        return pd.DataFrame(rows, columns=cols), num_rows
+
+    def write_out_table(self, run_id, df: pd.DataFrame, table_name: str):
+        """
+        Write out a DataFrame to a parquet file.
+
+        Parameters:
+            run_id: The ID of the run.
+            df: The DataFrame to write.
+            table_name: The name of the table/file.
+        """
+        out_path = os.path.join(
+            pu.DATA_PATH, "runs", run_id, f"{table_name}.parquet"
+        )
+        df.to_parquet(out_path, index=False)
+        print(f"\tWrote {table_name} to {out_path}.")
+
     async def collect_stats(self, skip_write_on_mismatch: bool = False):
         for run_id, run_params in self.run_params.items():
             print(f"Collecting stats for run {run_id}...")
@@ -102,33 +166,80 @@ class StatsCollector:
             }
             conn = pg2.connect(**d)
 
-            # Query the sys_query_history table.
-            cur = conn.cursor()
-            query = SYS_QUERY_HISTORY_QUERY.format(run_id)
-            print(f"\tExecuting query:\n{query}")
-            cur.execute(query)
-            rows = cur.fetchall()
-            cols = [desc[0] for desc in cur.description]
-            df = pd.DataFrame(rows, columns=cols)
-            cur.close()
-            conn.close()
-            num_rows = len(df)
-            print(f"\tRetrieved {num_rows} rows from sys_query_history.")
-            mismatch = num_rows != run_params["num_queries"]
+            # Query sys_query_history and possibly write out the results.
+            sys_query_history_df, sys_query_history_df_len = (
+                await self.run_one_query(
+                    conn, SYS_QUERY_HISTORY_QUERY.format(run_id)
+                )
+            )
+            mismatch = sys_query_history_df_len != run_params["num_queries"]
             if mismatch:
                 print(
-                    f"\tNumber of rows {num_rows} does not match expected {run_params['num_queries']}."
+                    f"\tNumber of rows {sys_query_history_df_len} does not "
+                    f"match expected {run_params['num_queries']}."
                 )
-
-            # Write out the stats.
             if not (skip_write_on_mismatch and mismatch):
-                out_path = os.path.join(
-                    pu.DATA_PATH, "runs", run_id, "sys_query_history.parquet"
+                self.write_out_table(
+                    run_id, sys_query_history_df, "sys_query_history"
                 )
-                df.to_parquet(out_path, index=False)
-                print(f"\tWrote stats to {out_path}.")
             else:
                 print(f"\tSkipping write due to mismatch.")
+                continue
+
+            # Derive the query_id and start_time ranges for further queries.
+            if sys_query_history_df_len == 0:
+                print(
+                    f"\tNo rows retrieved, skipping further stats collection."
+                )
+                continue
+            min_query_id = sys_query_history_df["query_id"].min()
+            max_query_id = sys_query_history_df["query_id"].max()
+            min_time = sys_query_history_df["start_time"].min() - pd.Timedelta(
+                minutes=1
+            )
+            max_time = sys_query_history_df["end_time"].max() + pd.Timedelta(
+                minutes=3
+            )
+
+            # Query sys_query_explain and write out the results.
+            sys_query_explain_df, _ = await self.run_one_query(
+                conn,
+                SYS_QUERY_EXPLAIN_QUERY.format(min_query_id, max_query_id),
+            )
+            self.write_out_table(
+                run_id, sys_query_explain_df, "sys_query_explain"
+            )
+
+            # Query sys_query_detail and write out the results.
+            sys_query_detail_df, _ = await self.run_one_query(
+                conn,
+                SYS_QUERY_DETAIL_QUERY.format(min_time, max_time),
+            )
+            self.write_out_table(
+                run_id, sys_query_detail_df, "sys_query_detail"
+            )
+
+            # Query sys_external_query_detail and write out the results.
+            sys_external_query_detail_df, _ = await self.run_one_query(
+                conn,
+                SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(min_time, max_time),
+            )
+            self.write_out_table(
+                run_id,
+                sys_external_query_detail_df,
+                "sys_external_query_detail",
+            )
+
+            # Query sys_serverless_usage and write out the results.
+            sys_serverless_usage_df, _ = await self.run_one_query(
+                conn,
+                SYS_SERVERLESS_USAGE_QUERY.format(min_time, max_time),
+            )
+            self.write_out_table(
+                run_id, sys_serverless_usage_df, "sys_serverless_usage"
+            )
+
+            conn.close()
 
 
 if __name__ == "__main__":
@@ -138,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--conn_info_path",
         type=str,
-        default=os.path.join(pu.CHUNKLOAD_ROOT, "config", "conn.yml"),
+        default=os.path.join(pu.AUTOSLO_ROOT, "config", "conn.yml"),
         help="Path to the YAML file containing the connection info for psycopg2.",
     )
     parser.add_argument(
