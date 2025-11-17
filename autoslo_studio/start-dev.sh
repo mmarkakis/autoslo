@@ -10,7 +10,7 @@ mkdir -p "$LOG_DIR"
 
 # Configuration (override via env)
 export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
-BACKEND_APP="${BACKEND_APP:-chunkload.api:app}"   # e.g. chunkload.api.app:app if your app module lives there
+BACKEND_APP="${BACKEND_APP:-autoslo.api:app}"   # e.g. autoslo.api.app:app if your app module lives there
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-1998}"
 FRONTEND_PORT="${FRONTEND_PORT:-8991}"
@@ -32,7 +32,7 @@ sleep 0.5
 
 # Start frontend
 echo "Starting frontend on http://localhost:${FRONTEND_PORT} ..."
-pushd "$ROOT/chunkload_studio" >/dev/null
+pushd "$ROOT/autoslo_studio" >/dev/null
 nohup npm run dev -- --port "$FRONTEND_PORT" \
   > "$LOG_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!

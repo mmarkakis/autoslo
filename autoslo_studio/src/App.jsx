@@ -534,7 +534,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="hdr">
-        <h1>Chunkload Studio</h1>
+        <h1>AutoSLO Studio</h1>
         {/* New: API docs button */}
         <button className="secondary" onClick={openRedoc} title="Open API docs (ReDoc)">
           API docs
