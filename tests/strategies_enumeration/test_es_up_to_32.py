@@ -1,8 +1,8 @@
 import pytest
 
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.building_blocks.cluster import Cluster
-from slostrats.strategies_enumeration.es_up_to_32 import ESUpTo32
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.strategies_enumeration.es_up_to_32 import ESUpTo32
 
 
 def test_enumerate_returns_list_of_blueprints():

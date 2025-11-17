@@ -1,6 +1,6 @@
 import pytest
 
-from slostrats.building_blocks.cluster import Cluster
+from autoslo.blueprints.cluster import Cluster
 
 
 def test_default_name_and_attributes():

@@ -4,8 +4,8 @@ from typing import Optional
 import pandas as pd
 import pytest
 
-from chunkload.building_blocks.chunk import Chunk
-from chunkload.building_blocks.day import Day
+from autoslo.workload_definition.chunk import Chunk
+from autoslo.workload_definition.day import Day
 
 
 class FakeChunk:

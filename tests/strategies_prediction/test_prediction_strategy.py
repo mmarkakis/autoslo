@@ -1,10 +1,10 @@
 import pytest
 
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.building_blocks.cluster import Cluster
-from slostrats.prediction.p_exact import PExact
-from slostrats.prediction.prediction import Prediction
-from slostrats.strategies_prediction.prediction_strategy import (
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.prediction.p_exact import PExact
+from autoslo.prediction.prediction import Prediction
+from autoslo.strategies_prediction.prediction_strategy import (
     PredictionStrategy,
 )
 

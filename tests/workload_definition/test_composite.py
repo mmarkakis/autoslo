@@ -5,10 +5,10 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import pytest
 
-import chunkload.utils.paths as pu
-from chunkload.building_blocks.chunk import Chunk
-from chunkload.building_blocks.composite import Composite
-from chunkload.building_blocks.day import Day
+import autoslo.utils.paths as pu
+from autoslo.workload_definition.chunk import Chunk
+from autoslo.workload_definition.composite import Composite
+from autoslo.workload_definition.day import Day
 
 
 def _make_trace_df(

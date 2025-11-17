@@ -1,8 +1,8 @@
 import pytest
 
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.building_blocks.cluster import Cluster
-from slostrats.strategies_total.total_strategy import TotalStrategy
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.strategies_total.total_strategy import TotalStrategy
 
 
 def test_cannot_instantiate_abstract_total_strategy():

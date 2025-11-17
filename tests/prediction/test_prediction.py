@@ -1,6 +1,6 @@
 import pytest
 
-from slostrats.prediction.prediction import Prediction
+from autoslo.prediction.prediction import Prediction
 
 
 def test_cannot_instantiate_abstract_prediction():

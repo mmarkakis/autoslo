@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 import pytest
 
-from chunkload.building_blocks.trace import Trace
+from autoslo.workload_execution.trace import Trace
 
 
 def _make_trace_df(

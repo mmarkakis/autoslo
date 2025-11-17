@@ -3,11 +3,11 @@ from typing import Any, Dict, List
 
 import pytest
 
-from slostrats.strategies_total.ts_replay_past import (
+from autoslo.strategies_total.ts_replay_past import (
     TSReplayPast,
     TSReplayPast1Cost,
 )
-from slostrats.strategies_selection.ss_min_cost_once_acceptable import (
+from autoslo.strategies_selection.ss_min_cost_once_acceptable import (
     SSMinCostOnceAcceptable,
 )
 

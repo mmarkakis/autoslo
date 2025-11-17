@@ -1,9 +1,9 @@
 import pytest
 
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.building_blocks.cluster import Cluster
-from slostrats.prediction.p_exact import PExact
-from slostrats.strategies_selection.selection_strategy import (
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.prediction.p_exact import PExact
+from autoslo.strategies_selection.selection_strategy import (
     SelectionStrategy,
 )
 

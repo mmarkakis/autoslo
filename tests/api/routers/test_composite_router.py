@@ -6,9 +6,9 @@ import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import chunkload.utils.paths as pu
-from chunkload.api.routers.composite_router import router
-from chunkload.building_blocks.composite import Composite
+import autoslo.utils.paths as pu
+from autoslo.api.routers.composite_router import router
+from autoslo.workload_definition.composite import Composite
 
 
 @pytest.fixture

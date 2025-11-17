@@ -3,11 +3,11 @@ from typing import Dict
 
 import pytest
 
-from slostrats.prediction.p_exact import PExact
-from slostrats.strategies_prediction import ps_replay_past as module
+from autoslo.prediction.p_exact import PExact
+from autoslo.strategies_prediction import ps_replay_past as module
 
 # ...existing imports...
-from slostrats.strategies_prediction.ps_replay_past import PSReplayPast
+from autoslo.strategies_prediction.ps_replay_past import PSReplayPast
 
 
 class DummyTrace:

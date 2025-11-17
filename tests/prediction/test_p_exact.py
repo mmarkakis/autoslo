@@ -1,6 +1,6 @@
 import pytest
 
-from slostrats.prediction.p_exact import PExact
+from autoslo.prediction.p_exact import PExact
 
 
 def test_slo_violation_rate_comparison():

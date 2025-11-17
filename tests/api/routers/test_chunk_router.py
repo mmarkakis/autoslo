@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi.encoders import jsonable_encoder
 
-from chunkload.api.routers.chunk_router import router
-from chunkload.building_blocks.chunk import Chunk
+from autoslo.api.routers.chunk_router import router
+from autoslo.workload_definition.chunk import Chunk
 
 
 @pytest.fixture

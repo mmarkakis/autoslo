@@ -2,8 +2,8 @@ import os
 import yaml
 import pytest
 
-from chunkload.building_blocks.chunk import Chunk
-import chunkload.utils.paths as pu
+from autoslo.workload_definition.chunk import Chunk 
+import autoslo.utils.paths as pu
 
 
 def test_constructor_validation_invalid_args():

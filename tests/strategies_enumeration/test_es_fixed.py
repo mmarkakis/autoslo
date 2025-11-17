@@ -1,8 +1,8 @@
 import pytest
 
-from slostrats.strategies_enumeration.es_fixed import ESFixed
-from slostrats.building_blocks.blueprint import Blueprint
-from slostrats.building_blocks.cluster import Cluster
+from autoslo.strategies_enumeration.es_fixed import ESFixed
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
 
 
 def test_enumerate_returns_single_blueprint():
