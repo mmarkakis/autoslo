@@ -1,14 +1,13 @@
 import argparse
 import asyncio
 import os
-from typing import Optional
 
 import pandas as pd
 import psycopg2 as pg2
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.execution.conn_utils import form_hostname
+from autoslo.blueprints.blueprint import Blueprint
 
 SYS_QUERY_HISTORY_QUERY = """
     SELECT *
@@ -46,28 +45,22 @@ class StatsCollector:
 
     def __init__(
         self,
-        conn_info_path: str,
-        force_starting_at: Optional[str] = None,
-        only_endpoint: Optional[str] = None,
+        run_ids: list[str],
+        force: bool = False,
     ):
         """
-        Initialize the StatsCollector with connection information.
+        Initialize the StatsCollector.
 
         Parameters:
-            conn_info_path: Path to the YAML file containing the connection info for psycopg2.
-            force_starting_at: If specified, recollect stats for runs starting at this run ID (inclusive).
-            only_endpoint: If specified, only collect stats for runs that used this endpoint name.
+            run_ids: List of run IDs to collect stats for.
+            force: If True, force recollection of stats for the specified runs,
+                even if they already exist.
         """
-
-        self.conn_info_path = conn_info_path
-        self.force_starting_at = force_starting_at
-        self.only_endpoint = only_endpoint
+        self.run_ids = run_ids
+        self.force = force
 
         # Validate connection info.
-        if not os.path.exists(self.conn_info_path):
-            raise FileNotFoundError(
-                f"Connection info file {self.conn_info_path} does not exist."
-            )
+        self.conn_info_path = pu.get_conn_info_path()
         with open(self.conn_info_path, "r") as f:
             self.all_conn_info = yaml.safe_load(f)
 
@@ -79,31 +72,31 @@ class StatsCollector:
         Go through the data directory and compile information about the runs.
         """
         self.run_params = {}
-        for run_dir in os.listdir(os.path.join(pu.DATA_PATH, "runs")):
-            run_path = os.path.join(pu.DATA_PATH, "runs", run_dir)
+        for run_id in self.run_ids:
+            run_path = os.path.join(pu.get_runs_path(), run_id)
             if not os.path.isdir(run_path):
+                print(f"Run path {run_path} does not exist, skipping.")
                 continue
 
-            has_range_and_matches = (self.force_starting_at is not None) and (
-                run_dir >= self.force_starting_at
-            )
-
-            no_range_and_missing = (self.force_starting_at is None) and not any(
+            # Determine if we should collect stats for this run.
+            should_collect = (self.force) or not any(
                 fname.endswith(".parquet") for fname in os.listdir(run_path)
             )
+            if not should_collect:
+                print(f"Stats already exist for run {run_id}, skipping.")
+                continue
 
-            if has_range_and_matches or no_range_and_missing:
-                # Store the relevant information for later processing.
-                with open(os.path.join(run_path, "run_params.yml"), "r") as f:
-                    run_params = yaml.safe_load(f)
+            # Store the relevant information for later processing.
+            with open(os.path.join(run_path, "run_params.yml"), "r") as f:
+                self.run_params[run_id] = yaml.safe_load(f)
 
-                if (self.only_endpoint is None) or (
-                    run_params["endpoint_name"] == self.only_endpoint
-                ):
-                    self.run_params[run_dir] = run_params
-
-    async def run_one_query(
-        self, conn: pg2.extensions.connection, query: str
+    async def run_one_and_write_out(
+        self,
+        conn: pg2.extensions.connection,
+        query: str,
+        run_id: str,
+        table_name: str,
+        cluster_name: str,
     ) -> tuple[pd.DataFrame, int]:
         """
         Run a single query and return the results as a DataFrame.
@@ -111,6 +104,9 @@ class StatsCollector:
         Parameters:
             conn: An open psycopg2 connection.
             query: The SQL query to execute.
+            run_id: The ID of the run.
+            table_name: The name of the statistics table.
+            cluster_name: The name of the cluster.
 
         Returns:
             df: A DataFrame containing the query results.
@@ -125,121 +121,88 @@ class StatsCollector:
             )
         num_rows = len(rows)
         print(f"\tRetrieved {num_rows} rows.")
-        return pd.DataFrame(rows, columns=cols), num_rows
+        df = pd.DataFrame(rows, columns=cols)
 
-    def write_out_table(self, run_id, df: pd.DataFrame, table_name: str):
-        """
-        Write out a DataFrame to a parquet file.
-
-        Parameters:
-            run_id: The ID of the run.
-            df: The DataFrame to write.
-            table_name: The name of the table/file.
-        """
+        # Write out the DataFrame to a parquet file.
         out_path = os.path.join(
-            pu.DATA_PATH, "runs", run_id, f"{table_name}.parquet"
+            pu.get_runs_path(), run_id, f"{table_name}+{cluster_name}.parquet"
         )
         df.to_parquet(out_path, index=False)
         print(f"\tWrote {table_name} to {out_path}.")
 
+        return df, num_rows
+
     async def collect_stats(self, skip_write_on_mismatch: bool = False):
         for run_id, run_params in self.run_params.items():
             print(f"Collecting stats for run {run_id}...")
-            # Open connection.
-            endpoint_name = run_params["endpoint_name"]
-            if endpoint_name not in self.all_conn_info["endpoints"]:
-                print(
-                    f"Endpoint name {endpoint_name} not found in connection info. Skipping."
+
+            blueprint = Blueprint.from_config(
+                blueprint_name=run_params["blueprint_name"]
+            )
+            for cluster in blueprint.clusters:
+                # Open a connection pool to the cluster.
+                conn_pool = cluster.conn_pool(minconn=1, maxconn=1)
+                conn = conn_pool.getconn()
+
+                # Query sys_query_history and write out the results.
+                sys_query_history_df, sys_query_history_df_len = (
+                    await self.run_one_and_write_out(
+                        conn,
+                        SYS_QUERY_HISTORY_QUERY.format(run_id),
+                        run_id,
+                        "sys_query_history",
+                        cluster.name,
+                    )
                 )
-                continue
-            conn_info = self.all_conn_info["endpoints"][endpoint_name]
-            d = {
-                "dbname": conn_info["dbname"],
-                "user": conn_info["user"],
-                "password": conn_info["password"],
-                "port": conn_info["port"],
-                "host": form_hostname(
-                    conn_info["workgroup_name"],
-                    self.all_conn_info["aws_account_id"],
-                    self.all_conn_info["aws_region"],
-                ),
-            }
-            conn = pg2.connect(**d)
 
-            # Query sys_query_history and possibly write out the results.
-            sys_query_history_df, sys_query_history_df_len = (
-                await self.run_one_query(
-                    conn, SYS_QUERY_HISTORY_QUERY.format(run_id)
+                # Derive the query_id and start_time ranges for further queries.
+                if sys_query_history_df_len == 0:
+                    print(
+                        f"\tNo rows found, skipping further stats collection."
+                    )
+                    continue
+                min_query_id = sys_query_history_df["query_id"].min()
+                max_query_id = sys_query_history_df["query_id"].max()
+                min_time = sys_query_history_df[
+                    "start_time"
+                ].min() - pd.Timedelta(minutes=1)
+                max_time = sys_query_history_df[
+                    "end_time"
+                ].max() + pd.Timedelta(minutes=3)
+
+                # Query the rest of the stats tables and write out the results.
+                await self.run_one_and_write_out(
+                    conn,
+                    SYS_QUERY_EXPLAIN_QUERY.format(min_query_id, max_query_id),
+                    run_id,
+                    "sys_query_explain",
+                    cluster.name,
                 )
-            )
-            mismatch = sys_query_history_df_len != run_params["num_queries"]
-            if mismatch:
-                print(
-                    f"\tNumber of rows {sys_query_history_df_len} does not "
-                    f"match expected {run_params['num_queries']}."
+                await self.run_one_and_write_out(
+                    conn,
+                    SYS_QUERY_DETAIL_QUERY.format(min_time, max_time),
+                    run_id,
+                    "sys_query_detail",
+                    cluster.name,
                 )
-            if not (skip_write_on_mismatch and mismatch):
-                self.write_out_table(
-                    run_id, sys_query_history_df, "sys_query_history"
+                await self.run_one_and_write_out(
+                    conn,
+                    SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(min_time, max_time),
+                    run_id,
+                    "sys_external_query_detail",
+                    cluster.name,
                 )
-            else:
-                print(f"\tSkipping write due to mismatch.")
-                continue
-
-            # Derive the query_id and start_time ranges for further queries.
-            if sys_query_history_df_len == 0:
-                print(
-                    f"\tNo rows retrieved, skipping further stats collection."
+                await self.run_one_and_write_out(
+                    conn,
+                    SYS_SERVERLESS_USAGE_QUERY.format(min_time, max_time),
+                    run_id,
+                    "sys_serverless_usage",
+                    cluster.name,
                 )
-                continue
-            min_query_id = sys_query_history_df["query_id"].min()
-            max_query_id = sys_query_history_df["query_id"].max()
-            min_time = sys_query_history_df["start_time"].min() - pd.Timedelta(
-                minutes=1
-            )
-            max_time = sys_query_history_df["end_time"].max() + pd.Timedelta(
-                minutes=3
-            )
 
-            # Query sys_query_explain and write out the results.
-            sys_query_explain_df, _ = await self.run_one_query(
-                conn,
-                SYS_QUERY_EXPLAIN_QUERY.format(min_query_id, max_query_id),
-            )
-            self.write_out_table(
-                run_id, sys_query_explain_df, "sys_query_explain"
-            )
-
-            # Query sys_query_detail and write out the results.
-            sys_query_detail_df, _ = await self.run_one_query(
-                conn,
-                SYS_QUERY_DETAIL_QUERY.format(min_time, max_time),
-            )
-            self.write_out_table(
-                run_id, sys_query_detail_df, "sys_query_detail"
-            )
-
-            # Query sys_external_query_detail and write out the results.
-            sys_external_query_detail_df, _ = await self.run_one_query(
-                conn,
-                SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(min_time, max_time),
-            )
-            self.write_out_table(
-                run_id,
-                sys_external_query_detail_df,
-                "sys_external_query_detail",
-            )
-
-            # Query sys_serverless_usage and write out the results.
-            sys_serverless_usage_df, _ = await self.run_one_query(
-                conn,
-                SYS_SERVERLESS_USAGE_QUERY.format(min_time, max_time),
-            )
-            self.write_out_table(
-                run_id, sys_serverless_usage_df, "sys_serverless_usage"
-            )
-
-            conn.close()
+                # Release the connection and close the pool.
+                conn_pool.putconn(conn)
+                cluster.destroy_conn_pool()
 
 
 if __name__ == "__main__":
@@ -247,30 +210,25 @@ if __name__ == "__main__":
         description="Query the execution statistics for any runs without stats."
     )
     parser.add_argument(
-        "--conn_info_path",
+        "--run_ids",
         type=str,
-        default=os.path.join(pu.AUTOSLO_ROOT, "config", "conn.yml"),
-        help="Path to the YAML file containing the connection info for psycopg2.",
+        nargs="+",
+        required=True,
+        help="List of run IDs to collect stats for.",
     )
     parser.add_argument(
-        "--force_starting_at",
-        type=str,
-        default=None,
-        help="If specified, recollect stats for runs starting at this run ID (inclusive).",
-    )
-    parser.add_argument(
-        "--only_endpoint",
-        type=str,
-        default=None,
-        help="If specified, only collect stats for runs that used this endpoint name.",
+        "--force",
+        action="store_true",
+        help="If set, force recollection of stats even if they already exist.",
     )
     parser.add_argument(
         "--skip_write_on_mismatch",
         action="store_true",
-        help="If set, skip writing out stats if the number of collected rows does not match the expected number of queries.",
+        help=(
+            "If set, skip writing out stats if the number of collected rows "
+            "does not match the expected number of queries."
+        ),
     )
     args = parser.parse_args()
-    collector = StatsCollector(
-        args.conn_info_path, args.force_starting_at, args.only_endpoint
-    )
+    collector = StatsCollector(run_ids=args.run_ids, force=args.force)
     asyncio.run(collector.collect_stats(args.skip_write_on_mismatch))

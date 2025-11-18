@@ -103,23 +103,46 @@ class Chunk:
             if stddev_interarrival_s is not None
             else T / 2
         )
-        self._chunk_id = "_".join(
-            [
-                self.schema,
-                f"{self.num_templates}templates",
-                f"{self.H:02d}pctheavy",
-                f"{self.T:02d}meaninterarrivals",
-            ]
+        self._chunk_id = self.form_chunk_id(
+            schema_name=self.schema,
+            num_templates=self.num_templates,
+            H=self.H,
+            T=self.T,
         )
 
     def chunk_id(self) -> str:
         """Get the chunk ID string."""
         return self._chunk_id
 
+    @staticmethod
+    def form_chunk_id(
+        schema_name: str, num_templates: int, H: int, T: int
+    ) -> str:
+        """
+        Get the chunk ID string for the given parameters.
+
+        Parameters:
+            schema_name: The name of the database schema.
+            num_templates: The number of query templates.
+            H: The percentage of heavy queries (0-100).
+            T: The mean query interarrival time in seconds.
+
+        Returns:
+            The chunk ID string.
+        """
+        return "_".join(
+            [
+                schema_name,
+                f"{num_templates}templates",
+                f"{H:02d}pctheavy",
+                f"{T:02d}meaninterarrivals",
+            ]
+        )
+
     def save_dir(self) -> str:
         """Get the directory path where the chunk workload is saved."""
         return os.path.join(
-            pu.DATA_PATH,
+            pu.get_data_path(),
             "chunk_workloads",
             self.chunk_id(),
         )
@@ -212,7 +235,7 @@ class Chunk:
 
         # Determine which templates are heavy and which are light.
         heavy_templates = set()
-        with open(pu.HEAVY_TEMPLATES_FILES[self.schema], "r") as f:
+        with open(pu.get_heavy_templates_files()[self.schema], "r") as f:
             for line in f:
                 template_id = int(line.strip())
                 if template_id <= self.num_templates:
@@ -350,7 +373,7 @@ class Chunk:
         """
         run_id = self.get_most_recent_run_id_on(endpoint_name)
         trace_path = os.path.join(
-            pu.RUNS_PATH,
+            pu.get_runs_path(),
             run_id,
             "sys_query_history.parquet",
         )

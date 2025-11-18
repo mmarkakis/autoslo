@@ -18,8 +18,8 @@ def test_init_multiple_raises():
     Ensure initializing a Blueprint with more than one cluster raises
     ValueError (temporary constraint).
     """
-    c1 = Cluster(rpu=4)
-    c2 = Cluster(rpu=8)
+    c1 = Cluster(rpu=4, name="cluster_4rpu")
+    c2 = Cluster(rpu=8, name="cluster_8rpu")
     with pytest.raises(ValueError):
         Blueprint([c1, c2])
 
@@ -29,7 +29,7 @@ def test_clusters_and_names():
     Verify that clusters and cluster_names properties return the correct
     cluster and its name.
     """
-    cluster = Cluster(rpu=8)
+    cluster = Cluster(rpu=8, name="cluster_8rpu")
     blueprint = Blueprint([cluster])
     assert blueprint.clusters == [cluster]
     assert blueprint.cluster_names == [cluster.name]
@@ -40,7 +40,7 @@ def test_total_cost_computation():
     Check that total_cost computes the expected cost for a single cluster
     usage.
     """
-    cluster = Cluster(rpu=4)
+    cluster = Cluster(rpu=4, name="cluster_4rpu", cost_per_rpu_hour=0.5)
     blueprint = Blueprint([cluster])
     usage_s = 3600.0  # one hour
     # compute expected using the cluster's cost method to stay consistent
@@ -54,7 +54,7 @@ def test_total_cost_unknown_cluster_raises():
     Ensure total_cost raises KeyError when provided a usage map for an unknown
     cluster name.
     """
-    cluster = Cluster(rpu=4)
+    cluster = Cluster(rpu=4, name="cluster_4rpu")
     blueprint = Blueprint([cluster])
     with pytest.raises(KeyError):
         blueprint.total_cost({"nonexistent-cluster": 100.0})
@@ -71,3 +71,4 @@ def test_simple_blueprints_up_to_32_rpu():
     # ensure each produced blueprint contains a single cluster with expected rpu
     actual_sizes = [bp.clusters[0].rpu for bp in blueprints]
     assert actual_sizes == expected_sizes
+

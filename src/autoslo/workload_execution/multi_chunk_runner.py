@@ -1,13 +1,10 @@
 import argparse
 import asyncio
-import os
 from datetime import datetime
-import shutil
 
-import autoslo.utils.paths as pu
-from autoslo.workload_execution.query_runner import QueryRunner
+from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_execution.collect_stats import StatsCollector
-import yaml
+from autoslo.workload_execution.query_runner import QueryRunner
 
 NUM_TEMPLATES_OPTIONS = [99]
 PCT_HEAVY_OPTIONS = [0, 10, 25, 50]
@@ -22,43 +19,49 @@ async def run_all_chunk_workloads(base_args: argparse.Namespace):
         base_args: Base arguments to pass to each QueryRunner instance.
     """
 
-    # Start by running just the example workload a couple of times to get the workgroup to resume.
-    example_workload_path = os.path.join(
-        pu.DATA_PATH, "benchmarking_workloads", "benchmarking_workload_1_1_5.parquet"
-    )
+    run_ids = []
+
+    # Start by running just the example workload a couple of times
+    # to get the workgroup to resume.
+    example_workload_name = "benchmarking_workload_1_1_5"
     example_args = argparse.Namespace(
-        **vars(base_args), trace_path=example_workload_path
+        **vars(base_args), workload_name=example_workload_name
     )
-    print(f"{datetime.now()} Running example workload {example_workload_path}...")
-    await QueryRunner(example_args).run()
+    print(
+        f"{datetime.now()} Running example workload {example_workload_name}..."
+    )
+    run_id = await QueryRunner(example_args).run()
+    run_ids.append(run_id)
     print(f"{datetime.now()} Sleeping for 2 minutes...")
     await asyncio.sleep(2 * 60)
     print(
-        f"{datetime.now()} Running example workload {example_workload_path} again..."
+        f"{datetime.now()} Running example workload {example_workload_name} again..."
     )
-    await QueryRunner(example_args).run()
-    print(f"{datetime.now()} Sleeping for 5 minutes...")
-    await asyncio.sleep(5 * 60)
+    run_id = await QueryRunner(example_args).run()
+    run_ids.append(run_id)
 
     if not base_args.test_run:
+        # Wait for a bit to get clean stats.
+        print(f"{datetime.now()} Sleeping for 5 minutes...")
+        await asyncio.sleep(5 * 60)
+
         # Now run all the chunk workloads.
-        chunk_ids = []
-        run_ids = []
         for num_templates in NUM_TEMPLATES_OPTIONS:
             for pct_heavy in PCT_HEAVY_OPTIONS:
                 for (
                     mean_interarrival_time_s
                 ) in MEAN_INTERARRIVAL_TIME_S_OPTIONS:
-                    chunk_id = f"tpcds_{num_templates}templates_{pct_heavy:02d}pctheavy_{mean_interarrival_time_s:02d}meaninterarrivals"
-                    chunk_ids.append(chunk_id)
-                    chunk_workload_path = os.path.join(
-                        pu.DATA_PATH, "chunks", f"{chunk_id}", "chunk_workload.parquet"
+                    chunk_id = Chunk.form_chunk_id(
+                        schema_name="tpcds",
+                        num_templates=num_templates,
+                        H=pct_heavy,
+                        T=mean_interarrival_time_s,
                     )
                     print(
-                        f"{datetime.now()} Running chunk workload {chunk_workload_path}..."
+                        f"{datetime.now()} Running chunk workload {chunk_id}..."
                     )
                     full_args = argparse.Namespace(
-                        **vars(base_args), trace_path=chunk_workload_path
+                        **vars(base_args), workload_name=chunk_id
                     )
                     run_id = await QueryRunner(full_args).run()
                     run_ids.append(run_id)
@@ -68,10 +71,7 @@ async def run_all_chunk_workloads(base_args: argparse.Namespace):
 
     # Now get the statistics out as well.
     print(f"{datetime.now()} Collecting stats for all runs...")
-    stats_collector = StatsCollector(
-        conn_info_path=base_args.conn_info_path,
-        only_endpoint=base_args.endpoint_name,
-    )
+    stats_collector = StatsCollector(run_ids=run_ids)
     await stats_collector.collect_stats(skip_write_on_mismatch=True)
     print(f"{datetime.now()} Done collecting stats.")
 
@@ -80,13 +80,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run queries from a benchmarking workload in an open loop."
     )
-
-    parser.add_argument(
-        "--conn_info_path",
-        type=str,
-        default=os.path.join(pu.AUTOSLO_ROOT, "config", "conn.yml"),
-        help="Path to the YAML file containing the connection info for psycopg2.",
-    )
     parser.add_argument(
         "--tpcds_scale_factor",
         type=int,
@@ -94,10 +87,16 @@ if __name__ == "__main__":
         help="TPC-DS scale factor to run against.",
     )
     parser.add_argument(
-        "--endpoint_name",
+        "--blueprint_name",
         type=str,
-        default="16",
-        help="Endpoint name to run on.",
+        default="single_8",
+        help="Blueprint name to run on.",
+    )
+    parser.add_argument(
+        "--query_router_name",
+        type=str,
+        default="RFixed(fixed_cluster_name='cluster_8')",
+        help="Name of the QueryRouter to use.",
     )
     parser.add_argument(
         "--maxconns",

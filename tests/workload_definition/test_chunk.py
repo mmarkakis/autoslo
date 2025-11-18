@@ -56,6 +56,14 @@ def test_to_from_dict_roundtrip():
     assert c2.num_queries_per_template == c1.num_queries_per_template
     assert c2.stddev_interarrival_s == c1.stddev_interarrival_s
 
+def test_form_chunk_id():
+    """
+    Verify that form_chunk_id produces the expected chunk ID string.
+    """
+    c = Chunk(H=10, T=30, schema="tpcds", num_templates=3)
+    chunk_id = c.chunk_id()
+    assert chunk_id == "tpcds_3templates_10pctheavy_30meaninterarrivals"
+
 
 def test_save_writes_yaml(tmp_path, monkeypatch):
     """
@@ -63,7 +71,7 @@ def test_save_writes_yaml(tmp_path, monkeypatch):
     save directory and that the YAML content matches to_dict().
     """
     # Redirect DATA_PATH to a temporary directory
-    monkeypatch.setattr(pu, "DATA_PATH", str(tmp_path))
+    monkeypatch.setattr(pu, "get_data_path", lambda: str(tmp_path))
     c = Chunk(H=10, T=30, num_templates=3)
     c.save()
     out_dir = c.save_dir()
