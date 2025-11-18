@@ -11,6 +11,7 @@ config/conn.yml
 data/composite_workloads/**/day_traces/
 data/runs/**/*.log
 data/strategy_runs/**/*.parquet
+data/runs/run_summary*
 
 site/
 docs/reference/
