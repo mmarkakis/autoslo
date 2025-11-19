@@ -1,3 +1,5 @@
+from typing import Optional
+
 from psycopg2.pool import ThreadedConnectionPool
 
 import autoslo.utils.paths as pu
@@ -16,26 +18,26 @@ class Blueprint:
     # Maps cluster names to their usage in seconds
     ClusterUsageMap = dict[str, float]
 
-    def __init__(self, clusters: list[Cluster]) -> None:
+    def __init__(
+        self, clusters: list[Cluster], name: Optional[str] = None
+    ) -> None:
         """
         Initialize a Blueprint instance.
 
         Parameters:
             clusters: A list of Cluster instances that this blueprint contains.
+            name: The name of the blueprint.
 
         Raises:
             ValueError: If the clusters list is empty.
-            ValueError: (Temporary) If the clusters list contains more than one
-            cluster.
 
         """
         if not clusters:
             raise ValueError("The clusters list cannot be empty.")
-        if len(clusters) > 1:
-            raise ValueError("Currently, only a single cluster is supported.")
         self._clusters: dict[str, Cluster] = {}
         for cluster in clusters:
             self._clusters[cluster.name] = cluster
+        self._name = name if name else ""
 
     @staticmethod
     def from_config(blueprint_name: str) -> "Blueprint":
@@ -64,7 +66,7 @@ class Blueprint:
             )
         cluster_names = blueprint_config[blueprint_name]["cluster_names"]
         clusters = [Cluster.from_config(name) for name in cluster_names]
-        return Blueprint(clusters=clusters)
+        return Blueprint(clusters=clusters, name=blueprint_name)
 
     @staticmethod
     def one_cluster_with(cluster_rpu: float) -> "Blueprint":
@@ -81,6 +83,16 @@ class Blueprint:
             rpu=int(cluster_rpu), name=f"cluster_{int(cluster_rpu)}"
         )
         return Blueprint(clusters=[cluster])
+
+    @property
+    def name(self) -> str:
+        """
+        Get the name of the blueprint.
+
+        Returns:
+            The name of the blueprint.
+        """
+        return self._name
 
     @property
     def clusters(self) -> list[Cluster]:

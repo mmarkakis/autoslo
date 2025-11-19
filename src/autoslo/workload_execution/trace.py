@@ -1,4 +1,9 @@
+import os
+from datetime import datetime
+
 import pandas as pd
+
+import autoslo.utils.paths as pu
 
 
 class Trace:
@@ -25,24 +30,52 @@ class Trace:
         ).reset_index(drop=True)
         self._original_start = self._trace_df["start_time"].min()
 
+    @property
+    def trace_df(self) -> pd.DataFrame:
+        """Get the underlying trace DataFrame."""
+        return self._trace_df
+
     @staticmethod
-    def from_path(trace_path: str) -> "Trace":
+    def from_run(run_id: str) -> "Trace":
         """
-        Create a Trace instance from a Parquet filepath, reading in only the
-        required columns.
+        Create a Trace instance from a run directory, reading in only the
+        required columns from each parquet file. If a cached version of the
+        trace exists, it will be used instead.
 
         Parameters:
-            trace_path: The path to the Parquet file containing the trace data.
+            run_id: The ID of the run directory containing the Parquet files.
 
         Returns:
             A Trace instance.
 
         Raises:
-            ValueError: If the file is not a Parquet file.
+            ValueError: If no sys_query_history Parquet file is found in the
+                run directory.
         """
-        if not trace_path.endswith(".parquet"):
-            raise ValueError("Trace file must be a Parquet file.")
+        run_dir = os.path.join(pu.get_runs_path(), run_id)
+        cached_trace_path = os.path.join(run_dir, "trace.parquet")
+
+        if os.path.exists(cached_trace_path):
+            trace_df = pd.read_parquet(
+                cached_trace_path, columns=Trace.REQUIRED_COLUMNS
+            )
+            return Trace(trace_df)
+
+        trace_path = None
+        for fname in os.listdir(run_dir):
+            if fname.startswith("sys_query_history") and fname.endswith(
+                ".parquet"
+            ):
+                trace_path = os.path.join(run_dir, fname)
+                break
+        if trace_path is None:
+            raise ValueError(
+                "No sys_query_history Parquet file found in run directory."
+            )
         trace_df = pd.read_parquet(trace_path, columns=Trace.REQUIRED_COLUMNS)
+
+        # Cache the trace for future use.
+        trace_df.to_parquet(cached_trace_path, index=False)
         return Trace(trace_df)
 
     @staticmethod
@@ -79,7 +112,23 @@ class Trace:
                 '"start_time" and "end_time".'
             )
 
-    def normalize_start_to(self, new_start: pd.Timestamp) -> "Trace":
+    @staticmethod
+    def concat(traces: list["Trace"]) -> "Trace":
+        """
+        Concatenate multiple Trace instances into a single Trace instance.
+
+        Parameters:
+            traces: A list of Trace instances to concatenate.
+
+        Returns:
+            A new Trace instance containing the concatenated trace data.
+        """
+        concatenated_df = pd.concat(
+            [trace.trace_df for trace in traces]
+        ).reset_index(drop=True)
+        return Trace(concatenated_df)
+
+    def normalize_start_to(self, new_start: datetime) -> "Trace":
         """
         Normalize start and end times of the trace so that the earliest start
         time is equal to `new_start`.
@@ -92,7 +141,7 @@ class Trace:
             A new Trace instance with normalized start times.
         """
         earliest_start = self._trace_df["start_time"].min()
-        shift = new_start - earliest_start
+        shift = pd.Timestamp(new_start) - earliest_start
         normalized_df = self._trace_df.copy()
         normalized_df["start_time"] = normalized_df["start_time"] + shift
         normalized_df["end_time"] = normalized_df["end_time"] + shift
@@ -220,21 +269,20 @@ class Trace:
         total_billed_s += billed_duration_s
 
         return total_billed_s
-    
+
     def mbytes_scanned_mean(self) -> float:
         """
         Placeholder method to return mean MB scanned.
         """
         # Placeholder implementation - need to get from SYS_QUERY_DETAIL
         return 0.0
-    
+
     def num_joins_mean(self) -> float:
         """
         Placeholder method to return mean number of joins.
         """
         # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
         return 0.0
-    
 
     def num_scans_mean(self) -> float:
         """
@@ -242,7 +290,6 @@ class Trace:
         """
         # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
         return 0.0
-    
 
     def num_aggregations_mean(self) -> float:
         """

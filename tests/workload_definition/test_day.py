@@ -6,6 +6,7 @@ import pytest
 
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.day import Day
+from autoslo.workload_execution.trace import Trace
 
 
 class FakeChunk:
@@ -22,7 +23,12 @@ class FakeChunk:
             base_start + timedelta(minutes=off) for off in minutes_offsets
         ]
         ends = [s + timedelta(minutes=1) for s in starts]
-        self._base_df = pd.DataFrame({"start_time": starts, "end_time": ends})
+        elapsed = [
+            (e - s).total_seconds() * 1_000_000 for s, e in zip(starts, ends)
+        ]
+        self._base_df = pd.DataFrame(
+            {"start_time": starts, "end_time": ends, "elapsed_time": elapsed}
+        )
 
     def color(self) -> str:
         return f"color_{self.T}"
@@ -43,19 +49,19 @@ class FakeChunk:
             "stddev_interarrival_s": None,
         }
 
-    def get_trace_on(
+    def get_most_recent_trace_on(
         self,
-        endpoint_name: str,
+        blueprint_name: str,
+        query_router_name: str,
         normalize_start_to: Optional[datetime] = None,
-        save_path: Optional[str] = None,
-    ) -> pd.DataFrame:
+    ) -> Trace:
         df = self._base_df.copy()
         if normalize_start_to is not None:
             earliest = df["start_time"].min()
             shift = normalize_start_to - earliest
             df["start_time"] = df["start_time"] + shift
             df["end_time"] = df["end_time"] + shift
-        return df
+        return Trace(df)
 
 
 def test_to_from_dict_roundtrip():
@@ -73,6 +79,7 @@ def test_to_from_dict_roundtrip():
     assert day2.chunks[0].T == c1.T
     assert day2.chunks[1].H == c2.H
     assert day2.chunks[1].T == c2.T
+
 
 def test_colors_and_shapes_delegate_to_chunks():
     """
@@ -108,41 +115,45 @@ def test_day_id_formatting():
     assert "_" in did
 
 
-def test_get_trace_on_concatenates_and_respects_gap():
+def test_get_most_recent_trace_on_concatenates_and_respects_gap():
     """
-    Test that Day.get_trace_on concatenates chunk traces in order and
-    that the gap between chunks equals the requested inter_chunk_gap.
+    Test that Day.get_most_recent_trace_on concatenates chunk traces in order
+    and that the gap between chunks equals the requested inter_chunk_gap.
     """
     # First chunk has times anchored at base; will be shifted to normalize_start.
     base0 = datetime(2021, 1, 1, 8, 0, 0)
     f1 = FakeChunk(H=1, T=10, base_start=base0, minutes_offsets=[0, 10])
-    num_f1_queries = len(f1.get_trace_on(endpoint_name="ep"))
+    num_f1_queries = len(
+        f1.get_most_recent_trace_on(
+            blueprint_name="bp", query_router_name="qr"
+        ).trace_df
+    )
     # Second chunk base starts at the same anchor but will be shifted by Day.
     f2 = FakeChunk(H=2, T=20, base_start=base0, minutes_offsets=[0, 5])
     day = Day(chunks=[f1, f2])
 
     normalize_start = datetime(2021, 1, 2, 9, 0, 0)
     gap = timedelta(minutes=5)
-    synthesized = day.get_trace_on(
-        endpoint_name="ep",
+    synthesized = day.get_most_recent_trace_on(
+        blueprint_name="bp",
+        query_router_name="qr",
         normalize_start_to=normalize_start,
         inter_chunk_gap=gap,
-        save_path=None,
     )
     # Earliest start equals the requested normalization.
-    assert synthesized["start_time"].min() == normalize_start
+    assert synthesized.trace_df["start_time"].min() == normalize_start
     # Latest end of first chunk:
-    first_chunk_end = synthesized.loc[num_f1_queries - 1, "end_time"]
+    first_chunk_end = synthesized.trace_df.loc[num_f1_queries - 1, "end_time"]
     # Earliest start of second chunk:
-    second_start = synthesized.loc[num_f1_queries, "start_time"]
+    second_start = synthesized.trace_df.loc[num_f1_queries, "start_time"]
     # The gap between first's latest end and second's earliest start equals gap.
     assert second_start - first_chunk_end == gap
 
 
-def test_get_trace_on_raises_if_exceeds_24_hours():
+def test_get_most_recent_trace_on_raises_if_exceeds_24_hours():
     """
-    Ensure Day.get_trace_on raises ValueError when the concatenated traces
-    would span more than 24 hours.
+    Ensure Day.get_most_recent_trace_on raises ValueError when the concatenated
+    traces would span more than 24 hours.
     """
     # Create two chunks each lasting 13 hours so combined > 24h.
     base = datetime(2020, 1, 1, 0, 0, 0)
@@ -151,4 +162,6 @@ def test_get_trace_on_raises_if_exceeds_24_hours():
     long2 = FakeChunk(H=2, T=20, base_start=base, minutes_offsets=[0, 60 * 13])
     day = Day(chunks=[long1, long2])
     with pytest.raises(ValueError):
-        day.get_trace_on(endpoint_name="ep", normalize_start_to=None)
+        day.get_most_recent_trace_on(
+            blueprint_name="bp", query_router_name="qr", normalize_start_to=None
+        )

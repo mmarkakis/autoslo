@@ -13,17 +13,6 @@ def test_init_empty_raises():
         Blueprint([])
 
 
-def test_init_multiple_raises():
-    """
-    Ensure initializing a Blueprint with more than one cluster raises
-    ValueError (temporary constraint).
-    """
-    c1 = Cluster(rpu=4, name="cluster_4rpu")
-    c2 = Cluster(rpu=8, name="cluster_8rpu")
-    with pytest.raises(ValueError):
-        Blueprint([c1, c2])
-
-
 def test_clusters_and_names():
     """
     Verify that clusters and cluster_names properties return the correct

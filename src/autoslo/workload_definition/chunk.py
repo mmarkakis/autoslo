@@ -9,6 +9,7 @@ import yaml
 
 import autoslo.utils.colors as cu
 import autoslo.utils.paths as pu
+from autoslo.workload_execution.trace import Trace
 
 
 class Chunk:
@@ -327,12 +328,16 @@ class Chunk:
         ) as f:
             yaml.dump(stats, f, sort_keys=False)
 
-    def get_most_recent_run_id_on(self, endpoint_name: str) -> str:
+    def get_most_recent_run_id_on(
+        self, blueprint_name: str, query_router_name: str
+    ) -> str:
         """
-        Get the most recent run ID for this chunk on the specified endpoint.
+        Get the most recent run ID for this chunk on the specified blueprint
+        and query router.
 
         Parameters:
-            endpoint_name: The name of the endpoint.
+            blueprint_name: The name of the blueprint.
+            query_router_name: The name of the query router.
 
         Returns:
             A string representing the run ID.
@@ -340,61 +345,49 @@ class Chunk:
         Raises:
             ValueError: If no matching run ID is found.
         """
-        run_ids = pu.RunLocator.get_run_id(
-            trace_path=f"{self.chunk_id()}.parquet", endpoint_name=endpoint_name
+        run_ids = pu.RunLocator.get_run_ids(
+            workload_name=self.chunk_id(),
+            blueprint_name=blueprint_name,
+            query_router_name=query_router_name,
         )
         if len(run_ids) == 0:
             raise ValueError(
-                f"No run ID found for chunk with H={self.H}, T={self.T} "
-                f"on endpoint '{endpoint_name}'."
+                f"No run ID found for chunk with H={self.H}, T={self.T} on "
+                f"blueprint '{blueprint_name}' and "
+                f"query router '{query_router_name}'."
             )
         return sorted(run_ids)[-1]
 
-    def get_trace_on(
+    def get_most_recent_trace_on(
         self,
-        endpoint_name: str,
+        blueprint_name: str,
+        query_router_name: str,
         normalize_start_to: Optional[datetime],
-        save_path: Optional[str] = None,
-    ) -> pd.DataFrame:
+    ) -> Trace:
         """
-        Get the (most recent) trace for this chunk on the specified endpoint,
-        optionally shifting all timestamps so that the earliest timestamp is
-        equal to `normalize_start_to`.
+        Get the (most recent) trace for this chunk on the specified blueprint
+        and query router, optionally shifting all timestamps so that the
+        earliest timestamp is equal to `normalize_start_to`.
 
         Parameters:
-            endpoint_name: The name of the endpoint.
+            blueprint_name: The name of the blueprint.
+            query_router_name: The name of the query router.
             normalize_start_to: A datetime object to which the earliest
                 timestamp will be normalized.
-            save_path: Optional path to save the trace as a Parquet file. If
-                None, does not save the trace.
 
         Returns:
-            A pandas DataFrame representing the trace.
+            A Trace instance.
         """
-        run_id = self.get_most_recent_run_id_on(endpoint_name)
-        trace_path = os.path.join(
-            pu.get_runs_path(),
-            run_id,
-            "sys_query_history.parquet",
+        most_recent_run_id = self.get_most_recent_run_id_on(
+            blueprint_name=blueprint_name,
+            query_router_name=query_router_name,
         )
-        if not os.path.exists(trace_path):
-            raise FileNotFoundError(
-                f"Trace file not found for chunk with H={self.H}, T={self.T} "
-                f"on endpoint '{endpoint_name}': {trace_path}"
-            )
-        df = pd.read_parquet(trace_path)
+        trace = Trace.from_run(run_id=most_recent_run_id)
 
         if normalize_start_to is not None:
-            earliest_timestamp = df["start_time"].min()
-            time_shift = normalize_start_to - earliest_timestamp
-            df["start_time"] = df["start_time"] + time_shift
-            df["end_time"] = df["end_time"] + time_shift
+            trace.normalize_start_to(normalize_start_to)
 
-        if save_path is not None:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            df.to_parquet(save_path, index=False)
-
-        return df
+        return trace
 
     @staticmethod
     def plot_legend(show: bool = False, save_path: Optional[str] = None):

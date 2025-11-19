@@ -6,9 +6,12 @@ import pandas as pd
 import pytest
 
 import autoslo.utils.paths as pu
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.composite import Composite
 from autoslo.workload_definition.day import Day
+from autoslo.workload_execution.trace import Trace
 
 
 def _make_trace_df(
@@ -74,14 +77,13 @@ class FakeDay:
         # Not used by Composite.from_dict in tests; present for completeness.
         return FakeDay("from_dict", datetime(2025, 9, 1), [(0, 1)])
 
-    def get_trace_on(
+    def get_most_recent_trace_on(
         self,
-        endpoint_name: str,
+        blueprint_name: str,
+        query_router_name: str,
         normalize_start_to: Optional[datetime] = None,
         inter_chunk_gap: timedelta = timedelta(0),
-        save_path: Optional[str] = None,
-        force_recompose: bool = False,
-    ) -> pd.DataFrame:
+    ) -> Trace:
         """
         Return a trace DataFrame whose earliest start equals normalize_start_to
         if provided; otherwise anchored at self.base_start.
@@ -110,12 +112,8 @@ class FakeDay:
             shift = pd.Timestamp(normalize_start_to) - earliest
             df["start_time"] = df["start_time"] + shift
             df["end_time"] = df["end_time"] + shift
-        if save_path is not None:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            # write a lightweight placeholder to avoid parquet engine issues
-            with open(save_path, "wb") as fh:
-                fh.write(b"PARQUET_PLACEHOLDER")
-        return df
+        return Trace(trace_df=df)
+
 
 def test_days():
     """
@@ -128,6 +126,7 @@ def test_days():
     assert len(days) == 2
     assert days[0].name == "day1"
     assert days[1].name == "day2"
+
 
 def test_to_from_dict_roundtrip():
     """
@@ -170,11 +169,11 @@ def test_day_initials_various_monday_index():
     assert initials == ["W", "T", "F", "S", "S"]
 
 
-def test_get_trace_on_concatenates_days_with_24h_spacing():
+def test_get_most_recent_trace_on_concatenates_days_with_24h_spacing():
     """
-    Verify that Composite.get_trace_on concatenates day traces such that the
-    earliest timestamp of each subsequent day is exactly 24 hours after the
-    previous day's earliest timestamp.
+    Verify that Composite.get_most_recent_trace_on concatenates day traces such 
+    that the earliest timestamp of each subsequent day is exactly 24 hours after 
+    the previous day's earliest timestamp.
     """
     base_a = datetime(2025, 9, 1, 8, 0, 0)
     base_b = datetime(2025, 9, 1, 9, 0, 0)
@@ -183,17 +182,21 @@ def test_get_trace_on_concatenates_days_with_24h_spacing():
     comp = Composite(name="cmp", days=[day_a, day_b], monday_index=0)
 
     normalize_start = datetime(2025, 9, 10, 6, 0, 0)
-    synthesized = comp.get_trace_on(
-        endpoint_name="ep", normalize_start_to=normalize_start
+    synthesized = comp.get_most_recent_trace_on(
+        blueprint_name="bp",
+        query_router_name="qr",
+        normalize_start_to=normalize_start,
     )
     # earliest start equals requested normalize_start_to
-    assert synthesized["start_time"].min() == pd.Timestamp(normalize_start)
+    assert synthesized.trace_df["start_time"].min() == pd.Timestamp(
+        normalize_start
+    )
     # find earliest of first day and earliest of second day in the concatenated DF
-    first_day_earliest = synthesized.iloc[0]["start_time"]
+    first_day_earliest = synthesized.trace_df.iloc[0]["start_time"]
     # locate the earliest start that is strictly greater than first_day_earliest
-    later_starts = synthesized[synthesized["start_time"] > first_day_earliest][
-        "start_time"
-    ]
+    later_starts = synthesized.trace_df[
+        synthesized.trace_df["start_time"] > first_day_earliest
+    ]["start_time"]
     assert not later_starts.empty
     second_day_earliest = later_starts.min()
     assert (second_day_earliest - first_day_earliest) == timedelta(days=1)
@@ -205,7 +208,7 @@ def test_save_writes_definition_and_stats(tmp_path, monkeypatch):
     Patch DataFrame.to_parquet to avoid external parquet engine requirements.
     """
     # patch DATA_PATH
-    monkeypatch.setattr(pu, "DATA_PATH", str(tmp_path))
+    monkeypatch.setattr(pu, "get_data_path", lambda: str(tmp_path))
 
     # Create two FakeDays that return traces with elapsed_time column
     d1 = FakeDay(
@@ -233,104 +236,73 @@ def test_save_writes_definition_and_stats(tmp_path, monkeypatch):
 
     out_dir = os.path.join(str(tmp_path), "composite_workloads", comp.name)
     assert os.path.exists(os.path.join(out_dir, "definition.yml"))
-    assert os.path.exists(os.path.join(out_dir, "day_tail_stats.parquet"))
 
 
-def test_ground_truth_smallest_adherent_endpoint_errors_and_success(
-    tmp_path, monkeypatch
-):
+def test_ground_truth_smallest_adherent_single_cluster_blueprint_errors_and_success(
+    tmp_path: "Path", monkeypatch: "pytest.MonkeyPatch"
+) -> None:
     """
-    Test error cases for ground_truth_smallest_adherent_endpoint when stats
-    file is missing or when percentile is not present, and test success case
-    by patching pd.read_parquet to return prepared stats.
+    Test error cases and a multi-day success scenario where different RPU
+    sizes are selected, and some days have no acceptable size.
     """
     # Ensure missing file raises
     monkeypatch.setattr(pu, "get_data_path", lambda: str(tmp_path))
-    with pytest.raises(ValueError):
-        Composite.ground_truth_smallest_adherent_endpoint(
+    with pytest.raises(FileNotFoundError):
+        Composite.ground_truth_smallest_adherent_single_cluster_blueprint(
             "nonexistent", tail_slo_s=1.0
         )
 
-    # Prepare a stats DataFrame missing the requested percentile
-    stats_df90 = pd.DataFrame(
-        [
-            {
-                "composite_name": "c",
-                "day_idx": 0,
-                "endpoint_name": "4",
-                "endpoint_rpu": 4,
-                "percentile": 90,
-                "tail_s": 0.5,
-            }
-        ]
+    # Success case: configure deterministic allowed RPUs and a fake Blueprint
+    monkeypatch.setattr(Cluster, "ALL_ALLOWED_RPU_SIZES", [1, 2, 4])
+
+    def fake_one_cluster_with(cluster_rpu: int):
+        class FB:
+            def __init__(self, r: int) -> None:
+                self.name = f"bp_{r}"
+                self.cluster_names = [f"cluster_{r}"]
+
+        return FB(cluster_rpu)
+
+    monkeypatch.setattr(
+        Blueprint, "one_cluster_with", staticmethod(fake_one_cluster_with)
     )
 
-    # Patch pd.read_parquet to return our dataframe when the file exists
-    def fake_read_parquet(path, *args, **kwargs):
-        return stats_df90
+    # Build three lightweight day-like objects that return a trace-like object
+    # whose latency_s_at depends on the blueprint name (which encodes RPU).
+    class VarDay:
+        def __init__(self, lat_by_rpu: dict[int, float]) -> None:
+            self._lat = lat_by_rpu
 
-    monkeypatch.setattr(pd, "read_parquet", fake_read_parquet)
+        def get_most_recent_trace_on(
+            self,
+            blueprint_name: str,
+            query_router_name: str,
+            normalize_start_to: Optional[datetime] = None,
+            inter_chunk_gap: timedelta = timedelta(0),
+        ):
+            # extract rpu from blueprint_name "bp_{r}"
+            r = int(blueprint_name.split("_")[-1])
 
-    # Create directory so the initial file-existence check passes
-    workload_dir = os.path.join(str(tmp_path), "composite_workloads", "c")
-    os.makedirs(workload_dir, exist_ok=True)
-    # Write a dummy file so os.path.exists(stats_file) is True
-    open(os.path.join(workload_dir, "day_tail_stats.parquet"), "wb").close()
+            class T:
+                def __init__(self, val: float) -> None:
+                    self._v = val
 
-    # Asking for 95 percentile should raise
-    with pytest.raises(ValueError):
-        Composite.ground_truth_smallest_adherent_endpoint(
-            "c", tail_slo_s=1.0, tail_percentile=95.0
-        )
+                def latency_s_at(self, quantile: float) -> float:
+                    return self._v
 
-    # Now provide stats containing the requested percentile and test return
-    # value
-    stats_df95 = pd.DataFrame(
-        [
-            {
-                "composite_name": "c",
-                "day_idx": 0,
-                "endpoint_name": "4",
-                "endpoint_rpu": 4,
-                "percentile": 95.0,
-                "tail_s": 1.5,
-            },
-            {
-                "composite_name": "c",
-                "day_idx": 0,
-                "endpoint_name": "8",
-                "endpoint_rpu": 8,
-                "percentile": 95.0,
-                "tail_s": 0.99,
-            },
-            {
-                "composite_name": "c",
-                "day_idx": 0,
-                "endpoint_name": "16",
-                "endpoint_rpu": 16,
-                "percentile": 95.0,
-                "tail_s": 0.5,
-            },
-            {
-                "composite_name": "c",
-                "day_idx": 1,
-                "endpoint_name": "4",
-                "endpoint_rpu": 4,
-                "percentile": 95.0,
-                "tail_s": 2.0,
-            },
-        ]
+            return T(self._lat.get(r, float("inf")))
+
+    # day0: RPU 1 satisfies SLO (latency 1.0)
+    day0 = VarDay({1: 1.0, 2: 0.9, 4: 0.8})
+    # day1: RPU 1 fails, RPU 2 satisfies (latencies: 2.0, 1.0, 0.9)
+    day1 = VarDay({1: 2.0, 2: 1.0, 4: 0.9})
+    # day2: no RPU satisfies (all latencies > 1.5)
+    day2 = VarDay({1: 3.0, 2: 2.5, 4: 2.0})
+
+    comp = Composite(name="cmp_patch", days=[day0, day1, day2], monday_index=0)
+    monkeypatch.setattr(Composite, "load", staticmethod(lambda name: comp))
+
+    sizes = Composite.ground_truth_smallest_adherent_single_cluster_blueprint(
+        "ignored_name", tail_slo_s=1.5
     )
-
-    def fake_read_parquet2(path, *args, **kwargs):
-        return stats_df95
-
-    monkeypatch.setattr(pd, "read_parquet", fake_read_parquet2)
-
-    # The smallest RPU meeting tail_slo_s=1.0 for day 0 is 8; for day 1 none
-    result = Composite.ground_truth_smallest_adherent_endpoint(
-        "c", tail_slo_s=1.0, tail_percentile=95.0
-    )
-    assert isinstance(result, list)
-    assert result[0] == 8
-    assert result[1] is None
+    assert sizes == [1, 2, None]

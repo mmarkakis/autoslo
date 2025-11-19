@@ -140,11 +140,12 @@ class RunLocator:
         return run_summary
 
     @staticmethod
-    def get_run_id(**kwargs) -> list[str]:
+    def get_run_ids(**kwargs) -> list[str]:
         """
         Returns a list of run IDs that match the given filter criteria. For
         integer or float values, an exact match is performed. For string values,
-        a substring match is performed.
+        a substring match is performed. The run IDs are returned in
+        chronological order.
 
         Parameters:
             **kwargs: Key-value pairs to filter the runs. Keys should be column
@@ -164,7 +165,7 @@ class RunLocator:
                     filtered_summary[k].str.contains(str(v))
                 ]
 
-        return list(filtered_summary["run_id"].values)
+        return sorted(filtered_summary["run_id"].tolist())
 
     @staticmethod
     def _check_refresh(force: bool = False) -> tuple[str, list[str]]:

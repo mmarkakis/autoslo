@@ -5,11 +5,14 @@ from typing import Any, Optional
 import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
-from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.routing.r_fixed import RFixed
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.day import Day
+from autoslo.workload_execution.trace import Trace
 
 
 class Composite:
@@ -20,7 +23,7 @@ class Composite:
         Get the directory path where composite workloads are stored.
         """
         return os.path.join(
-            pu.DATA_PATH,
+            pu.get_data_path(),
             "composite_workloads",
         )
 
@@ -54,24 +57,6 @@ class Composite:
         """
         return os.path.join(Composite.outputs_parent_dir(), workload_name)
 
-    @staticmethod
-    def dir_for_workload_day(workload_name: str, day_idx: int) -> str:
-        """
-        Get the directory path for a specific day within a composite workload.
-
-        Parameters:
-            workload_name: The name of the composite workload.
-            day_idx: The index of the day within the composite workload.
-
-        Returns:
-            The directory path for the specified day of the composite workload.
-        """
-        return os.path.join(
-            Composite.dir_for_composite_workload(workload_name),
-            "day_traces",
-            f"day_{day_idx}",
-        )
-
     def __init__(
         self,
         name: str,
@@ -79,7 +64,7 @@ class Composite:
         monday_index: int = 0,
     ):
         """
-        Initialize a new MultiDay.
+        Initialize a new Composite workload.
 
         Parameters:
             name: A string representing the name of the composite workload.
@@ -111,7 +96,7 @@ class Composite:
             "monday_index": self.monday_index,
             "days": [day.to_dict() for day in self.days],
         }
-    
+
     @property
     def days(self) -> list[Day]:
         """Get the list of days in the composite workload."""
@@ -148,7 +133,7 @@ class Composite:
         )
         if not os.path.exists(definition_path):
             raise FileNotFoundError(
-                f"Composite workload definition file '{definition_path}' does not exist."
+                f"Composite definition file '{definition_path}' does not exist."
             )
         with open(definition_path, "r") as f:
             data = yaml.safe_load(f)
@@ -185,47 +170,6 @@ class Composite:
             save_path=os.path.join(out_dir, f"{self.name}_legend.png")
         )
 
-        # For each day, create and save its trace on each endpoint.
-        l = []
-        US_TO_S = 1_000_000.0
-        for day_idx, day in tqdm(
-            enumerate(self.days),
-            desc="Saving day traces...",
-            total=len(self.days),
-        ):
-            day_dir = os.path.join(out_dir, "day_traces", f"day_{day_idx}")
-            os.makedirs(day_dir, exist_ok=True)
-            # FIXME: Hardcoded endpoint names and RPUs
-            for endpoint_name in ["4", "8", "16", "32"]:
-                endpoint_rpu = int(endpoint_name)
-                trace_out_path = os.path.join(
-                    day_dir, f"{self.name}_day{day_idx}_{endpoint_name}.parquet"
-                )
-                day_df = day.get_trace_on(
-                    endpoint_name=endpoint_name,
-                    save_path=trace_out_path,
-                )
-                for percentile in [90, 95, 99]:
-                    tail_value = (
-                        day_df["elapsed_time"].quantile(percentile / 100.0)
-                        / US_TO_S
-                    )
-                    l.append(
-                        {
-                            "composite_name": self.name,
-                            "day_idx": day_idx,
-                            "endpoint_name": endpoint_name,
-                            "endpoint_rpu": endpoint_rpu,
-                            "percentile": percentile,
-                            "tail_s": tail_value,
-                        }
-                    )
-
-        # Save out tail statistics for each day on each endpoint.
-        stats_df = pd.DataFrame(l)
-        stats_out_path = os.path.join(out_dir, "day_tail_stats.parquet")
-        stats_df.to_parquet(stats_out_path)
-
     def day_initials(self) -> list[str]:
         """
         Get the initials of the days of the week starting from monday_index.
@@ -240,18 +184,18 @@ class Composite:
         year=2025, month=9, day=1, hour=0, minute=0, second=0
     )
 
-    def get_trace_on(
+    def get_most_recent_trace_on(
         self,
-        endpoint_name: str,
+        blueprint_name: str,
+        query_router_name: str,
         normalize_start_to: datetime = DEFAULT_TRACE_START_DATE,
         inter_chunk_gap: timedelta = timedelta(0),
-        save_path: Optional[str] = None,
-        force_recompose: bool = False, #TODO TODO
-    ) -> pd.DataFrame:
+    ) -> Trace:
         """
         Get the synthesized trace for the entire composite workload on the
-        specified endpoint. The synthesized trace is formed by concatenating the
-        traces of all days in the composite workload on the specified endpoint.
+        specified blueprint and query router. The synthesized trace is formed by
+        concatenating the traces of all days in the composite workload on the
+        specified blueprint and query router.
 
         All the timestamps in the trace are shifted, so that the first day's
         earliest timestamp is equal to `normalize_start_to`, and the earliest
@@ -267,39 +211,34 @@ class Composite:
                 timestamp will be normalized.
             inter_chunk_gap: A timedelta object representing the gap to insert
                 between consecutive chunks within each day.
-            save_path: Optional path to save the synthesized trace as a Parquet
-                file. If None, does not save the trace.
-            force_recompose: If True, forces recomposition of the trace from its
-                constituent chunks even if a saved trace already exists.
 
         Returns:
             A pandas DataFrame representing the synthesized trace for the
                 composite workload.
         """
-    
+
         l = [
-            self.days[0].get_trace_on(
-                endpoint_name=endpoint_name,
+            self.days[0].get_most_recent_trace_on(
+                blueprint_name=blueprint_name,
+                query_router_name=query_router_name,
                 normalize_start_to=normalize_start_to,
                 inter_chunk_gap=inter_chunk_gap,
             )
         ]
+
         for day in self.days[1:]:
-            prev_day_start = l[-1]["start_time"].min()
+            prev_day_start = l[-1].trace_df["start_time"].min()
             this_day_start = prev_day_start + timedelta(days=1)
-            day_trace = day.get_trace_on(
-                endpoint_name=endpoint_name,
+            day_trace = day.get_most_recent_trace_on(
+                blueprint_name=blueprint_name,
+                query_router_name=query_router_name,
                 normalize_start_to=this_day_start,
                 inter_chunk_gap=inter_chunk_gap,
-                save_path=None,
             )
             l.append(day_trace)
 
-        # Concatenate and optionally save the synthesized trace.
-        synthesized_trace = pd.concat(l).reset_index(drop=True)
-        if save_path is not None:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            synthesized_trace.to_parquet(save_path, index=False)
+        # Concatenate the synthesized trace.
+        synthesized_trace = Trace.concat(l)
 
         return synthesized_trace
 
@@ -412,46 +351,49 @@ class Composite:
         """
         Chunk.plot_legend(show=show, save_path=save_path)
 
-    def calculate_day_tail_on_endpoint(
+    def calculate_day_tail_s(
         self,
         day_idx: int,
-        endpoint_name: str,
+        blueprint_name: str,
+        query_router_name: str,
         tail_percentile: float = 95.0,
     ) -> float:
         """
         Calculate the specified tail percentile of the query durations across
-        the specified day on the given endpoint.
+        the specified day on the given blueprint and query router.
 
         Parameters:
             day_idx: The index of the day within the composite workload.
-            endpoint_name: The name of the endpoint.
+            blueprint_name: The name of the blueprint.
+            query_router_name: The name of the query router.
             tail_percentile: The percentile to calculate (e.g., 95.0 for 95th
                 percentile).
 
         Returns:
-            The calculated tail percentile of response times in milliseconds.
+            The calculated tail percentile of response times in seconds.
         """
-        synthesized_trace = self.get_trace_on(
-            endpoint_name=endpoint_name,
-            normalize_start_to=self.DEFAULT_TRACE_START_DATE,
-            inter_chunk_gap=timedelta(0),
-            save_path=None,
+        return (
+            self.days[day_idx]
+            .get_most_recent_trace_on(
+                blueprint_name=blueprint_name,
+                query_router_name=query_router_name,
+            )
+            .latency_s_at(quantile=tail_percentile / 100.0)
         )
-        tail_value = synthesized_trace["response_time_ms"].quantile(
-            tail_percentile / 100.0
-        )
-        return tail_value
 
     @staticmethod
-    def ground_truth_smallest_adherent_endpoint(
+    def ground_truth_smallest_adherent_single_cluster_blueprint(
         composite_name: str,
         tail_slo_s: float,
         tail_percentile: float = 95.0,
         day_idx: Optional[int] = None,
     ) -> list[Optional[int]]:
         """
-        Determine the smallest endpoint RPU that meets the tail SLO for the
-        specified day within the composite workload.
+        Determine the smallest single-cluster blueprint (i.e. among the blueprints
+        with only one cluster, the one where the cluster has the fewest RPUs)
+        that meets the specified tail SLO for the specified day of the specified
+        composite workload. If day_idx is None, evaluates all days in the
+        composite workload.
 
         Parameters:
             composite_name: The name of the composite workload.
@@ -462,42 +404,40 @@ class Composite:
                 If None, evaluates all days in the composite workload.
 
         Returns:
-            The smallest endpoint RPU that meets the tail SLO, or None if no
-            suitable RPU is found, for each day (if day_idx is None) or for the
-            specified day (if day_idx is provided).
+            The smallest single-cluster blueprint that meets the tail SLO, or
+            None if no suitable blueprint is found, for each day (if day_idx is
+            None) or for the specified day (if day_idx is provided).
         """
 
-        # Read in the day tail statistics
-        base = pu.get_data_path()
-        workload_dir = os.path.join(base, "composite_workloads", composite_name)
-        stats_file = os.path.join(workload_dir, "day_tail_stats.parquet")
-        if not os.path.exists(stats_file):
-            raise ValueError(
-                "Day tail stats file not found for the "
-                f"composite workload {composite_name}."
-            )
-        stats_df = pd.read_parquet(stats_file)
+        composite = Composite.load(composite_name)
+        days_to_evaluate = (
+            [day_idx] if day_idx is not None else range(len(composite.days))
+        )
 
-        # Check that the given percentile is in the stats
-        if tail_percentile not in stats_df["percentile"].unique():
-            raise ValueError(
-                f"Percentile {tail_percentile} not found in day tail stats."
-            )
+        sizes: list[Optional[int]] = []
+        for idx in days_to_evaluate:
+            selected = None
+            for rpu in sorted(Cluster.ALL_ALLOWED_RPU_SIZES):
+                # Retrieve the trace on a single-cluster blueprint with the
+                # current RPU size.
+                blueprint = Blueprint.one_cluster_with(cluster_rpu=rpu)
+                trace = composite.days[idx].get_most_recent_trace_on(
+                    blueprint_name=blueprint.name,
+                    query_router_name=RFixed(
+                        blueprint, fixed_cluster_name=blueprint.cluster_names[0]
+                    ).name,
+                )
 
-        # Find the smallest endpoint RPU that meets the tail SLO, for each day.
-        if day_idx is not None:
-            stats_df = stats_df[stats_df["day_idx"] == day_idx]
-        stats_df = stats_df[
-            stats_df["percentile"] == tail_percentile
-        ].sort_values(by=["day_idx", "endpoint_rpu"], ascending=True)
+                # Check if the tail latency meets the SLO.
+                if (
+                    trace.latency_s_at(
+                        quantile=tail_percentile / 100.0,
+                    )
+                    <= tail_slo_s
+                ):
+                    selected = rpu
+                    break
 
-        ans = []
-        for _, group in stats_df.groupby("day_idx"):
-            suitable_rpus = group[group["tail_s"] <= tail_slo_s][
-                "endpoint_rpu"
-            ].tolist()
-            if suitable_rpus:
-                ans.append(suitable_rpus[0])
-            else:
-                ans.append(None)
-        return ans
+            sizes.append(selected)
+
+        return sizes
