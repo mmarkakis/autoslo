@@ -7,6 +7,7 @@ if __name__ == "__main__":
         description="Run the specified TotalStrategies with given parameters."
     )
     parser.add_argument(
+        "-i",
         "--include_strategy_names",
         type=str,
         nargs="*",
@@ -17,6 +18,7 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "-e",
         "--exclude_strategy_names",
         type=str,
         nargs="*",
@@ -27,24 +29,28 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "-s",
         "--latency_slo_s",
         type=float,
         required=True,
         help="The latency SLO in seconds.",
     )
     parser.add_argument(
+        "-v",
         "--slo_violation_rate_threshold",
         type=float,
         default=0.05,
         help="The acceptable SLO violation rate threshold.",
     )
     parser.add_argument(
+        "-w",
         "--workload_name",
         type=str,
         required=True,
         help="The workload to run the strategies against.",
     )
     parser.add_argument(
+        "-td",
         "--num_training_days",
         type=int,
         default=14,
@@ -54,15 +60,27 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--rpu_during_training",
-        type=int,
+        "-tb",
+        "--training_period_blueprint_name",
+        type=str,
+        default="single_8",
         help=(
-            "During the training period, we assume a constant blueprint "
-            "including a single cluster with the specified RPU."
+            "During the training period, we assume that the workload is run "
+            "with the specified blueprint."
         ),
-        required=True,
     )
     parser.add_argument(
+        "-tr",
+        "--training_period_query_router_name",
+        default="RFixed(fixed_cluster_name='cluster_8')",
+        type=str,
+        help=(
+            "During the training period, we assume that the workload is run "
+            "with the specified query router."
+        ),
+    )
+    parser.add_argument(
+        "-p",
         "--only_plots",
         action="store_true",
         help="Generate only plots without running the strategies.",
@@ -77,7 +95,8 @@ if __name__ == "__main__":
         slo_violation_rate_threshold=args.slo_violation_rate_threshold,
         workload_name=args.workload_name,
         num_training_days=args.num_training_days,
-        rpu_during_training=args.rpu_during_training,
+        training_period_blueprint_name=args.training_period_blueprint_name,
+        training_period_query_router_name=args.training_period_query_router_name,
     )
     if not args.only_plots:
         runner.run_all()
@@ -85,6 +104,4 @@ if __name__ == "__main__":
         StrategyRunner.plot_results(
             args.workload_name,
             args.latency_slo_s,
-            args.num_training_days,
-            args.rpu_during_training,
         )

@@ -18,9 +18,7 @@ class Blueprint:
     # Maps cluster names to their usage in seconds
     ClusterUsageMap = dict[str, float]
 
-    def __init__(
-        self, clusters: list[Cluster], name: Optional[str] = None
-    ) -> None:
+    def __init__(self, clusters: list[Cluster], name: str) -> None:
         """
         Initialize a Blueprint instance.
 
@@ -37,7 +35,7 @@ class Blueprint:
         self._clusters: dict[str, Cluster] = {}
         for cluster in clusters:
             self._clusters[cluster.name] = cluster
-        self._name = name if name else ""
+        self._name = name
 
     @staticmethod
     def from_config(blueprint_name: str) -> "Blueprint":
@@ -82,7 +80,7 @@ class Blueprint:
         cluster = Cluster(
             rpu=int(cluster_rpu), name=f"cluster_{int(cluster_rpu)}"
         )
-        return Blueprint(clusters=[cluster])
+        return Blueprint(clusters=[cluster], name=f"single_{int(cluster_rpu)}")
 
     @property
     def name(self) -> str:
@@ -135,7 +133,9 @@ class Blueprint:
                 raise KeyError(
                     f"Cluster name '{cluster_name}' not found in blueprint."
                 )
-            total_cost += self._clusters[cluster_name].cost(duration_s=usage_s)
+            total_cost += (
+                self._clusters[cluster_name].cost_per_second * usage_s
+            )
 
         return total_cost
 
@@ -150,8 +150,7 @@ class Blueprint:
         """
         blueprints = []
         for rpu in Cluster.UP_TO_32_RPU_SIZES:
-            cluster = Cluster(rpu=rpu, name=f"cluster_{rpu}")
-            blueprint = Blueprint(clusters=[cluster])
+            blueprint = Blueprint.one_cluster_with(cluster_rpu=rpu)
             blueprints.append(blueprint)
         return blueprints
 

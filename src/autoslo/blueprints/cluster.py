@@ -17,7 +17,11 @@ class Cluster:
     ONE_HOUR_S = 3600
 
     UP_TO_32_RPU_SIZES = [4, 8, 16, 32]
-    ALL_ALLOWED_RPU_SIZES = UP_TO_32_RPU_SIZES
+    ALL_ALLOWED_RPU_SIZES = [4, 8, 16] # FIXME: Removed 32 RPU temporarily
+
+    @staticmethod
+    def all_allowed_rpu_sizes() -> list[int]:
+        return Cluster.ALL_ALLOWED_RPU_SIZES
 
     def __init__(
         self,
@@ -96,22 +100,6 @@ class Cluster:
             conn_info=conn_info,
         )
 
-    def cost(self, duration_s: float = ONE_HOUR_S) -> float:
-        """
-        Calculate the cost of running the cluster for a given duration.
-
-        Parameters:
-            duration_s: The duration in seconds for which the cluster is run. If
-                not provided, defaults to one hour.
-
-        Returns:
-            The total cost of running the cluster for the specified duration, in
-                dollars.
-        """
-        hours = duration_s / self.ONE_HOUR_S
-        total_cost = self.rpu * self.cost_per_rpu_hour * hours
-        return total_cost
-
     @property
     def name(self) -> str:
         """
@@ -141,6 +129,16 @@ class Cluster:
             The cost per RPU per hour.
         """
         return self._cost_per_rpu_hour
+
+    @property
+    def cost_per_second(self) -> float:
+        """
+        Get the cost per second for the cluster.
+
+        Returns:
+            The cost per second.
+        """
+        return self._cost_per_rpu_hour * self._rpu / Cluster.ONE_HOUR_S
 
     @property
     def conn_info(self) -> Optional[ClusterConnInfo]:

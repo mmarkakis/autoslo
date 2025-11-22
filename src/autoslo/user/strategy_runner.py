@@ -11,7 +11,14 @@ import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster import Cluster
 from autoslo.user.strategy_plotter import StrategyPlotter
 from autoslo.workload_definition.composite import Composite
-from src.autoslo.workload_execution.trace import Trace
+from autoslo.workload_execution.trace import Trace
+
+from autoslo.routing.query_router import QueryRouter
+
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.strategies.slo_strategy_performance import SLOStrategyPerformance
+
+from autoslo.strategies.slo_strategy import SLOStrategy
 
 
 class StrategyRunner:
@@ -31,7 +38,8 @@ class StrategyRunner:
         slo_violation_rate_threshold: float,
         workload_name: str,
         num_training_days: int,
-        rpu_during_training: int,
+        training_period_blueprint_name: str,
+        training_period_query_router_name: str,
     ):
         """
         Instantiate a new StrategyRunner.
@@ -45,9 +53,10 @@ class StrategyRunner:
             workload_name: The workload to run the strategies against.
             num_training_days: The number of training days to use. The strategy
                 is evaluated only on days after the training period.
-            rpu_during_training: During the training period, we assume a
-                constant blueprint including a single cluster with the specified
-                RPU.
+            training_period_blueprint_name: The blueprint name used during the
+                training period.
+            training_period_query_router_name: The query router name used during
+                the training period.
         """
 
         StrategyRunner._validate_args(
@@ -57,7 +66,8 @@ class StrategyRunner:
             slo_violation_rate_threshold=slo_violation_rate_threshold,
             workload_name=workload_name,
             num_training_days=num_training_days,
-            rpu_during_training=rpu_during_training,
+            training_period_blueprint_name=training_period_blueprint_name,
+            training_period_query_router_name=training_period_query_router_name,
         )
         self.include_strategy_names = include_strategy_names
         self.exclude_strategy_names = exclude_strategy_names
@@ -65,7 +75,10 @@ class StrategyRunner:
         self.slo_violation_rate_threshold = slo_violation_rate_threshold
         self.workload_name = workload_name
         self.num_training_days = num_training_days
-        self.rpu_during_training = rpu_during_training
+        self.training_period_blueprint_name = training_period_blueprint_name
+        self.training_period_query_router_name = (
+            training_period_query_router_name
+        )
 
         # Determine which strategies to run based on include/exclude lists.
         self.strategy_names_to_run = self._strategy_names_to_run()
@@ -140,15 +153,28 @@ class StrategyRunner:
             if kwargs["num_training_days"] < 0:
                 raise ValueError("num_training_days must be non-negative.")
 
-        # Validate rpu_during_training.
-        if "rpu_during_training" in kwargs:
-            rpu_during_training = kwargs["rpu_during_training"]
-            if rpu_during_training not in Cluster.ALL_ALLOWED_RPU_SIZES:
+        # Validate blueprint and query router names during training.
+        if "training_period_blueprint_name" in kwargs:
+            blueprint_name = kwargs["training_period_blueprint_name"]
+            if blueprint_name not in pu.get_blueprint_dicts_from_config():
                 raise ValueError(
-                    f"rpu_during_training '{rpu_during_training}' is not an "
-                    "allowed RPU size. The allowed sizes are: "
-                    f"{Cluster.ALL_ALLOWED_RPU_SIZES}."
+                    f"training_period_blueprint_name "
+                    f"'{blueprint_name}' is not a recognized blueprint name."
                 )
+
+        if "training_period_query_router_name" in kwargs:
+            query_router_name = kwargs["training_period_query_router_name"]
+            try:
+                QueryRouter.from_name(
+                    query_router_name,
+                    blueprint=Blueprint.from_config(blueprint_name),
+                )
+            except ValueError as e:
+                raise ValueError(
+                    f"training_period_query_router_name "
+                    f"'{query_router_name}' is not a recognized query router "
+                    f"name or has invalid parameters: {e}"
+                ) from e
 
     def _strategy_names_to_run(self) -> list[str]:
         """
@@ -190,40 +216,41 @@ class StrategyRunner:
         """
         workload = Composite.load(workload_name=self.workload_name)
         records = []
+        training_period_blueprint = Blueprint.from_config(
+            self.training_period_blueprint_name
+        )
+        training_period_query_router = QueryRouter.from_name(
+            self.training_period_query_router_name,
+            blueprint=training_period_blueprint,
+        )
         for day_idx in range(self.num_training_days):
-            day_dir = Composite.dir_for_workload_day(
-                workload_name=self.workload_name, day_idx=day_idx
-            )
-            trace = Trace.from_path(
-                os.path.join(
-                    day_dir,
-                    f"{self.workload_name}_day{day_idx}_{self.rpu_during_training}.parquet",  # TODO: probably should have a more elegant way to do this
-                )
-            )
-
-            violating_queries = trace.num_queries_with_latency_over(
-                self.latency_slo_s
-            )
-            total_queries = trace.num_queries()
-            slo_violation_rate = (
-                violating_queries / total_queries if total_queries > 0 else 0.0
+            perf: SLOStrategyPerformance = SLOStrategy.evaluate_suggestion(
+                workload=workload,
+                day_idx=day_idx,
+                latency_slo_s=self.latency_slo_s,
+                blueprint=training_period_blueprint,
+                query_router=training_period_query_router,
             )
 
             records.append(
                 {
                     "strategy_name": "training_period",
                     "workload_name": self.workload_name,
+                    "num_training_days": self.num_training_days,
                     "day_idx": day_idx,
                     "latency_slo_s": self.latency_slo_s,
                     "slo_violation_rate_threshold": (
                         self.slo_violation_rate_threshold
                     ),
-                    "suggested_blueprint_0_rpu": self.rpu_during_training,
-                    "slo_violation_rate": slo_violation_rate,
-                    "total_cost": Cluster(self.rpu_during_training).cost(
-                        trace.billed_s()
+                    "blueprint_name": (self.training_period_blueprint_name),
+                    "query_router_name": (
+                        self.training_period_query_router_name
                     ),
-                    "num_training_days": self.num_training_days,
+                    "num_slo_violations": perf.num_slo_violations(),
+                    "num_total_queries": perf.num_total_queries(),
+                    "slo_violation_rate": perf.slo_violation_rate(),
+                    "total_cost": perf.total_cost(),
+                    "total_routing_time_s": perf.total_routing_time_s(),
                 }
             )
 
@@ -231,7 +258,15 @@ class StrategyRunner:
         output_dir = self.output_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(
-            output_dir, f"training_period_{self.rpu_during_training}.parquet"
+            output_dir,
+            "_".join(
+                [
+                    "training_period",
+                    self.training_period_blueprint_name,
+                    self.training_period_query_router_name,
+                ]
+            )
+            + ".parquet",
         )
         records_df = pd.DataFrame(records)
         records_df.to_parquet(output_path, index=False)
@@ -262,23 +297,32 @@ class StrategyRunner:
         num_days = workload.num_days()
         records = []
         for day_idx in range(self.num_training_days, num_days):
-            suggested_blueprint, perf_of_suggested_blueprint = (
-                strategy_instance.perf_of_suggested_blueprint(
-                    workload_name=self.workload_name,
+            suggested_blueprint, suggested_query_router = (
+                strategy_instance.suggest(
+                    workload=workload,
                     day_idx=day_idx,
                     latency_slo_s=self.latency_slo_s,
+                )
+            )
+            perf: SLOStrategyPerformance = (
+                strategy_instance.evaluate_suggestion(
+                    workload=workload,
+                    day_idx=day_idx,
+                    latency_slo_s=self.latency_slo_s,
+                    blueprint=suggested_blueprint,
+                    query_router=suggested_query_router,
                 )
             )
             records.append(
                 {
                     "day_idx": day_idx,
-                    "suggested_blueprint_0_rpu": suggested_blueprint.clusters[
-                        0
-                    ].rpu,  # TODO: Handle multi-cluster blueprints
-                    "slo_violation_rate": (
-                        perf_of_suggested_blueprint.slo_violation_rate
-                    ),
-                    "total_cost": perf_of_suggested_blueprint.cost,
+                    "blueprint_name": suggested_blueprint.name,
+                    "query_router_name": (suggested_query_router.name),
+                    "num_slo_violations": perf.num_slo_violations(),
+                    "num_total_queries": perf.num_total_queries(),
+                    "slo_violation_rate": (perf.slo_violation_rate()),
+                    "total_cost": perf.total_cost(),
+                    "total_routing_time_s": (perf.total_routing_time_s()),
                 }
             )
 
@@ -299,13 +343,17 @@ class StrategyRunner:
                 [
                     "strategy_name",
                     "workload_name",
+                    "num_training_days",
                     "day_idx",
                     "latency_slo_s",
                     "slo_violation_rate_threshold",
-                    "suggested_blueprint_0_rpu",
+                    "blueprint_name",
+                    "query_router_name",
+                    "num_slo_violations",
+                    "num_total_queries",
                     "slo_violation_rate",
                     "total_cost",
-                    "num_training_days",
+                    "total_routing_time_s",
                 ]
             ]
             .sort_values(by=["day_idx"])
@@ -341,16 +389,12 @@ class StrategyRunner:
         StrategyRunner.plot_results(
             workload_name=self.workload_name,
             latency_slo_s=self.latency_slo_s,
-            num_training_days=self.num_training_days,
-            rpu_during_training=self.rpu_during_training,
         )
 
     @staticmethod
     def plot_results(
         workload_name: str,
         latency_slo_s: float,
-        num_training_days: Optional[int] = None,
-        rpu_during_training: Optional[int] = None,
     ):
         """
         Plot the results of all strategy runs for the specified workload.
@@ -358,16 +402,12 @@ class StrategyRunner:
         Parameters:
             workload_name: The name of the workload to plot results for.
             latency_slo_s: The latency SLO in seconds.
-            num_training_days: The number of training days used in the runs.
-            rpu_during_training: The RPU used during the training period.
         """
 
         # Validate input arguments.
         StrategyRunner._validate_args(
             workload_name=workload_name,
             latency_slo_s=latency_slo_s,
-            num_training_days=num_training_days,
-            rpu_during_training=rpu_during_training,
         )
 
         # Read in all strategy results for the workload.

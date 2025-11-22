@@ -100,7 +100,7 @@ def get_conn_info_path() -> str:
 class RunLocator:
     """
     The `data/runs` directory is organized by timestamp. This class is in charge
-    of maintaining pointers to the most recent run of each workload, and
+    of cataloguing the parameters of each run, and
     providing easier access to the corresponding directories.
     """
 
@@ -110,8 +110,8 @@ class RunLocator:
     @staticmethod
     def get_runs_df(columns: Optional[list[str]] = None) -> pd.DataFrame:
         """
-        Returns a DataFrame indicating the most recent run for each set of
-        configuration parameters.
+        Returns a DataFrame with one row per unique run, summarizing the run
+        parameters.
 
         Parameters:
             columns: Optional list of columns to include in the returned
@@ -156,13 +156,14 @@ class RunLocator:
         """
         run_summary = RunLocator.get_runs_df(list(kwargs.keys()) + ["run_id"])
 
+
         filtered_summary = run_summary
         for k, v in kwargs.items():
             if isinstance(v, (int, float)):
                 filtered_summary = filtered_summary[filtered_summary[k] == v]
             else:
                 filtered_summary = filtered_summary[
-                    filtered_summary[k].str.contains(str(v))
+                    filtered_summary[k].str.contains(str(v), regex=False)
                 ]
 
         return sorted(filtered_summary["run_id"].tolist())
@@ -212,7 +213,8 @@ class RunLocator:
             )
             assert last_run_id_internal == last_run_id
             for f in run_summary_files:
-                os.remove(os.path.join(get_runs_path(), f))
+                if last_run_id not in f:
+                    os.remove(os.path.join(get_runs_path(), f))
         else:
             run_summary_path = os.path.join(
                 get_runs_path(), f"run_summary_{last_run_id}.parquet"
@@ -268,7 +270,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    last_run_id, run_summary_cols = RunLocator._check_refresh()
+    last_run_id, run_summary_cols = RunLocator._check_refresh(force=args.force)
     print(
         f"Last run ID: {last_run_id} "
         f"({datetime.fromtimestamp(int(last_run_id))})"

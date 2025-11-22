@@ -182,6 +182,10 @@ class StrategyPlotter:
         """
         fig, ax, new_ax = StrategyPlotter._maybe_create_ax(ax)
 
+        results_df["suggested_blueprint_0_rpu"] = results_df[
+            "blueprint_name"
+        ].apply(lambda name: int(name.split("_")[-1]))
+
         sns.lineplot(
             data=results_df,
             ax=ax,

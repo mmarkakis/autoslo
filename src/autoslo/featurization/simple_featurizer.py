@@ -30,11 +30,11 @@ class SimpleFeaturizer(Featurizer):
         Returns:
             A featurization vector representing the trace.
         """
-        total_queries = trace.num_queries()
-        mbytes_scanned_mean = trace.mbytes_scanned_mean()
-        num_joins_mean = trace.num_joins_mean()
-        num_scans_mean = trace.num_scans_mean()
-        num_aggregations_mean = trace.num_aggregations_mean()
+        total_queries = trace.num_queries
+        mbytes_scanned_mean = trace.mbytes_scanned().mean()
+        num_joins_mean = trace.num_joins().mean()
+        num_scans_mean = trace.num_scans().mean()
+        num_aggregations_mean = trace.num_aggregations().mean()
 
         return [
             float(total_queries),

@@ -82,32 +82,28 @@ class Day:
             ValueError: If the synthesized trace exceeds 24 hours.
         """
 
-        l = [
-            self.chunks[0].get_most_recent_trace_on(
-                blueprint_name=blueprint_name,
-                query_router_name=query_router_name,
-                normalize_start_to=normalize_start_to,
-            )
-        ]
+        trace = self.chunks[0].get_most_recent_trace_on(
+            blueprint_name=blueprint_name,
+            query_router_name=query_router_name,
+            normalize_start_to=normalize_start_to,
+        )
+
         for chunk in self.chunks[1:]:
-            prev_latest_timestamp = l[-1].trace_df["end_time"].max()
-            chunk_trace = chunk.get_most_recent_trace_on(
+            new_trace_start_time = trace.latest_query_end_time + inter_chunk_gap
+            new_trace = chunk.get_most_recent_trace_on(
                 blueprint_name=blueprint_name,
                 query_router_name=query_router_name,
-                normalize_start_to=prev_latest_timestamp + inter_chunk_gap,
+                normalize_start_to=new_trace_start_time,
             )
-            l.append(chunk_trace)
+            trace.append(new_trace)
 
         # Check that the trace doesn't actually last more than 24 hours.
-        overall_earliest = l[0].trace_df["start_time"].min()
-        overall_latest = l[-1].trace_df["end_time"].max()
+        overall_earliest = trace.earliest_query_start_time
+        overall_latest = trace.latest_query_end_time
         overall_duration = overall_latest - overall_earliest
         if overall_duration > timedelta(hours=24):
             raise ValueError(
                 f"Synthesized trace exceeds 24 hours: {overall_duration}."
             )
 
-        # Concatenate the synthesized trace.
-        synthesized_trace = Trace.concat(l)
-
-        return synthesized_trace
+        return trace

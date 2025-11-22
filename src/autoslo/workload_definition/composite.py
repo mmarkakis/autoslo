@@ -217,30 +217,24 @@ class Composite:
                 composite workload.
         """
 
-        l = [
-            self.days[0].get_most_recent_trace_on(
-                blueprint_name=blueprint_name,
-                query_router_name=query_router_name,
-                normalize_start_to=normalize_start_to,
-                inter_chunk_gap=inter_chunk_gap,
-            )
-        ]
+        trace = None
 
-        for day in self.days[1:]:
-            prev_day_start = l[-1].trace_df["start_time"].min()
-            this_day_start = prev_day_start + timedelta(days=1)
+        for day_idx, day in enumerate(self.days):
+            day_start = normalize_start_to + timedelta(days=day_idx)
             day_trace = day.get_most_recent_trace_on(
                 blueprint_name=blueprint_name,
                 query_router_name=query_router_name,
-                normalize_start_to=this_day_start,
+                normalize_start_to=day_start,
                 inter_chunk_gap=inter_chunk_gap,
             )
-            l.append(day_trace)
+            if trace is None:
+                trace = day_trace
+            else:
+                trace.append(day_trace)
 
-        # Concatenate the synthesized trace.
-        synthesized_trace = Trace.concat(l)
+        assert trace is not None
 
-        return synthesized_trace
+        return trace
 
     def plot_definition(
         self,
@@ -350,94 +344,3 @@ class Composite:
                 not save the legend image.
         """
         Chunk.plot_legend(show=show, save_path=save_path)
-
-    def calculate_day_tail_s(
-        self,
-        day_idx: int,
-        blueprint_name: str,
-        query_router_name: str,
-        tail_percentile: float = 95.0,
-    ) -> float:
-        """
-        Calculate the specified tail percentile of the query durations across
-        the specified day on the given blueprint and query router.
-
-        Parameters:
-            day_idx: The index of the day within the composite workload.
-            blueprint_name: The name of the blueprint.
-            query_router_name: The name of the query router.
-            tail_percentile: The percentile to calculate (e.g., 95.0 for 95th
-                percentile).
-
-        Returns:
-            The calculated tail percentile of response times in seconds.
-        """
-        return (
-            self.days[day_idx]
-            .get_most_recent_trace_on(
-                blueprint_name=blueprint_name,
-                query_router_name=query_router_name,
-            )
-            .latency_s_at(quantile=tail_percentile / 100.0)
-        )
-
-    @staticmethod
-    def ground_truth_smallest_adherent_single_cluster_blueprint(
-        composite_name: str,
-        tail_slo_s: float,
-        tail_percentile: float = 95.0,
-        day_idx: Optional[int] = None,
-    ) -> list[Optional[int]]:
-        """
-        Determine the smallest single-cluster blueprint (i.e. among the blueprints
-        with only one cluster, the one where the cluster has the fewest RPUs)
-        that meets the specified tail SLO for the specified day of the specified
-        composite workload. If day_idx is None, evaluates all days in the
-        composite workload.
-
-        Parameters:
-            composite_name: The name of the composite workload.
-            tail_slo_s: The tail SLO in seconds.
-            tail_percentile: The percentile to consider for the SLO (e.g., 95.0
-                for 95th percentile).
-            day_idx: The index of the day within the composite workload.
-                If None, evaluates all days in the composite workload.
-
-        Returns:
-            The smallest single-cluster blueprint that meets the tail SLO, or
-            None if no suitable blueprint is found, for each day (if day_idx is
-            None) or for the specified day (if day_idx is provided).
-        """
-
-        composite = Composite.load(composite_name)
-        days_to_evaluate = (
-            [day_idx] if day_idx is not None else range(len(composite.days))
-        )
-
-        sizes: list[Optional[int]] = []
-        for idx in days_to_evaluate:
-            selected = None
-            for rpu in sorted(Cluster.ALL_ALLOWED_RPU_SIZES):
-                # Retrieve the trace on a single-cluster blueprint with the
-                # current RPU size.
-                blueprint = Blueprint.one_cluster_with(cluster_rpu=rpu)
-                trace = composite.days[idx].get_most_recent_trace_on(
-                    blueprint_name=blueprint.name,
-                    query_router_name=RFixed(
-                        blueprint, fixed_cluster_name=blueprint.cluster_names[0]
-                    ).name,
-                )
-
-                # Check if the tail latency meets the SLO.
-                if (
-                    trace.latency_s_at(
-                        quantile=tail_percentile / 100.0,
-                    )
-                    <= tail_slo_s
-                ):
-                    selected = rpu
-                    break
-
-            sizes.append(selected)
-
-        return sizes

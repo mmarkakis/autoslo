@@ -362,7 +362,7 @@ class Chunk:
         self,
         blueprint_name: str,
         query_router_name: str,
-        normalize_start_to: Optional[datetime],
+        normalize_start_to: Optional[datetime] = None
     ) -> Trace:
         """
         Get the (most recent) trace for this chunk on the specified blueprint
@@ -382,7 +382,7 @@ class Chunk:
             blueprint_name=blueprint_name,
             query_router_name=query_router_name,
         )
-        trace = Trace.from_run(run_id=most_recent_run_id)
+        trace = Trace(run_id=most_recent_run_id)
 
         if normalize_start_to is not None:
             trace.normalize_start_to(normalize_start_to)

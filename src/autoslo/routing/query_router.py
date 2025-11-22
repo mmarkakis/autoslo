@@ -92,7 +92,7 @@ class QueryRouter(ABC):
     def registered_names(cls) -> List[str]:
         """Return a list of currently-registered router keys."""
         return list(cls._registry.keys())
-
+    
     @classmethod
     def from_name(
         cls,
@@ -132,6 +132,8 @@ class QueryRouter(ABC):
         Raises:
             ValueError: If the class name is not registered or if the name
                 string is malformed.
+            ValueError: If there is an error instantiating the subclass with the
+                provided arguments.
         """
         # optionally populate registry by importing routing submodules
         if auto_populate:
@@ -177,7 +179,14 @@ class QueryRouter(ABC):
 
         subcls = cls._registry[class_name]
         # instantiate subclass with blueprint and parsed args.
-        return subcls(blueprint, *positional, **kw)
+        try:
+            subclass_instance = subcls(blueprint, *positional, **kw)
+        except Exception as e:
+            raise ValueError(
+                f"Error instantiating QueryRouter subclass '{class_name}' "
+                f"with args {positional} and kwargs {kw}: {e}"
+            ) from e
+        return subclass_instance
 
     def __init__(self, blueprint: Blueprint, *args, **kwargs) -> None:
         """
