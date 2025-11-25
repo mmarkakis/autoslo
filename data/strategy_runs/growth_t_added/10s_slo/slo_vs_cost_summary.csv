@@ -1,0 +1,6 @@
+strategy_name,mean_slo_violation_rate,sum_total_cost
+StratHistoricalSingle1,0.16763226920862387,300.75
+StratHistoricalSingle14,0.16763226920862387,300.75
+StratHistoricalSingle7,0.16763226920862387,300.75
+StratOracleSingle,0.16763226920862387,300.75
+training_period,0.505814401232191,34.252500000000005
