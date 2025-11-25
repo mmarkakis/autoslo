@@ -1,6 +1,6 @@
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pandas as pd
 import pyarrow as pa

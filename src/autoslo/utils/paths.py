@@ -1,7 +1,7 @@
 import argparse
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -13,6 +13,49 @@ QUERIES_PATH = "/home/markakis/tpc-ds-generator/queries/1721657313/redshift"
 AUTOSLO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")
 )
+
+REDSET_RAW_PATH = "/home/markakis/redset"
+
+
+def get_redset_raw_path() -> str:
+    """
+    Return the absolute REDSET_RAW_PATH used by autoslo.
+    Useful for API routes that need to expose this to the UI.
+    """
+    return REDSET_RAW_PATH
+
+
+def get_redset_raw_data(
+    cluster_type: str = "provisioned", cluster_id: Union[str, int] = 1
+):
+    """
+    Return the absolute path to the Redset raw data for a given cluster type
+    and cluster ID.
+
+    Parameters:
+        cluster_type: The type of the cluster ("provisioned" or "serverless").
+        cluster_id: The ID of the cluster.
+
+    Returns:
+        The absolute path to the Redset raw data for the specified cluster.
+
+    Raises:
+        ValueError: If the cluster_type is not recognized.
+        IndexError: If the cluster_id is not found in the directory.
+    """
+    if cluster_type not in ["provisioned", "serverless"]:
+        raise ValueError(f"Unknown cluster type: {cluster_type}")
+
+    path = os.path.join(
+        REDSET_RAW_PATH, cluster_type, "parts", f"{cluster_id}.parquet"
+    )
+
+    if not os.path.exists(path):
+        raise IndexError(
+            f"Cluster ID {cluster_id} not found in {cluster_type} clusters."
+        )
+
+    return path
 
 
 def get_cluster_dicts_from_config() -> dict[str, dict]:
@@ -155,7 +198,6 @@ class RunLocator:
             A list of run IDs that match the filter criteria.
         """
         run_summary = RunLocator.get_runs_df(list(kwargs.keys()) + ["run_id"])
-
 
         filtered_summary = run_summary
         for k, v in kwargs.items():

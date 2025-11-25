@@ -12,6 +12,7 @@ data/composite_workloads/**/day_traces/
 data/runs/**/*.log
 data/strategy_runs/**/*.parquet
 data/runs/run_summary*
+data/redset_byproducts/
 
 site/
 docs/reference/

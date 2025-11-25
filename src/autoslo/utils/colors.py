@@ -18,6 +18,7 @@ class Palette:
     dark_orange: str = "#E07022"
     light_red: str = "#E78C84"
     dark_red: str = "#C9302C"
+    light_gray: str = "#D3D3D3"
     gray: str = "#4A4A4A"
     black: str = "#000000"
 
