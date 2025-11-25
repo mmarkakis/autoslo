@@ -20,6 +20,8 @@ from autoslo.strategies.slo_strategy_performance import SLOStrategyPerformance
 
 from autoslo.strategies.slo_strategy import SLOStrategy
 
+import autoslo.utils.paralellism as plu
+
 
 class StrategyRunner:
 
@@ -371,10 +373,7 @@ class StrategyRunner:
         self._collect_training_period_data()
 
         # Run the strategies over the test period in parallel.
-        num_cpus = min(
-            max(1, mp.cpu_count() - 1), len(self.strategy_names_to_run)
-        )
-        with mp.Pool(processes=num_cpus) as pool:
+        with mp.Pool(processes=plu.deg_of_paralellism()) as pool:
             list(
                 tqdm(
                     pool.imap_unordered(

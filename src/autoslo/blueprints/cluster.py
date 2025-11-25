@@ -17,7 +17,7 @@ class Cluster:
     ONE_HOUR_S = 3600
 
     UP_TO_32_RPU_SIZES = [4, 8, 16, 32]
-    ALL_ALLOWED_RPU_SIZES = [4, 8, 16] # FIXME: Removed 32 RPU temporarily
+    ALL_ALLOWED_RPU_SIZES = UP_TO_32_RPU_SIZES
 
     @staticmethod
     def all_allowed_rpu_sizes() -> list[int]:

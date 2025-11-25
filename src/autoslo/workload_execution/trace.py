@@ -1,13 +1,14 @@
 import os
+from collections import defaultdict
 from datetime import datetime, timezone
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
+import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster import Cluster
-from collections import defaultdict
-
-import pyarrow.parquet as pq
 
 
 class Trace:
@@ -101,7 +102,8 @@ class Trace:
                 f"DataFrame at {path} is missing required columns: "
                 f"{', '.join(missing_columns)}"
             )
-        return pd.read_parquet(path, columns=column_list)
+        pa.set_cpu_count(plu.inner_level_num_cpus())
+        return pd.read_parquet(path, columns=column_list, engine="pyarrow")
 
     def normalize_start_to(self, new_start: datetime) -> "Trace":
         """
@@ -271,7 +273,7 @@ class Trace:
             A list of unique cluster names.
         """
         return list(self._dfs["sys_query_history"].keys())
-    
+
     @property
     def routing_times_s(self) -> list[float]:
         """
@@ -280,7 +282,7 @@ class Trace:
         Returns:
             A list of routing times in seconds.
         """
-        # FIXME: Placeholder implementation - routing strategy should record 
+        # FIXME: Placeholder implementation - routing strategy should record
         # this and write it out.
         return [0.0 for _ in range(self.num_queries)]
 
