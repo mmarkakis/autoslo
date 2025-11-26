@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+import autoslo.utils.class_with_factory as au
 from autoslo.workload_execution.trace import Trace
 
 
@@ -7,6 +8,9 @@ class Featurizer(ABC):
     """
     Abstract base class for featurizers that convert traces into vectors that
     the model-based strategies can use for predictions.
+
+    TODO: The same featurizer must also provide ways to recover the same
+    featurization from Redset.
     """
 
     WorkloadFeaturization = list[float]
@@ -22,7 +26,9 @@ class Featurizer(ABC):
         pass
 
     @abstractmethod
-    def featurize(self, trace: Trace, *args, **kwargs) -> WorkloadFeaturization:
+    def featurize_trace(
+        self, trace: Trace, *args, **kwargs
+    ) -> WorkloadFeaturization:
         """
         Featurize a given trace into a vector.
 

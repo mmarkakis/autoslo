@@ -1,6 +1,5 @@
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.routing.query_router import QueryRouter
-from typing import Optional
 
 
 class RFixed(QueryRouter):
@@ -31,8 +30,7 @@ class RFixed(QueryRouter):
     @property
     def name(self) -> str:
         """
-        Get the name of the RFixed instance in a reproducible format that can be
-        parsed by QueryRouter.from_name.
+        Get the name of the RFixed instance.
         """
         return f"RFixed(fixed_cluster_name={repr(self._fixed_cluster_name)})"
 
