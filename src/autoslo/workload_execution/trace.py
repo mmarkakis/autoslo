@@ -404,7 +404,8 @@ class Trace:
 
     def mbytes_scanned(self) -> pd.Series:
         """
-        Return a Series with the total MB scanned per query.
+        Return a Series where the index is the query IDs and the values are
+        the total MB scanned per query.
         """
         series = []
         query_ids = self.query_ids
@@ -419,24 +420,43 @@ class Trace:
             pd.concat(series).reindex(query_ids) / Trace.BYTES_IN_MEGABYTE
         )
         return concatenated
+    
+    def _count_word_in_plan_rows(self, word: str) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the count of occurrences of the specified word in the plan nodes.
+        """
+        series = []
+        query_ids = self.query_ids
+        for df in self._dfs["sys_query_explain"].values():
+            condition = df["query_id"].isin(query_ids)
+            s = (
+                df[condition]["plan_node"]
+                .str.lower()
+                .str.contains(word.lower(), na=False)
+                .groupby(df["query_id"])
+                .sum()
+            )
+            series.append(s)
+        return pd.concat(series).reindex(query_ids)
 
-    def num_joins(self) -> float:
+    def num_joins(self) -> pd.Series:
         """
-        Placeholder method to return mean number of joins.
+        Return a Series where the index is the query IDs and the values are
+        the number of joins.
         """
-        # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
-        return 0.0
+        return self._count_word_in_plan_rows("join")
 
-    def num_scans(self) -> float:
+    def num_scans(self) -> pd.Series:
         """
-        Placeholder method to return mean number of scans.
+        Return a Series where the index is the query IDs and the values are
+        the number of scans.
         """
-        # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
-        return 0.0
+        return self._count_word_in_plan_rows("scan")
 
-    def num_aggregations(self) -> float:
+    def num_aggregates(self) -> pd.Series:
         """
-        Placeholder method to return mean number of aggregations.
+        Return a Series where the index is the query IDs and the values are
+        the number of aggregates.
         """
-        # Placeholder implementation - need to get from SYS_QUERY_EXPLAIN
-        return 0.0
+        return self._count_word_in_plan_rows("aggregate")

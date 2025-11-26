@@ -18,3 +18,5 @@ site/
 docs/reference/
 docs/index.md
 docs/assets/
+
+data/models/
