@@ -41,8 +41,22 @@ class FMinimal(Featurizer):
         """
         return f"FMinimal(summary_metric={self.summary_metric})"
 
-    def featurize_trace(
-        self, trace: Trace, rpu: int
+    @property
+    def feature_names(self) -> list[str]:
+        """
+        Get the ordered names of the features produced by this featurizer.
+        """
+        return [
+            "num_queries",
+            f"mbytes_scanned_{self.summary_metric}",
+            f"num_joins_{self.summary_metric}",
+            f"num_scans_{self.summary_metric}",
+            f"num_aggregations_{self.summary_metric}",
+            "rpu",
+        ]
+
+    def _featurize_trace_impl(
+        self, trace: Trace,
     ) -> Featurizer.WorkloadFeaturization:
         """
         Featurize a given trace into a vector of basic statistics.
@@ -59,6 +73,11 @@ class FMinimal(Featurizer):
         num_joins_stat = self.summary_func(trace.num_joins())
         num_scans_stat = self.summary_func(trace.num_scans())
         num_aggregates_stat = self.summary_func(trace.num_aggregates())
+
+        rpu_per_cluster = trace.rpu_per_cluster()
+        # For simplicity, assume a single cluster and take its RPU.
+        # FIXME: Extend to multi-cluster traces in the future.
+        rpu = next(iter(rpu_per_cluster.values()))
 
         return [
             float(total_queries),

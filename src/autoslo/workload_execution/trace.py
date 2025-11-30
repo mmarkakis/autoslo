@@ -5,6 +5,7 @@ from datetime import datetime
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import yaml
 
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
@@ -29,6 +30,10 @@ class Trace:
             "step_name",
             "output_bytes",
         ],
+        "sys_query_explain": [
+            "query_id",
+            "plan_node",
+        ],
     }
 
     REDSHIFT_BILLING_THRESHOLD_S = 60
@@ -52,6 +57,7 @@ class Trace:
             ValueError: If no sys_query_history Parquet file is found in the
                 run directory.
         """
+        self._run_id = run_id
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
         self._original_start = datetime.now()
@@ -77,6 +83,13 @@ class Trace:
                     min_start_time = df["start_time"].min()
                     if min_start_time < self._original_start:
                         self._original_start = min_start_time
+
+    @property
+    def run_id(self) -> str:
+        """
+        Get the run ID of the trace.
+        """
+        return self._run_id
 
     @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
@@ -420,11 +433,15 @@ class Trace:
             pd.concat(series).reindex(query_ids) / Trace.BYTES_IN_MEGABYTE
         )
         return concatenated
-    
+
     def _count_word_in_plan_rows(self, word: str) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
         the count of occurrences of the specified word in the plan nodes.
+
+        FIXME: This lumps together the features from all clusters in the trace.
+        We may want to separate them per cluster in the future to properly
+        support multi-cluster traces, or at least document this behavior.
         """
         series = []
         query_ids = self.query_ids
@@ -460,3 +477,31 @@ class Trace:
         the number of aggregates.
         """
         return self._count_word_in_plan_rows("aggregate")
+
+    def rpu_per_cluster(self) -> dict[str, int]:
+        """
+        Returns the RPU corresponding to each cluster of the blueprint on
+        which this trace was executed.
+
+        Returns:
+            A dictionary mapping cluster names to their respective RPUs.
+        """
+        # Find out the name of the blueprint.
+        run_params_path = os.path.join(
+            pu.get_runs_path(), self._run_id, "run_params.yml"
+        )
+        with open(run_params_path, "r") as f:
+            run_params = yaml.safe_load(f)
+        blueprint_name = run_params["blueprint_name"]
+
+        # For this blueprint, find out the cluster names and their RPUs.
+        bp_cluster_names = pu.get_blueprint_dicts_from_config()[blueprint_name][
+            "cluster_names"
+        ]
+        all_cluster_names_to_rpu = {
+            k: v["rpu"] for k, v in pu.get_cluster_dicts_from_config().items()
+        }
+        bp_cluster_names_to_rpu = {
+            name: all_cluster_names_to_rpu[name] for name in bp_cluster_names
+        }
+        return bp_cluster_names_to_rpu
