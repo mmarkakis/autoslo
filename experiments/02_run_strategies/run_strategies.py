@@ -95,6 +95,20 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "-mrid",
+        "--model_training_run_id",
+        type=str,
+        default="1764110060",
+        help="The run ID where the model artifacts are stored.",
+    )
+    parser.add_argument(
+        "-mn",
+        "--model_name",
+        type=str,
+        default="model_105",
+        help="The name of the model to load.",
+    )
+    parser.add_argument(
         "-p",
         "--only_plots",
         action="store_true",
@@ -136,6 +150,8 @@ if __name__ == "__main__":
             num_training_days=args.num_training_days,
             training_period_blueprint_name=args.training_period_blueprint_name,
             training_period_query_router_name=args.training_period_query_router_name,
+            model_training_run_id=args.model_training_run_id,
+            model_name=args.model_name
         )
         if not args.only_plots:
             runner.run_all()

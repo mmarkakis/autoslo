@@ -42,6 +42,8 @@ class StrategyRunner:
         num_training_days: int,
         training_period_blueprint_name: str,
         training_period_query_router_name: str,
+        model_training_run_id: str,
+        model_name: str,
     ):
         """
         Instantiate a new StrategyRunner.
@@ -59,6 +61,8 @@ class StrategyRunner:
                 training period.
             training_period_query_router_name: The query router name used during
                 the training period.
+            model_training_run_id: The run ID where the model is stored.
+            model_name: The name of the model to load.
         """
 
         StrategyRunner._validate_args(
@@ -70,6 +74,7 @@ class StrategyRunner:
             num_training_days=num_training_days,
             training_period_blueprint_name=training_period_blueprint_name,
             training_period_query_router_name=training_period_query_router_name,
+            # TODO: validate model_training_run_id and model_name?
         )
         self.include_strategy_names = include_strategy_names
         self.exclude_strategy_names = exclude_strategy_names
@@ -81,6 +86,8 @@ class StrategyRunner:
         self.training_period_query_router_name = (
             training_period_query_router_name
         )
+        self.model_training_run_id = model_training_run_id
+        self.model_name = model_name
 
         # Determine which strategies to run based on include/exclude lists.
         self.strategy_names_to_run = self._strategy_names_to_run()
@@ -158,6 +165,7 @@ class StrategyRunner:
         # Validate blueprint and query router names during training.
         if "training_period_blueprint_name" in kwargs:
             blueprint_name = kwargs["training_period_blueprint_name"]
+            blueprint = Blueprint.from_config(blueprint_name)
             if blueprint_name not in pu.get_blueprint_dicts_from_config():
                 raise ValueError(
                     f"training_period_blueprint_name "
@@ -291,6 +299,8 @@ class StrategyRunner:
         strategy_instance = strategy_class(
             latency_slo_s=self.latency_slo_s,
             slo_violation_rate_threshold=self.slo_violation_rate_threshold,
+            model_training_run_id=self.model_training_run_id,
+            model_name=self.model_name,
         )
 
         # For the chosen workload, after the training period, run the strategy
@@ -339,6 +349,8 @@ class StrategyRunner:
             self.slo_violation_rate_threshold
         )
         records_df["num_training_days"] = self.num_training_days
+        records_df['model_training_run_id'] = self.model_training_run_id
+        records_df['model_name'] = self.model_name
         records_df["strategy_name"] = strategy_name
         records_df = (
             records_df[
@@ -351,6 +363,8 @@ class StrategyRunner:
                     "slo_violation_rate_threshold",
                     "blueprint_name",
                     "query_router_name",
+                    "model_training_run_id",
+                    "model_name",
                     "num_slo_violations",
                     "num_total_queries",
                     "slo_violation_rate",
@@ -426,26 +440,31 @@ class StrategyRunner:
         results_df = pd.concat(all_records, ignore_index=True)
 
         # Generate the plots individually.
-        StrategyPlotter.plot_daily_slo_violation_rates(
-            workload_name=workload_name,
-            output_dir=output_dir,
-            results_df=results_df,
-        )
-        StrategyPlotter.plot_daily_costs(
-            workload_name=workload_name,
-            output_dir=output_dir,
-            results_df=results_df,
-        )
-        StrategyPlotter.plot_daily_chosen_rpu(
-            workload_name=workload_name,
-            output_dir=output_dir,
-            results_df=results_df,
-        )
+        # StrategyPlotter.plot_daily_slo_violation_rates(
+        #     workload_name=workload_name,
+        #     output_dir=output_dir,
+        #     results_df=results_df,
+        # )
+        # StrategyPlotter.plot_daily_costs(
+        #     workload_name=workload_name,
+        #     output_dir=output_dir,
+        #     results_df=results_df,
+        # )
+        # StrategyPlotter.plot_daily_chosen_rpu(
+        #     workload_name=workload_name,
+        #     output_dir=output_dir,
+        #     results_df=results_df,
+        # )
         summary_df = StrategyPlotter.plot_scatter_slo_violations_vs_cost(
             workload_name=workload_name,
             output_dir=output_dir,
             results_df=results_df,
         )
+
+        # Also save these scatterplot data to a CSV for further analysis.
+        csv_path = os.path.join(output_dir, "slo_vs_cost_summary.csv")
+        summary_df.to_csv(csv_path, index=False)
+
 
         # Also generate a single figure with the workload definition and all
         # three plots for easier comparison. Make the first plot have a shorter
@@ -488,6 +507,4 @@ class StrategyRunner:
         fig.savefig(combined_plt_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
-        # Also save these scatterplot data to a CSV for further analysis.
-        csv_path = os.path.join(output_dir, "slo_vs_cost_summary.csv")
-        summary_df.to_csv(csv_path, index=False)
+        

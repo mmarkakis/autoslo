@@ -14,6 +14,11 @@ class StratHistoricalSingle(SLOStrategy):
     """
     SLO strategy that uses past data from the most recent periods to
     predict and select the best single-cluster blueprint for the next period.
+
+    # FIXME: We should accept the historical bluepirnts over the training window
+    # as input, and only access the ground truth on those blueprints. For the
+    # rest, we should be using a model. Or we can keep this one as-is and create
+    # a new strategy that uses the model this way. 
     """
 
     def __init__(

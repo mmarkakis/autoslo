@@ -4,6 +4,9 @@ from autoslo.strategies.strat_historical_single import (
     StratHistoricalSingle7,
     StratHistoricalSingle14,
 )
+from autoslo.strategies.strat_model_noforecast_single import (
+    StratModelNoForecastSingle,
+)
 from autoslo.strategies.strat_oracle_single import StratOracleSingle
 
 # Maps strategy names to their corresponding TotalStrategy classes.
@@ -31,7 +34,11 @@ STRATEGIES: dict[str, dict[str, object]] = {
     "StratOracleSingle": {
         "class": StratOracleSingle,
         "color": cu.Palette.light_blue,
-        "marker": "o",
+        "marker": "s",
     },
-
+    "StratModelNoForecastSingle": {
+        "class": StratModelNoForecastSingle,
+        "color": cu.Palette.light_green,
+        "marker": "^",
+    },
 }

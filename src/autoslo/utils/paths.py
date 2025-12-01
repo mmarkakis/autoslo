@@ -102,6 +102,12 @@ def get_runs_path() -> str:
     """
     return os.path.join(get_data_path(), "runs")
 
+def get_models_dir() -> str:
+    """
+    Return the absolute path to the models directory.
+    """
+    return os.path.join(get_data_path(), "models")
+
 
 def get_heavy_templates_files() -> dict[str, str]:
     """

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import pandas as pd
 
 
 @dataclass
@@ -120,6 +121,24 @@ class SLOStrategyPerformance:
             The latency SLO in seconds.
         """
         return self._latency_slo_s
+    
+    def latency_s_at_quantile(self, quantile: float) -> float:
+        """
+        Calculate the latency at the specified quantile.
+
+        Parameters:
+            quantile: The quantile to calculate (between 0 and 1).
+
+        Returns:
+            The latency at the specified quantile as a float.
+
+        Raises:
+            ValueError: If the quantile is not between 0 and 1.
+        """
+        if not 0.0 < quantile < 1.0:
+            raise ValueError("Quantile must be between 0 and 1.")
+
+        return float(pd.Series(self._latencies_s).quantile(quantile))
 
     def total_cost(self) -> float:
         """

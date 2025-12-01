@@ -236,6 +236,11 @@ class StrategyPlotter:
             .reset_index()
         )
 
+        # Don't plot the "training period" strategy if present.
+        summary_df = summary_df[
+            summary_df["strategy_name"] != "training_period"
+        ]
+
         sns.scatterplot(
             data=summary_df,
             x="sum_total_cost",
