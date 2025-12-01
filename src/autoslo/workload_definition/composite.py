@@ -190,6 +190,7 @@ class Composite:
         query_router_name: str,
         normalize_start_to: datetime = DEFAULT_TRACE_START_DATE,
         inter_chunk_gap: timedelta = timedelta(0),
+        day_idx: Optional[int] = None,
     ) -> Trace:
         """
         Get the synthesized trace for the entire composite workload on the
@@ -211,15 +212,23 @@ class Composite:
                 timestamp will be normalized.
             inter_chunk_gap: A timedelta object representing the gap to insert
                 between consecutive chunks within each day.
+            day_idx: Optional index of a specific day to retrieve the trace for.
+                If provided, only the trace for that day will be returned.
 
         Returns:
             A pandas DataFrame representing the synthesized trace for the
-                composite workload.
+                composite workload, or for the specified day if day_idx is 
+                provided.
         """
 
         trace = None
 
-        for day_idx, day in enumerate(self.days):
+        day_idxs_to_use = (
+            [day_idx] if day_idx is not None else range(len(self.days))
+        )
+
+        for day_idx in day_idxs_to_use:
+            day = self.days[day_idx]
             day_start = normalize_start_to + timedelta(days=day_idx)
             day_trace = day.get_most_recent_trace_on(
                 blueprint_name=blueprint_name,
