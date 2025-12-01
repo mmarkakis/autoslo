@@ -5,9 +5,8 @@ Base class with registry and factory methods for AutoSLO components.
 import ast
 import importlib
 import pkgutil
-from typing import Any, Self
-
 from abc import ABC, abstractmethod
+from typing import Any, Self
 
 
 class ClassWithFactory(ABC):
@@ -15,6 +14,15 @@ class ClassWithFactory(ABC):
     # Each sublcass of ClassWithFactory should have its own _registry variable,
     # where it maps strings to the types of *its* subclasses.
     _registry: dict[str, type[Self]] = {}
+
+    # Add an init_subclass to populate the registry automatically when a
+    # subclass is defined.
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not hasattr(cls, "_registry"):
+            cls._registry = {}
+        # Register the subclass using its class name.
+        cls._registry[cls.__name__] = cls
 
     @classmethod
     def ensure_registry_populated(
