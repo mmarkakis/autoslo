@@ -29,6 +29,24 @@ def group_one(df: pd.DataFrame, group_column: str, out_path: str):
         .agg(
             instance_id=("instance_id", "first"),
             num_queries=("arrival_timestamp", "size"),
+            interarrival_time_s_mean=(
+                "arrival_timestamp",
+                lambda x: x.sort_values().diff().dt.total_seconds().mean(),
+            ),
+            interarrival_time_s_p5=(
+                "arrival_timestamp",
+                lambda x: x.sort_values()
+                .diff()
+                .dt.total_seconds()
+                .quantile(0.05),
+            ),
+            interarrival_time_s_p1=(
+                "arrival_timestamp",
+                lambda x: x.sort_values()
+                .diff()
+                .dt.total_seconds()
+                .quantile(0.01),
+            ),
             unique_cluster_sizes=(
                 "cluster_size",
                 lambda x: list(x[x.notna()].unique()),

@@ -14,11 +14,13 @@ from tqdm.auto import tqdm
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
 
+import yaml
+
 TRAIN_PARAMS = {
     "bin_granularity": ["daily", "hourly"],
     "label": ["duration_s_p95", "duration_s_p99"],
-    "num_boost_rounds": [100, 500, 1000],
-    "max_depth": [6, 10, 15],
+    "num_boost_rounds": [100, 200, 500, 1000],
+    "max_depth": [5, 15, 10, 20, 30],
     "objective_params": [
         {"objective": "reg:quantileerror", "quantile_alpha": 0.95},
         {"objective": "reg:quantileerror", "quantile_alpha": 0.99},
@@ -26,6 +28,27 @@ TRAIN_PARAMS = {
             "objective": "custom:asymmetric_mse",
             "heavy_side": 10,
             "light_side": 0.5,
+        },
+        {
+            "objective": "custom:asymmetric_thresholded_mse",
+            "heavy_side": 3,
+            "light_side": 1,
+            "low_threshold": 10.0,
+            "low_value_weight": 0.2,
+        },
+        {
+            "objective": "custom:asymmetric_thresholded_mse",
+            "heavy_side": 2,
+            "light_side": 1,
+            "low_threshold": 10.0,
+            "low_value_weight": 0.2,
+        },
+        {
+            "objective": "custom:asymmetric_thresholded_mse",
+            "heavy_side": 3,
+            "light_side": 1,
+            "low_threshold": 10.0,
+            "low_value_weight": 0.1,
         },
     ],
     "feature_set": {
@@ -85,6 +108,63 @@ TRAIN_PARAMS = {
             "num_aggregations_p99",
             "rpu",
         ],
+        "inter_mean": [
+            "interarrival_time_s_p1",
+            "mbytes_scanned_mean",
+            "num_joins_mean",
+            "num_scans_mean",
+            "num_aggregations_mean",
+            "rpu",
+        ],
+        "inter_p95": [
+            "interarrival_time_s_p1",
+            "mbytes_scanned_p95",
+            "num_joins_p95",
+            "num_scans_p95",
+            "num_aggregations_p95",
+            "rpu",
+        ],
+        "inter_p99": [
+            "interarrival_time_s_p1",
+            "mbytes_scanned_p99",
+            "num_joins_p99",
+            "num_scans_p99",
+            "num_aggregations_p99",
+            "rpu",
+        ],
+        "all_nonq": [
+            "interarrival_time_s_p1",
+            "interarrival_time_s_p5",
+            "interarrival_time_s_mean",
+            "was_aborted_mean",
+            "was_cached_mean",
+            "num_permanent_tables_accessed_mean",
+            "num_external_tables_accessed_mean",
+            "num_system_tables_accessed_mean",
+            "mbytes_scanned_mean",
+            "mbytes_scanned_p95",
+            "mbytes_scanned_p99",
+            "num_joins_mean",
+            "num_joins_p95",
+            "num_joins_p99",
+            "num_scans_mean",
+            "num_scans_p95",
+            "num_scans_p99",
+            "num_aggregations_mean",
+            "num_aggregations_p95",
+            "num_aggregations_p99",
+            "query_type_analyze",
+            "query_type_copy",
+            "query_type_ctas",
+            "query_type_delete",
+            "query_type_insert",
+            "query_type_other",
+            "query_type_select",
+            "query_type_unload",
+            "query_type_update",
+            "query_type_vacuum",
+            "rpu",
+        ],
     },
 }
 
@@ -125,12 +205,11 @@ class ModelTrainer:
         # Write out the training parameters
         with open(
             os.path.join(
-                self.output_dir, f"{self.model_id}_training_params.txt"
+                self.output_dir, f"{self.model_id}_training_params.yml"
             ),
             "w",
         ) as f:
-            for k, v in training_params.items():
-                f.write(f"{k}: {v}\n")
+            yaml.dump(training_params, f)
 
         self.read_and_preprocess()
         self.train()
@@ -178,16 +257,44 @@ class ModelTrainer:
             y_pred: array-like of predicted values
         """
         residual = (y_true - y_pred).astype("float")
+
+        heavy = self.objective_params.get("heavy_side", 10)
+        light = self.objective_params.get("light_side", 0.5)
+
         grad = np.where(
             residual > 0,
-            -2 * residual * self.objective_params.get("heavy_side", 10),
-            -2 * residual * self.objective_params.get("light_side", 0.5),
+            -2 * residual * heavy,
+            -2 * residual * light,
         )
         hess = np.where(
             residual > 0,
-            2 * self.objective_params.get("heavy_side", 10),
-            2 * self.objective_params.get("light_side", 0.5),
+            2 * heavy,
+            2 * light,
         )
+        return grad, hess
+
+    def asymmetric_thresholded_mse(self, y_true, y_pred):
+        """
+        Custom asymmetric mean squared error loss function with thresholding.
+        Heavier penalty for underestimation than overestimation. For very small
+        values
+
+        Parameters:
+            y_true: array-like of true values
+            y_pred: array-like of predicted values
+        """
+        base_grad, base_hess = self.asymmetric_mse(y_true, y_pred)
+
+        T_low = self.objective_params.get("low_threshold", 10.0)
+        T_low_logspace = np.log1p(T_low)
+        low_w = self.objective_params.get("low_value_weight", 0.2)
+
+        w_small = low_w + (1.0 - low_w) * np.minimum(
+            1.0, y_true / T_low_logspace
+        )
+
+        grad = w_small * base_grad
+        hess = w_small * base_hess
         return grad, hess
 
     def train(self):
@@ -280,6 +387,8 @@ class ModelTrainer:
         """
         d = {}
 
+        thresholds = [1, 5, 10, 20, 30, 60, 120, 300, 600]
+
         for split_name, split_df in self.split_dfs.items():
             y_true_log = self.log_labels[split_name]
             y_pred_log = self.model.predict(split_df[self.feature_set])
@@ -291,11 +400,11 @@ class ModelTrainer:
 
             # 1) Pinball @ 95 and 99
             diff = y_true - y_pred
-            pinball_95 = np.mean(
-                np.where(diff >= 0, 0.95 * diff, (1 - 0.95) * (-diff))
+            pinball_95 = float(
+                np.mean(np.where(diff >= 0, 0.95 * diff, (1 - 0.95) * (-diff)))
             )
-            pinball_99 = np.mean(
-                np.where(diff >= 0, 0.99 * diff, (1 - 0.99) * (-diff))
+            pinball_99 = float(
+                np.mean(np.where(diff >= 0, 0.99 * diff, (1 - 0.99) * (-diff)))
             )
 
             # 2) Coverage
@@ -312,20 +421,40 @@ class ModelTrainer:
             # 4) MALE (overall closeness, multiplicative)
             male = float(np.mean(np.abs(y_true_log - y_pred_log)))
 
+            # 5) Accuracy at over/under prediction, at various thresholds
+            threshaccs = {}
+            for threshold in thresholds:
+                # Count 1 if both prediction and truth are on the same side of
+                # the threshold
+                acc = float(
+                    np.mean(
+                        ((y_true >= threshold) & (y_pred >= threshold))
+                        | ((y_true < threshold) & (y_pred < threshold))
+                    )
+                )
+                threshaccs[threshold] = acc
+
+                d = d | {
+                    f"{split_name}_threshacc@{threshold}": acc,
+                }
+
+            # 6) Mean threshold accuracy
+            mean_threshacc = float(np.mean(list(threshaccs.values())))
+
             d = d | {
                 f"{split_name}_pinball@95": pinball_95,
                 f"{split_name}_pinball@99": pinball_99,
                 f"{split_name}_coverage": coverage,
                 f"{split_name}_miss_depth_log_under": miss_depth,
                 f"{split_name}_MALE": male,
+                f"{split_name}_mean_threshacc": mean_threshacc,
             }
 
         # Save metrics
         with open(
-            os.path.join(self.output_dir, f"{self.model_id}_metrics.txt"), "w"
+            os.path.join(self.output_dir, f"{self.model_id}_metrics.yml"), "w"
         ) as f:
-            for k, v in d.items():
-                f.write(f"{k}: {v}\n")
+            yaml.dump(d, f)
 
         return d
 
