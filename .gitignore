@@ -10,6 +10,7 @@ config/conn.yml
 
 data/composite_workloads/**/day_traces/
 data/runs/**/*.log
+data/runs/**/featurization_*
 data/strategy_runs/**/*.parquet
 data/runs/run_summary*
 data/redset_byproducts/
