@@ -10,6 +10,18 @@ def save_def_and_traces(workload: Composite):
     workload.save()
 
 
+# one_of_each
+days = []
+for h in [0, 10, 25, 50]:
+    for t in [10, 30, 60, 120]:
+        day = Day([Chunk(H=h, T=t)])
+        days.append(day)
+one_of_each = Composite("one_of_each", days)
+save_def_and_traces(one_of_each)
+
+
+##############################
+
 weekend_day = Day([Chunk(H=50, T=120)])
 
 # weekly_set
