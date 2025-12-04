@@ -37,6 +37,27 @@ class Blueprint:
             self._clusters[cluster.name] = cluster
         self._name = name
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Check equality between this Blueprint and another object.
+
+        Parameters:
+            other: The object to compare with.
+
+        Returns:
+            True if the other object is a Blueprint with the same clusters and
+            name, False otherwise.
+        """
+        if not isinstance(other, Blueprint):
+            return False
+        if self._name != other._name:
+            return False
+        if self.cluster_names != other.cluster_names:
+            return False
+        if self.clusters != other.clusters:
+            return False
+        return True
+
     @staticmethod
     def from_config(blueprint_name: str) -> "Blueprint":
         """

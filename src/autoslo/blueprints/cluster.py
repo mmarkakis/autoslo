@@ -47,6 +47,29 @@ class Cluster:
         self._conn_info = conn_info
         self._conn_pool: Optional[ThreadedConnectionPool] = None
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Check equality between this Cluster and another object.
+
+        Parameters:
+            other: The object to compare with.
+
+        Returns:
+            True if the other object is a Cluster with the same RPU, name,
+            cost per RPU hour, and connection info, False otherwise.
+        """
+        if not isinstance(other, Cluster):
+            return False
+        if self._rpu != other._rpu:
+            return False
+        if self._name != other._name:
+            return False
+        if self._cost_per_rpu_hour != other._cost_per_rpu_hour:
+            return False
+        if self._conn_info != other._conn_info:
+            return False
+        return True
+
     def __del__(self):
         """
         Destructor to ensure the connection pool is closed.
