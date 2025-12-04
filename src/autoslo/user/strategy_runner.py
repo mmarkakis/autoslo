@@ -7,20 +7,17 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 import autoslo.user.strategies_metadata as smd
+import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.blueprint_timeseries import BlueprintTimeseries
 from autoslo.blueprints.cluster import Cluster
+from autoslo.routing.query_router import QueryRouter
+from autoslo.strategies.slo_strategy import SLOStrategy
+from autoslo.strategies.slo_strategy_performance import SLOStrategyPerformance
 from autoslo.user.strategy_plotter import StrategyPlotter
 from autoslo.workload_definition.composite import Composite
 from autoslo.workload_execution.trace import Trace
-
-from autoslo.routing.query_router import QueryRouter
-
-from autoslo.blueprints.blueprint import Blueprint
-from autoslo.strategies.slo_strategy_performance import SLOStrategyPerformance
-
-from autoslo.strategies.slo_strategy import SLOStrategy
-
-import autoslo.utils.paralellism as plu
 
 
 class StrategyRunner:
@@ -43,7 +40,6 @@ class StrategyRunner:
         training_period_blueprint_name: str,
         training_period_query_router_name: str,
         model_training_run_id: str,
-        model_name: str,
     ):
         """
         Instantiate a new StrategyRunner.
@@ -62,7 +58,6 @@ class StrategyRunner:
             training_period_query_router_name: The query router name used during
                 the training period.
             model_training_run_id: The run ID where the model is stored.
-            model_name: The name of the model to load.
         """
 
         StrategyRunner._validate_args(
@@ -74,7 +69,7 @@ class StrategyRunner:
             num_training_days=num_training_days,
             training_period_blueprint_name=training_period_blueprint_name,
             training_period_query_router_name=training_period_query_router_name,
-            # TODO: validate model_training_run_id and model_name?
+            model_training_run_id=model_training_run_id,
         )
         self.include_strategy_names = include_strategy_names
         self.exclude_strategy_names = exclude_strategy_names
@@ -87,7 +82,6 @@ class StrategyRunner:
             training_period_query_router_name
         )
         self.model_training_run_id = model_training_run_id
-        self.model_name = model_name
 
         # Determine which strategies to run based on include/exclude lists.
         self.strategy_names_to_run = self._strategy_names_to_run()
@@ -185,6 +179,19 @@ class StrategyRunner:
                     f"'{query_router_name}' is not a recognized query router "
                     f"name or has invalid parameters: {e}"
                 ) from e
+
+        # Validate model_training_run_id.
+        if "model_training_run_id" in kwargs:
+            model_training_runs_df = pu.ModelLocator.get_runs_df()
+            model_training_run_id = kwargs["model_training_run_id"]
+            if (
+                model_training_run_id
+                not in model_training_runs_df["run_id"].values
+            ):
+                raise ValueError(
+                    f"model_training_run_id '{model_training_run_id}' does not "
+                    "exist in the model runs."
+                )
 
     def _strategy_names_to_run(self) -> list[str]:
         """
@@ -300,8 +307,18 @@ class StrategyRunner:
             latency_slo_s=self.latency_slo_s,
             slo_violation_rate_threshold=self.slo_violation_rate_threshold,
             model_training_run_id=self.model_training_run_id,
-            model_name=self.model_name,
         )
+
+        # Initialize past blueprints based on the training period.
+        past_blueprints = BlueprintTimeseries.empty()
+        training_period_blueprint = Blueprint.from_config(
+            self.training_period_blueprint_name
+        )
+        for day_idx in range(self.num_training_days):
+            past_blueprints.set_blueprint_for_period(
+                period_idx=day_idx,
+                blueprint=training_period_blueprint,
+            )
 
         # For the chosen workload, after the training period, run the strategy
         # for each day.
@@ -309,13 +326,20 @@ class StrategyRunner:
         num_days = workload.num_days()
         records = []
         for day_idx in range(self.num_training_days, num_days):
+            # Find the suggestion for this day and log it.
             suggested_blueprint, suggested_query_router = (
                 strategy_instance.suggest(
                     workload=workload,
                     day_idx=day_idx,
                     latency_slo_s=self.latency_slo_s,
+                    past_blueprints=past_blueprints,
                 )
             )
+            past_blueprints.set_blueprint_for_period(
+                period_idx=day_idx, blueprint=suggested_blueprint
+            )
+
+            # Evaluate the performance of the suggested blueprint/query router.
             perf: SLOStrategyPerformance = (
                 strategy_instance.evaluate_suggestion(
                     workload=workload,
@@ -349,8 +373,7 @@ class StrategyRunner:
             self.slo_violation_rate_threshold
         )
         records_df["num_training_days"] = self.num_training_days
-        records_df['model_training_run_id'] = self.model_training_run_id
-        records_df['model_name'] = self.model_name
+        records_df["model_training_run_id"] = self.model_training_run_id
         records_df["strategy_name"] = strategy_name
         records_df = (
             records_df[
@@ -364,7 +387,6 @@ class StrategyRunner:
                     "blueprint_name",
                     "query_router_name",
                     "model_training_run_id",
-                    "model_name",
                     "num_slo_violations",
                     "num_total_queries",
                     "slo_violation_rate",
@@ -465,7 +487,6 @@ class StrategyRunner:
         csv_path = os.path.join(output_dir, "slo_vs_cost_summary.csv")
         summary_df.to_csv(csv_path, index=False)
 
-
         # Also generate a single figure with the workload definition and all
         # three plots for easier comparison. Make the first plot have a shorter
         # height.
@@ -506,5 +527,3 @@ class StrategyRunner:
         )
         fig.savefig(combined_plt_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
-
-        

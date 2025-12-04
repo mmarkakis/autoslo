@@ -66,3 +66,29 @@ class BlueprintTimeseries:
                 f"Period index '{period_idx}' not found in timeseries."
             )
         return self._period_idx_to_blueprint[period_idx]
+
+    def set_blueprint_for_period(
+        self,
+        period_idx: int,
+        blueprint: Blueprint,
+        error_if_exists: bool = True,
+    ) -> None:
+        """
+        Set a blueprint for a specific period.
+
+        Parameters:
+            period_idx: The index of the period.
+            blueprint: The Blueprint instance to add.
+            error_if_exists: If True, raise an error if a blueprint already
+                exists for the specified period.
+
+        Raises:
+            ValueError: If a blueprint already exists for the specified period
+                and error_if_exists is True.
+        """
+        if error_if_exists and (period_idx in self._period_idx_to_blueprint):
+            raise ValueError(
+                f"Period index '{period_idx}' already has a blueprint "
+                f"assigned."
+            )
+        self._period_idx_to_blueprint[period_idx] = blueprint

@@ -10,7 +10,7 @@ from autoslo.strategies.slo_strategy_performance import (
 from autoslo.workload_definition.composite import Composite
 
 
-class StratExactFutureFullPerfSignle(SLOStrategy):
+class StratExactFutureFullPerfSingle(SLOStrategy):
     """
     SLO strategy that has oracle knowledge of the best single-cluster
     blueprint for the next period.

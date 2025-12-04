@@ -4,11 +4,16 @@ from autoslo.strategies.strat_histuniform_fullperf_single import (
     StratHistUniformFullPerfSingle7,
     StratHistUniformFullPerfSingle14,
 )
+from autoslo.strategies.strat_histuniform_obsperf_single import (
+    StratHistUniformObsPerfSingle1,
+    StratHistUniformObsPerfSingle7,
+    StratHistUniformObsPerfSingle14,
+)
 from autoslo.strategies.strat_exactfuture_predperf_single import (
     StratExactFuturePredPerfSingle,
 )
 from autoslo.strategies.strat_exactfuture_fullperf_single import (
-    StratExactFutureFullPerfSignle,
+    StratExactFutureFullPerfSingle,
 )
 
 # Maps strategy names to their corresponding TotalStrategy classes.
@@ -33,8 +38,23 @@ STRATEGIES: dict[str, dict[str, object]] = {
         "color": cu.Palette.light_red,
         "marker": "o",
     },
-    "StratExactFutureFullPerfSignle": {
-        "class": StratExactFutureFullPerfSignle,
+    "StratHistUniformObsPerfSingle1": {
+        "class": StratHistUniformObsPerfSingle1,
+        "color": cu.Palette.dark_yellow,
+        "marker": "o",
+    },
+    "StratHistUniformObsPerfSingle7": {
+        "class": StratHistUniformObsPerfSingle7,
+        "color": cu.Palette.dark_orange,
+        "marker": "o",
+    },
+    "StratHistUniformObsPerfSingle14": {
+        "class": StratHistUniformObsPerfSingle14,
+        "color": cu.Palette.dark_red,
+        "marker": "o",
+    },
+    "StratExactFutureFullPerfSingle": {
+        "class": StratExactFutureFullPerfSingle,
         "color": cu.Palette.light_blue,
         "marker": "s",
     },

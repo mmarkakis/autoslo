@@ -21,7 +21,7 @@ ALL_SLO_S = [10, 30, 60, 120, 300]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run the specified TotalStrategies with given parameters."
+        description="Run the specified SLOStrategies with given parameters."
     )
     parser.add_argument(
         "-i",
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         "-s",
         "--latency_slo_s",
         type=float,
-        help="The latency SLO in seconds.",
+        help="The latency SLO in seconds. If not provided, all SLOs are run.",
     )
     parser.add_argument(
         "-v",
@@ -62,7 +62,10 @@ if __name__ == "__main__":
         "-w",
         "--workload_name",
         type=str,
-        help="The workload to run the strategies against.",
+        help=(
+            "The workload to run the strategies against. If not provided, all "
+            "workloads are run."
+        ),
     )
     parser.add_argument(
         "-td",
@@ -98,15 +101,8 @@ if __name__ == "__main__":
         "-mrid",
         "--model_training_run_id",
         type=str,
-        default="1764110060",
         help="The run ID where the model artifacts are stored.",
-    )
-    parser.add_argument(
-        "-mn",
-        "--model_name",
-        type=str,
-        default="model_105",
-        help="The name of the model to load.",
+        required=True,
     )
     parser.add_argument(
         "-p",
@@ -151,7 +147,6 @@ if __name__ == "__main__":
             training_period_blueprint_name=args.training_period_blueprint_name,
             training_period_query_router_name=args.training_period_query_router_name,
             model_training_run_id=args.model_training_run_id,
-            model_name=args.model_name
         )
         if not args.only_plots:
             runner.run_all()
