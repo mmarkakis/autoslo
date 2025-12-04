@@ -14,13 +14,15 @@ from tqdm.auto import tqdm
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
 
+import argparse
+
 import yaml
 
 TRAIN_PARAMS = {
     "bin_granularity": ["daily", "hourly"],
     "label": ["duration_s_p95", "duration_s_p99"],
-    "num_boost_rounds": [100, 200, 500, 1000],
-    "max_depth": [5, 15, 10, 20, 30],
+    "num_boost_rounds": [50, 100, 200],
+    "max_depth": [5, 15, 30],
     "objective_params": [
         {"objective": "reg:quantileerror", "quantile_alpha": 0.95},
         {"objective": "reg:quantileerror", "quantile_alpha": 0.99},
@@ -174,7 +176,6 @@ class ModelTrainer:
     def run(
         self,
         training_params,
-        run_dir,
     ):
 
         self.training_params = training_params
@@ -185,9 +186,8 @@ class ModelTrainer:
         self.objective_params = training_params["objective_params"]
         self.feature_set_name = training_params["feature_set"]
         self.feature_set = TRAIN_PARAMS["feature_set"][self.feature_set_name]
-        self.run_dir = run_dir
-        self.model_id = training_params["model_id"]
-        self.output_dir = os.path.join(run_dir, self.model_id)
+        self.run_id = training_params["run_id"]
+        self.output_dir = os.path.join(pu.get_models_dir(), self.run_id)
         self.model = None
         self.split_dfs = {}
         self.log_labels = {}
@@ -204,12 +204,10 @@ class ModelTrainer:
 
         # Write out the training parameters
         with open(
-            os.path.join(
-                self.output_dir, f"{self.model_id}_training_params.yml"
-            ),
+            os.path.join(self.output_dir, f"training_params.yml"),
             "w",
         ) as f:
-            yaml.dump(training_params, f)
+            yaml.dump(training_params, f, sort_keys=False)
 
         self.read_and_preprocess()
         self.train()
@@ -331,9 +329,7 @@ class ModelTrainer:
         )
 
         # Save the model
-        self.model.save_model(
-            os.path.join(self.output_dir, f"{self.model_id}_model.json")
-        )
+        self.model.save_model(os.path.join(self.output_dir, f"model.json"))
 
     def plot_scatter(self):
         """
@@ -348,7 +344,7 @@ class ModelTrainer:
                 np.expm1(self.model.predict(split_df[self.feature_set])),
                 alpha=0.5,
             )
-            ax.set_title(f"{split_name} - {self.model_id}")
+            ax.set_title(f"{split_name} - {self.run_id}")
             ax.set_xlabel("True")
             ax.set_ylabel("Predicted")
             ax.set_xscale("log")
@@ -360,7 +356,7 @@ class ModelTrainer:
             )
 
         plt.savefig(
-            os.path.join(self.output_dir, f"{self.model_id}_scatter.png"),
+            os.path.join(self.output_dir, f"scatter.png"),
             bbox_inches="tight",
             dpi=300,
         )
@@ -371,11 +367,9 @@ class ModelTrainer:
         Plot feature importance based on gain.
         """
         xgb.plot_importance(self.model, importance_type="gain")
-        plt.title(f"Feature Importance - {self.model_id}")
+        plt.title(f"Feature Importance - {self.run_id}")
         plt.savefig(
-            os.path.join(
-                self.output_dir, f"{self.model_id}_feature_importance.png"
-            ),
+            os.path.join(self.output_dir, f"feature_importance.png"),
             bbox_inches="tight",
             dpi=300,
         )
@@ -451,50 +445,66 @@ class ModelTrainer:
             }
 
         # Save metrics
-        with open(
-            os.path.join(self.output_dir, f"{self.model_id}_metrics.yml"), "w"
-        ) as f:
-            yaml.dump(d, f)
+        with open(os.path.join(self.output_dir, f"metrics.yml"), "w") as f:
+            yaml.dump(d, f, sort_keys=False)
 
         return d
 
 
-if __name__ == "__main__":
-
-    run_id = int(datetime.now(tz=timezone.utc).timestamp())
-    run_dir = os.path.join(pu.get_data_path(), "models", f"{run_id}")
-    if not os.path.exists(run_dir):
-        os.makedirs(run_dir)
+def main(force: bool):
 
     # Determine parameter combinations.
     keys = list(TRAIN_PARAMS.keys())
     values = list(TRAIN_PARAMS.values())
-
-    param_combinations = [
+    all_param_combinations = [
         dict(zip(keys, combo)) for combo in itertools.product(*values)
     ]
+    print(f"Total parameter combinations: {len(all_param_combinations)}")
 
-    # Create pairs of (model_id, training_params)
+    # Check which parameter combinations have already been run
+    param_combinations = []
+    if force:
+        print(
+            f"The --force flag is set. "
+            f"Re-training all {len(all_param_combinations)} models."
+        )
+        param_combinations = all_param_combinations
+    else:
+        for training_params in all_param_combinations:
+            if not pu.ModelLocator.run_exists(training_params):
+                param_combinations.append(training_params)
+        print(
+            "The --force flag is not set. "
+            f"{len(param_combinations)} out of {len(all_param_combinations)} "
+            "models will be trained."
+        )
+
+    # Create pairs of (run_id, training_params)
+    base_run_id = int(datetime.now(tz=timezone.utc).timestamp())
     for i, param_combination in enumerate(param_combinations):
-        param_combination["model_id"] = f"model_{i}"
+        param_combination["run_id"] = f"{base_run_id}_{i}"
 
     # Run in parallel using multiprocessing
-    run_one = partial(
-        ModelTrainer().run,
-        run_dir=run_dir,
-    )
-
     with mp.Pool(plu.deg_of_paralellism()) as pool:
-        metrics = list(
+        _ = list(
             tqdm(
-                pool.imap_unordered(run_one, param_combinations),
+                pool.imap_unordered(ModelTrainer().run, param_combinations),
                 total=len(param_combinations),
             )
         )
 
-    # Save the metrics as a dataframe to a parquet file
-    metrics_df = pd.DataFrame(metrics)
-    metrics_df.to_parquet(
-        os.path.join(run_dir, "all_model_metrics.parquet"),
-        index=False,
+    # Trigger computation of summary table
+    pu.ModelLocator.get_runs_df()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Train coarse XGBoost models with various parameters."
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-training of models even if they already exist.",
+    )
+    args = parser.parse_args()
+    main(args.force)

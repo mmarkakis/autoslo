@@ -102,6 +102,7 @@ def get_runs_path() -> str:
     """
     return os.path.join(get_data_path(), "runs")
 
+
 def get_models_dir() -> str:
     """
     Return the absolute path to the models directory.
@@ -309,12 +310,266 @@ class RunLocator:
         return last_run_id, run_summary_cols
 
 
+class ModelLocator:
+    """
+    The `data/models` directory is organized by model training run ID. This
+    class is in charge of cataloguing the parameters of each model training
+    run, and providing easier access to the corresponding directories.
+
+    TODO: refactor this and RunLocator to share code.
+    """
+
+    LAST_RUN_ID: Optional[str] = None
+    RUN_SUMMARY_COLS: Optional[list[str]] = None
+    RUN_SUMMARY_FILENAME = "model_training_run_summary_{}.parquet"
+
+    @staticmethod
+    def get_runs_df(
+        columns: Optional[list[str]] = None,
+    ) -> pd.DataFrame:
+        """
+        Returns a DataFrame with one row per unique model training run,
+        summarizing the training run parameters and metrics
+
+        Parameters:
+            columns: Optional list of columns to include in the returned
+                DataFrame. If None, all columns are included.
+
+        Returns:
+            A pandas DataFrame with one row per unique model training run.
+
+        """
+
+        last_run_id, run_summary_cols = ModelLocator._check_refresh()
+        if last_run_id == "":
+            # No model training runs exist yet.
+            return pd.DataFrame()
+
+        if columns is not None:
+            to_remove = []
+            for col in columns:
+                if col not in run_summary_cols:
+                    to_remove.append(col)
+            for col in to_remove:
+                columns.remove(col)
+
+        run_summary_path = os.path.join(
+            get_models_dir(),
+            ModelLocator.RUN_SUMMARY_FILENAME.format(last_run_id),
+        )
+        run_summary = pd.read_parquet(run_summary_path, columns=columns)
+
+        return run_summary
+
+    @staticmethod
+    def get_run_ids(**kwargs) -> list[str]:
+        """
+        Returns a list of model training run IDs that match the given filter
+        criteria. For integer or float values, an exact match is performed.
+        For string values, a substring match is performed. The run IDs are
+        returned in chronological order.
+
+        Parameters:
+            **kwargs: Key-value pairs to filter the model training runs. Keys
+                should be column names in the model training run summary
+                DataFrame.
+
+        Returns:
+            A list of model training run IDs that match the filter criteria.
+        """
+        # Flatten inputs if there are nested dicts
+        for k, v in list(kwargs.items()):
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    kwargs[f"{k}_{k2}"] = v2
+                del kwargs[k]
+
+        run_summary = ModelLocator.get_runs_df(list(kwargs.keys()) + ["run_id"])
+        if len(run_summary) == 0:
+            return []
+
+        filtered_summary = run_summary
+        for k, v in kwargs.items():
+            if k not in filtered_summary.columns:
+                return []
+
+            if isinstance(v, (int, float)):
+                filtered_summary = filtered_summary[filtered_summary[k] == v]
+            else:
+                filtered_summary = filtered_summary[
+                    filtered_summary[k].str.contains(str(v), regex=False)
+                ]
+
+        return sorted(filtered_summary["run_id"].tolist())
+
+    @staticmethod
+    def run_exists(d: dict) -> bool:
+        """
+        Check if a model training run exists that matches the given filter
+        criteria.
+
+        Parameters:
+            d: A dictionary of key-value pairs to filter the model training
+                runs. Keys should be column names in the model training run
+                summary DataFrame.
+
+        Returns:
+            True if at least one matching model training run exists, False
+            otherwise.
+        """
+        run_ids = ModelLocator.get_run_ids(**d)
+        return len(run_ids) > 0
+
+    @staticmethod
+    def _check_refresh(force: bool = False) -> tuple[str, list[str]]:
+        """
+        Check if the model training parameters summary file is already loaded
+        in memory; if not, regenerate it if needed.
+
+        Parameters:
+            force: If True, force regeneration of the model training run summary
+                file.
+
+        Returns:
+            last_run_id: The ID of the most recent model training run.
+            run_summary_cols: A list of column names in the summary DataFrame.
+        """
+        if (
+            ModelLocator.LAST_RUN_ID is not None
+            and ModelLocator.RUN_SUMMARY_COLS is not None
+            and not force
+        ):
+            return ModelLocator.LAST_RUN_ID, ModelLocator.RUN_SUMMARY_COLS
+
+        run_dirs = sorted(
+            [
+                d
+                for d in os.listdir(get_models_dir())
+                if os.path.isdir(os.path.join(get_models_dir(), d))
+            ]
+        )
+
+        if len(run_dirs) == 0:
+            return "", []
+
+        last_run_id = run_dirs[-1].split("_")[0]
+        pf, sf = ModelLocator.RUN_SUMMARY_FILENAME.split("{}")[:2]
+        cond = lambda f: f.startswith(pf) and f.endswith(sf)
+        run_summary_files = [f for f in os.listdir(get_models_dir()) if cond(f)]
+        if (
+            (len(run_summary_files) != 1)
+            or (last_run_id not in run_summary_files[0])
+            or force
+        ):
+            last_run_id_internal, run_summary_cols = ModelLocator._regenerate(
+                run_dirs
+            )
+            assert last_run_id_internal == last_run_id
+            for f in run_summary_files:
+                if last_run_id not in f:
+                    os.remove(os.path.join(get_models_dir(), f))
+        else:
+            run_summary_path = os.path.join(
+                get_models_dir(),
+                ModelLocator.RUN_SUMMARY_FILENAME.format(last_run_id),
+            )
+            run_summary_cols = pq.read_schema(run_summary_path).names
+
+        return last_run_id, run_summary_cols
+
+    @staticmethod
+    def _regenerate(
+        run_dirs: list[str],
+    ) -> tuple[str, list[str]]:
+        """
+        Regenerate the model training parameters summary file based on the
+        given list of model training run directories. This file includes both
+        parameters that are inputs to the training process (e.g. the target)
+        as well as metrics that are outputs of the training process
+        (e.g. accuracy).
+
+        Parameters:
+            run_dirs: A list of model training run directory
+                names to consider for the summary.
+
+        Returns:
+            last_run_id: The ID of the most recent model training run.
+            summary_cols: A list of column names in the summary DataFrame.
+        """
+
+        # For each model training run dir, read its training_params.yml and
+        # its metrics.yml and append as a dataframe row.
+        l = []
+        all_seen_training_keys = []
+        all_seen_metrics_keys = []
+        for run_dir in run_dirs:
+            d = {}
+
+            # Read training_params.yml
+            training_params_path = os.path.join(
+                get_models_dir(),
+                run_dir,
+                "training_params.yml",
+            )
+            with open(training_params_path, "r") as f:
+                training_params = yaml.safe_load(f)
+
+            # Update d and all_seen_training_keys
+            for k, v in training_params.items():
+                if isinstance(v, dict):
+                    for k2, v2 in v.items():
+                        d[f"{k}_{k2}"] = v2
+                        if f"{k}_{k2}" not in all_seen_training_keys:
+                            all_seen_training_keys.append(f"{k}_{k2}")
+                else:
+                    d[k] = v
+                    if k not in all_seen_training_keys:
+                        all_seen_training_keys.append(k)
+
+            # Read metrics.yml
+            metrics_path = os.path.join(
+                get_models_dir(),
+                run_dir,
+                "metrics.yml",
+            )
+            with open(metrics_path, "r") as f:
+                metrics = yaml.safe_load(f)
+            d.update(metrics)
+            for k in metrics.keys():
+                if k not in all_seen_metrics_keys:
+                    all_seen_metrics_keys.append(k)
+
+            # Append the row dict
+            l.append(d)
+
+        all_columns = all_seen_training_keys + all_seen_metrics_keys
+        all_columns.remove("run_id")
+        all_columns = ["run_id"] + all_columns
+
+        summary = (
+            pd.DataFrame(l, columns=all_columns)
+            .sort_values(by="run_id")
+            .reset_index(drop=True)
+        )
+        summary_cols = summary.columns.tolist()
+
+        # Write out the summary dataframe.
+        last_run_id = run_dirs[-1].split("_")[0]
+        summary_path = os.path.join(
+            get_models_dir(),
+            ModelLocator.RUN_SUMMARY_FILENAME.format(last_run_id),
+        )
+        summary.to_parquet(summary_path, index=False)
+
+        return last_run_id, summary_cols
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force regeneration of the run summary file",
+        help="Force regeneration of the run and model summary files.",
     )
     args = parser.parse_args()
 
