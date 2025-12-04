@@ -18,7 +18,7 @@ from autoslo.strategies.slo_strategy_performance import (
 from autoslo.workload_definition.composite import Composite
 
 
-class StratModelNoForecastSingle(SLOStrategy):
+class StratExactFuturePredPerfSingle(SLOStrategy):
     """
     SLO strategy that assumes access to tomorrow's exact workload features, but
     then uses a model to predict performance on each single-cluster blueprint.
@@ -34,7 +34,7 @@ class StratModelNoForecastSingle(SLOStrategy):
         **kwargs,
     ) -> None:
         """
-        Initialize the StratModelNoForecastSingle strategy.
+        Initialize the StratExactFuturePredPerfSingle strategy.
 
         Parameters:
             model_training_run_id: The run ID of the model training run.

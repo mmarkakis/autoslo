@@ -10,13 +10,15 @@ from autoslo.strategies.slo_strategy_performance import (
 from autoslo.workload_definition.composite import Composite
 
 
-class StratOracleSingle(SLOStrategy):
+class StratExactFutureFullPerfSignle(SLOStrategy):
     """
     SLO strategy that has oracle knowledge of the best single-cluster
     blueprint for the next period.
     """
 
-    def __init__(self, slo_violation_rate_threshold: float,*args, **kwargs) -> None:
+    def __init__(
+        self, slo_violation_rate_threshold: float, *args, **kwargs
+    ) -> None:
         """
         Initialize the StratOracle strategy.
 
@@ -29,7 +31,7 @@ class StratOracleSingle(SLOStrategy):
         """
         super().__init__(*args, **kwargs)
         self.violation_rate_threshold = slo_violation_rate_threshold
-        
+
     def suggest(
         self,
         workload: Composite,

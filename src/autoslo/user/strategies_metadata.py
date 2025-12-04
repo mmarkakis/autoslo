@@ -1,13 +1,15 @@
 import autoslo.utils.colors as cu
-from autoslo.strategies.strat_historical_single import (
-    StratHistoricalSingle1,
-    StratHistoricalSingle7,
-    StratHistoricalSingle14,
+from autoslo.strategies.strat_histuniform_fullperf_single import (
+    StratHistUniformFullPerfSingle1,
+    StratHistUniformFullPerfSingle7,
+    StratHistUniformFullPerfSingle14,
 )
-from autoslo.strategies.strat_model_noforecast_single import (
-    StratModelNoForecastSingle,
+from autoslo.strategies.strat_exactfuture_predperf_single import (
+    StratExactFuturePredPerfSingle,
 )
-from autoslo.strategies.strat_oracle_single import StratOracleSingle
+from autoslo.strategies.strat_exactfuture_fullperf_single import (
+    StratExactFutureFullPerfSignle,
+)
 
 # Maps strategy names to their corresponding TotalStrategy classes.
 STRATEGIES: dict[str, dict[str, object]] = {
@@ -16,28 +18,28 @@ STRATEGIES: dict[str, dict[str, object]] = {
         "color": cu.Palette.gray,
         "marker": "o",
     },
-    "StratHistoricalSingle1": {
-        "class": StratHistoricalSingle1,
+    "StratHistUniformFullPerfSingle1": {
+        "class": StratHistUniformFullPerfSingle1,
         "color": cu.Palette.light_yellow,
         "marker": "o",
     },
-    "StratHistoricalSingle7": {
-        "class": StratHistoricalSingle7,
+    "StratHistUniformFullPerfSingle7": {
+        "class": StratHistUniformFullPerfSingle7,
         "color": cu.Palette.light_orange,
         "marker": "o",
     },
-    "StratHistoricalSingle14": {
-        "class": StratHistoricalSingle14,
+    "StratHistUniformFullPerfSingle14": {
+        "class": StratHistUniformFullPerfSingle14,
         "color": cu.Palette.light_red,
         "marker": "o",
     },
-    "StratOracleSingle": {
-        "class": StratOracleSingle,
+    "StratExactFutureFullPerfSignle": {
+        "class": StratExactFutureFullPerfSignle,
         "color": cu.Palette.light_blue,
         "marker": "s",
     },
-    "StratModelNoForecastSingle": {
-        "class": StratModelNoForecastSingle,
+    "StratExactFuturePredPerfSingle": {
+        "class": StratExactFuturePredPerfSingle,
         "color": cu.Palette.light_green,
         "marker": "^",
     },

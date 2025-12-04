@@ -10,7 +10,7 @@ from autoslo.strategies.slo_strategy_performance import (
 from autoslo.workload_definition.composite import Composite
 
 
-class StratHistoricalSingle(SLOStrategy):
+class StratHistUniformFullPerfSingle(SLOStrategy):
     """
     SLO strategy that uses past data from the most recent periods to
     predict and select the best single-cluster blueprint for the next period.
@@ -29,7 +29,7 @@ class StratHistoricalSingle(SLOStrategy):
         **kwargs,
     ) -> None:
         """
-        Initialize the StratHistoricalSingle strategy.
+        Initialize the StratHistUniformFullPerfSingle strategy.
 
         Parameters:
             window_size: The number of past periods to consider for prediction.
@@ -92,9 +92,9 @@ class StratHistoricalSingle(SLOStrategy):
         return options[best_idx]
 
 
-class StratHistoricalSingle1(StratHistoricalSingle):
+class StratHistUniformFullPerfSingle1(StratHistUniformFullPerfSingle):
     """
-    A StratHistoricalSingle strategy that uses a past window size of 1.
+    A StratHistUniformFullPerfSingle strategy that uses a past window size of 1.
     """
 
     def __init__(
@@ -109,9 +109,9 @@ class StratHistoricalSingle1(StratHistoricalSingle):
         )
 
 
-class StratHistoricalSingle7(StratHistoricalSingle):
+class StratHistUniformFullPerfSingle7(StratHistUniformFullPerfSingle):
     """
-    A StratHistoricalSingle strategy that uses a past window size of 7.
+    A StratHistUniformFullPerfSingle strategy that uses a past window size of 7.
     """
 
     def __init__(
@@ -126,9 +126,9 @@ class StratHistoricalSingle7(StratHistoricalSingle):
         )
 
 
-class StratHistoricalSingle14(StratHistoricalSingle):
+class StratHistUniformFullPerfSingle14(StratHistUniformFullPerfSingle):
     """
-    A StratHistoricalSingle strategy that uses a past window size of 14.
+    A StratHistUniformFullPerfSingle strategy that uses a past window size of 14.
     """
 
     def __init__(
