@@ -43,7 +43,7 @@ def test_list_and_get_composite_workloads(
     os.makedirs(wd, exist_ok=True)
     definition = {"name": name, "monday_index": 0, "days": []}
     with open(os.path.join(wd, "definition.yml"), "w") as fh:
-        yaml.dump(definition, fh)
+        yaml.dump(definition, fh, sort_keys=False)
 
     resp2 = client.get("/composite")
     assert resp2.status_code == 200
@@ -74,7 +74,7 @@ def test_create_composite_workload_post_success(
         out_dir = os.path.join(str(tmp_path), "composite_workloads", self.name)
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, "definition.yml"), "w") as fh:
-            yaml.dump(self.to_dict(), fh)
+            yaml.dump(self.to_dict(), fh, sort_keys=False)
 
     monkeypatch.setattr(Composite, "save", fake_save)
 

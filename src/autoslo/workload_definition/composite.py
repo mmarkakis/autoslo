@@ -160,7 +160,7 @@ class Composite:
         # Save composite workload definition as YAML.
         definition_out_path = os.path.join(out_dir, "definition.yml")
         with open(definition_out_path, "w") as f:
-            yaml.dump(self.to_dict(), f)
+            yaml.dump(self.to_dict(), f, sort_keys=False)
 
         # Save plots.
         self.plot_definition(

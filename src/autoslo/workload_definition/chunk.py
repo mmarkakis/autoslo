@@ -188,9 +188,9 @@ class Chunk:
         """Save the chunk definition as a YAML file."""
         out_dir = self.save_dir()
         os.makedirs(out_dir, exist_ok=True)
-        out_path = os.path.join(out_dir, "chunk_definition.yaml")
+        out_path = os.path.join(out_dir, "chunk_definition.yml")
         with open(out_path, "w") as f:
-            yaml.dump(self.to_dict(), f)
+            yaml.dump(self.to_dict(), f, sort_keys=False)
 
     def color(self) -> str:
         """Get the color associated with the chunk's T value."""

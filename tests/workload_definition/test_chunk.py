@@ -75,7 +75,7 @@ def test_save_writes_yaml(tmp_path, monkeypatch):
     c = Chunk(H=10, T=30, num_templates=3)
     c.save()
     out_dir = c.save_dir()
-    yaml_path = os.path.join(out_dir, "chunk_definition.yaml")
+    yaml_path = os.path.join(out_dir, "chunk_definition.yml")
     assert os.path.exists(yaml_path)
     with open(yaml_path, "r") as f:
         loaded = yaml.safe_load(f)
