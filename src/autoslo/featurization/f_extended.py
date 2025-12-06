@@ -7,16 +7,14 @@ from autoslo.featurization.featurizer import Featurizer
 from autoslo.workload_execution.trace import Trace
 
 
-class FMinimal(Featurizer):
+class FExtended(Featurizer):
     """
-    A minimal featurizer that extracts basic statistics from a trace.
+    An extended featurizer that extracts more statistics from a trace.
     """
 
     def __init__(
         self,
-        features_summary_metric: str = "mean",
         label_summary_metric: str = "p95",
-        interarrival_summary_metric: str = "mean",
         label_in_log_space: bool = True,
         use_num_queries: bool = True,
         use_interarrival_time: bool = False,
@@ -24,18 +22,11 @@ class FMinimal(Featurizer):
         **kwargs,
     ) -> None:
         """
-        Initialize a FMinimal instance.
+        Initialize a FExtended instance.
 
         Parameters:
-            features_summary_metric: The summary metric to use for aggregating
-                features
-                (default is "mean", other options are "p95" and "p99").
-            label_summary_metric: The summary metric to use for aggregating
-                the label
-                (default is "p95", other options are "mean" and "p99").
-            interarrival_summary_metric: The summary metric to use for
-                aggregating interarrival times
-                (default is "mean", other options are "p5" and "p1").
+            label_summary_metric: The summary metric to use for aggregating the
+                label (default is "p95", other options are "mean" and "p99").
             label_in_log_space: Whether the label should be in log space
                 (default is True).
             use_num_queries: Whether to use the number of queries as a feature
@@ -49,36 +40,21 @@ class FMinimal(Featurizer):
             ValueError: If an unsupported summary metric is provided.
         """
         super().__init__(*args, **kwargs)
-        if features_summary_metric not in {"mean", "p95", "p99"}:
-            raise ValueError(
-                "Unsupported features summary metric: "
-                f"{features_summary_metric}"
-            )
+
         if label_summary_metric not in {"mean", "p95", "p99"}:
             raise ValueError(
                 f"Unsupported label summary metric: {label_summary_metric}"
             )
-        if interarrival_summary_metric not in {"mean", "p5", "p1"}:
-            raise ValueError(
-                f"Unsupported interarrival summary metric: "
-                f"{interarrival_summary_metric}"
-            )
 
-        self.features_summary_metric: str = features_summary_metric
         self.label_summary_metric: str = label_summary_metric
-        self.interarrival_summary_metric: str = interarrival_summary_metric
-        summary_funcs: dict[str, Callable] = {
+        self.summary_funcs: dict[str, Callable] = {
             "mean": lambda s: s.mean(),
             "p95": lambda s: s.quantile(0.95),
             "p99": lambda s: s.quantile(0.99),
             "p5": lambda s: s.quantile(0.05),
             "p1": lambda s: s.quantile(0.01),
         }
-        self.features_summary_func = summary_funcs[self.features_summary_metric]
-        self.label_summary_func = summary_funcs[self.label_summary_metric]
-        self.interarrival_summary_func = summary_funcs[
-            self.interarrival_summary_metric
-        ]
+        self.label_summary_func = self.summary_funcs[self.label_summary_metric]
         self.label_in_log_space = label_in_log_space
         self.use_num_queries = use_num_queries
         self.use_interarrival_time = use_interarrival_time
@@ -86,12 +62,10 @@ class FMinimal(Featurizer):
     @property
     def name(self) -> str:
         """
-        Get the name of the FMinimal instance.
+        Get the name of the FExtended instance.
         """
         return (
-            f"FMinimal(features_summary_metric={self.features_summary_metric},"
-            f"label_summary_metric={self.label_summary_metric},"
-            f"interarrival_summary_metric={self.interarrival_summary_metric}),"
+            f"FExtended(label_summary_metric={self.label_summary_metric},"
             f"label_in_log_space={self.label_in_log_space}),"
             f"use_num_queries={self.use_num_queries}),"
             f"use_interarrival_time={self.use_interarrival_time})"
@@ -109,13 +83,39 @@ class FMinimal(Featurizer):
         l = []
         if self.use_num_queries:
             l.append("num_queries")
+            l.append("nan_cluster_size_num_queries")
         if self.use_interarrival_time:
-            l.append(f"interarrival_time_s_{self.interarrival_summary_metric}")
+            l.append("interarrival_time_s_mean")
+            l.append("interarrival_time_s_p5")
+            l.append("interarrival_time_s_p1")
         return l + [
-            f"mbytes_scanned_{self.features_summary_metric}",
-            f"num_joins_{self.features_summary_metric}",
-            f"num_scans_{self.features_summary_metric}",
-            f"num_aggregations_{self.features_summary_metric}",
+            "was_aborted_mean",
+            "was_cached_mean",
+            "num_permanent_tables_accessed_mean",
+            "num_external_tables_accessed_mean",
+            "num_system_tables_accessed_mean",
+            "mbytes_scanned_mean",
+            "mbytes_scanned_p95",
+            "mbytes_scanned_p99",
+            "num_joins_mean",
+            "num_joins_p95",
+            "num_joins_p99",
+            "num_scans_mean",
+            "num_scans_p95",
+            "num_scans_p99",
+            "num_aggregations_mean",
+            "num_aggregations_p95",
+            "num_aggregations_p99",
+            "query_type_analyze_mean",
+            "query_type_copy_mean",
+            "query_type_ctas_mean",
+            "query_type_delete_mean",
+            "query_type_insert_mean",
+            "query_type_other_mean",
+            "query_type_select_mean",
+            "query_type_unload_mean",
+            "query_type_update_mean",
+            "query_type_vacuum_mean",
             "rpu",
         ]
 
@@ -156,43 +156,75 @@ class FMinimal(Featurizer):
         Returns:
             A featurization vector representing the trace.
         """
-        total_queries = trace.num_queries
-        interarrival_times_s = (
-            trace.arrival_times()
-            .diff()
-            .dropna()
-            .apply(lambda x: x.total_seconds())
-        )
-        interarrival_time_stat = self.interarrival_summary_func(
-            interarrival_times_s
-        )
-        mbytes_scanned_stat = self.features_summary_func(trace.mbytes_scanned())
-        num_joins_stat = self.features_summary_func(trace.num_joins())
-        num_scans_stat = self.features_summary_func(trace.num_scans())
-        num_aggregates_stat = self.features_summary_func(trace.num_aggregates())
-        duration_s_stat = self.label_summary_func(trace.latencies_s)
-        if self.is_label_in_log_space:
-            duration_s_stat = np.log1p(duration_s_stat)
 
+        l = []
+
+        # Optional number of queries and interarrival time features
+        if self.use_num_queries:
+            l.append(float(trace.num_queries))
+            l.append(0)  # We don't have nan_cluster_size_num_queries in traces
+        if self.use_interarrival_time:
+            interarrival_times_s = (
+                trace.arrival_times()
+                .diff()
+                .dropna()
+                .apply(lambda x: x.total_seconds())
+            )
+            for metric in ["mean", "p5", "p1"]:
+                l.append(self.summary_funcs[metric](interarrival_times_s))
+
+        # Was aborted and was cached
+        l.append(float(trace.was_aborted().mean()))
+        l.append(float(trace.was_cached().mean()))
+
+        # Number of tables accessed
+        l.append(float(trace.num_permanent_tables().mean()))
+        l.append(float(trace.num_external_tables().mean()))
+        l.append(float(trace.num_system_tables().mean()))
+
+        # Mbytes scanned, number of joins, scans, aggregations
+        bases = [
+            trace.mbytes_scanned(),
+            trace.num_joins(),
+            trace.num_scans(),
+            trace.num_aggregates(),
+        ]
+        for base in bases:
+            for metric in ["mean", "p95", "p99"]:
+                l.append(float(self.summary_funcs[metric](base)))
+
+        # Query types (one-hot encoded)
+        query_types = [
+            "analyze",
+            "copy",
+            "ctas",
+            "delete",
+            "insert",
+            "other",
+            "select",
+            "unload",
+            "update",
+            "vacuum",
+        ]
+        query_type_counts = trace.query_type().value_counts(normalize=True)
+        query_type_counts.index = query_type_counts.index.str.lower()
+        for qt in query_types:
+            l.append(float(query_type_counts.get(qt, 0.0)))
+
+        # RPU
         rpu_per_cluster = trace.rpu_per_cluster()
         # For simplicity, assume a single cluster and take its RPU.
         # FIXME: Extend to multi-cluster traces in the future.
         rpu = next(iter(rpu_per_cluster.values()))
+        l.append(float(rpu))
 
-        # Construct the feature vector based on selected features
-        l = []
-        if self.use_num_queries:
-            l.append(float(total_queries))
-        if self.use_interarrival_time:
-            l.append(float(interarrival_time_stat))
-        return l + [
-            float(mbytes_scanned_stat),
-            float(num_joins_stat),
-            float(num_scans_stat),
-            float(num_aggregates_stat),
-            float(rpu),
-            float(duration_s_stat),
-        ]
+        # Label
+        duration_s_stat = self.label_summary_func(trace.latencies_s)
+        if self.is_label_in_log_space:
+            duration_s_stat = np.log1p(duration_s_stat)
+        l.append(float(duration_s_stat))
+
+        return l
 
     @property
     def _required_redset_summary_columns(self) -> list[str]:
@@ -206,14 +238,40 @@ class FMinimal(Featurizer):
         l = []
         if self.use_num_queries:
             l.append("num_queries")
+            l.append("nan_cluster_size_num_queries")
         if self.use_interarrival_time:
-            l.append(f"interarrival_time_s_{self.interarrival_summary_metric}")
+            l.append(f"interarrival_time_s_mean")
+            l.append(f"interarrival_time_s_p5")
+            l.append(f"interarrival_time_s_p1")
 
         return l + [
-            f"mbytes_scanned_{self.features_summary_metric}",
-            f"num_joins_{self.features_summary_metric}",
-            f"num_scans_{self.features_summary_metric}",
-            f"num_aggregations_{self.features_summary_metric}",
+            "was_aborted_mean",
+            "was_cached_mean",
+            "num_permanent_tables_accessed_mean",
+            "num_external_tables_accessed_mean",
+            "num_system_tables_accessed_mean",
+            "mbytes_scanned_mean",
+            "mbytes_scanned_p95",
+            "mbytes_scanned_p99",
+            "num_joins_mean",
+            "num_joins_p95",
+            "num_joins_p99",
+            "num_scans_mean",
+            "num_scans_p95",
+            "num_scans_p99",
+            "num_aggregations_mean",
+            "num_aggregations_p95",
+            "num_aggregations_p99",
+            "query_type_analyze",
+            "query_type_copy",
+            "query_type_ctas",
+            "query_type_delete",
+            "query_type_insert",
+            "query_type_other",
+            "query_type_select",
+            "query_type_unload",
+            "query_type_update",
+            "query_type_vacuum",
             "unique_cluster_size_count",
             "unique_cluster_sizes",
             f"duration_s_{self.label_summary_metric}",
@@ -248,5 +306,11 @@ class FMinimal(Featurizer):
 
         if self.is_label_in_log_space:
             df[self.label_name] = np.log1p(df[self.label_name])
+
+        # Append "_mean" to query type columns
+        for col in df.columns:
+            if col.startswith("query_type_"):
+                new_col = f"{col}_mean"
+                df[new_col] = df[col]
 
         return df[self.feature_names + [self.label_name]]

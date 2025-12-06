@@ -24,6 +24,9 @@ class Trace:
             "start_time",
             "end_time",
             "elapsed_time",
+            "status",
+            "result_cache_hit",
+            "query_type",
         ],
         "sys_query_detail": [
             "query_id",
@@ -40,6 +43,16 @@ class Trace:
     REDSHIFT_BILLING_GRANULARITY_S = 1
     REDSHIFT_ELAPSED_TIME_UNIT = "us"  # microseconds
     BYTES_IN_MEGABYTE = 1_000_000
+
+    REDSHIFT_SYSTEM_TABLE_SUBSTRINGS = [
+        "sys_",
+        "svv_",
+        "stl_",
+        "stv_",
+        "svcs_",
+        "svl_",
+    ]
+    REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
 
     def __init__(self, run_id: str):
         """
@@ -433,6 +446,109 @@ class Trace:
             pd.concat(series).reindex(query_ids) / Trace.BYTES_IN_MEGABYTE
         )
         return concatenated
+
+    def arrival_times(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the arrival times (start times in SYS_QUERY_HISTORY) of each query.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["start_time"]
+            s = pd.to_datetime(s)
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
+
+    def was_aborted(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        booleans indicating whether each query was aborted.
+
+        Note: This implementation assumes that each query with a status
+        different than 'success' in SYS_QUERY_HISTORY is considered aborted.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["status"] != "success"
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
+
+    def was_cached(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        booleans indicating whether each query was served from the result cache.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["result_cache_hit"]
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
+
+    def query_type(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the type of each query (e.g., 'SELECT', 'INSERT', etc.).
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["query_type"]
+            series.append(s)
+        return pd.concat(series).reindex(self.query_ids)
+
+    def _count_distinct_table_names_containing(
+        self, substrings: list[str]
+    ) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the count of distinct table names containing any of the specified
+        substrings associated with each query.
+
+        Parameters:
+            substring: The substring to search for in table names.
+        """
+        series = []
+        query_ids = self.query_ids
+        joined_substrings = "|".join(substrings)
+        for df in self._dfs["sys_query_detail"].values():
+            condition = df["query_id"].isin(query_ids)
+            s = (
+                df[condition]
+                .groupby("query_id")["table_name"]
+                .apply(
+                    lambda x: x.str.contains(joined_substrings, na=False).sum()
+                )
+            )
+            series.append(s)
+        return pd.concat(series).reindex(query_ids, fill_value=0)
+
+    def num_external_tables(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the count of distinct external table names associated with each query.
+        """
+        # FIXME: Assume we don't have external tables for now.
+        return pd.Series(0, index=self.query_ids)
+
+    def num_system_tables(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the count of distinct system table names associated with each query.
+        """
+        return self._count_distinct_table_names_containing(
+            Trace.REDSHIFT_SYSTEM_TABLE_SUBSTRINGS
+        )
+
+    def num_permanent_tables(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the count of distinct permanent table names associated with each query.
+        """
+        return self._count_distinct_table_names_containing(
+            Trace.REDSHIFT_PERMANENT_TABLE_SUBSTRINGS
+        )
 
     def _count_word_in_plan_rows(self, word: str) -> pd.Series:
         """

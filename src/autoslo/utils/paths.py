@@ -25,6 +25,13 @@ def get_redset_raw_path() -> str:
     return REDSET_RAW_PATH
 
 
+def get_config_dir() -> str:
+    """
+    Return the absolute path to the config directory.
+    """
+    return os.path.join(AUTOSLO_ROOT, "config")
+
+
 def get_redset_raw_data(
     cluster_type: str = "provisioned", cluster_id: Union[str, int] = 1
 ):
@@ -502,6 +509,7 @@ class ModelLocator:
         l = []
         all_seen_training_keys = []
         all_seen_metrics_keys = []
+
         for run_dir in run_dirs:
             d = {}
 
@@ -514,17 +522,17 @@ class ModelLocator:
             with open(training_params_path, "r") as f:
                 training_params = yaml.safe_load(f)
 
-            # Update d and all_seen_training_keys
-            for k, v in training_params.items():
-                if isinstance(v, dict):
-                    for k2, v2 in v.items():
-                        d[f"{k}_{k2}"] = v2
-                        if f"{k}_{k2}" not in all_seen_training_keys:
-                            all_seen_training_keys.append(f"{k}_{k2}")
-                else:
-                    d[k] = v
-                    if k not in all_seen_training_keys:
-                        all_seen_training_keys.append(k)
+            def read_with_arbitrary_nesting(prefix: str, params: dict):
+                for k2, v2 in params.items():
+                    if isinstance(v2, dict):
+                        read_with_arbitrary_nesting(f"{prefix}{k2}__", v2)
+                    else:
+                        new_key = f"{prefix}{k2}"
+                        d[new_key] = v2
+                        if new_key not in all_seen_training_keys:
+                            all_seen_training_keys.append(new_key)
+
+            read_with_arbitrary_nesting("", training_params)
 
             # Read metrics.yml
             metrics_path = os.path.join(
@@ -542,10 +550,10 @@ class ModelLocator:
             # Append the row dict
             l.append(d)
 
+        # Create the summary dataframe.
         all_columns = all_seen_training_keys + all_seen_metrics_keys
         all_columns.remove("run_id")
         all_columns = ["run_id"] + all_columns
-
         summary = (
             pd.DataFrame(l, columns=all_columns)
             .sort_values(by="run_id")
