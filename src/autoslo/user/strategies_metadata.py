@@ -41,22 +41,22 @@ STRATEGIES: dict[str, dict[str, object]] = {
     "StratHistUniformObsPerfSingle1": {
         "class": StratHistUniformObsPerfSingle1,
         "color": cu.Palette.dark_yellow,
-        "marker": "o",
+        "marker": "^",
     },
     "StratHistUniformObsPerfSingle7": {
         "class": StratHistUniformObsPerfSingle7,
         "color": cu.Palette.dark_orange,
-        "marker": "o",
+        "marker": "^",
     },
     "StratHistUniformObsPerfSingle14": {
         "class": StratHistUniformObsPerfSingle14,
         "color": cu.Palette.dark_red,
-        "marker": "o",
+        "marker": "^",
     },
     "StratExactFutureFullPerfSingle": {
         "class": StratExactFutureFullPerfSingle,
         "color": cu.Palette.light_blue,
-        "marker": "s",
+        "marker": "o",
     },
     "StratExactFuturePredPerfSingle": {
         "class": StratExactFuturePredPerfSingle,
