@@ -145,10 +145,12 @@ class StratHistUniformObsPerfSingle(SLOStrategy):
                     )
                 else:
                     # If not, use the model to predict its performance.
-                    workload_trace = workload.get_most_recent_trace_on(
-                        blueprint.name, query_router.name, day_idx=past_day_idx
-                    )
-                    features, _ = self.featurizer.featurize_trace(workload_trace)
+                    features, _ = workload.get_most_recent_featurization_on(
+                        blueprint.name,
+                        query_router.name,
+                        self.featurizer,
+                        day_idx=past_day_idx,
+                    )[past_day_idx]
 
                     predicted_tail_latency = np.expm1(
                         self.model.predict(np.array(features).reshape(1, -1))

@@ -8,7 +8,7 @@
 scratch.ipynb
 config/conn.yml
 
-data/composite_workloads/**/day_traces/
+data/composite_workloads/**/cached*
 data/runs/**/*.log
 data/runs/**/featurization_*
 data/strategy_runs/**/*.parquet

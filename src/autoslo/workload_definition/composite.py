@@ -1,4 +1,5 @@
 import os
+import pickle
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -9,6 +10,7 @@ import yaml
 import autoslo.utils.paths as pu
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.blueprints.cluster import Cluster
+from autoslo.featurization.featurizer import Featurizer
 from autoslo.routing.r_fixed import RFixed
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.day import Day
@@ -217,7 +219,7 @@ class Composite:
 
         Returns:
             A pandas DataFrame representing the synthesized trace for the
-                composite workload, or for the specified day if day_idx is 
+                composite workload, or for the specified day if day_idx is
                 provided.
         """
 
@@ -244,6 +246,82 @@ class Composite:
         assert trace is not None
 
         return trace
+
+    def get_most_recent_featurization_on(
+        self,
+        blueprint_name: str,
+        query_router_name: str,
+        featurizer: Featurizer,
+        day_idx: Optional[int] = None,
+    ) -> dict[int, tuple[Featurizer.WorkloadFeaturization, Any]]:
+        """
+        Using the given featurizer, get the featurization of the entire trace
+        from the most recent run on the specified blueprint and query router.
+        Checks for, and caches, the featurization on each day to avoid redundant
+        computations.
+
+        Parameters:
+            blueprint_name: The name of the blueprint.
+            query_router_name: The name of the query router.
+            featurizer: The Featurizer instance to use for featurization.
+            day_idx: Optional index of a specific day to retrieve the
+                featurization for. If provided, only the featurization for that
+                day will be returned.
+
+        Returns:
+            A dictionary mapping day indices to tuples of
+                (featurization vector, label) for each day in the composite
+                workload, or for the specified day if day_idx is provided.
+        """
+        d = {}
+        day_idxs_to_use = (
+            [day_idx] if day_idx is not None else range(len(self.days))
+        )
+
+        for day_idx in day_idxs_to_use:
+            # See if we can read in a cached featurization.
+            cached_featurization_path = os.path.join(
+                self.save_dir(),
+                "cached_featurizations",
+                f"day_{day_idx}",
+                f"{blueprint_name}_{query_router_name}_{featurizer.name}_features.pkl",
+            )
+            label_path = os.path.join(
+                self.save_dir(),
+                "cached_featurizations",
+                f"day_{day_idx}",
+                f"{blueprint_name}_{query_router_name}_{featurizer.name}_label.pkl",
+            )
+            if os.path.exists(cached_featurization_path) and os.path.exists(
+                label_path
+            ):
+                with open(cached_featurization_path, "rb") as f:
+                    features = pickle.load(f)
+                with open(label_path, "rb") as f:
+                    label = pickle.load(f)
+                d[day_idx] = (features, label)
+                continue
+
+            # Otherwise, compute the featurization.
+            trace = self.get_most_recent_trace_on(
+                blueprint_name=blueprint_name,
+                query_router_name=query_router_name,
+                day_idx=day_idx,
+            )
+            features, label = featurizer.featurize_trace(trace)
+
+            # Cache the featurization.
+            os.makedirs(
+                os.path.dirname(cached_featurization_path), exist_ok=True
+            )
+            with open(cached_featurization_path, "wb") as f:
+                pickle.dump(features, f)
+            with open(label_path, "wb") as f:
+                pickle.dump(label, f)
+
+            d[day_idx] = (features, label)
+
+        return d
 
     def plot_definition(
         self,

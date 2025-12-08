@@ -82,10 +82,12 @@ class StratExactFuturePredPerfSingle(SLOStrategy):
             query_router = RFixed(blueprint, blueprint.cluster_names[0])
             options.append((blueprint, query_router))
 
-            workload_trace = workload.get_most_recent_trace_on(
-                blueprint.name, query_router.name, day_idx=day_idx
-            )
-            features, _ = self.featurizer.featurize_trace(workload_trace)
+            features, _ = workload.get_most_recent_featurization_on(
+                blueprint.name,
+                query_router.name,
+                self.featurizer,
+                day_idx=day_idx,
+            )[day_idx]
 
             predicted_tail_latency = np.expm1(
                 self.model.predict(np.array(features).reshape(1, -1))

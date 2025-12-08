@@ -1,5 +1,8 @@
+import os
+import pickle
 from abc import ABC, abstractmethod
 
+import autoslo.utils.paths as pu
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.routing.query_router import QueryRouter
 from autoslo.strategies.slo_strategy_performance import SLOStrategyPerformance
@@ -61,7 +64,8 @@ class SLOStrategy(ABC):
     ) -> SLOStrategyPerformance:
         """
         Get the actual performance of the suggested blueprint for the specified
-        workload and day based on the provided latency SLO.
+        workload and day based on the provided latency SLO. Cache the
+        performance metrics for future reference.
 
         Parameters:
             workload: The Composite workload to suggest for.
@@ -83,17 +87,35 @@ class SLOStrategy(ABC):
                 f"Day index {day_idx} is out of range for workload "
                 f"'{workload.name}' with {len(workload.days)} days."
             )
-        day = workload.days[day_idx]
 
+        # See if we can read in a cached performance.
+        cached_performance_path = os.path.join(
+            workload.save_dir(),
+            "cached_true_performance",
+            f"day_{day_idx}",
+            f"{blueprint.name}_{query_router.name}.pkl",
+        )
+        if os.path.exists(cached_performance_path):
+            with open(cached_performance_path, "rb") as f:
+                cached_perf = pickle.load(f)
+            cached_perf._latency_slo_s = latency_slo_s  # FIXME: Hacky
+            return cached_perf
+
+        # Otherwise, compute the true performance from the workload trace.
+        day = workload.days[day_idx]
         trace = day.get_most_recent_trace_on(
             blueprint_name=blueprint.name, query_router_name=query_router.name
         )
-
         perf = SLOStrategyPerformance(
-            latencies_s=trace.latencies_s,
+            latencies_s=list(trace.latencies_s),
             costs=trace.costs,
             routing_times_s=trace.routing_times_s,
             latency_slo_s=latency_slo_s,
         )
+
+        # Cache the performance for future reference.
+        os.makedirs(os.path.dirname(cached_performance_path), exist_ok=True)
+        with open(cached_performance_path, "wb") as f:
+            pickle.dump(perf, f)
 
         return perf
