@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -145,7 +145,7 @@ class FExtended(Featurizer):
     def _featurize_trace_impl(
         self,
         trace: Trace,
-    ) -> Featurizer.WorkloadFeaturization:
+    ) -> tuple[Featurizer.WorkloadFeaturization, Any]:
         """
         Featurize a given trace into a vector of basic statistics.
 
@@ -154,7 +154,8 @@ class FExtended(Featurizer):
             rpu: Redshift processing units for the cluster.
 
         Returns:
-            A featurization vector representing the trace.
+            features: The feature values.
+            label: The label value.
         """
 
         l = []
@@ -222,9 +223,8 @@ class FExtended(Featurizer):
         duration_s_stat = self.label_summary_func(trace.latencies_s)
         if self.is_label_in_log_space:
             duration_s_stat = np.log1p(duration_s_stat)
-        l.append(float(duration_s_stat))
 
-        return l
+        return l, float(duration_s_stat)
 
     @property
     def _required_redset_summary_columns(self) -> list[str]:

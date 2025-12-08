@@ -1,6 +1,7 @@
 import os
 import pickle
 from abc import abstractmethod
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
@@ -84,7 +85,7 @@ class Featurizer(ClassWithFactory):
 
     def featurize_trace(
         self, trace: Trace, force: bool = False, *args, **kwargs
-    ) -> WorkloadFeaturization:
+    ) -> tuple[WorkloadFeaturization, Any]:
         """
         Featurize a given trace into a vector.
 
@@ -96,29 +97,40 @@ class Featurizer(ClassWithFactory):
             kwargs: Keyword arguments (as needed by specific featurizers).
 
         Returns:
-            A featurization vector representing the trace.
+            features: The feature values.
+            label: The label value.
         """
         # Check for cached featurization and load it if available.
         run_dir = os.path.join(pu.get_runs_path(), trace.run_id)
-        file_name = f"featurization_{self.name}.pkl"
-        featurization_path = os.path.join(run_dir, file_name)
+        features_file_name = f"features_{self.name}.pkl"
+        features_path = os.path.join(run_dir, features_file_name)
+        label_file_name = f"label_{self.name}.pkl"
+        label_path = os.path.join(run_dir, label_file_name)
 
-        if os.path.exists(featurization_path) and not force:
-            with open(featurization_path, "rb") as f:
-                featurization = pickle.load(f)
-            return featurization
+        if (
+            os.path.exists(features_path)
+            and os.path.exists(label_path)
+            and not force
+        ):
+            with open(features_path, "rb") as f:
+                features = pickle.load(f)
+            with open(label_path, "rb") as f:
+                label = pickle.load(f)
+            return features, label
 
         # Compute the featurization and cache it.
-        featurization = self._featurize_trace_impl(trace, *args, **kwargs)
-        with open(featurization_path, "wb") as f:
-            pickle.dump(featurization, f)
+        features, label = self._featurize_trace_impl(trace, *args, **kwargs)
+        with open(features_path, "wb") as f:
+            pickle.dump(features, f)
+        with open(label_path, "wb") as f:
+            pickle.dump(label, f)
 
-        return featurization
+        return features, label
 
     @abstractmethod
     def _featurize_trace_impl(
         self, trace: Trace, *args, **kwargs
-    ) -> WorkloadFeaturization:
+    ) -> tuple[WorkloadFeaturization, Any]:
         """
         Featurize a given trace into a vector.
 
@@ -128,7 +140,8 @@ class Featurizer(ClassWithFactory):
             kwargs: Keyword arguments (as needed by specific featurizers).
 
         Returns:
-            A featurization vector representing the trace.
+            features: The feature values.
+            label: The label value.
         """
         raise NotImplementedError("Subclasses should implement this method.")
 

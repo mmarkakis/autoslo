@@ -32,6 +32,7 @@ class Trace:
             "query_id",
             "step_name",
             "output_bytes",
+            "table_name",
         ],
         "sys_query_explain": [
             "query_id",
@@ -87,8 +88,11 @@ class Trace:
                     os.path.join(run_dir, filename),
                     Trace.REQUIRED_COLUMNS[table_name],
                 )
-                df["query_id"] = df["query_id"].apply(
-                    lambda x: f"{cluster_name}_{x}"
+                if len(df) == 0:
+                    continue
+                df["query_id"] = df.apply(
+                    lambda row: f"{row.name}#{cluster_name}_{row['query_id']}",
+                    axis=1,
                 )
                 self._dfs[table_name][cluster_name] = df
 
@@ -189,7 +193,8 @@ class Trace:
                 "trace is before the latest end time of this trace."
             )
 
-        # Append the dataframes per cluster and table.
+        # Append the dataframes per cluster and table. Ensure that the query_ids
+        # are unique across the two traces.
         for table_name, clusters in self._dfs.items():
             if table_name not in other._dfs:
                 continue
@@ -203,6 +208,10 @@ class Trace:
                         other_clusters[cluster_name],
                     ]
                 ).reset_index(drop=True)
+                combined_df["query_id"] = combined_df.apply(
+                    lambda row: f"{row.name}#{row['query_id'].split('#')[-1]}",
+                    axis=1,
+                )
                 self._dfs[table_name][cluster_name] = combined_df
 
         return self
@@ -255,25 +264,27 @@ class Trace:
         return total_queries
 
     @property
-    def latencies_s(self) -> list[float]:
+    def latencies_s(self) -> pd.Series:
         """
         Get the latencies of the queries in the trace, in seconds.
 
         Returns:
-            A pandas Series containing the latencies in seconds.
+            A pandas Series where the index is the query IDs and the values are
+                the latencies in seconds.
         """
         conversion_factor = pd.Timedelta(
             1, Trace.REDSHIFT_ELAPSED_TIME_UNIT  # type: ignore
         ).total_seconds()
 
-        latencies = []
+        series = []
         for df in self._dfs["sys_query_history"].values():
-            elapsed_times_in_s = (
-                df["elapsed_time"].astype("float") * conversion_factor
+            s = (
+                df.set_index("query_id")["elapsed_time"].astype("float")
+                * conversion_factor
             )
-            latencies.extend(elapsed_times_in_s.tolist())
+            series.append(s)
 
-        return latencies
+        return pd.concat(series).reindex(self.query_ids)
 
     @property
     def costs(self) -> list[float]:

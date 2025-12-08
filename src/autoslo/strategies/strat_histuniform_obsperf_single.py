@@ -9,7 +9,7 @@ import autoslo.utils.paths as pu
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.blueprints.blueprint_timeseries import BlueprintTimeseries
 from autoslo.blueprints.cluster import Cluster
-from autoslo.featurization.f_minimal import FMinimal
+from autoslo.featurization.featurizer import Featurizer
 from autoslo.routing.query_router import QueryRouter
 from autoslo.routing.r_fixed import RFixed
 from autoslo.strategies.slo_strategy import SLOStrategy
@@ -59,20 +59,19 @@ class StratHistUniformObsPerfSingle(SLOStrategy):
         model_path = os.path.join(model_dir, "model.json")
         self.model.load_model(model_path)
 
-        # Read the model config to find the summary metrics.
+        # Read the model config and initialize the featurizer.
         training_params_path = os.path.join(model_dir, f"training_params.yml")
         with open(training_params_path, "r") as f:
             tp = yaml.safe_load(f)
-        if "feature_set" not in tp or "label" not in tp:
+        featurization_params = tp.get("featurization_params", None)
+        if featurization_params is None:
             raise ValueError(
                 "Model training parameters file is missing "
-                "'feature_set' or 'label' entries."
+                "'featurization_params' entry."
             )
-        self.input_summary_metric = tp["feature_set"].split("_")[-1]
-        self.output_summary_metric = tp["label"].split("_")[-1]
-
-        # Initialize the featurizer.
-        self.featurizer = FMinimal(summary_metric=self.input_summary_metric)
+        self.featurizer = Featurizer.from_name(
+            featurization_params["featurizer_name"], **featurization_params
+        )
 
     def suggest(
         self,
@@ -149,7 +148,7 @@ class StratHistUniformObsPerfSingle(SLOStrategy):
                     workload_trace = workload.get_most_recent_trace_on(
                         blueprint.name, query_router.name, day_idx=past_day_idx
                     )
-                    features = self.featurizer.featurize_trace(workload_trace)
+                    features, _ = self.featurizer.featurize_trace(workload_trace)
 
                     predicted_tail_latency = np.expm1(
                         self.model.predict(np.array(features).reshape(1, -1))

@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -145,7 +145,7 @@ class FMinimal(Featurizer):
     def _featurize_trace_impl(
         self,
         trace: Trace,
-    ) -> Featurizer.WorkloadFeaturization:
+    ) -> tuple[Featurizer.WorkloadFeaturization, Any]:
         """
         Featurize a given trace into a vector of basic statistics.
 
@@ -154,7 +154,8 @@ class FMinimal(Featurizer):
             rpu: Redshift processing units for the cluster.
 
         Returns:
-            A featurization vector representing the trace.
+            features: The feature values.
+            label: The label value.
         """
         total_queries = trace.num_queries
         interarrival_times_s = (
@@ -185,14 +186,14 @@ class FMinimal(Featurizer):
             l.append(float(total_queries))
         if self.use_interarrival_time:
             l.append(float(interarrival_time_stat))
-        return l + [
-            float(mbytes_scanned_stat),
-            float(num_joins_stat),
-            float(num_scans_stat),
-            float(num_aggregates_stat),
-            float(rpu),
-            float(duration_s_stat),
-        ]
+        l.append(float(mbytes_scanned_stat))
+        l.append(float(num_joins_stat))
+        l.append(float(num_scans_stat))
+        l.append(float(num_aggregates_stat))
+        l.append(float(rpu))
+
+        return l, float(duration_s_stat)
+
 
     @property
     def _required_redset_summary_columns(self) -> list[str]:
