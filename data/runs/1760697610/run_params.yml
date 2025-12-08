@@ -1,9 +1,0 @@
-run_id: '1760697610'
-workload_name: chunk_traces
-num_queries: 34
-scale_factor: 1000
-schema_name: ext_tpcds1000
-blueprint_name: single_4
-query_router_name: RFixed(fixed_cluster_name='cluster_4')
-maxconns: 1000
-closed_loop: false
