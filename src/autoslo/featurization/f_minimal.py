@@ -91,9 +91,9 @@ class FMinimal(Featurizer):
         return (
             f"FMinimal(features_summary_metric={self.features_summary_metric},"
             f"label_summary_metric={self.label_summary_metric},"
-            f"interarrival_summary_metric={self.interarrival_summary_metric}),"
-            f"label_in_log_space={self.label_in_log_space}),"
-            f"use_num_queries={self.use_num_queries}),"
+            f"interarrival_summary_metric={self.interarrival_summary_metric},"
+            f"label_in_log_space={self.label_in_log_space},"
+            f"use_num_queries={self.use_num_queries},"
             f"use_interarrival_time={self.use_interarrival_time})"
         )
 

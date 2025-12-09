@@ -1,6 +1,7 @@
 import os
 from collections import defaultdict
 from datetime import datetime
+import uuid
 
 import pandas as pd
 import pyarrow as pa
@@ -72,6 +73,8 @@ class Trace:
                 run directory.
         """
         self._run_id = run_id
+        self._uuid = uuid.uuid4()
+
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
         self._original_start = datetime.now()
@@ -90,8 +93,13 @@ class Trace:
                 )
                 if len(df) == 0:
                     continue
+
+                # N.B.: We may create longer traces by appending multiple copies
+                # of the same run of the same chunk to each other. To maintain
+                # proper joins across the sys tables of each copy, we append 
+                # a UUID to each query_id.
                 df["query_id"] = df.apply(
-                    lambda row: f"{row.name}#{cluster_name}_{row['query_id']}",
+                    lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
                     axis=1,
                 )
                 self._dfs[table_name][cluster_name] = df
@@ -193,8 +201,7 @@ class Trace:
                 "trace is before the latest end time of this trace."
             )
 
-        # Append the dataframes per cluster and table. Ensure that the query_ids
-        # are unique across the two traces.
+        # Append the dataframes per cluster and table.
         for table_name, clusters in self._dfs.items():
             if table_name not in other._dfs:
                 continue
@@ -208,10 +215,6 @@ class Trace:
                         other_clusters[cluster_name],
                     ]
                 ).reset_index(drop=True)
-                combined_df["query_id"] = combined_df.apply(
-                    lambda row: f"{row.name}#{row['query_id'].split('#')[-1]}",
-                    axis=1,
-                )
                 self._dfs[table_name][cluster_name] = combined_df
 
         return self
@@ -476,12 +479,13 @@ class Trace:
         Return a Series where the index is the query IDs and the values are
         booleans indicating whether each query was aborted.
 
-        Note: This implementation assumes that each query with a status
-        different than 'success' in SYS_QUERY_HISTORY is considered aborted.
+        Note: This implementation assumes that each query is considered aborted
+        if its status in SYS_QUERY_HISTORY does not contain "success". We don't
+        do exact string match because there may be trailing whitespace.
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["status"] != "success"
+            s = ~df.set_index("query_id")["status"].str.contains("success")
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)

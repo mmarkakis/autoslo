@@ -66,8 +66,8 @@ class FExtended(Featurizer):
         """
         return (
             f"FExtended(label_summary_metric={self.label_summary_metric},"
-            f"label_in_log_space={self.label_in_log_space}),"
-            f"use_num_queries={self.use_num_queries}),"
+            f"label_in_log_space={self.label_in_log_space},"
+            f"use_num_queries={self.use_num_queries},"
             f"use_interarrival_time={self.use_interarrival_time})"
         )
 
@@ -172,7 +172,9 @@ class FExtended(Featurizer):
                 .apply(lambda x: x.total_seconds())
             )
             for metric in ["mean", "p5", "p1"]:
-                l.append(self.summary_funcs[metric](interarrival_times_s))
+                l.append(
+                    float(self.summary_funcs[metric](interarrival_times_s))
+                )
 
         # Was aborted and was cached
         l.append(float(trace.was_aborted().mean()))
