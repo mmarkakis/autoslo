@@ -1,9 +1,8 @@
 import argparse
 
-from autoslo.user.strategy_runner import StrategyRunner
-
 from tqdm.auto import tqdm
 
+from autoslo.user.strategy_runner import StrategyRunner
 
 ALL_WORKLOAD_NAMES = [
     "weekly_set",
@@ -131,6 +130,13 @@ if __name__ == "__main__":
         for latency_slo_s in latency_slo_s_list
     ]
 
+    # args.exclude_strategy_names = [
+    #     "StratHistUniformFullPerfSingle1",
+    #     "StratHistUniformFullPerfSingle7",
+    #     "StratHistUniformObsPerfSingle1",
+    #     "StratHistUniformObsPerfSingle7",
+    # ]
+
     for i, (workload_name, latency_slo_s) in enumerate(combinations):
         print(
             f"({i+1}/{len(combinations)}) Running strategies for workload "
@@ -154,4 +160,5 @@ if __name__ == "__main__":
             StrategyRunner.plot_results(
                 workload_name,
                 latency_slo_s,
+                exclude_strategy_names=args.exclude_strategy_names,
             )

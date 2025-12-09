@@ -424,25 +424,32 @@ class StrategyRunner:
         StrategyRunner.plot_results(
             workload_name=self.workload_name,
             latency_slo_s=self.latency_slo_s,
+            exclude_strategy_names=self.exclude_strategy_names,
         )
 
     @staticmethod
     def plot_results(
         workload_name: str,
         latency_slo_s: float,
+        exclude_strategy_names: Optional[list[str]] = None,
     ):
         """
-        Plot the results of all strategy runs for the specified workload.
+        Plot the results of strategy runs for the specified workload.
 
         Parameters:
             workload_name: The name of the workload to plot results for.
             latency_slo_s: The latency SLO in seconds.
+            exclude_strategy_names: List of strategy names to exclude from
+                the plots.
         """
+        if exclude_strategy_names is None:
+            exclude_strategy_names = []
 
         # Validate input arguments.
         StrategyRunner._validate_args(
             workload_name=workload_name,
             latency_slo_s=latency_slo_s,
+            exclude_strategy_names=exclude_strategy_names,
         )
 
         # Read in all strategy results for the workload.
@@ -452,9 +459,15 @@ class StrategyRunner:
             f"{int(latency_slo_s)}s_slo",
         )
         all_records = []
-        for strategy_name in os.listdir(output_dir):
-            if strategy_name.endswith(".parquet"):
-                df = pd.read_parquet(os.path.join(output_dir, strategy_name))
+        for strategy_filename in os.listdir(output_dir):
+            strategy_name, ext = os.path.splitext(strategy_filename)
+            if (
+                ext == ".parquet"
+                and strategy_name not in exclude_strategy_names
+            ):
+                df = pd.read_parquet(
+                    os.path.join(output_dir, strategy_filename)
+                )
                 all_records.append(df)
         if not all_records:
             print(f"No results found for workload '{workload_name}'.")
