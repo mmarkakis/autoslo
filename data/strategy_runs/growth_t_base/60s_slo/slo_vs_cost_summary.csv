@@ -1,9 +1,0 @@
-strategy_name,mean_slo_violation_rate,sum_total_cost
-StratExactFutureFullPerfSingle,0.014924273434302087,122.25
-StratExactFuturePredPerfSingle,0.7362668849774867,44.62291666666667
-StratHistUniformFullPerfSingle1,0.014924273434302087,122.25
-StratHistUniformFullPerfSingle14,0.014924273434302087,122.25
-StratHistUniformFullPerfSingle7,0.014924273434302087,122.25
-StratHistUniformObsPerfSingle1,0.7024232501023332,44.870000000000005
-StratHistUniformObsPerfSingle14,0.7956201391731479,42.800000000000004
-StratHistUniformObsPerfSingle7,0.7499058534588621,43.41166666666667
