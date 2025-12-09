@@ -68,6 +68,15 @@ class XGBoostTrainer:
             else T_low_bare
         )
         self.low_w = objective_params.get("low_value_weight", 0.2)
+        self.monotonic_rpu = self.params["model_params"].get(
+            "monotonic_rpu", False
+        )
+        self.monotone_constraints = tuple(
+            [
+                -1 if ((feature_name == "rpu") and self.monotonic_rpu) else 0
+                for feature_name in self.featurizer.feature_names
+            ]
+        )
 
         # Remove these parameters, if they exist, since they are not valid
         # XGBoost parameters.
@@ -170,6 +179,7 @@ class XGBoostTrainer:
             **self.params["model_params"]["objective_params"],
             early_stopping_rounds=10,
             n_jobs=4,
+            monotone_constraints=self.monotone_constraints,
         )
 
         # Train the model
@@ -297,6 +307,39 @@ class XGBoostTrainer:
             # 6) Mean threshold accuracy
             mean_threshacc = float(np.mean(list(threshaccs.values())))
 
+            # 7) MSE
+            mse = float(np.mean((y_true - y_pred) ** 2))
+
+            # 8) MAE
+            mae = float(np.mean(np.abs(y_true - y_pred)))
+
+            # 9) Asymmetric MSE (10, 0.5)
+            asym_mse = float(
+                np.mean(
+                    np.where(
+                        y_true - y_pred > 0,
+                        10.0 * (y_true - y_pred) ** 2,
+                        0.5 * (y_true - y_pred) ** 2,
+                    )
+                )
+            )
+
+            # 10) Asymmetric Thresholded MSE (3, 1, low threshold 10, low weight 0.2)
+            asym_thresh_mse = float(
+                np.mean(
+                    np.where(
+                        y_true - y_pred > 0,
+                        3.0 * (y_true - y_pred) ** 2,
+                        1.0 * (y_true - y_pred) ** 2,
+                    )
+                    * np.where(
+                        y_true < 10.0,
+                        0.2 + 0.8 * (y_true / 10.0),
+                        1.0,
+                    )
+                )
+            )
+
             d = d | {
                 f"{split_name}_pinball@95": pinball_95,
                 f"{split_name}_pinball@99": pinball_99,
@@ -304,6 +347,10 @@ class XGBoostTrainer:
                 f"{split_name}_miss_depth_log_under": miss_depth,
                 f"{split_name}_MALE": male,
                 f"{split_name}_mean_threshacc": mean_threshacc,
+                f"{split_name}_MSE": mse,
+                f"{split_name}_MAE": mae,
+                f"{split_name}_asym_mse": asym_mse,
+                f"{split_name}_asym_thresh_mse": asym_thresh_mse,
             }
 
         # Save metrics
