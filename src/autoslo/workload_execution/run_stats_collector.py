@@ -41,7 +41,7 @@ SYS_SERVERLESS_USAGE_QUERY = """
 """
 
 
-class StatsCollector:
+class RunStatsCollector:
 
     def __init__(
         self,
@@ -230,5 +230,5 @@ if __name__ == "__main__":
         ),
     )
     args = parser.parse_args()
-    collector = StatsCollector(run_ids=args.run_ids, force=args.force)
+    collector = RunStatsCollector(run_ids=args.run_ids, force=args.force)
     asyncio.run(collector.collect_stats(args.skip_write_on_mismatch))
