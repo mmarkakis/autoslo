@@ -1,7 +1,8 @@
 import os
+import uuid
 from collections import defaultdict
 from datetime import datetime
-import uuid
+from typing import Any, Optional, cast
 
 import pandas as pd
 import pyarrow as pa
@@ -11,6 +12,7 @@ import yaml
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster import Cluster
+from autoslo.plans.parse_plan import parse_one_plan, plan_summary
 
 
 class Trace:
@@ -37,6 +39,7 @@ class Trace:
         ],
         "sys_query_explain": [
             "query_id",
+            "plan_node_id",
             "plan_node",
         ],
     }
@@ -96,12 +99,20 @@ class Trace:
 
                 # N.B.: We may create longer traces by appending multiple copies
                 # of the same run of the same chunk to each other. To maintain
-                # proper joins across the sys tables of each copy, we append 
+                # proper joins across the sys tables of each copy, we append
                 # a UUID to each query_id.
                 df["query_id"] = df.apply(
                     lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
                     axis=1,
                 )
+
+                if table_name == "sys_query_explain":
+                    df = (
+                        df[df["plan_node"].str.contains("XN")]
+                        .sort_values(["query_id", "plan_node_id"])
+                        .reset_index(drop=True)
+                    )
+
                 self._dfs[table_name][cluster_name] = df
 
                 if table_name == "sys_query_history":
@@ -473,6 +484,85 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
+
+    def completion_times(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the completion times (end times in SYS_QUERY_HISTORY) of each query.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["end_time"]
+            s = pd.to_datetime(s)
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
+
+    def query_plans(self) -> dict[str, Any]:
+        """
+        Parse the query plans for each query in the trace and return a
+        dictionary mapping the query IDs to their parsed plans.
+        """
+
+        # First check if a cached version of the plans exists.
+        run_dir = os.path.join(pu.get_runs_path(), self.run_id)
+        plans_path = os.path.join(run_dir, "parsed_plans.yml")
+        if os.path.exists(plans_path):
+            with open(plans_path, "r") as f:
+                cached_plans = yaml.safe_load(f)
+
+            # Append the UUID to the query IDs in the cached plans.
+            cached_plans = {
+                f"{query_id}#{self._uuid}": plan
+                for query_id, plan in cached_plans.items()
+            }
+            return cached_plans
+
+        # Find out the name of the schema.
+        run_params_path = os.path.join(
+            pu.get_runs_path(), self._run_id, "run_params.yml"
+        )
+        with open(run_params_path, "r") as f:
+            run_params = yaml.safe_load(f)
+        schema_name = run_params["schema_name"]
+
+        # If not, parse the plans from sys_query_explain.
+        d: dict[str, Any] = {}
+        query_ids = self.query_ids
+        for df in self._dfs["sys_query_explain"].values():
+
+            for query_id, group_df in df[
+                df["query_id"].isin(query_ids)
+            ].groupby("query_id"):
+                plan_steps = group_df.sort_values("plan_node_id")[
+                    "plan_node"
+                ].tolist()
+                verbose_plan, _, _ = parse_one_plan(plan_steps, analyze=False)
+                alias_dict: dict[str, Optional[str]] = {}
+                verbose_plan.parse_lines_recursively(
+                    schema_name=schema_name,
+                    alias_dict=alias_dict,
+                )
+                verbose_plan.parse_columns_bottom_up(
+                    alias_dict=alias_dict,
+                )
+
+                # Get the tables.
+                tables, _, _ = plan_summary(verbose_plan)
+                verbose_plan_dict = verbose_plan.as_serializable()
+                verbose_plan_dict["tables"] = sorted(list(tables))
+                verbose_plan_dict["num_tables"] = len(tables)
+
+                d[cast(str, query_id)] = verbose_plan_dict
+
+        # Cache the parsed plans for future use, without the UUIDs.
+        with open(plans_path, "w") as f:
+            d_anon = {
+                query_id.split("#")[0]: plan for query_id, plan in d.items()
+            }
+            yaml.safe_dump(d_anon, f)
+
+        return d
 
     def was_aborted(self) -> pd.Series:
         """

@@ -12,7 +12,9 @@ data/composite_workloads/**/cached*
 data/models/
 data/redset_byproducts/
 data/runs/**/*.log
-data/runs/**/featurization_*
+data/runs/**/features_*
+data/runs/**/label_*
+data/runs/**/parsed_plans.yml
 data/runs/run_summary*
 data/strategy_runs/
 
