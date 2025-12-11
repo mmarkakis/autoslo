@@ -351,6 +351,7 @@ class Chunk:
             workload_name=self.chunk_id(),
             blueprint_name=blueprint_name,
             query_router_name=query_router_name,
+            schema_name='ext_tpcds1000' #FIXME: hacky to avoid internal runs
         )
         if len(run_ids) == 0:
             raise ValueError(
