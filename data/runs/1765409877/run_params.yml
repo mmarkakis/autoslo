@@ -1,0 +1,9 @@
+run_id: '1765409877'
+workload_name: tpcds_99templates_25pctheavy_10meaninterarrivals
+num_queries: 347
+scale_factor: 1000
+schema_name: tpcds1000
+blueprint_name: single_8
+query_router_name: RFixed(fixed_cluster_name='cluster_8')
+maxconns: 1000
+closed_loop: false
