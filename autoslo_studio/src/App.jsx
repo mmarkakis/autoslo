@@ -1,4 +1,4 @@
-import { useMemo, useState, Fragment, useEffect } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 
 
 // Weekday names and label helper (Monday = 1)
@@ -506,7 +506,7 @@ export default function App() {
         tail_slo_s: String(sloSecondsNum),
         percentile: String(sloPercentileNum),
       }).toString()
-      const res = await fetch(`/api/composite/ground_truth_smallest_adherent_endpoint?${qs}`, { method: 'POST' })
+      const res = await fetch(`/api/strat/cheapest_adherent_cluster?${qs}`, { method: 'POST' })
       if (!res.ok) {
         const msg = await res.text().catch(() => '')
         throw new Error(`HTTP ${res.status} ${msg}`)
@@ -662,7 +662,7 @@ export default function App() {
 
       {/* SLO adherence full-width pane */}
       <section className="card slo-card">
-        <h2>SLO adherence</h2>
+        <h2>Minimum Cluster Size to Meet SLO</h2>
         <div className="slo-grid">
           <div className="form-col">
             <label className="form-label">Workload</label>
