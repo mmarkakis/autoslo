@@ -13,6 +13,10 @@ model_params:
     - objective_type: built-in
       objective: reg:quantileerror
       quantile_alpha: 0.99
+    # - objective_type: built-in
+    #   objective: reg:squarederror
+    # - objective_type: built-in
+    #   objective: reg:absoluteerror
     - objective_type: custom
       objective: asymmetric_mse
       heavy_side: 10

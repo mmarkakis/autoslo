@@ -340,6 +340,14 @@ class XGBoostTrainer:
                 )
             )
 
+            # 11) Q-error mean, median, p90, p95, p99
+            eps = 1e-6
+            q_errors = np.where(
+                y_true >= y_pred,
+                y_true / (y_pred + eps),
+                y_pred / (y_true + eps),
+            )
+
             d = d | {
                 f"{split_name}_pinball@95": pinball_95,
                 f"{split_name}_pinball@99": pinball_99,
@@ -351,6 +359,11 @@ class XGBoostTrainer:
                 f"{split_name}_MAE": mae,
                 f"{split_name}_asym_mse": asym_mse,
                 f"{split_name}_asym_thresh_mse": asym_thresh_mse,
+                f"{split_name}_qerror_mean": float(np.mean(q_errors)),
+                f"{split_name}_qerror_median": float(np.median(q_errors)),
+                f"{split_name}_qerror_p90": float(np.percentile(q_errors, 90)),
+                f"{split_name}_qerror_p95": float(np.percentile(q_errors, 95)),
+                f"{split_name}_qerror_p99": float(np.percentile(q_errors, 99)),
             }
 
         # Save metrics
