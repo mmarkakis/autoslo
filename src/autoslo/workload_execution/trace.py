@@ -59,6 +59,9 @@ class Trace:
     ]
     REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
 
+    TPCDSQueryId = tuple[int, int]
+    """Represents the template number and the number of the query within it."""
+
     def __init__(self, run_id: str):
         """
         Create a Trace instance from a run directory, reading in only the
@@ -452,6 +455,57 @@ class Trace:
             all_query_ids.extend(list(df["query_id"].unique()))
 
         return all_query_ids
+
+    @property
+    def tpcds_query_ids(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the TPCDS query IDs (template number and query number within that
+        template).
+        """
+        # Check if there is a cached version of the TPCDS query IDs.
+        run_dir = os.path.join(pu.get_runs_path(), self.run_id)
+        tpcds_query_ids_path = os.path.join(run_dir, "tpcds_query_ids.parquet")
+        if os.path.exists(tpcds_query_ids_path):
+            # Set the uuid to the query IDs in the cached series.
+            concatenated = cast(
+                pd.Series,
+                pd.read_parquet(tpcds_query_ids_path).squeeze("columns"),
+            )
+            concatenated.index = pd.Index(
+                [f"{q.split('#')[0]}#{self._uuid}" for q in concatenated.index]
+            )
+            return concatenated
+
+        # If not, compute the TPCDS query IDs.
+        series = []
+        for cluster_name, df in self._dfs["sys_query_history"].items():
+            # Read another local copy of the query history for this cluster,
+            # including the query text field.
+            df_with_query_text = pd.read_parquet(
+                os.path.join(
+                    run_dir, f"sys_query_history+{cluster_name}.parquet"
+                ),
+                columns=["query_id", "query_text"],
+            )
+
+            # Adjust the query IDs and derive the TPCDS query ID.
+            df_with_query_text["query_id"] = df_with_query_text.apply(
+                lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
+                axis=1,
+            )
+            df_with_query_text["tup"] = df_with_query_text["query_text"].apply(
+                lambda x: tuple(
+                    [int(a) for a in x.split("\\n")[1][-11:-4].split("_")]
+                )
+            )
+            s = df_with_query_text.set_index("query_id")["tup"]
+            series.append(s)
+
+        # Cache the TPCDS query IDs for future use.
+        concatenated = pd.concat(series).reindex(self.query_ids)
+        concatenated.to_frame().to_parquet(tpcds_query_ids_path, index=True)
+        return pd.Series(concatenated)
 
     def mbytes_scanned(self) -> pd.Series:
         """

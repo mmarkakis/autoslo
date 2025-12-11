@@ -15,6 +15,7 @@ data/runs/**/*.log
 data/runs/**/features_*
 data/runs/**/label_*
 data/runs/**/parsed_plans.yml
+data/runs/**/tpcds_query_ids.parquet
 data/runs/run_summary*
 data/strategy_runs/
 
