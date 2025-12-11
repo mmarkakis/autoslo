@@ -122,6 +122,17 @@ class StrategyPlotter:
         ax.set_xlabel("Day Index")
         ax.set_ylabel("SLO Violation Rate")
 
+        # Shade the area from y=0 to y=slo_violation_rate_threshold for each day
+        assert results_df["slo_violation_rate_threshold"].nunique() == 1
+        ax.fill_between(
+            x=[-0.5, results_df["day_idx"].max() + 0.5],
+            y1=0,
+            y2=results_df["slo_violation_rate_threshold"].iloc[0],
+            color="green",
+            alpha=0.1,
+            label="Acceptable SLO Violation Rate Area",
+        )
+
         StrategyPlotter._finalize_axes(
             ax,
             max_x_val=results_df["day_idx"].max(),
@@ -219,7 +230,7 @@ class StrategyPlotter:
         ax: Optional[plt.Axes] = None,
     ):
         """
-        Plot scatter plot of mean SLO violation rate vs. total cost.
+        Scatter plot of # days with good SLO violation rate vs. total cost.
         """
         fig, ax, new_ax = StrategyPlotter._maybe_create_ax(ax, figsize=(8, 6))
 
@@ -229,9 +240,16 @@ class StrategyPlotter:
 
         summary_df = (
             results_df.groupby("strategy_name")
-            .agg(
-                mean_slo_violation_rate=("slo_violation_rate", "mean"),
-                sum_total_cost=("total_cost", "sum"),
+            .apply(
+                lambda df: pd.Series(
+                    {
+                        "frac_days_met_slo": (
+                            df["slo_violation_rate"]
+                            <= df["slo_violation_rate_threshold"]
+                        ).mean(),
+                        "total_cost": df["total_cost"].sum(),
+                    }
+                )
             )
             .reset_index()
         )
@@ -243,22 +261,24 @@ class StrategyPlotter:
 
         sns.scatterplot(
             data=summary_df,
-            x="sum_total_cost",
-            y="mean_slo_violation_rate",
+            x="total_cost",
+            y="frac_days_met_slo",
             ax=ax,
             **StrategyPlotter._lineplot_kwargs(scatter=True),
         )
         ax.set_title(
-            "Mean SLO Violation Rate vs. Total Cost for Workload "
-            f"'{workload_name}' with SLO "
-            f"{results_df['latency_slo_s'].iloc[0]:.1f}s"
+            "Fraction of Days Meeting SLO vs. Total Cost\n "
+            f"Workload: {workload_name}\n"
+            f"SLO {results_df['latency_slo_s'].iloc[0]:.1f}s "
+            "(Acceptable violation Rate: "
+            f"{results_df['slo_violation_rate_threshold'].iloc[0]:.2})"
         )
         ax.set_xlabel("Total Cost ($)")
-        ax.set_ylabel("Mean SLO Violation Rate")
+        ax.set_ylabel("Fraction of Days Meeting SLO")
         StrategyPlotter._finalize_axes(
             ax,
-            max_x_val=summary_df["sum_total_cost"].max(),
-            max_y_val=summary_df["mean_slo_violation_rate"].max(),
+            max_x_val=summary_df["total_cost"].max(),
+            max_y_val=summary_df["frac_days_met_slo"].max(),
         )
 
         if new_ax:
