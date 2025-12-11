@@ -516,6 +516,49 @@ button.secondary { background: var(--bg); }
   padding: 4px 8px;
 }
 
+.tabs {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tab {
+  background: transparent;
+  border: 1px solid #0b1022;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.tab.active {
+  background: var(--brand);
+  color: #ffffff;
+  border-color: var(--brand);
+}
+
+.perf-top-row {
+  align-items: stretch;
+  margin-bottom: var(--col-gap);
+}
+
+.perf-image-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.perf-image-card img {
+  max-width: 100%;
+  height: 175px;
+  object-fit: contain;
+}
+
+.library-card {
+  height: 200px;
+}
+
 
 
 

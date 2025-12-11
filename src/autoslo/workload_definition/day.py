@@ -107,3 +107,31 @@ class Day:
             )
 
         return trace
+
+    def get_available_blueprints_and_query_routers(
+        self,
+    ) -> dict[str, set[str]]:
+        """
+        Determine the blueprints and query routers available for this day. These
+        are determined by the intersection of the available blueprints and query
+        routers for each chunk in the day.
+
+        Returns:
+            A dictionary with blueprint names as keys and sets of query router
+            names as values.
+        """
+
+        result = self.chunks[0].get_available_blueprints_and_query_routers()
+
+        for chunk in self.chunks[1:]:
+            chunk_dict = chunk.get_available_blueprints_and_query_routers()
+            for blueprint, query_routers in chunk_dict.items():
+                if blueprint in result:
+                    result[blueprint] = result[blueprint].intersection(
+                        query_routers
+                    )
+
+                else:
+                    del result[blueprint]
+
+        return result

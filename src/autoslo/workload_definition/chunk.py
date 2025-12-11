@@ -351,7 +351,7 @@ class Chunk:
             workload_name=self.chunk_id(),
             blueprint_name=blueprint_name,
             query_router_name=query_router_name,
-            schema_name='ext_tpcds1000' #FIXME: hacky to avoid internal runs
+            schema_name="ext_tpcds1000",  # FIXME: hacky to avoid internal runs
         )
         if len(run_ids) == 0:
             raise ValueError(
@@ -365,7 +365,7 @@ class Chunk:
         self,
         blueprint_name: str,
         query_router_name: str,
-        normalize_start_to: Optional[datetime] = None
+        normalize_start_to: Optional[datetime] = None,
     ) -> Trace:
         """
         Get the (most recent) trace for this chunk on the specified blueprint
@@ -459,3 +459,25 @@ class Chunk:
             )
         if show:
             plt.show()
+
+    def get_available_blueprints_and_query_routers(
+        self,
+    ) -> dict[str, set[str]]:
+        """
+        Determine the blueprints and query routers available for this chunk.
+
+        Returns:
+            A dictionary with blueprint names as keys and sets of query router
+            names as values.
+        """
+
+        runs_df = pu.RunLocator.get_runs_df()
+        chunk_runs_df = runs_df[
+            (runs_df["workload_name"] == self.chunk_id())
+            & (runs_df["schema_name"] == "ext_tpcds1000")
+        ]
+        return (
+            chunk_runs_df.groupby("blueprint_name")
+            .apply(lambda df: set(df["query_router_name"]))
+            .to_dict()
+        )

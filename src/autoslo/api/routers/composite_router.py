@@ -1,12 +1,18 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
 import os
-import yaml
-from fastapi import Body
+from typing import List
 
-from autoslo.workload_definition.composite import Composite
+import yaml
+from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 import autoslo.utils.paths as pu
+from autoslo.blueprints.blueprint import Blueprint
+from autoslo.routing.query_router import QueryRouter
+from autoslo.strategies.slo_strategy import SLOStrategy
+from autoslo.strategies.slo_strategy_performance import SLOStrategyPerformance
+from autoslo.workload_definition.composite import Composite
+from autoslo.workload_execution.trace import Trace
 
 router = APIRouter()
 
@@ -124,3 +130,76 @@ def create_composite_workload_def_post(workload_definition: dict = Body(...)):
     return name
 
 
+class TailPerfRequest(BaseModel):
+    workload_name: str
+    blueprint_name: str
+    query_router_name: str
+    percentiles: list[int]
+
+
+@router.post("/composite/tail_perf", response_model=dict)
+def get_composite_workload_tail_performance(payload: TailPerfRequest):
+    """
+    For the named composite workload, return the performance at the specified
+    percentile on the specified blueprint.
+
+    Parameters (JSON body):
+        workload_name: The name of the composite workload.
+        blueprint_name: The name of the blueprint.
+        query_router_name: The name of the query router.
+        percentiles: A list of percentiles to compute performance for.
+
+    Returns:
+        A dictionary where each key is a percentile and each value is a list,
+            containing the performance at the specified percentile for each day
+            of the workload.
+    """
+    workload = Composite.load(payload.workload_name)
+    blueprint = Blueprint.from_config(payload.blueprint_name)
+    query_router = QueryRouter.from_name(
+        payload.query_router_name, blueprint=blueprint
+    )
+    d: dict[int, list[float]] = {p: [] for p in payload.percentiles}
+    for day_idx in range(len(workload.days)):
+
+        perf: SLOStrategyPerformance = SLOStrategy.evaluate_suggestion(
+            workload=workload,
+            day_idx=day_idx,
+            latency_slo_s=0,
+            blueprint=blueprint,
+            query_router=query_router,
+        )
+
+        for p in payload.percentiles:
+            d[p].append(perf.latency_s_at_quantile(p / 100.0))
+    return d
+
+
+@router.get("/composite/{name}/blueprints_and_routers", response_model=dict)
+def get_composite_workload_blueprints_and_routers(name: str):
+    """
+    For the composite workload, return a dictionary of blueprints and routers
+    that have been used to run the workload.
+
+    Parameters:
+        name: The name of the composite workload.
+
+    Returns:
+        A dictionary with keys "blueprints" and "routers", each mapping to a list
+        of names.
+    """
+    workload = Composite.load(name)
+    return workload.get_available_blueprints_and_query_routers()
+
+
+@router.get("/composite/{name}/definition_image")
+def get_composite_workload_definition_image(name: str):
+    base = pu.get_data_path()
+    image_path = os.path.join(
+        base, "composite_workloads", name, f"{name}_definition.png"
+    )
+    if not os.path.exists(image_path):
+        raise HTTPException(
+            status_code=404, detail="Definition image not found"
+        )
+    return FileResponse(image_path, media_type="image/png")
