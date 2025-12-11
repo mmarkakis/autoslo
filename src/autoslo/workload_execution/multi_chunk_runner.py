@@ -3,7 +3,7 @@ import asyncio
 from datetime import datetime
 
 from autoslo.workload_definition.chunk import Chunk
-from autoslo.workload_execution.collect_stats import StatsCollector
+from autoslo.workload_execution.run_stats_collector import RunStatsCollector
 from autoslo.workload_execution.query_runner import QueryRunner
 
 NUM_TEMPLATES_OPTIONS = [99]
@@ -71,7 +71,7 @@ async def run_all_chunk_workloads(base_args: argparse.Namespace):
 
     # Now get the statistics out as well.
     print(f"{datetime.now()} Collecting stats for all runs...")
-    stats_collector = StatsCollector(run_ids=run_ids)
+    stats_collector = RunStatsCollector(run_ids=run_ids)
     await stats_collector.collect_stats(skip_write_on_mismatch=True)
     print(f"{datetime.now()} Done collecting stats.")
 

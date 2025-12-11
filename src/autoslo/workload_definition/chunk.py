@@ -232,6 +232,8 @@ class Chunk:
                     "r",
                 ) as f:
                     query_text = f.read()
+                # FIXME: these will end up off by one, because the list indexing
+                # starts at 0, but the query numbers per template start at 1.
                 query_texts[template_id].append(query_text)
 
         # Determine which templates are heavy and which are light.
