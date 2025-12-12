@@ -14,8 +14,8 @@ data/redset_byproducts/
 data/runs/**/*.log
 data/runs/**/features_*
 data/runs/**/label_*
-data/runs/**/parsed_plans.yml
-data/runs/**/tpcds_query_ids.parquet
+data/runs/**/parsed_plans.*
+data/runs/**/tpcds_temp_and_q_idxs*
 data/runs/run_summary*
 data/strategy_runs/
 
