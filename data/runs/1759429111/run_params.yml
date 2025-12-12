@@ -1,5 +1,5 @@
 run_id: '1759429111'
-workload_name: benchmarking_trace_99_3_3_shuffled_42
+workload_name: benchmarking_workload_99_3_3_shuffled_42
 num_queries: 891
 scale_factor: 1000
 schema_name: ext_tpcds1000
