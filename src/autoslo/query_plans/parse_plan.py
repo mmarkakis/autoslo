@@ -5,7 +5,7 @@ The code in this file is derived from https://github.com/DataManagementLab/zero-
 import re
 from typing import Any, Optional, Sequence, cast
 
-from autoslo.plans.plan_operator import PlanOperator
+from autoslo.query_plans.plan_operator import PlanOperator
 
 # Plan parsing regexes
 planning_time_regex = re.compile(
