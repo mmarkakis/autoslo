@@ -135,13 +135,12 @@ class IconqQueryFeaturizer:
 
             for query_id, tpcds_temp_and_q_idx in tpcds_temp_and_q_idxs.items():
                 query_id = cast(str, query_id)
-                tpcds_temp_and_q_idx = cast(
-                    Trace.TPCDSTempAndQIdx, tuple(tpcds_temp_and_q_idx.tolist())
-                )
                 if tpcds_temp_and_q_idx in self._featurization_cache:
                     continue
-                plan = plans[query_id]
-                featurization = self.featurize_plan(plan)
+                if (query_id not in plans) or (plans[query_id] is None):
+                    self._featurization_cache[tpcds_temp_and_q_idx] = []
+                    continue
+                featurization = self.featurize_plan(plans[query_id])
                 self._featurization_cache[tpcds_temp_and_q_idx] = featurization
 
     def _find_top_operators(self, query_plans: dict) -> list[str]:
@@ -158,7 +157,8 @@ class IconqQueryFeaturizer:
         # Find all of the operators across queries and their counts.
         all_operators: dict[str, int] = {}
         for plan in tqdm(query_plans.values()):
-            IconqQueryFeaturizer._dfs_count_operators(plan, all_operators)
+            if plan is not None:
+                IconqQueryFeaturizer._dfs_count_operators(plan, all_operators)
         op_names = list(all_operators.keys())
         op_counts = list(all_operators.values())
         total_ops = sum(op_counts)
@@ -232,7 +232,7 @@ class IconqQueryFeaturizer:
             print(f"  {table_name}: {size} rows")
         return table_names_and_sizes[: self._n]
 
-    async def featurize_from_tpcds_temp_and_q_idx(
+    def featurize_from_tpcds_temp_and_q_idx(
         self,
         tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
     ) -> IconqQueryFeaturization:
@@ -256,7 +256,34 @@ class IconqQueryFeaturizer:
 
         raise ValueError("No cached featurization for this query.")
 
-    async def dump_featurization(
+    def featurize(
+        self,
+        query_text: str,
+    ) -> IconqQueryFeaturization:
+        """
+        Converts the given query text into a vectorized representation.
+
+        Parameters:
+            query_text: The text of the query to convert.
+
+        Returns:
+            The vectorized representation of the query text.
+
+        Raises:
+            ValueError: If the TPC-DS query ID cannot be extracted from the
+                query text, or if there is no cached featurization for the
+                extracted TPC-DS query ID.
+        """
+
+        tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(query_text)
+        if tpcds_temp_and_q_idx is None:
+            raise ValueError(
+                "Could not extract TPC-DS template and query index."
+            )
+
+        return self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx)
+
+    def dump_featurization(
         self, query_text: str, out_dir: Optional[str] = None
     ) -> None:
         """
@@ -474,13 +501,12 @@ class IconqQueryFeaturizer:
         with open(cache_path, "w") as f:
             l = []
             for (
-                tpcds_template_id,
-                tpcds_query_idx,
-            ), featurization in self._featurization_cache.items():
+                tpcds_temp_and_q_idx,
+                featurization,
+            ) in self._featurization_cache.items():
                 l.append(
                     {
-                        "tpcds_template_id": tpcds_template_id,
-                        "tpcds_query_idx": tpcds_query_idx,
+                        "tpcds_temp_and_q_idx": tpcds_temp_and_q_idx,
                         "featurization": featurization,
                     }
                 )
@@ -526,10 +552,7 @@ class IconqQueryFeaturizer:
         with open(cache_path, "r") as f:
             l = yaml.safe_load(f)
         featurizer._featurization_cache = {
-            (item["tpcds_template_id"], item["tpcds_query_idx"]): item[
-                "featurization"
-            ]
-            for item in l
+            item["tpcds_temp_and_q_idx"]: item["featurization"] for item in l
         }
 
         return featurizer

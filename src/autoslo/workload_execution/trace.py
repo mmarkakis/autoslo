@@ -60,7 +60,7 @@ class Trace:
     ]
     REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
 
-    TPCDSTempAndQIdx = tuple[int, int]
+    TPCDSTempAndQIdx = str
     """Represents the template number and the number of the query within it."""
 
     def __init__(self, run_id: str):
@@ -458,7 +458,7 @@ class Trace:
         return all_query_ids
 
     @staticmethod
-    def extract_temp_and_q_idxs(query_text: str) -> TPCDSTempAndQIdx:
+    def extract_temp_and_q_idxs(query_text: str) -> "TPCDSTempAndQIdx":
         """
         Extract the TPC-DS template and query index from the given query text.
 
@@ -473,15 +473,8 @@ class Trace:
                 template and query index following the required format.
         """
         try:
-            return cast(
-                Trace.TPCDSTempAndQIdx,
-                tuple(
-                    [
-                        int(a)
-                        for a in query_text.split("\\n")[1][-11:-4].split("_")
-                    ]
-                ),
-            )
+            return query_text.split("\\n")[1][-11:-4].strip()
+
         except Exception as e:
             raise ValueError(
                 "Query text does not contain a valid TPC-DS template and "
@@ -500,7 +493,7 @@ class Trace:
         tpcds_temp_and_q_idxs_path = os.path.join(
             run_dir, "tpcds_temp_and_q_idxs.parquet"
         )
-        if os.path.exists(tpcds_temp_and_q_idxs_path):
+        if False:  # os.path.exists(tpcds_temp_and_q_idxs_path):
             # Set the uuid to the query IDs in the cached series.
             concatenated = cast(
                 pd.Series,
@@ -593,20 +586,7 @@ class Trace:
         dictionary mapping the query IDs to their parsed plans.
         """
 
-        # First check if a cached version of the plans exists.
-        run_dir = os.path.join(pu.get_runs_path(), self.run_id)
-        plans_yml_path = os.path.join(run_dir, "parsed_plans.yml")
-        plans_pkl_path = os.path.join(run_dir, "parsed_plans.pkl")
-        if os.path.exists(plans_yml_path) and os.path.exists(plans_pkl_path):
-            with open(plans_pkl_path, "rb") as f:
-                cached_plans = pickle.load(f)
-
-            # Append the UUID to the query IDs in the cached plans.
-            cached_plans = {
-                f"{query_id}#{self._uuid}": plan
-                for query_id, plan in cached_plans.items()
-            }
-            return cached_plans
+        d = {}
 
         # Find out the name of the schema.
         run_params_path = os.path.join(
@@ -615,16 +595,53 @@ class Trace:
         with open(run_params_path, "r") as f:
             run_params = yaml.safe_load(f)
         schema_name = run_params["schema_name"]
+        workload_name = run_params["workload_name"]
 
-        # If not, parse the plans from sys_query_explain.
-        d: dict[str, Any] = {}
-        query_ids = self.query_ids
-        for df in self._dfs["sys_query_explain"].values():
+        # Load any pre-parsed plans.
+        parsed_plans_path = os.path.join(
+            pu.get_data_path(), "parsed_query_plans", f"{schema_name}.pkl"
+        )
+        parsed_plans: dict[Trace.TPCDSTempAndQIdx, Any] = {}
+        if os.path.exists(parsed_plans_path):
+            with open(parsed_plans_path, "rb") as f:
+                parsed_plans = pickle.load(f)
 
-            for query_id, group_df in df[
-                df["query_id"].isin(query_ids)
-            ].groupby("query_id"):
-                plan_steps = group_df.sort_values("plan_node_id")[
+        # Determine any queries still to be parsed and exit early if none.
+        query_ids_to_parse_per_cluster: dict[
+            str, list[tuple[str, Trace.TPCDSTempAndQIdx]]
+        ] = defaultdict(list)
+        for query_id, temp_and_q_idx in self.tpcds_temp_and_q_idxs.items():
+            query_id = cast(str, query_id)
+            temp_and_q_idx
+            if temp_and_q_idx in parsed_plans:
+                d[query_id] = parsed_plans[temp_and_q_idx]
+            else:
+                cluster = query_id.rsplit("_", maxsplit=1)[0]
+                query_ids_to_parse_per_cluster[cluster].append(
+                    (query_id, temp_and_q_idx)
+                )
+        if all(len(v) == 0 for v in query_ids_to_parse_per_cluster.values()):
+            return d
+
+        # FIXME: Currently we are missing the explain data for some queries in
+        # the benchmarking workloads, so we cannot parse their plans.
+        if "benchmarking" in workload_name:
+            for (
+                cluster_name,
+                query_ids,
+            ) in query_ids_to_parse_per_cluster.items():
+                d[cast(str, query_id)] = None
+            return d
+
+        # Parse the remaining queries.
+        for cluster_name, query_ids in query_ids_to_parse_per_cluster.items():
+            explain_df = self._dfs["sys_query_explain"][cluster_name]
+
+            for query_id, temp_and_q_idx in query_ids:
+                query_df = explain_df[explain_df["query_id"] == query_id]
+                if len(query_df) == 0:
+                    continue
+                plan_steps = query_df.sort_values("plan_node_id")[
                     "plan_node"
                 ].tolist()
                 verbose_plan, _, _ = parse_one_plan(plan_steps, analyze=False)
@@ -644,13 +661,13 @@ class Trace:
                 verbose_plan_dict["num_tables"] = len(tables)
 
                 d[cast(str, query_id)] = verbose_plan_dict
+                parsed_plans[temp_and_q_idx] = verbose_plan_dict
 
-        # Cache the parsed plans for future use, without the UUIDs.
-        d_anon = {query_id.split("#")[0]: plan for query_id, plan in d.items()}
-        with open(plans_yml_path, "w") as f:
-            yaml.safe_dump(d_anon, f)
-        with open(plans_pkl_path, "wb") as f:
-            pickle.dump(d_anon, f)
+        # Cache the parsed plans for future use.
+        with open(parsed_plans_path, "wb") as f:
+            pickle.dump(parsed_plans, f)
+        with open(parsed_plans_path.replace(".pkl", ".yml"), "w") as f:
+            yaml.dump(parsed_plans, f, sort_keys=False)
 
         return d
 
