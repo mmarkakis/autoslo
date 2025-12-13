@@ -286,6 +286,9 @@ class Trace:
         """
         Get the latencies of the queries in the trace, in seconds.
 
+        The order of the query IDs in the Series matches the order of the query
+        IDs provided by the `query_ids` property.
+
         Returns:
             A pandas Series where the index is the query IDs and the values are
                 the latencies in seconds.
@@ -481,11 +484,42 @@ class Trace:
                 "query index following the required format."
             ) from e
 
+    @staticmethod
+    def extract_temp(temp_and_q_idx: "TPCDSTempAndQIdx") -> int:
+        """
+        Extract the TPC-DS template number from the given template and query
+        index string.
+
+        Parameters:
+            temp_and_q_idx: The TPC-DS template and query index string.
+
+        Returns:
+            The template number as an integer.
+        """
+        return int(temp_and_q_idx.split("_")[0])
+
+    @staticmethod
+    def extract_q_idx(temp_and_q_idx: "TPCDSTempAndQIdx") -> int:
+        """
+        Extract the TPC-DS query index from the given template and query index
+        string.
+
+        Parameters:
+            temp_and_q_idx: The TPC-DS template and query index string.
+
+        Returns:
+            The query index as an integer.
+        """
+        return int(temp_and_q_idx.split("_")[1])
+
     @property
     def tpcds_temp_and_q_idxs(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
         the TPCDS template and query indices associated with each query.
+
+        The order of the query IDs in the Series matches the order of the query
+        IDs provided by the `query_ids` property.
         """
         # Check if there is a cached version of the TPCDS template and query
         # indices.
@@ -493,7 +527,7 @@ class Trace:
         tpcds_temp_and_q_idxs_path = os.path.join(
             run_dir, "tpcds_temp_and_q_idxs.parquet"
         )
-        if False:  # os.path.exists(tpcds_temp_and_q_idxs_path):
+        if os.path.exists(tpcds_temp_and_q_idxs_path):
             # Set the uuid to the query IDs in the cached series.
             concatenated = cast(
                 pd.Series,
