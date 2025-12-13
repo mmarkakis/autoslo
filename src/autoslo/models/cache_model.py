@@ -1,14 +1,14 @@
 import os
 import pickle
 from datetime import datetime
+from typing import Optional
 
 import numpy as np
 import yaml
 
 import autoslo.utils.paths as pu
+from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
-
-from typing import Optional
 
 
 class CacheModel:
@@ -19,8 +19,6 @@ class CacheModel:
     at hand. For cache misses, the model returns the mean runtime and the
     runtime standard deviation of all queries seen so far.
     """
-
-    MeanAndStdDev = tuple[float, float]
 
     def __init__(
         self,
@@ -48,19 +46,21 @@ class CacheModel:
         self._overall_mean_runtime_s = 0.0
         self._overall_std_runtime_s = 0.0
 
-    def predict(self, query_texts: dict[str, str]) -> dict[str, MeanAndStdDev]:
+    def predict(
+        self, query_texts: dict[str, str]
+    ) -> dict[str, ModelPrediction]:
         """
-        Predicts the runtime of the given query representations.
+        Predicts the runtime of the given query texts.
 
         Parameters:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
 
         Returns:
-            A dictionary mapping query ids to (mean runtime, std dev) tuples,
+            A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
-        predictions: dict[str, CacheModel.MeanAndStdDev] = {}
+        predictions: dict[str, ModelPrediction] = {}
 
         for query_id, query_text in query_texts.items():
             query_temp_and_q_idxs = Trace.extract_temp_and_q_idxs(query_text)
@@ -74,9 +74,9 @@ class CacheModel:
                 and not self._enable_template_cache
             ):
                 # Cache miss
-                predictions[query_id] = (
-                    self._overall_mean_runtime_s,
-                    self._overall_std_runtime_s,
+                predictions[query_id] = ModelPrediction(
+                    mean_s=self._overall_mean_runtime_s,
+                    std_s=self._overall_std_runtime_s,
                 )
             elif (
                 query_within_template_id not in self._cache[template_id]
@@ -87,16 +87,19 @@ class CacheModel:
                     template_id
                 ].items():
                     runtimes.extend(local_runtimes)
-                predictions[query_id] = (
-                    float(np.mean(runtimes)),
-                    float(np.std(runtimes, ddof=0)),
+                predictions[query_id] = ModelPrediction(
+                    mean_s=float(np.mean(runtimes)),
+                    std_s=float(np.std(runtimes, ddof=0)),
                 )
             elif query_within_template_id in self._cache[template_id]:
                 # Cache hit
                 _, mean_runtime, std_runtime = self._cache[template_id][
                     query_within_template_id
                 ]
-                predictions[query_id] = (mean_runtime, std_runtime)
+                predictions[query_id] = ModelPrediction(
+                    mean_s=mean_runtime,
+                    std_s=std_runtime,
+                )
 
         return predictions
 

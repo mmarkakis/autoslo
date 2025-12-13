@@ -283,6 +283,32 @@ class IconqQueryFeaturizer:
 
         return self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx)
 
+    def featurize_trace(
+        self, trace: Trace
+    ) -> dict[str, IconqQueryFeaturization]:
+        """
+        Featurizes all queries in the given trace.
+
+        Parameters:
+            trace: The Trace object containing the queries to featurize.
+
+        Returns:
+            A dictionary mapping query IDs to their vectorized representations.
+        """
+        featurizations: dict[
+            str, IconqQueryFeaturizer.IconqQueryFeaturization
+        ] = {}
+        tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+
+        for query_id, tpcds_temp_and_q_idx in tpcds_temp_and_q_idxs.items():
+            query_id = cast(str, query_id)
+            featurization = self.featurize_from_tpcds_temp_and_q_idx(
+                tpcds_temp_and_q_idx
+            )
+            featurizations[query_id] = featurization
+
+        return featurizations
+
     def dump_featurization(
         self, query_text: str, out_dir: Optional[str] = None
     ) -> None:
