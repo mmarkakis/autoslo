@@ -3,9 +3,8 @@ The code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
 import os
-import pickle
 from datetime import datetime
-from typing import Any, Optional, cast
+from typing import Any, Optional, TypeAlias, cast
 
 import numpy as np
 import yaml
@@ -22,11 +21,13 @@ class IconqQueryFeaturizer:
     well as the N largest tables in the database to define the feature space.
     """
 
-    IconqQueryFeaturization = list[float]
+    IconqQueryFeaturization: TypeAlias = list[float]
     """Represents the vectorized features of a query."""
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
+        schema_name: str,
+        run_ids: list[str],
         m: int = 15,
         n: int = 20,
         use_size: bool = True,
@@ -38,6 +39,9 @@ class IconqQueryFeaturizer:
         Initializes the IconqQueryFeaturizer.
 
         Parameters:
+            schema_name: The name of the schema containing the database tables.
+            run_ids: The run IDs, the traces of which will be used to determine
+                the top M operators and top N tables.
             m: The number of operators to consider.
             n: The number of tables to consider.
             use_size: Whether to multiply cardinalities by the width of
@@ -49,6 +53,9 @@ class IconqQueryFeaturizer:
             use_log: Whether to use the logarithm of the cardinalities in the
                 features.
         """
+        self._schema_name = schema_name
+        self._run_ids = run_ids
+
         self._m = m
         self._top_operators: list[str] = []
         self._n = n
@@ -58,12 +65,41 @@ class IconqQueryFeaturizer:
         self._use_table_selectivity = use_table_selectivity
         self._use_log = use_log
 
-        # These will be populated in other methods.
-        self._run_ids: list[str] = []
         self._featurization_cache: dict[
             Trace.TPCDSTempAndQIdx,
             IconqQueryFeaturizer.IconqQueryFeaturization,
         ] = {}
+
+        query_plans = {}
+        print("Loading query plans...")
+        for run_id in tqdm(run_ids):
+            trace = Trace(run_id)
+            plans = trace.query_plans()
+            query_plans.update(plans)
+
+        print("Finding top operators...")
+        self._top_operators = self._find_top_operators(query_plans)
+        print("Finding top tables...")
+        self._top_tables = self._find_top_tables()
+
+        # Featurize all the given runs while we're at it, as a cache.
+        print("Featurizing queries...")
+        for run_id in tqdm(run_ids):
+            trace = Trace(run_id)
+
+            tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+
+            plans = trace.query_plans()
+
+            for query_id, tpcds_temp_and_q_idx in tpcds_temp_and_q_idxs.items():
+                query_id = cast(str, query_id)
+                if tpcds_temp_and_q_idx in self._featurization_cache:
+                    continue
+                if (query_id not in plans) or (plans[query_id] is None):
+                    self._featurization_cache[tpcds_temp_and_q_idx] = []
+                    continue
+                featurization = self.featurize_plan(plans[query_id])
+                self._featurization_cache[tpcds_temp_and_q_idx] = featurization
 
     @property
     def num_dims(self) -> int:
@@ -95,53 +131,6 @@ class IconqQueryFeaturizer:
             The names of the top N tables in the database.
         """
         return [table_name for (table_name, _) in self._top_tables]
-
-    def initialize(
-        self,
-        schema_name: str,
-        run_ids: list[str],
-    ) -> None:
-        """
-        Initializes the IconqQueryFeaturizer by determining the top M operators
-        and top N tables in the given runs.
-
-        Parameters:
-            schema_name: The name of the schema containing the database tables.
-            run_ids: The run IDs, the traces of which will be used to determine
-                the top M operators and top N tables.
-        """
-        self._schema_name = schema_name
-        self._run_ids = run_ids
-        query_plans = {}
-        print("Loading query plans...")
-        for run_id in tqdm(run_ids):
-            trace = Trace(run_id)
-            plans = trace.query_plans()
-            query_plans.update(plans)
-
-        print("Finding top operators...")
-        self._top_operators = self._find_top_operators(query_plans)
-        print("Finding top tables...")
-        self._top_tables = self._find_top_tables()
-
-        # Featurize all the given runs while we're at it, as a cache.
-        print("Featurizing queries...")
-        for run_id in tqdm(run_ids):
-            trace = Trace(run_id)
-
-            tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
-
-            plans = trace.query_plans()
-
-            for query_id, tpcds_temp_and_q_idx in tpcds_temp_and_q_idxs.items():
-                query_id = cast(str, query_id)
-                if tpcds_temp_and_q_idx in self._featurization_cache:
-                    continue
-                if (query_id not in plans) or (plans[query_id] is None):
-                    self._featurization_cache[tpcds_temp_and_q_idx] = []
-                    continue
-                featurization = self.featurize_plan(plans[query_id])
-                self._featurization_cache[tpcds_temp_and_q_idx] = featurization
 
     def _find_top_operators(self, query_plans: dict) -> list[str]:
         """
