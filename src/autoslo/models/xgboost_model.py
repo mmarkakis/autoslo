@@ -1,9 +1,10 @@
 import os
-import pickle
 from datetime import datetime
 from typing import Any, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import yaml
 from xgboost import XGBRegressor
 
@@ -11,8 +12,6 @@ import autoslo.utils.paths as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
-import pandas as pd
-import matplotlib.pyplot as plt
 
 
 class XGBoostModel:
@@ -23,7 +22,6 @@ class XGBoostModel:
 
     def __init__(
         self,
-        iconq_query_featurizer_id: str,
         train_on_log_runtime: bool = False,
         n_estimators: int = 1000,
         max_depth: int = 8,
@@ -31,13 +29,13 @@ class XGBoostModel:
         eval_metric: str = "mae",
         early_stopping_rounds: int = 100,
         random_seed: int = 42,
+        iconq_query_featurizer_id: Optional[str] = None,
+        iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
     ):
         """
         Initializes the XGBoostModel.
 
         Parameters:
-            iconq_query_featurizer_id: The identifier of the
-                IconqQueryFeaturizer to use for featurizing queries.
             train_on_log_runtime: Whether to train on the log of the runtime, as
                 opposed to the runtime itself.
             n_estimators: Number of boosting rounds (number of gradient boosted
@@ -48,12 +46,36 @@ class XGBoostModel:
             early_stopping_rounds: The number of rounds with no improvement to
                 wait before stopping.
             random_seed: The random seed to use for training.
+            iconq_query_featurizer_id: The identifier of the
+                IconqQueryFeaturizer to use for featurizing queries. If not
+                provided, must provide iconq_query_featurizer_init_params, with
+                appropriate keys, to initialize a new IconqQueryFeaturizer.
+            iconq_query_featurizer_init_params: The initialization parameters
+                for the IconqQueryFeaturizer, if iconq_query_featurizer_id is
+                not provided. Must include a key for each required parameter of
+                the constructor of IconqQueryFeaturizer.
+        Raises:
+            ValueError: If neither iconq_query_featurizer_id nor
+                iconq_query_featurizer_init_params is provided.
         """
 
-        self._iconq_query_featurizer_id = iconq_query_featurizer_id
-        self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-            iconq_query_featurizer_id
-        )
+        if iconq_query_featurizer_id is None:
+            if iconq_query_featurizer_init_params is None:
+                raise ValueError(
+                    "Must provide either iconq_query_featurizer_id or "
+                    "iconq_query_featurizer_init_params."
+                )
+            self._iconq_query_featurizer = IconqQueryFeaturizer(
+                **iconq_query_featurizer_init_params
+            )
+            self._iconq_query_featurizer_id = (
+                self._iconq_query_featurizer.save()
+            )
+        else:
+            self._iconq_query_featurizer_id = iconq_query_featurizer_id
+            self._iconq_query_featurizer = IconqQueryFeaturizer.load(
+                iconq_query_featurizer_id
+            )
 
         self._train_on_log_runtime = train_on_log_runtime
         self._n_estimators = n_estimators
@@ -103,7 +125,7 @@ class XGBoostModel:
 
         return predictions
 
-    async def train(
+    def train(
         self,
         run_ids: list[str],
         from_scratch: bool = False,

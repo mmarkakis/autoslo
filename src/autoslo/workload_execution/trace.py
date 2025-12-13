@@ -3,7 +3,7 @@ import pickle
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Optional, cast
+from typing import Any, Optional, TypeAlias, cast
 
 import pandas as pd
 import pyarrow as pa
@@ -60,7 +60,7 @@ class Trace:
     ]
     REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
 
-    TPCDSTempAndQIdx = str
+    TPCDSTempAndQIdx: TypeAlias = str
     """Represents the template number and the number of the query within it."""
 
     def __init__(self, run_id: str):
@@ -496,7 +496,7 @@ class Trace:
         Returns:
             The template number as an integer.
         """
-        return int(temp_and_q_idx.split("_")[0])
+        return int(str(temp_and_q_idx).split("_")[0])
 
     @staticmethod
     def extract_q_idx(temp_and_q_idx: "TPCDSTempAndQIdx") -> int:
@@ -510,7 +510,7 @@ class Trace:
         Returns:
             The query index as an integer.
         """
-        return int(temp_and_q_idx.split("_")[1])
+        return int(str(temp_and_q_idx).split("_")[1])
 
     @property
     def tpcds_temp_and_q_idxs(self) -> pd.Series:

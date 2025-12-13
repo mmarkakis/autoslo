@@ -16,13 +16,20 @@ class CacheModel:
     A query runtime model that simply caches the past runtimes of each query,
     based on their TPC-DS template and query index. For cache hits, the model
     returns the mean and standard deviation of the cached runtimes for the query
-    at hand. For cache misses, the model returns the mean runtime and the
-    runtime standard deviation of all queries seen so far.
+    at hand. For cache misses, the model generally returns None.
+
+    If template caching is enabled, unseen queries from seen templates will be
+    predicted as the mean and standard deviation of the seen queries of the
+    template.
+
+    If best effort is enabled, cache misses will return the overall mean and
+    standard deviation of all cached runtimes.
     """
 
     def __init__(
         self,
         enable_template_cache: bool = False,
+        best_effort: bool = False,
     ) -> None:
         """
         Initializes the CacheModel.
@@ -32,6 +39,9 @@ class CacheModel:
                 If enabled, unseen queries from seen templates will be predicted
                 as the mean and standard deviation of the seen queries of the
                 template.
+            best_effort: Whether to enable best-effort predictions for cache
+                misses. If enabled, cache misses will return the overall mean
+                and standard deviation of all cached runtimes.
         """
         # key: tpcds template index
         # value: dictionary where
@@ -42,13 +52,14 @@ class CacheModel:
             dict[int, tuple[list[float], float, float]],
         ] = {}
         self._enable_template_cache = enable_template_cache
+        self._best_effort = best_effort
         self._run_ids: list[str] = []
         self._overall_mean_runtime_s = 0.0
         self._overall_std_runtime_s = 0.0
 
     def predict(
         self, query_texts: dict[str, str]
-    ) -> dict[str, ModelPrediction]:
+    ) -> dict[str, Optional[ModelPrediction]]:
         """
         Predicts the runtime of the given query texts.
 
@@ -60,7 +71,7 @@ class CacheModel:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
-        predictions: dict[str, ModelPrediction] = {}
+        predictions: dict[str, Optional[ModelPrediction]] = {}
 
         for query_id, query_text in query_texts.items():
             query_temp_and_q_idxs = Trace.extract_temp_and_q_idxs(query_text)
@@ -74,10 +85,13 @@ class CacheModel:
                 and not self._enable_template_cache
             ):
                 # Cache miss
-                predictions[query_id] = ModelPrediction(
-                    mean_s=self._overall_mean_runtime_s,
-                    std_s=self._overall_std_runtime_s,
-                )
+                if self._best_effort:
+                    predictions[query_id] = ModelPrediction(
+                        mean_s=self._overall_mean_runtime_s,
+                        std_s=self._overall_std_runtime_s,
+                    )
+                else:
+                    predictions[query_id] = None
             elif (
                 query_within_template_id not in self._cache[template_id]
             ) and self._enable_template_cache:
@@ -190,6 +204,7 @@ class CacheModel:
             yaml.safe_dump(
                 {
                     "enable_template_cache": self._enable_template_cache,
+                    "best_effort": self._best_effort,
                     "run_ids": self._run_ids,
                     "mean_overall_runtime_s": self._overall_mean_runtime_s,
                     "std_overall_runtime_s": self._overall_std_runtime_s,
@@ -234,6 +249,7 @@ class CacheModel:
             params = yaml.safe_load(f)
         model = CacheModel(
             enable_template_cache=params["enable_template_cache"],
+            best_effort=params["best_effort"],
         )
         model._run_ids = params["run_ids"]
         model._overall_mean_runtime_s = params["mean_overall_runtime_s"]

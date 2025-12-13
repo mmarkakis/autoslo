@@ -37,7 +37,7 @@ def _install_dummy_trace(
 
 
 @pytest.mark.unit
-def test_cache_model_cache_hits_and_misses_no_template_cache(
+def test_cache_model_cache_hits_and_misses_no_template_cache_no_best_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
@@ -51,7 +51,7 @@ def test_cache_model_cache_hits_and_misses_no_template_cache(
         },
     }
     _install_dummy_trace(monkeypatch, runs)
-    model = CacheModel(enable_template_cache=False)
+    model = CacheModel(enable_template_cache=False, best_effort=False)
     model.train(["run-a"], from_scratch=True)
 
     predictions = model.predict(
@@ -61,8 +61,43 @@ def test_cache_model_cache_hits_and_misses_no_template_cache(
         },
     )
 
+    assert predictions["hit"] is not None
     assert predictions["hit"].mean_s == pytest.approx(1.5)
     assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["miss"] is None
+    assert model._overall_mean_runtime_s == pytest.approx(2.0)
+    assert model._overall_std_runtime_s == pytest.approx(0.81649658)
+
+
+@pytest.mark.unit
+def test_cache_model_cache_hits_and_misses_no_template_cache_with_best_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Ensure cache hits and misses return correct runtimes when template caching
+    is disabled.
+    """
+    runs = {
+        "run-a": {
+            "latencies": [1.0, 2.0, 3.0],
+            "pairs": ["1_1", "1_1", "2_5"],
+        },
+    }
+    _install_dummy_trace(monkeypatch, runs)
+    model = CacheModel(enable_template_cache=False, best_effort=True)
+    model.train(["run-a"], from_scratch=True)
+
+    predictions = model.predict(
+        {
+            "hit": "1_1",
+            "miss": "2_99",
+        },
+    )
+
+    assert predictions["hit"] is not None
+    assert predictions["hit"].mean_s == pytest.approx(1.5)
+    assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["miss"] is not None
     assert predictions["miss"].mean_s == pytest.approx(2.0)
     assert predictions["miss"].std_s == pytest.approx(0.81649658)
     assert model._overall_mean_runtime_s == pytest.approx(2.0)
@@ -70,7 +105,7 @@ def test_cache_model_cache_hits_and_misses_no_template_cache(
 
 
 @pytest.mark.unit
-def test_cache_model_cache_hits_and_misses_with_template_cache(
+def test_cache_model_cache_hits_and_misses_with_template_cache_no_best_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
@@ -84,7 +119,7 @@ def test_cache_model_cache_hits_and_misses_with_template_cache(
         },
     }
     _install_dummy_trace(monkeypatch, runs)
-    model = CacheModel(enable_template_cache=True)
+    model = CacheModel(enable_template_cache=True, best_effort=False)
     model.train(["run-a"], from_scratch=True)
 
     predictions = model.predict(
@@ -95,10 +130,50 @@ def test_cache_model_cache_hits_and_misses_with_template_cache(
         },
     )
 
+    assert predictions["hit"] is not None
     assert predictions["hit"].mean_s == pytest.approx(1.5)
     assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["template_miss"] is not None
     assert predictions["template_miss"].mean_s == pytest.approx(3.0)
     assert predictions["template_miss"].std_s == pytest.approx(0.0)
+    assert predictions["miss"] is None
+    assert model._overall_mean_runtime_s == pytest.approx(2.0)
+    assert model._overall_std_runtime_s == pytest.approx(0.81649658)
+
+
+@pytest.mark.unit
+def test_cache_model_cache_hits_and_misses_with_template_cache_with_best_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Ensure cache hits and misses return correct runtimes when template caching
+    is enabled.
+    """
+    runs = {
+        "run-a": {
+            "latencies": [1.0, 2.0, 3.0],
+            "pairs": ["1_1", "1_1", "2_5"],
+        },
+    }
+    _install_dummy_trace(monkeypatch, runs)
+    model = CacheModel(enable_template_cache=True, best_effort=True)
+    model.train(["run-a"], from_scratch=True)
+
+    predictions = model.predict(
+        {
+            "hit": "1_1",
+            "template_miss": "2_99",
+            "miss": "3_42",
+        },
+    )
+
+    assert predictions["hit"] is not None
+    assert predictions["hit"].mean_s == pytest.approx(1.5)
+    assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["template_miss"] is not None
+    assert predictions["template_miss"].mean_s == pytest.approx(3.0)
+    assert predictions["template_miss"].std_s == pytest.approx(0.0)
+    assert predictions["miss"] is not None
     assert predictions["miss"].mean_s == pytest.approx(2.0)
     assert predictions["miss"].std_s == pytest.approx(0.81649658)
     assert model._overall_mean_runtime_s == pytest.approx(2.0)

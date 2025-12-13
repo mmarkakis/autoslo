@@ -1,13 +1,13 @@
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from autoslo.models.xgboost_model import XGBoostModel
 import autoslo.models.xgboost_model as xgb_module
+from autoslo.models.xgboost_model import XGBoostModel
 
 
 def _make_query_text(template: str) -> str:
@@ -17,11 +17,13 @@ def _make_query_text(template: str) -> str:
     return f"SELECT 1\\nabc{template}tail"
 
 
-def _create_trace_run(root: Path,
-                      run_id: str,
-                      latencies: list[float],
-                      templates: list[str],
-                      cluster_name: str = "cluster") -> Path:
+def _create_trace_run(
+    root: Path,
+    run_id: str,
+    latencies: list[float],
+    templates: list[str],
+    cluster_name: str = "cluster",
+) -> Path:
     """
     Create a minimal run consumable by Trace using synthetic parquet files.
     """
@@ -54,8 +56,9 @@ def _create_trace_run(root: Path,
 
 
 @pytest.mark.unit
-def test_xgboost_model_predict_uses_featurizer(monkeypatch: pytest.MonkeyPatch
-                                              ) -> None:
+def test_xgboost_model_predict_uses_featurizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Ensure prediction uses featurizer output and applies inverse log transform.
     """
@@ -90,7 +93,9 @@ def test_xgboost_model_predict_uses_featurizer(monkeypatch: pytest.MonkeyPatch
         staticmethod(lambda _: featurizer_stub),
     )
 
-    model = XGBoostModel("stub", train_on_log_runtime=True)
+    model = XGBoostModel(
+        iconq_query_featurizer_id="stub", train_on_log_runtime=True
+    )
     predictions = model.predict({"q1": _make_query_text("001_001")})
 
     assert predict_stub.received == [[1.0, 2.0]]
@@ -99,8 +104,9 @@ def test_xgboost_model_predict_uses_featurizer(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_xgboost_model_train_prepares_fit(monkeypatch: pytest.MonkeyPatch
-                                               ) -> None:
+async def test_xgboost_model_train_prepares_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Ensure training prepares arrays and returns the last recorded losses.
     """
@@ -140,11 +146,13 @@ async def test_xgboost_model_train_prepares_fit(monkeypatch: pytest.MonkeyPatch
             self.fit_called = False
             self.recorded_eval_set: list[tuple[np.ndarray, np.ndarray]] = []
 
-        def fit(self,
-                train_X: np.ndarray,
-                train_y: np.ndarray,
-                eval_set: list[tuple[np.ndarray, np.ndarray]],
-                verbose: bool) -> None:
+        def fit(
+            self,
+            train_X: np.ndarray,
+            train_y: np.ndarray,
+            eval_set: list[tuple[np.ndarray, np.ndarray]],
+            verbose: bool,
+        ) -> None:
             self.fit_called = True
             self.train_X = train_X
             self.train_y = train_y
@@ -168,8 +176,12 @@ async def test_xgboost_model_train_prepares_fit(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(xgb_module, "XGBRegressor", stub_factory)
 
-    model = XGBoostModel("stub", n_estimators=5, early_stopping_rounds=2)
-    train_loss, val_loss = await model.train(["run-1"], from_scratch=True)
+    model = XGBoostModel(
+        iconq_query_featurizer_id="stub",
+        n_estimators=5,
+        early_stopping_rounds=2,
+    )
+    train_loss, val_loss = model.train(["run-1"], from_scratch=True)
 
     final_stub = fit_stubs[-1]
     assert final_stub.fit_called
@@ -181,9 +193,9 @@ async def test_xgboost_model_train_prepares_fit(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_xgboost_model_with_real_trace(tmp_path: Path,
-                                             monkeypatch: pytest.MonkeyPatch
-                                             ) -> None:
+async def test_xgboost_model_with_real_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Exercise XGBoostModel with real Trace data and persistence.
     """
@@ -228,14 +240,14 @@ async def test_xgboost_model_with_real_trace(tmp_path: Path,
     )
 
     model = XGBoostModel(
-        "stub",
+        iconq_query_featurizer_id="stub",
         n_estimators=25,
         max_depth=3,
         eta=0.3,
         early_stopping_rounds=5,
         random_seed=0,
     )
-    train_loss, val_loss = await model.train([run_id], from_scratch=True)
+    train_loss, val_loss = model.train([run_id], from_scratch=True)
 
     assert train_loss >= 0.0
     assert val_loss >= 0.0
