@@ -86,6 +86,11 @@ def test_xgboost_model_predict_uses_featurizer(
         def featurize_trace(self, trace: Any) -> dict[str, list[float]]:
             return {}
 
+        def featurize_from_tpcds_temp_and_q_idx(
+            self, template: str
+        ) -> list[float]:
+            return [1.0, 2.0]
+
     featurizer_stub = FeaturizerStub()
     monkeypatch.setattr(
         xgb_module.IconqQueryFeaturizer,
@@ -99,7 +104,7 @@ def test_xgboost_model_predict_uses_featurizer(
     predictions = model.predict({"q1": _make_query_text("001_001")})
 
     assert predict_stub.received == [[1.0, 2.0]]
-    assert predictions["q1"].mean_s == pytest.approx(4.0)
+    assert predictions["q1"].overall_mean_s() == pytest.approx(4.0)
 
 
 @pytest.mark.unit
@@ -232,6 +237,11 @@ async def test_xgboost_model_with_real_trace(
                 for query_id, template in trace.tpcds_temp_and_q_idxs.items()
             }
 
+        def featurize_from_tpcds_temp_and_q_idx(
+            self, template: str
+        ) -> list[float]:
+            return to_features(template)
+
     simple_featurizer = SimpleFeaturizer()
     monkeypatch.setattr(
         xgb_module.IconqQueryFeaturizer,
@@ -266,6 +276,6 @@ async def test_xgboost_model_with_real_trace(
         },
     )
 
-    assert np.isfinite(predictions["seen"].mean_s)
-    assert predictions["seen"].mean_s > 0.0
-    assert predictions["unseen"].mean_s > 0.0
+    assert np.isfinite(predictions["seen"].overall_mean_s())
+    assert predictions["seen"].overall_mean_s() > 0.0
+    assert predictions["unseen"].overall_mean_s() > 0.0

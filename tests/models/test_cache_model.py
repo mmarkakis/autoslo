@@ -5,7 +5,6 @@ import pytest
 
 import autoslo.models.cache_model as cache_model
 from autoslo.models.cache_model import CacheModel
-from autoslo.models.model_prediction import ModelPrediction
 
 
 def _install_dummy_trace(
@@ -62,8 +61,8 @@ def test_cache_model_cache_hits_and_misses_no_template_cache_no_best_effort(
     )
 
     assert predictions["hit"] is not None
-    assert predictions["hit"].mean_s == pytest.approx(1.5)
-    assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["hit"].overall_mean_s() == pytest.approx(1.5)
+    assert predictions["hit"].overall_std_dev_s() == pytest.approx(0.5)
     assert predictions["miss"] is None
     assert model._overall_mean_runtime_s == pytest.approx(2.0)
     assert model._overall_std_runtime_s == pytest.approx(0.81649658)
@@ -95,11 +94,11 @@ def test_cache_model_cache_hits_and_misses_no_template_cache_with_best_effort(
     )
 
     assert predictions["hit"] is not None
-    assert predictions["hit"].mean_s == pytest.approx(1.5)
-    assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["hit"].overall_mean_s() == pytest.approx(1.5)
+    assert predictions["hit"].overall_std_dev_s() == pytest.approx(0.5)
     assert predictions["miss"] is not None
-    assert predictions["miss"].mean_s == pytest.approx(2.0)
-    assert predictions["miss"].std_s == pytest.approx(0.81649658)
+    assert predictions["miss"].overall_mean_s() == pytest.approx(2.0)
+    assert predictions["miss"].overall_std_dev_s() == pytest.approx(0.81649658)
     assert model._overall_mean_runtime_s == pytest.approx(2.0)
     assert model._overall_std_runtime_s == pytest.approx(0.81649658)
 
@@ -131,11 +130,13 @@ def test_cache_model_cache_hits_and_misses_with_template_cache_no_best_effort(
     )
 
     assert predictions["hit"] is not None
-    assert predictions["hit"].mean_s == pytest.approx(1.5)
-    assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["hit"].overall_mean_s() == pytest.approx(1.5)
+    assert predictions["hit"].overall_std_dev_s() == pytest.approx(0.5)
     assert predictions["template_miss"] is not None
-    assert predictions["template_miss"].mean_s == pytest.approx(3.0)
-    assert predictions["template_miss"].std_s == pytest.approx(0.0)
+    assert predictions["template_miss"].overall_mean_s() == pytest.approx(3.0)
+    assert predictions["template_miss"].overall_std_dev_s() == pytest.approx(
+        0.0
+    )
     assert predictions["miss"] is None
     assert model._overall_mean_runtime_s == pytest.approx(2.0)
     assert model._overall_std_runtime_s == pytest.approx(0.81649658)
@@ -168,14 +169,16 @@ def test_cache_model_cache_hits_and_misses_with_template_cache_with_best_effort(
     )
 
     assert predictions["hit"] is not None
-    assert predictions["hit"].mean_s == pytest.approx(1.5)
-    assert predictions["hit"].std_s == pytest.approx(0.5)
+    assert predictions["hit"].overall_mean_s() == pytest.approx(1.5)
+    assert predictions["hit"].overall_std_dev_s() == pytest.approx(0.5)
     assert predictions["template_miss"] is not None
-    assert predictions["template_miss"].mean_s == pytest.approx(3.0)
-    assert predictions["template_miss"].std_s == pytest.approx(0.0)
+    assert predictions["template_miss"].overall_mean_s() == pytest.approx(3.0)
+    assert predictions["template_miss"].overall_std_dev_s() == pytest.approx(
+        0.0
+    )
     assert predictions["miss"] is not None
-    assert predictions["miss"].mean_s == pytest.approx(2.0)
-    assert predictions["miss"].std_s == pytest.approx(0.81649658)
+    assert predictions["miss"].overall_mean_s() == pytest.approx(2.0)
+    assert predictions["miss"].overall_std_dev_s() == pytest.approx(0.81649658)
     assert model._overall_mean_runtime_s == pytest.approx(2.0)
     assert model._overall_std_runtime_s == pytest.approx(0.81649658)
 

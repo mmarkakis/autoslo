@@ -145,7 +145,7 @@ class XGBoostModel:
             raw_prediction = self._model.predict(featurization_array)[0]
             if self._train_on_log_runtime:
                 raw_prediction = np.expm1(raw_prediction)
-            predictions[query_id] = ModelPrediction(mean_s=raw_prediction)
+            predictions[query_id] = ModelPrediction(mean_s=[raw_prediction])
 
         return predictions
 

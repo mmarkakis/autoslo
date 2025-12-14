@@ -106,8 +106,8 @@ class CacheModel:
                 # Cache miss
                 if self._best_effort:
                     predictions[query_id] = ModelPrediction(
-                        mean_s=self._overall_mean_runtime_s,
-                        std_s=self._overall_std_runtime_s,
+                        mean_s=[self._overall_mean_runtime_s],
+                        std_dev_s=[self._overall_std_runtime_s],
                     )
                 else:
                     predictions[query_id] = None
@@ -121,8 +121,8 @@ class CacheModel:
                 ].items():
                     runtimes.extend(local_runtimes)
                 predictions[query_id] = ModelPrediction(
-                    mean_s=float(np.mean(runtimes)),
-                    std_s=float(np.std(runtimes, ddof=0)),
+                    mean_s=[float(np.mean(runtimes))],
+                    std_dev_s=[float(np.std(runtimes, ddof=0))],
                 )
             elif query_within_template_id in self._cache[template_id]:
                 # Cache hit
@@ -130,8 +130,8 @@ class CacheModel:
                     query_within_template_id
                 ]
                 predictions[query_id] = ModelPrediction(
-                    mean_s=mean_runtime,
-                    std_s=std_runtime,
+                    mean_s=[mean_runtime],
+                    std_dev_s=[std_runtime],
                 )
 
         return predictions

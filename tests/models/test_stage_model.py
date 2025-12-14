@@ -20,11 +20,13 @@ def _make_query_text(template: str) -> str:
     return f"SELECT 1\\n-- Filename: query{template}.sql\\n"
 
 
-def _create_trace_run(root: Path,
-                      run_id: str,
-                      latencies: list[float],
-                      templates: list[str],
-                      cluster_name: str = "cluster") -> Path:
+def _create_trace_run(
+    root: Path,
+    run_id: str,
+    latencies: list[float],
+    templates: list[str],
+    cluster_name: str = "cluster",
+) -> Path:
     """
     Emit a minimal parquet-backed run consumable by Trace.
     """
@@ -58,8 +60,9 @@ def _create_trace_run(root: Path,
 
 
 @pytest.mark.unit
-def test_stage_model_requires_cache_configuration(monkeypatch: pytest.MonkeyPatch
-                                                 ) -> None:
+def test_stage_model_requires_cache_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Ensure StageModel enforces cache model configuration requirements.
     """
@@ -84,22 +87,35 @@ def test_stage_model_requires_cache_configuration(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.unit
-def test_stage_model_predicts_with_loaded_models(monkeypatch: pytest.MonkeyPatch
-                                                ) -> None:
+def test_stage_model_predicts_with_loaded_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Confirm StageModel combines cache hits with XGBoost fallbacks.
     """
 
     class CacheStub:
-        def predict(self, _: dict[str, str]) -> dict[str, ModelPrediction | None]:
+        def predict(
+            self, _: dict[str, str]
+        ) -> dict[str, ModelPrediction | None]:
             return {
-                "cached": ModelPrediction(mean_s=1.0, std_s=0.1),
+                "cached": ModelPrediction(mean_s=[1.0], std_dev_s=[0.1]),
                 "ml": None,
             }
 
+        def predict_from_tpcds_temp_and_q_idx(
+            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+        ) -> dict[str, ModelPrediction | None]:
+            return self.predict(d)
+
     class XGBStub:
         def predict(self, _: dict[str, str]) -> dict[str, ModelPrediction]:
-            return {"ml": ModelPrediction(mean_s=5.0, std_s=0.5)}
+            return {"ml": ModelPrediction(mean_s=[5.0], std_dev_s=[0.5])}
+        
+        def predict_from_tpcds_temp_and_q_idx(
+            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+        ) -> dict[str, ModelPrediction]:
+            return self.predict(d)
 
     monkeypatch.setattr(
         stage_module.CacheModel,
@@ -123,13 +139,14 @@ def test_stage_model_predicts_with_loaded_models(monkeypatch: pytest.MonkeyPatch
         }
     )
 
-    assert results["cached"].mean_s == pytest.approx(1.0)
-    assert results["ml"].mean_s == pytest.approx(5.0)
+    assert results["cached"].overall_mean_s() == pytest.approx(1.0)
+    assert results["ml"].overall_mean_s() == pytest.approx(5.0)
 
 
 @pytest.mark.unit
-def test_stage_model_trains_and_saves_new_models(monkeypatch: pytest.MonkeyPatch
-                                                ) -> None:
+def test_stage_model_trains_and_saves_new_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Ensure StageModel trains, saves, and reuses newly built sub-models.
     """
@@ -147,11 +164,18 @@ def test_stage_model_trains_and_saves_new_models(monkeypatch: pytest.MonkeyPatch
             self.saved = True
             return "cache-trained"
 
-        def predict(self, _: dict[str, str]) -> dict[str, ModelPrediction | None]:
+        def predict(
+            self, _: dict[str, str]
+        ) -> dict[str, ModelPrediction | None]:
             return {
-                "cached": ModelPrediction(mean_s=2.0, std_s=0.2),
+                "cached": ModelPrediction(mean_s=[2.0], std_dev_s=[0.2]),
                 "ml": None,
             }
+        
+        def predict_from_tpcds_temp_and_q_idx(
+            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+        ) -> dict[str, ModelPrediction | None]:
+            return self.predict(d)
 
     class XGBStub:
         def __init__(self, **kwargs: Any) -> None:
@@ -168,7 +192,12 @@ def test_stage_model_trains_and_saves_new_models(monkeypatch: pytest.MonkeyPatch
             return "xgb-trained"
 
         def predict(self, _: dict[str, str]) -> dict[str, ModelPrediction]:
-            return {"ml": ModelPrediction(mean_s=4.0, std_s=0.4)}
+            return {"ml": ModelPrediction(mean_s=[4.0], std_dev_s=[0.4])}
+        
+        def predict_from_tpcds_temp_and_q_idx(
+            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+        ) -> dict[str, ModelPrediction]:
+            return self.predict(d)
 
     cache_instance = CacheStub()
     xgb_instance = XGBStub()
@@ -200,14 +229,14 @@ def test_stage_model_trains_and_saves_new_models(monkeypatch: pytest.MonkeyPatch
     assert cache_instance.saved
     assert xgb_instance.trained[0]["run_ids"] == ["run-2"]
     assert xgb_instance.saved
-    assert results["cached"].mean_s == pytest.approx(2.0)
-    assert results["ml"].mean_s == pytest.approx(4.0)
+    assert results["cached"].overall_mean_s() == pytest.approx(2.0)
+    assert results["ml"].overall_mean_s() == pytest.approx(4.0)
 
 
 @pytest.mark.integration
-def test_stage_model_end_to_end_with_real_models(tmp_path: Path,
-                                                 monkeypatch: pytest.MonkeyPatch
-                                                 ) -> None:
+def test_stage_model_end_to_end_with_real_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Exercise StageModel with real sub-models over synthetic traces.
     """
@@ -226,6 +255,11 @@ def test_stage_model_end_to_end_with_real_models(tmp_path: Path,
         def featurize(self, query_text: str) -> list[float]:
             template = xgb_module.Trace.extract_temp_and_q_idxs(query_text)
             return self._featurize_template(template)
+        
+        def featurize_from_tpcds_temp_and_q_idx(
+            self, template: str
+        ) -> list[float]:
+            return self._featurize_template(template)
 
         def featurize_trace(self, trace: Any) -> dict[str, list[float]]:
             return {
@@ -243,13 +277,9 @@ def test_stage_model_end_to_end_with_real_models(tmp_path: Path,
     data_root = tmp_path / "data"
     runs_root.mkdir()
     data_root.mkdir()
-    monkeypatch.setattr(
-        pu, "get_runs_path", lambda: os.fspath(runs_root)
-    )
-    monkeypatch.setattr(
-        pu, "get_data_path", lambda: os.fspath(data_root)
-    )
-   
+    monkeypatch.setattr(pu, "get_runs_path", lambda: os.fspath(runs_root))
+    monkeypatch.setattr(pu, "get_data_path", lambda: os.fspath(data_root))
+
     monkeypatch.setattr(
         xgb_module,
         "IconqQueryFeaturizer",
@@ -290,7 +320,7 @@ def test_stage_model_end_to_end_with_real_models(tmp_path: Path,
 
     assert model._cache_model_id is not None
     assert model._xgboost_model_id is not None
-    assert predictions["cached"].mean_s == pytest.approx(3.0)
-    assert predictions["cached"].std_s == pytest.approx(1.0)
-    assert predictions["ml"].mean_s > 0.0
-    assert np.isfinite(predictions["ml"].mean_s)
+    assert predictions["cached"].overall_mean_s() == pytest.approx(3.0)
+    assert predictions["cached"].overall_std_dev_s() == pytest.approx(1.0)
+    assert predictions["ml"].overall_mean_s() > 0.0
+    assert np.isfinite(predictions["ml"].overall_mean_s())
