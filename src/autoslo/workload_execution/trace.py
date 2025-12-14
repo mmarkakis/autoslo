@@ -594,6 +594,9 @@ class Trace:
         """
         Return a Series where the index is the query IDs and the values are
         the arrival times (start times in SYS_QUERY_HISTORY) of each query.
+
+        The order of the query IDs in the Series matches the order of the query
+        IDs provided by the `query_ids` property.
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
@@ -607,6 +610,9 @@ class Trace:
         """
         Return a Series where the index is the query IDs and the values are
         the completion times (end times in SYS_QUERY_HISTORY) of each query.
+
+        The order of the query IDs in the Series matches the order of the query
+        IDs provided by the `query_ids` property.
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
@@ -870,57 +876,5 @@ class Trace:
         }
         return bp_cluster_names_to_rpu
 
-    def get_overlap_graph(self) -> nx.Graph:
-        """
-        Get a representation of the overlaps between queries in the trace. Each
-        node is a query, and there is an edge beetween query A and query B if
-        they overlap in time.
-
-        Returns:
-            A pandas DataFrame where each row represents one query of the trace
-               and the columns contain information about overlapping queries.
-        """
-
-        G = nx.Graph()
-        tpcds_temp_and_q_idxs = self.tpcds_temp_and_q_idxs
-
-        for df in self._dfs["sys_query_history"].values():
-            df = df.sort_values(
-                ["start_time", "end_time"], ascending=True
-            ).reset_index(drop=True)
-
-            active_query_ids: list[tuple[datetime, str]] = []
-
-            for _, row in df.iterrows():
-                current_query_id = row["query_id"]
-                current_start_time = row["start_time"]
-                current_end_time = row["end_time"]
-                tpcds_temp_and_q_idx = tpcds_temp_and_q_idxs[current_query_id]
-
-                # Remove queries that have ended before the current query starts
-                while (
-                    len(active_query_ids) > 0
-                    and active_query_ids[0][0] <= row["start_time"]
-                ):
-                    heapq.heappop(active_query_ids)
-
-                # Create a node for the current query
-                G.add_node(
-                    current_query_id,
-                    query_id=current_query_id,
-                    start_time=current_start_time,
-                    end_time=current_end_time,
-                    tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
-                )
-
-                # Add edges to all currently active queries
-                for active_query_id in active_query_ids:
-                    G.add_edge(current_query_id, active_query_id)
-
-                # Add the current query to the list of active queries
-                heapq.heappush(
-                    active_query_ids, (current_end_time, current_query_id)
-                )
-
-        return G
+    
 
