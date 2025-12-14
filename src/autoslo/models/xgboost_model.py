@@ -107,10 +107,34 @@ class XGBoostModel:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
+        query_temp_and_q_idxs = {
+            query_id: Trace.extract_temp_and_q_idxs(query_text)
+            for query_id, query_text in query_texts.items()
+        }
+        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs)
+
+    def predict_from_tpcds_temp_and_q_idx(
+        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx]
+    ) -> dict[str, ModelPrediction]:
+        """
+        Predicts the runtime of the given queries, based on their TPC-DS
+        template and query indices.
+
+        Parameters:
+            query_temp_and_q_idxs: The TPC-DS template and query indices of
+                the queries to predict the runtime of, as a dictionary mapping
+                query ids to TPC-DS template and query indices.
+
+        Returns:
+            A dictionary mapping query ids to ModelPrediction instances,
+                where each element is in seconds.
+        """
         predictions: dict[str, ModelPrediction] = {}
 
-        for query_id, query_text in query_texts.items():
-            featurization = self._iconq_query_featurizer.featurize(query_text)
+        for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
+            featurization = self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
+                temp_and_q_idx
+            )
             if featurization is None:
                 raise ValueError(
                     f"Query {query_id} could not be featurized using "

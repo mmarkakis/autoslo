@@ -71,14 +71,33 @@ class CacheModel:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
+        query_temp_and_q_idxs = {
+            query_id: Trace.extract_temp_and_q_idxs(query_text)
+            for query_id, query_text in query_texts.items()
+        }
+        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs)
+
+    def predict_from_tpcds_temp_and_q_idx(
+        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx]
+    ) -> dict[str, Optional[ModelPrediction]]:
+        """
+        Predicts the runtime of the given queries, based on their TPC-DS
+        template and query indices.
+
+        Parameters:
+            query_temp_and_q_idxs: The TPC-DS template and query indices of
+                the queries to predict the runtime of, as a dictionary mapping
+                query ids to TPC-DS template and query indices.
+
+        Returns:
+            A dictionary mapping query ids to ModelPrediction instances,
+                where each element is in seconds.
+        """
         predictions: dict[str, Optional[ModelPrediction]] = {}
 
-        for query_id, query_text in query_texts.items():
-            query_temp_and_q_idxs = Trace.extract_temp_and_q_idxs(query_text)
-            template_id = Trace.extract_temp(query_temp_and_q_idxs)
-            query_within_template_id = Trace.extract_q_idx(
-                query_temp_and_q_idxs
-            )
+        for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
+            template_id = Trace.extract_temp(temp_and_q_idx)
+            query_within_template_id = Trace.extract_q_idx(temp_and_q_idx)
 
             if (template_id not in self._cache) or (
                 (query_within_template_id not in self._cache[template_id])
@@ -233,6 +252,12 @@ class CacheModel:
             timestamp: The identifier of the saved CacheModel to load.
             parent_load_dir: The parent directory where cache models are stored.
                 If None, defaults to `data/cache_models/`.
+
+        Returns:
+            The loaded CacheModel.
+
+        Raises:
+            ValueError: If the specified directory does not exist.
         """
         if parent_load_dir is None:
             parent_load_dir = os.path.join(pu.get_data_path(), "cache_models")

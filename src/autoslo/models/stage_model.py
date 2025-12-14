@@ -1,8 +1,14 @@
+import os
+from datetime import datetime
 from typing import Any, Optional
 
+import yaml
+
+import autoslo.utils.paths as pu
 from autoslo.models.cache_model import CacheModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.models.xgboost_model import XGBoostModel
+from autoslo.workload_execution.trace import Trace
 
 
 class StageModel:
@@ -89,19 +95,117 @@ class StageModel:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
+        query_temp_and_q_idxs = {
+            query_id: Trace.extract_temp_and_q_idxs(query_text)
+            for query_id, query_text in query_texts.items()
+        }
+        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs)
+
+    def predict_from_tpcds_temp_and_q_idx(
+        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx]
+    ) -> dict[str, ModelPrediction]:
+        """
+        Predicts the runtime of the given queries, based on their TPC-DS
+        template and query indices.
+
+        Parameters:
+            query_temp_and_q_idxs: The TPC-DS template and query indices of
+                the queries to predict the runtime of, as a dictionary mapping
+                query ids to TPC-DS template and query indices.
+
+        Returns:
+            A dictionary mapping query ids to ModelPrediction instances,
+                where each element is in seconds.
+        """
         overall_predictions: dict[str, ModelPrediction] = {}
 
         # Process cache model first
-        cache_predictions = self._cache_model.predict(query_texts)
-        remaining_query_texts = {}
+        cache_predictions = self._cache_model.predict_from_tpcds_temp_and_q_idx(
+            query_temp_and_q_idxs
+        )
+        remaining_query_temp_and_q_idxs = {}
         for query_id, prediction in cache_predictions.items():
             if prediction is not None:
                 overall_predictions[query_id] = prediction
             else:
-                remaining_query_texts[query_id] = query_texts[query_id]
+                remaining_query_temp_and_q_idxs[query_id] = (
+                    query_temp_and_q_idxs[query_id]
+                )
 
         # Use XGBoost only for the queries that were not cache hits.
-        xgboost_predictions = self._xgboost_model.predict(remaining_query_texts)
+        xgboost_predictions = (
+            self._xgboost_model.predict_from_tpcds_temp_and_q_idx(
+                remaining_query_temp_and_q_idxs
+            )
+        )
         overall_predictions |= xgboost_predictions
 
         return overall_predictions
+
+    def save(self, parent_save_dir: Optional[str] = None) -> str:
+        """
+        Saves the StageModel.
+
+        Parameters:
+            parent_save_dir: The parent directory where stage models are stored.
+                If None, defaults to `data/stage_models/`.
+        Returns:
+            The identifier of the saved StageModel. This is a subdirectory under
+                the parent_save_dir named after the current timestamp.
+        """
+        # Create directory.
+        if parent_save_dir is None:
+            parent_save_dir = os.path.join(pu.get_data_path(), "stage_models")
+        timestamp = str(int(datetime.now().timestamp()))
+        save_dir = os.path.join(
+            parent_save_dir,
+            timestamp,
+        )
+        os.makedirs(save_dir, exist_ok=False)
+
+        # Save stage model parameters
+        param_path = os.path.join(save_dir, "params.yml")
+        with open(param_path, "w") as f:
+            yaml.safe_dump(
+                {
+                    "cache_model_id": self._cache_model_id,
+                    "xgboost_model_id": self._xgboost_model_id,
+                },
+                f,
+            )
+
+        return save_dir
+
+    @staticmethod
+    def load(
+        timestamp: str, parent_load_dir: Optional[str] = None
+    ) -> "StageModel":
+        """
+        Loads the model from the given directory.
+
+        Parameters:
+            timestamp: The identifier of the saved StageModel to load.
+            parent_load_dir: The parent directory where stage models are stored.
+                If None, defaults to `data/stage_models/`.
+
+        Returns:
+            The loaded StageModel.
+
+        Raises:
+            ValueError: If the specified directory does not exist.
+        """
+        if parent_load_dir is None:
+            parent_load_dir = os.path.join(pu.get_data_path(), "stage_models")
+        load_dir = os.path.join(parent_load_dir, timestamp)
+        if not os.path.exists(load_dir):
+            raise ValueError(f"StageModel directory {load_dir} does not exist.")
+
+        # Load model parameters
+        param_path = os.path.join(load_dir, "params.yml")
+        with open(param_path, "r") as f:
+            params = yaml.safe_load(f)
+
+        return StageModel(
+            cache_model_id=params["cache_model_id"],
+            xgboost_model_id=params["xgboost_model_id"],
+        )
