@@ -1,8 +1,8 @@
 H: 50
 T: 120
-chunk_duration_s: 3600
-num_queries_per_template: 3
-num_templates: 99
-random_seed: 42
 schema: tpcds
+chunk_duration_s: 3600
+random_seed: 42
+num_templates: 99
+num_queries_per_template: 3
 stddev_interarrival_s: 60.0
