@@ -49,7 +49,9 @@ class DummyIconqQueryFeaturizer:
 def build_timeline(specs: list[tuple[str, float, float]]) -> QueryTimeline:
     trace = cast(Trace, DummyTrace(specs))
     featurizer = cast(IconqQueryFeaturizer, DummyIconqQueryFeaturizer())
-    return QueryTimeline(trace, featurizer)
+    timeline = QueryTimeline(featurizer)
+    timeline.initialize_from_trace(trace)
+    return timeline
 
 
 def test_overlap_graph_builds_expected_edges() -> None:

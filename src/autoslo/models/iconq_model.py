@@ -384,9 +384,9 @@ class IconqModel:
 
         for run_id in run_ids:
             trace = Trace(run_id)
-            overlap_graph = QueryTimeline(
-                trace, self._iconq_query_featurizer
-            ).overlap_graph()
+            query_timeline = QueryTimeline(self._iconq_query_featurizer)
+            query_timeline.initialize_from_trace(trace)
+            overlap_graph = query_timeline.overlap_graph()
 
             # To each node in the graph, add its featurization and its stage
             # model prediction.

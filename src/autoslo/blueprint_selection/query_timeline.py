@@ -1,6 +1,7 @@
 import bisect
 import heapq
 from typing import Optional
+from dataclasses import dataclass
 
 import networkx as nx
 
@@ -8,35 +9,70 @@ from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
 
+@dataclass
+class IngestedQuery:
+    """
+    Represents a query in the timeline, for ingestion into the QueryTimeline.
+    """
+
+    query_id: str
+    start_time_s: float
+    end_time_s: float
+    tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx
+
+
 class QueryTimeline:
     """Represents a timestamped schedule of query submissions."""
 
     def __init__(
         self,
-        trace: Trace,
         iconq_query_featurizer: IconqQueryFeaturizer,
     ) -> None:
         """
         Initializes the QueryTimeline.
 
         Parameters:
-            trace: The Trace containing the query submission events.
             iconq_query_featurizer: The IconqQueryFeaturizer to use for
                 featurizing the queries.
 
         """
-        self._trace_run_id = trace.run_id
         self._iconq_query_featurizer = iconq_query_featurizer
-        self._overlap_graph = self._build_overlap_graph(trace)
+        self._overlap_graph: nx.Graph
+        self._ordered_start_times_s: list[tuple[float, str]]
 
+    def initialize_from_trace(self, trace: Trace) -> None:
+        """
+        Initializes the QueryTimeline from a Trace.
+
+        Parameters:
+            trace: The Trace containing the query submission events.
+        """
+
+        tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+        start_times = trace.arrival_times()
+        end_times = trace.completion_times()
+        query_ids = trace.query_ids
+
+        ingested_queries: list[IngestedQuery] = []
+        for query_id in query_ids:
+            ingested_queries.append(
+                IngestedQuery(
+                    query_id=query_id,
+                    start_time_s=start_times[query_id].timestamp(),
+                    end_time_s=end_times[query_id].timestamp(),
+                    tpcds_temp_and_q_idx=tpcds_temp_and_q_idxs[query_id],
+                )
+            )
+
+        self._overlap_graph = self._build_overlap_graph(ingested_queries)
         self._ordered_start_times_s = sorted(
             [
                 (data["start_time_s"], node)
                 for node, data in self._overlap_graph.nodes(data=True)
-            ]  # FIXME: In theory there is an edge case where two queries have
-            #  same start time and the node name sort order gets messed up,
-            # but this is unlikely in practice.
-        )
+            ]
+        )  # FIXME: In theory there is an edge case where two queries have
+        #  same start time and the node name sort order gets messed up,
+        # but this is unlikely in practice.
 
     def overlap_graph(self) -> nx.Graph:
         """
@@ -47,37 +83,33 @@ class QueryTimeline:
         """
         return self._overlap_graph
 
-    def _build_overlap_graph(self, trace: Trace) -> nx.Graph:
+    def _build_overlap_graph(
+        self, ingested_queries: list[IngestedQuery]
+    ) -> nx.Graph:
         """
-        Get a representation of the overlaps between queries in the trace. Each
+        Get a representation of the overlaps between the given queries. Each
         node is a query, and there is an edge beetween query A and query B if
         they overlap in time.
 
         Parameters:
-            trace: The Trace containing the query submission events.
+            ingested_queries: The input queries.
 
         Returns:
-            A NetworkX Graph representing the overlaps between queries in the
-                trace.
+            A NetworkX Graph representing the overlaps between queries.
         """
 
         G: nx.Graph = nx.Graph()
-        tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
-        start_times = trace.arrival_times()
-        end_times = trace.completion_times()
 
-        query_ids = trace.query_ids
-
-        for query_id in query_ids:
+        for ingested_query in ingested_queries:
             G.add_node(
-                query_id,
-                query_id=query_id,
-                start_time_s=start_times[query_id].timestamp(),
-                end_time_s=end_times[query_id].timestamp(),
-                tpcds_temp_and_q_idx=tpcds_temp_and_q_idxs[query_id],
+                ingested_query.query_id,
+                query_id=ingested_query.query_id,
+                start_time_s=ingested_query.start_time_s,
+                end_time_s=ingested_query.end_time_s,
+                tpcds_temp_and_q_idx=ingested_query.tpcds_temp_and_q_idx,
                 featurization=(
                     self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                        tpcds_temp_and_q_idxs[query_id]
+                        ingested_query.tpcds_temp_and_q_idx
                     )
                 ),
             )
