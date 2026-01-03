@@ -152,30 +152,47 @@ class XGBoostModel:
     def train(
         self,
         run_ids: list[str],
-        from_scratch: bool = False,
+        parent_save_dir: Optional[str] = None,
     ) -> tuple[float, float]:
         """
         Trains the model on the given run IDs.
 
         Parameters:
             run_ids: The run IDs to train the model on.
-            from_scratch: Whether to train the model from scratch, or
-                continue training from the existing model.
+            parent_save_dir: The parent directory where xgboost models are
+                stored. If None, defaults to `data/xgboost_models/`.
 
         Returns:
             A tuple containing the final training and validation loss.
         """
 
-        # If from_scratch, re-initialize the model.
-        if from_scratch:
-            self._model = XGBRegressor(
-                n_estimators=self._n_estimators,
-                max_depth=self._max_depth,
-                eta=self._eta,
-                subsample=1.0,
-                eval_metric=self._eval_metric,
-                early_stopping_rounds=self._early_stopping_rounds,
-                random_state=self._random_seed,
+        # Create directory.
+        if parent_save_dir is None:
+            parent_save_dir = os.path.join(pu.get_data_path(), "xgboost_models")
+        self._run_id = str(int(datetime.now().timestamp()))
+        self._save_dir = os.path.join(
+            parent_save_dir,
+            self._run_id,
+        )
+        os.makedirs(self._save_dir, exist_ok=True)
+
+        # Save the XGBoostModel parameters.
+        params_path = os.path.join(self._save_dir, "params.yml")
+        with open(params_path, "w") as f:
+            yaml.dump(
+                {
+                    "iconq_query_featurizer_id": (
+                        self._iconq_query_featurizer_id
+                    ),
+                    "train_on_log_runtime": self._train_on_log_runtime,
+                    "n_estimators": self._n_estimators,
+                    "max_depth": self._max_depth,
+                    "eta": self._eta,
+                    "eval_metric": self._eval_metric,
+                    "early_stopping_rounds": self._early_stopping_rounds,
+                    "random_seed": self._random_seed,
+                },
+                f,
             )
 
         # Load featurizations and apply log transform if specified.
@@ -190,7 +207,8 @@ class XGBoostModel:
                     "query_featurization": featurizations[query_id],
                     "runtime_s": latencies[query_id],
                 }
-                for query_id in featurizations.keys()  # FIXME: Zip to optimize
+                for query_id in featurizations.keys()
+                if len(featurizations[query_id]) > 0
             ]
 
             l.extend(new_items)
@@ -213,23 +231,31 @@ class XGBoostModel:
         train_df = featurization_df.iloc[:split_idx]
         val_df = featurization_df.iloc[split_idx:]
 
+        # Save them out.
+        train_df_path = os.path.join(
+            self._save_dir, "train_featurizations.parquet"
+        )
+        train_df.to_parquet(train_df_path)
+        val_df_path = os.path.join(self._save_dir, "val_featurizations.parquet")
+        val_df.to_parquet(val_df_path)
+
         # Train the model.
+        X_train = np.stack(train_df["query_featurization"].to_list()).astype(
+            np.float32
+        )
+        y_train = train_df[label_column_name].to_numpy()
+
+        X_val = np.stack(val_df["query_featurization"].to_list()).astype(
+            np.float32
+        )
+        y_val = val_df[label_column_name].to_numpy()
         self._model.fit(
-            np.array(train_df["query_featurization"].to_list()),
-            train_df[label_column_name],
+            X_train,
+            y_train,
             # We include the training set to `eval_set` in order to get
             # final_train_loss out. XGBoost only uses the last entry in this
             # list for early stopping so it doesn't affect the training.
-            eval_set=[
-                (
-                    np.array(train_df["query_featurization"].to_list()),
-                    train_df[label_column_name],
-                ),
-                (
-                    np.array(val_df["query_featurization"].to_list()),
-                    val_df[label_column_name],
-                ),
-            ],
+            eval_set=[(X_train, y_train), (X_val, y_val)],
             verbose=False,
         )
 
@@ -240,54 +266,21 @@ class XGBoostModel:
 
         return final_train_loss, final_val_loss
 
-    def save(self, parent_save_dir: Optional[str] = None) -> str:
+    def save(self) -> str:
         """
         Saves the XGBoostModel.
 
-        Parameters:
-            parent_save_dir: The parent directory where xgboost models are
-                stored. If None, defaults to `data/xgboost_models/`.
-
         Returns:
-            The identifier of the saved XGBoostModel. This is a subdirectory
-                under the parent_save_dir named after the current timestamp.
+            The identifier of the saved XGBoostModel.
         """
-        # Create directory.
-        if parent_save_dir is None:
-            parent_save_dir = os.path.join(pu.get_data_path(), "xgboost_models")
-        timestamp = str(int(datetime.now().timestamp()))
-        save_dir = os.path.join(
-            parent_save_dir,
-            timestamp,
-        )
-        os.makedirs(save_dir, exist_ok=True)
-
-        # Save the XGBoostModel parameters.
-        params_path = os.path.join(save_dir, "params.yml")
-        with open(params_path, "w") as f:
-            yaml.dump(
-                {
-                    "iconq_query_featurizer_id": (
-                        self._iconq_query_featurizer_id
-                    ),
-                    "train_on_log_runtime": self._train_on_log_runtime,
-                    "n_estimators": self._n_estimators,
-                    "max_depth": self._max_depth,
-                    "eta": self._eta,
-                    "eval_metric": self._eval_metric,
-                    "early_stopping_rounds": self._early_stopping_rounds,
-                    "random_seed": self._random_seed,
-                },
-                f,
-            )
 
         # Save the model.
-        model_json_path = os.path.join(save_dir, "model.json")
+        model_json_path = os.path.join(self._save_dir, "model.json")
         self._model.save_model(model_json_path)
 
         # Also save the loss trajectories of the model as a plot.
         losses = self._model.evals_result()
-        loss_plot_path = os.path.join(save_dir, "loss_plot.png")
+        loss_plot_path = os.path.join(self._save_dir, "loss_plot.png")
         plt.figure()
         plt.plot(losses["validation_0"][self._eval_metric], label="Train Loss")
         plt.plot(
@@ -299,7 +292,7 @@ class XGBoostModel:
         plt.legend()
         plt.savefig(loss_plot_path)
 
-        return timestamp
+        return self._run_id
 
     @staticmethod
     def load(

@@ -34,6 +34,14 @@ class IconqQueryFeaturizer:
         use_true_card: bool = False,
         use_table_selectivity: bool = False,
         use_log: bool = True,
+        precomputed_top_operators: Optional[list[str]] = None,
+        precomputed_top_tables: Optional[list[tuple[str, int]]] = None,
+        precomputed_featurization_cache: Optional[
+            dict[
+                Trace.TPCDSTempAndQIdx,
+                IconqQueryFeaturization,
+            ]
+        ] = None,
     ) -> None:
         """
         Initializes the IconqQueryFeaturizer.
@@ -52,6 +60,10 @@ class IconqQueryFeaturizer:
                 feature, as opposed to the cardinality.
             use_log: Whether to use the logarithm of the cardinalities in the
                 features.
+            precomputed_top_operators: If provided, the top M operators to use.
+            precomputed_top_tables: If provided, the top N tables to use.
+            precomputed_featurization_cache: If provided, a cache mapping
+                TPC-DS template and query indices to their featurizations.
         """
         self._schema_name = schema_name
         self._run_ids = run_ids
@@ -70,36 +82,50 @@ class IconqQueryFeaturizer:
             IconqQueryFeaturizer.IconqQueryFeaturization,
         ] = {}
 
-        query_plans = {}
-        print("Loading query plans...")
-        for run_id in tqdm(run_ids):
-            trace = Trace(run_id)
-            plans = trace.query_plans()
-            query_plans.update(plans)
+        if precomputed_top_operators is not None:
+            self._top_operators = precomputed_top_operators
+        else:
+            query_plans = {}
+            print("Loading query plans...")
+            for run_id in tqdm(run_ids):
+                trace = Trace(run_id)
+                plans = trace.query_plans()
+                query_plans.update(plans)
 
-        print("Finding top operators...")
-        self._top_operators = self._find_top_operators(query_plans)
-        print("Finding top tables...")
-        self._top_tables = self._find_top_tables()
+            print("Finding top operators...")
+            self._top_operators = self._find_top_operators(query_plans)
+
+        if precomputed_top_tables is not None:
+            self._top_tables = precomputed_top_tables
+        else:
+            print("Finding top tables...")
+            self._top_tables = self._find_top_tables()
 
         # Featurize all the given runs while we're at it, as a cache.
-        print("Featurizing queries...")
-        for run_id in tqdm(run_ids):
-            trace = Trace(run_id)
+        if precomputed_featurization_cache is not None:
+            self._featurization_cache = precomputed_featurization_cache
+        else:
+            print("Featurizing queries...")
+            for run_id in tqdm(run_ids):
+                trace = Trace(run_id)
 
-            tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+                tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+                plans = trace.query_plans()
 
-            plans = trace.query_plans()
-
-            for query_id, tpcds_temp_and_q_idx in tpcds_temp_and_q_idxs.items():
-                query_id = cast(str, query_id)
-                if tpcds_temp_and_q_idx in self._featurization_cache:
-                    continue
-                if (query_id not in plans) or (plans[query_id] is None):
-                    self._featurization_cache[tpcds_temp_and_q_idx] = []
-                    continue
-                featurization = self.featurize_plan(plans[query_id])
-                self._featurization_cache[tpcds_temp_and_q_idx] = featurization
+                for (
+                    query_id,
+                    tpcds_temp_and_q_idx,
+                ) in tpcds_temp_and_q_idxs.items():
+                    query_id = cast(str, query_id)
+                    if tpcds_temp_and_q_idx in self._featurization_cache:
+                        continue
+                    if (query_id not in plans) or (plans[query_id] is None):
+                        self._featurization_cache[tpcds_temp_and_q_idx] = []
+                        continue
+                    featurization = self.featurize_plan(plans[query_id])
+                    self._featurization_cache[tpcds_temp_and_q_idx] = (
+                        featurization
+                    )
 
     @property
     def num_dims(self) -> int:
@@ -131,6 +157,16 @@ class IconqQueryFeaturizer:
             The names of the top N tables in the database.
         """
         return [table_name for (table_name, _) in self._top_tables]
+
+    @property
+    def run_ids(self) -> list[str]:
+        """
+        Returns the run IDs used to train this featurizer.
+
+        Returns:
+            The run IDs used to train this featurizer.
+        """
+        return self._run_ids
 
     def _find_top_operators(self, query_plans: dict) -> list[str]:
         """
@@ -549,25 +585,26 @@ class IconqQueryFeaturizer:
         with open(param_path, "r") as f:
             params = yaml.safe_load(f)
 
+        # Load featurization cache.
+        cache_path = os.path.join(load_dir, "featurizations.yml")
+        with open(cache_path, "r") as f:
+            l = yaml.safe_load(f)
+        precomputed_featurization_cache = {
+            item["tpcds_temp_and_q_idx"]: item["featurization"] for item in l
+        }
+
         featurizer = IconqQueryFeaturizer(
+            schema_name=params["schema_name"],
+            run_ids=params["run_ids"],
             m=params["m"],
             n=params["n"],
             use_size=params["use_size"],
             use_true_card=params["use_true_card"],
             use_table_selectivity=params["use_table_selectivity"],
             use_log=params["use_log"],
+            precomputed_top_operators=params["top_operators"],
+            precomputed_top_tables=params["top_tables"],
+            precomputed_featurization_cache=precomputed_featurization_cache,
         )
-        featurizer._schema_name = params["schema_name"]
-        featurizer._run_ids = params["run_ids"]
-        featurizer._top_operators = params["top_operators"]
-        featurizer._top_tables = params["top_tables"]
-
-        # Load featurization cache.
-        cache_path = os.path.join(load_dir, "featurizations.yml")
-        with open(cache_path, "r") as f:
-            l = yaml.safe_load(f)
-        featurizer._featurization_cache = {
-            item["tpcds_temp_and_q_idx"]: item["featurization"] for item in l
-        }
 
         return featurizer

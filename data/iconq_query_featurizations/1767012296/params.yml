@@ -65,13 +65,6 @@ run_ids:
 - '1763299918'
 - '1763291740'
 - '1763966257'
-- '1759156767'
-- '1759156803'
-- '1759156811'
-- '1759156817'
-- '1759166300'
-- '1759429080'
-- '1759429111'
 schema_name: tpcds1000
 top_operators:
 - XN Seq Scan
@@ -82,10 +75,10 @@ top_operators:
 - XN Network
 - XN Subquery Scan
 - XN Sort
-- XN Merge
 - XN Result
-- XN Limit
+- XN Merge
 - XN Hash Join DS_DIST_INNER
+- XN Limit
 - XN Append
 - XN Aggregate
 - XN Hash Join DS_DIST_OUTER

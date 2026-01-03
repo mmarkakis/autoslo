@@ -1,3 +1,5 @@
+from typing import Any, Optional
+
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
@@ -11,16 +13,43 @@ class IconqInteractionFeaturizer:
     IconqInteractionFeaturization = list[float]
     """Represents the vectorized features of a query interaction."""
 
-    def __init__(self, iconq_query_featurizer: IconqQueryFeaturizer):
+    def __init__(
+        self,
+        iconq_query_featurizer_id: Optional[str] = None,
+        iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
+    ):
         """
         Initializes the IconqInteractionFeaturizer.
 
         Parameters:
-            iconq_query_featurizer: The query featurizer used to produce the
-                query features.
+            iconq_query_featurizer_id: The identifier of the
+                IconqQueryFeaturizer to use for featurizing queries. If not
+                provided, must provide iconq_query_featurizer_init_params, with
+                appropriate keys, to initialize a new IconqQueryFeaturizer.
+            iconq_query_featurizer_init_params: The initialization parameters
+                for the IconqQueryFeaturizer, if iconq_query_featurizer_id is
+                not provided. Must include a key for each required parameter of
+                the constructor of IconqQueryFeaturizer.
         """
-        self._iconq_query_featurizer = iconq_query_featurizer
+        if iconq_query_featurizer_id is None:
+            if iconq_query_featurizer_init_params is None:
+                raise ValueError(
+                    "Must provide either iconq_query_featurizer_id or "
+                    "iconq_query_featurizer_init_params."
+                )
+            self._iconq_query_featurizer = IconqQueryFeaturizer(
+                **iconq_query_featurizer_init_params
+            )
+            self._iconq_query_featurizer_id = (
+                self._iconq_query_featurizer.save()
+            )
+        else:
+            self._iconq_query_featurizer_id = iconq_query_featurizer_id
+            self._iconq_query_featurizer = IconqQueryFeaturizer.load(
+                iconq_query_featurizer_id
+            )
 
+    @property
     def num_dims(self) -> int:
         """
         Returns the number of dimensions in the interaction feature vector,
@@ -90,14 +119,44 @@ class IconqInteractionFeaturizer:
             qb_latency_prediction: The latency prediction of the second query.
         """
 
-        return (
-            self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
+        return self.featurize_from_vectors(
+            qa_features=self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                 qa_tpcds_temp_and_q_idx
-            )
-            + [qa_latency_prediction]
-            + self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
+            ),
+            qa_start_time_s=qa_start_time_s,
+            qa_latency_prediction=qa_latency_prediction,
+            qb_features=self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                 qb_tpcds_temp_and_q_idx
-            )
+            ),
+            qb_start_time_s=qb_start_time_s,
+            qb_latency_prediction=qb_latency_prediction,
+        )
+
+    def featurize_from_vectors(
+        self,
+        qa_features: list[float],
+        qa_start_time_s: float,
+        qa_latency_prediction: float,
+        qb_features: list[float],
+        qb_start_time_s: float,
+        qb_latency_prediction: float,
+    ) -> IconqInteractionFeaturization:
+        """
+        Featurizes the interaction between two queries, given their feature
+        vectors.
+
+        Parameters:
+            qa_features: The features of the first query.
+            qa_start_time_s: The first query start time (Unix timestamp).
+            qa_latency_prediction: The latency prediction of the first query.
+            qb_features: The features of the second query.
+            qb_start_time_s: The second query start time (Unix timestamp).
+            qb_latency_prediction: The latency prediction of the second query.
+        """
+        return (
+            qa_features
+            + [qa_latency_prediction]
+            + qb_features
             + [qb_latency_prediction]
             + [
                 abs(qb_start_time_s - qa_start_time_s),
