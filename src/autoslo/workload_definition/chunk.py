@@ -144,7 +144,7 @@ class Chunk:
         """Get the directory path where the chunk workload is saved."""
         return os.path.join(
             pu.get_data_path(),
-            "chunk_workloads",
+            "chunks",
             self.chunk_id(),
         )
 
@@ -214,7 +214,7 @@ class Chunk:
         self,
     ) -> None:
         # Retrieve the query texts for the specified number of templates.
-        query_texts: dict[int, list[str]] = {}
+        query_texts: dict[int, dict[int, str]] = {}
         for template_id in range(1, self.num_templates + 1):
             template_str = f"query{template_id:03d}"
             template_dir = os.path.join(pu.QUERIES_PATH, template_str)
@@ -222,8 +222,11 @@ class Chunk:
                 print(f"Template directory {template_dir} missing. Skipping.")
                 continue
 
-            query_texts[template_id] = []
+            query_texts[template_id] = {}
 
+            # N.B. This could start at zero, but we started it as one-based
+            # and now all chunks are defined like that, so keeping it for 
+            # compatibility.
             for query_num in range(1, self.num_queries_per_template + 1):
                 with open(
                     os.path.join(
@@ -232,9 +235,7 @@ class Chunk:
                     "r",
                 ) as f:
                     query_text = f.read()
-                # FIXME: these will end up off by one, because the list indexing
-                # starts at 0, but the query numbers per template start at 1.
-                query_texts[template_id].append(query_text)
+                query_texts[template_id][query_num] = query_text
 
         # Determine which templates are heavy and which are light.
         heavy_templates = set()
@@ -260,7 +261,7 @@ class Chunk:
             else:
                 template_id = np.random.choice(list(light_templates))
             query_num_within_template = np.random.randint(
-                0, self.num_queries_per_template
+                1, self.num_queries_per_template + 1
             )
             query_text = query_texts[template_id][query_num_within_template]
 
