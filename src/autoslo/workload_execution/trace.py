@@ -664,17 +664,7 @@ class Trace:
                 )
         if all(len(v) == 0 for v in query_ids_to_parse_per_cluster.values()):
             return d
-
-        # FIXME: Currently we are missing the explain data for some queries in
-        # the benchmarking workloads, so we cannot parse their plans.
-        if "benchmarking" in workload_name:
-            for (
-                cluster_name,
-                query_ids,
-            ) in query_ids_to_parse_per_cluster.items():
-                d[cast(str, query_id)] = None
-            return d
-
+        
         # Parse the remaining queries.
         for cluster_name, query_ids in query_ids_to_parse_per_cluster.items():
             explain_df = self._dfs["sys_query_explain"][cluster_name]
