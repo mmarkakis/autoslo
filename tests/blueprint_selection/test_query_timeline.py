@@ -5,6 +5,9 @@ import pytest
 
 from autoslo.blueprint_selection.query_timeline import QueryTimeline
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.featurization.iconq_interaction_featurizer import (
+    IconqInteractionFeaturizer,
+)
 from autoslo.workload_execution.trace import Trace
 
 BASE_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -36,6 +39,9 @@ class DummyTrace:
     def completion_times(self) -> dict[str, datetime]:
         return self._completion
 
+    def cluster_name_from_query_id(self, query_id: str) -> str:
+        return "default-cluster"
+
 
 class DummyIconqQueryFeaturizer:
     """Lightweight IconqQueryFeaturizer stub for QueryTimeline tests."""
@@ -44,12 +50,29 @@ class DummyIconqQueryFeaturizer:
         self, tpcds_temp_and_q_idx: tuple[str, int]
     ) -> list[float]:
         return [0.0, 1.5, 2.5]
+    
+class DummyIconqInteractionFeaturizer:
+    """Lightweight IconqInteractionFeaturizer stub for QueryTimeline tests."""
+
+    def featurize_from_vectors(
+        self,
+        qa_features: list[float],
+        qa_start_time_s: float,
+        qa_latency_prediction: float,
+        qb_features: list[float],
+        qb_start_time_s: float,
+        qb_latency_prediction: float,
+    ) -> list[float]:
+        return [0.0, 1.0, 2.0, 3.0]
 
 
 def build_timeline(specs: list[tuple[str, float, float]]) -> QueryTimeline:
     trace = cast(Trace, DummyTrace(specs))
     featurizer = cast(IconqQueryFeaturizer, DummyIconqQueryFeaturizer())
-    timeline = QueryTimeline(featurizer)
+    interaction_featurizer = cast(
+        IconqInteractionFeaturizer, DummyIconqInteractionFeaturizer()
+    )
+    timeline = QueryTimeline(featurizer, interaction_featurizer)
     timeline.initialize_from_trace(trace)
     return timeline
 
@@ -63,57 +86,35 @@ def test_overlap_graph_builds_expected_edges() -> None:
             ("q3", 20.0, 30.0),
         ]
     )
-    edges = {frozenset(edge) for edge in timeline.overlap_graph().edges()}
-    assert edges == {frozenset({"q1", "q2"})}
+    for query_id_a in timeline.query_ids:
+        for query_id_b in timeline.query_ids:
+            if query_id_a == query_id_b:
+                continue
+            overlap = timeline.overlap(query_id_a, query_id_b)
+            if {query_id_a, query_id_b} == {"q1", "q2"}:
+                assert (
+                    overlap
+                ), f"Expected overlap between {query_id_a} and {query_id_b}"
+            else:
+                assert (
+                    not overlap
+                ), f"Did not expect overlap between {query_id_a} and {query_id_b}"
 
 
-def test_add_rejects_duplicate_query_id() -> None:
-    """Ensure adding duplicate query ids fails."""
-    timeline = build_timeline([("q1", 0.0, 10.0)])
-    with pytest.raises(ValueError):
-        timeline.add("q1", 0.0, 5.0, "tmpl")
-
-
-def test_add_connects_overlapping_queries() -> None:
-    """Ensure add links new overlapping queries."""
-    timeline = build_timeline(
-        [
-            ("q1", 0.0, 10.0),
-            ("q2", 20.0, 30.0),
-        ]
-    )
-    timeline.add(
-        "q3", dt_after(9.0).timestamp(), dt_after(25.0).timestamp(), "tmpl"
-    )
-    graph = timeline.overlap_graph()
-    assert graph.has_edge("q3", "q1")
-    assert graph.has_edge("q3", "q2")
-
-
-def test_remove_unknown_query_id_raises_error() -> None:
-    """Ensure removing missing query ids fails."""
-    timeline = build_timeline([("q1", 0.0, 10.0)])
-    with pytest.raises(ValueError):
-        timeline.remove("missing")
-
-
-def test_update_latency_shorter_purges_edges() -> None:
-    """Ensure shrinking latency drops trailing edges."""
+def test_update_latency_shorter_removes_overlap() -> None:
+    """Ensure shrinking latency removes overlaps."""
     timeline = build_timeline(
         [
             ("q1", 0.0, 10.0),
             ("q2", 9.0, 20.0),
         ]
     )
-    graph = timeline.overlap_graph()
-    assert graph.has_edge("q1", "q2")
+    assert timeline.overlap("q1", "q2")
     timeline.update_latency("q1", 5.0)
-    graph = timeline.overlap_graph()
-    assert not graph.has_edge("q1", "q2")
+    assert not timeline.overlap("q1", "q2")
 
-
-def test_update_latency_longer_adds_edges() -> None:
-    """Ensure extending latency connects future overlaps."""
+def test_update_latency_longer_adds_overlaps() -> None:
+    """Ensure extending latency creates overlaps."""
     timeline = build_timeline(
         [
             ("q1", 0.0, 5.0),
@@ -121,12 +122,10 @@ def test_update_latency_longer_adds_edges() -> None:
             ("q3", 10.0, 12.0),
         ]
     )
-    graph = timeline.overlap_graph()
-    assert not graph.has_edge("q1", "q2")
+    assert not timeline.overlap("q1", "q2")
     timeline.update_latency("q1", 7.0)
-    graph = timeline.overlap_graph()
-    assert graph.has_edge("q1", "q2")
-    assert not graph.has_edge("q1", "q3")
+    assert timeline.overlap("q1", "q2")
+    assert not timeline.overlap("q1", "q3")
 
 
 def test_update_latency_unknown_query_id_raises_error() -> None:

@@ -10,6 +10,7 @@ import networkx as nx
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import xxhash
 import yaml
 
 import autoslo.utils.paralellism as plu
@@ -132,6 +133,32 @@ class Trace:
         Get the run ID of the trace.
         """
         return self._run_id
+
+    @staticmethod
+    def cluster_name_from_query_id(query_id: str) -> str:
+        """
+        Extract the cluster name from a query ID.
+
+        Parameters:
+            query_id: The query ID from which to extract the cluster name.
+
+        Returns:
+            The cluster name as a string.
+        """
+        return query_id.rsplit("_", maxsplit=1)[0]
+
+    @staticmethod
+    def hash_query_id(query_id: str) -> int:
+        """
+        Hashes the given query ID to an integer.
+
+        Parameters:
+            query_id: The query ID to hash.
+
+        Returns:
+            The hashed query ID as an integer.
+        """
+        return xxhash.xxh32(query_id).intdigest()
 
     @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
@@ -664,7 +691,7 @@ class Trace:
                 )
         if all(len(v) == 0 for v in query_ids_to_parse_per_cluster.values()):
             return d
-        
+
         # Parse the remaining queries.
         for cluster_name, query_ids in query_ids_to_parse_per_cluster.items():
             explain_df = self._dfs["sys_query_explain"][cluster_name]
@@ -865,6 +892,3 @@ class Trace:
             name: all_cluster_names_to_rpu[name] for name in bp_cluster_names
         }
         return bp_cluster_names_to_rpu
-
-    
-

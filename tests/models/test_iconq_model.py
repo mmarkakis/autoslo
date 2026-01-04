@@ -11,7 +11,6 @@ from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
 
-
 ICONQ_MODEL_ID = "1767526817"
 TRACE_RUN_ID = "1763941019"
 
@@ -31,13 +30,13 @@ def test_predict_from_query_timeline_with_trained_model() -> None:
     )
 
     trace = Trace(TRACE_RUN_ID)
-    query_timeline = QueryTimeline(model._iconq_query_featurizer)  # type: ignore[attr-defined]
-    query_timeline.initialize_from_trace(trace)
+    query_timeline = QueryTimeline(model._iconq_query_featurizer, model._iconq_interaction_featurizer)  # type: ignore[attr-defined]
+    query_timeline.initialize_from_trace(trace, stage_model=model._stage_model)  # type: ignore[attr-defined]
 
     predictions = model.predict_from_query_timeline(query_timeline)
 
     assert predictions, "Expected predictions for at least one query"
-    timeline_query_ids = set(query_timeline.overlap_graph().nodes)
+    timeline_query_ids = set(query_timeline.query_ids)
     assert set(predictions).issubset(timeline_query_ids)
 
     sample_prediction = next(iter(predictions.values()))

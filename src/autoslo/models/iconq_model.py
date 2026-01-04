@@ -8,7 +8,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
-import xxhash
 import yaml
 from torch import nn, optim
 from torch.optim.lr_scheduler import ExponentialLR
@@ -246,18 +245,6 @@ class IconqModel:
         # Save initial model parameters.
         self._save_params()
 
-    def _hash_query_id(self, query_id: str) -> int:
-        """
-        Hashes the given query ID to an integer.
-
-        Parameters:
-            query_id: The query ID to hash.
-
-        Returns:
-            The hashed query ID as an integer.
-        """
-        return xxhash.xxh32(query_id).intdigest()
-
     def train(  # pylint: disable=arguments-differ,too-many-locals
         self,
         train_config: NNModelTrainConfig,
@@ -281,18 +268,25 @@ class IconqModel:
         self._train_config_sequence.append(train_config)
         self._save_params()
 
-        # During execution, what gets logged out is a list of query executions.
-        # However, the inputs to our model are features regarding the concurrent
-        # execution of queries. We need to transform the data into this format,
-        # or load it from cache if it already exists.
-        # FIXME: We may want to cache this, we will see.
-        overlap_graph = self._get_and_enhance_overlap_graph(
-            train_config.run_ids
-        )
-        train_dataloader, val_dataloader = self._graph_to_dataloaders(
-            overlap_graph,
+        datasets = []
+        for run_id in train_config.run_ids:
+            trace = Trace(run_id)
+            query_timeline = QueryTimeline(
+                self._iconq_query_featurizer, self._iconq_interaction_featurizer
+            )
+            query_timeline.initialize_from_trace(
+                trace, stage_model=self._stage_model
+            )
+            dataset = query_timeline.get_dataset(
+                use_log_runtime=self._trained_on_log_runtime
+            )
+
+            datasets.append(dataset)
+        overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
+
+        train_dataloader, val_dataloader = self._get_dataloaders(
+            overall_dataset,
             train_config,
-            use_log_runtime=self._trained_on_log_runtime,
             split=True,
             save_dataset=True,
         )
@@ -318,18 +312,21 @@ class IconqModel:
             A dictionary mapping query IDs to their predicted ModelPrediction.
         """
 
-        overlap_graph = query_timeline.overlap_graph()
-        enhanced_overlap_graph = self._enhance_overlap_graph(overlap_graph)
-
-        predictions: dict[str, ModelPrediction] = {}
-        # Now, for each node, compute its prediction.
-        dataloader, _ = self._graph_to_dataloaders(
-            enhanced_overlap_graph,
+        dataset = query_timeline.get_dataset(
+            use_log_runtime=self._trained_on_log_runtime
+        )
+        dataloader, _ = self._get_dataloaders(
+            dataset,
             train_config=None,
-            use_log_runtime=self._trained_on_log_runtime,
             split=False,
             save_dataset=False,
         )
+        query_id_hashes_to_query_ids = {
+            Trace.hash_query_id(query_id): query_id
+            for query_id in query_timeline.query_ids
+        }
+
+        predictions: dict[str, ModelPrediction] = {}
         self._nn.eval()
         with torch.no_grad():
             for x, x_len, pinch_points, _, query_id_hashes in tqdm(dataloader):
@@ -351,15 +348,9 @@ class IconqModel:
                     y_pred_logvar = torch.expm1(y_pred_logvar)
 
                 batch_size = x.size(0)
-                hash_to_id = {
-                    self._hash_query_id(node_data["query_id"]): node_data[
-                        "query_id"
-                    ]
-                    for node, node_data in overlap_graph.nodes(data=True)
-                }
                 for i in range(batch_size):
                     query_id_hash = query_id_hashes[i].item()
-                    query_id = hash_to_id[query_id_hash]
+                    query_id = query_id_hashes_to_query_ids[query_id_hash]
                     if self._nn_args["is_mdn"]:
                         predictions[query_id] = ModelPrediction(
                             mean_s=[
@@ -476,79 +467,19 @@ class IconqModel:
 
         return model
 
-    def _get_and_enhance_overlap_graph(  # pylint: disable=too-many-locals
+    def _get_dataloaders(  # pylint: disable=too-many-locals
         self,
-        run_ids: list[str],
-    ) -> nx.Graph:
-        """
-        Gets the overlap graph for the given run IDs, and enhances it with
-        featurizations and stage model predictions.
-
-        Parameters:
-            run_ids: The run IDs to compute the overlaps for.
-
-        Returns:
-            overlap_graph: The overlap graph with enhanced information.
-        """
-        overall_overlap_graph: nx.Graph = nx.Graph()
-
-        for run_id in run_ids:
-            trace = Trace(run_id)
-            query_timeline = QueryTimeline(self._iconq_query_featurizer)
-            query_timeline.initialize_from_trace(trace)
-
-            overlap_graph = query_timeline.overlap_graph()
-            enhanced_overlap_graph = self._enhance_overlap_graph(overlap_graph)
-            overall_overlap_graph = nx.compose(
-                overall_overlap_graph, enhanced_overlap_graph
-            )
-
-        return overall_overlap_graph
-
-    def _enhance_overlap_graph(
-        self,
-        overlap_graph: nx.Graph,
-    ) -> nx.Graph:
-        """
-        Adds featurizations and stage model predictions to the given overlap
-        graph.
-
-        Parameters:
-            overlap_graph: The overlap graph to enhance.
-
-        Returns:
-            The enhanced overlap graph.
-        """
-
-        for node, node_data in overlap_graph.nodes(data=True):
-            node_data["query_featurization"] = (
-                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                    node_data["tpcds_temp_and_q_idx"]
-                )
-            )
-            node_data["stage_model_prediction"] = (
-                self._stage_model.predict_from_tpcds_temp_and_q_idx(
-                    {node_data["query_id"]: node_data["tpcds_temp_and_q_idx"]}
-                )[node_data["query_id"]]
-            )
-        return overlap_graph
-
-    def _graph_to_dataloaders(  # pylint: disable=too-many-locals
-        self,
-        overlap_graph: nx.Graph,
+        dataset: ConcurrentQueryDataset,
         train_config: Optional[NNModelTrainConfig] = None,
-        use_log_runtime: bool = True,
         split: bool = True,
         save_dataset: bool = False,
     ) -> tuple[DataLoader, Optional[DataLoader]]:
         """
-        Converts the given overlap graph into training and validation
-        dataloaders, ignoring any nodes marked as ignored.
+        Converts the given dataset into DataLoaders for training and validation.
 
         Parameters:
-            overlap_graph: The overlap graph to convert.
+            dataset: The dataset to convert.
             train_config: The training configuration for the LSTM model.
-            use_log_runtime: Whether to use the log of the runtime as target.
             split: Whether to split the data into training and validation sets.
             save_dataset: Whether to save the created dataset to disk.
 
@@ -559,93 +490,7 @@ class IconqModel:
                 split is False.
         """
 
-        x = []
-        y = []
-        pinch_points = []
-        query_id_hashes = []
-
-        if not train_config and split:
-            raise ValueError("train_config must be provided if split is True.")
-
-        for node in overlap_graph.nodes:
-            node_data = overlap_graph.nodes[node]
-            if node_data.get("ignored", False):
-                continue
-
-            interaction_featurizations: dict[
-                float, IconqInteractionFeaturizer.IconqInteractionFeaturization
-            ] = {}
-
-            # Add oneself to the interaction featurizations. This helps with
-            # queries that do not have any overlapping neighbors.
-            interaction_featurizations[node_data["start_time_s"]] = (
-                self._iconq_interaction_featurizer.featurize_from_vectors(
-                    qa_features=node_data["query_featurization"],
-                    qa_start_time_s=node_data["start_time_s"],
-                    qa_latency_prediction=node_data[
-                        "stage_model_prediction"
-                    ].overall_mean_s(),
-                    qb_features=node_data["query_featurization"],
-                    qb_start_time_s=node_data["start_time_s"],
-                    qb_latency_prediction=node_data[
-                        "stage_model_prediction"
-                    ].overall_mean_s(),
-                )
-            )
-
-            # Collect the interaction featurizations with neighboring nodes.
-            for neighbor in overlap_graph.neighbors(node):
-                neighbor_data = overlap_graph.nodes[neighbor]
-                interaction_featurizations[neighbor_data["start_time_s"]] = (
-                    self._iconq_interaction_featurizer.featurize_from_vectors(
-                        qa_features=node_data["query_featurization"],
-                        qa_start_time_s=node_data["start_time_s"],
-                        qa_latency_prediction=node_data[
-                            "stage_model_prediction"
-                        ].overall_mean_s(),
-                        qb_features=neighbor_data["query_featurization"],
-                        qb_start_time_s=neighbor_data["start_time_s"],
-                        qb_latency_prediction=neighbor_data[
-                            "stage_model_prediction"
-                        ].overall_mean_s(),
-                    )
-                )
-            neighbor_sort_order = sorted(interaction_featurizations.keys())
-
-            # Update the tensors.
-            x.append(
-                torch.stack(
-                    [
-                        torch.tensor(
-                            interaction_featurizations[neighbor_start_time_s],
-                            dtype=torch.float32,
-                        )
-                        for neighbor_start_time_s in neighbor_sort_order
-                    ]
-                )
-            )
-            latency = node_data["end_time_s"] - node_data["start_time_s"]
-            y.append(latency if not use_log_runtime else np.log1p(latency))
-            pinch_points.append(
-                neighbor_sort_order.index(node_data["start_time_s"])
-            )
-            query_id_hashes.append(self._hash_query_id(node_data["query_id"]))
-
-        # Transform lists into tensors.
-        x_tensorized = x
-        pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
-        y_tensorized = torch.tensor(y, dtype=torch.float32)
-        query_id_hashes_tensorized = torch.tensor(
-            query_id_hashes, dtype=torch.int64
-        )
-
-        # Create the dataset and dataloaders.
-        dataset = ConcurrentQueryDataset(
-            x=x_tensorized,
-            pinch_points=pinch_points_tensorized,
-            y=y_tensorized,
-            query_id_hashes=query_id_hashes_tensorized,
-        )
+        
         if save_dataset:
             dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
         if not split:

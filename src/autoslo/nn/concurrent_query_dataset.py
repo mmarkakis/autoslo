@@ -9,7 +9,7 @@ class ConcurrentQueryDataset(Dataset):
     A PyTorch Dataset for concurrent query data.
 
     Each item in the dataset is a tuple of the form
-    (x, pinch_point, y, query_id), where:
+    (x, pinch_point, y, query_id_hashes), where:
         - x is a list of the the input tensor, of shape (seq_len, input_size).
             The list length is batch_size.
         - pinch_point is the pinch points tensor, of shape (1,).
@@ -43,6 +43,34 @@ class ConcurrentQueryDataset(Dataset):
             self.pinch_points[idx],
             self.y[idx],
             self.query_id_hashes[idx],
+        )
+
+    @staticmethod
+    def concatenate(
+        datasets: list["ConcurrentQueryDataset"],
+    ) -> "ConcurrentQueryDataset":
+        if not all(isinstance(d, ConcurrentQueryDataset) for d in datasets):
+            raise ValueError(
+                "Can only add ConcurrentQueryDataset to another "
+                "ConcurrentQueryDataset"
+            )
+
+        new_x = []
+        for dataset in datasets:
+            new_x.extend(dataset.x)
+        new_pinch_points = torch.cat(
+            [dataset.pinch_points for dataset in datasets], dim=0
+        )
+        new_y = torch.cat([dataset.y for dataset in datasets], dim=0)
+        new_query_id_hashes = torch.cat(
+            [dataset.query_id_hashes for dataset in datasets], dim=0
+        )
+
+        return ConcurrentQueryDataset(
+            x=new_x,
+            pinch_points=new_pinch_points,
+            y=new_y,
+            query_id_hashes=new_query_id_hashes,
         )
 
     @staticmethod
@@ -105,12 +133,10 @@ class ConcurrentQueryDataset(Dataset):
             query_id_hashes_out,
         )
 
-
-
     def save_to(self, path: str) -> None:
         """
         Saves the dataset to disk at the specified path.
-        
+
         Parameters:
             path: The file path where the dataset will be saved.
         """
