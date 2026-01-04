@@ -69,7 +69,8 @@ class Day:
         the first chunk) is equal to `normalize_start_to`.
 
         Parameters:
-            endpoint_name: The name of the endpoint.
+            blueprint_name: The name of the blueprint.
+            query_router_name: The name of the query router.
             normalize_start_to: A datetime object to which the earliest
                 timestamp will be normalized.
             inter_chunk_gap: A timedelta object representing the gap to insert
