@@ -304,6 +304,91 @@ class IconqModel:
             val_dataloader=val_dataloader,
         )
 
+    def predict_from_query_timeline(
+        self, query_timeline: QueryTimeline
+    ) -> dict[str, ModelPrediction]:
+        """
+        Predicts the runtimes for the queries in the given QueryTimeline,
+        taking into account their overlaps, unless they are ignored.
+
+        Parameters:
+            query_timeline: The QueryTimeline to predict runtimes for.
+
+        Returns:
+            A dictionary mapping query IDs to their predicted ModelPrediction.
+        """
+
+        overlap_graph = query_timeline.overlap_graph()
+        enhanced_overlap_graph = self._enhance_overlap_graph(overlap_graph)
+
+        predictions: dict[str, ModelPrediction] = {}
+        # Now, for each node, compute its prediction.
+        dataloader, _ = self._graph_to_dataloaders(
+            enhanced_overlap_graph,
+            train_config=None,
+            use_log_runtime=self._trained_on_log_runtime,
+            split=False,
+            save_dataset=False,
+        )
+        self._nn.eval()
+        with torch.no_grad():
+            for x, x_len, pinch_points, _, query_id_hashes in tqdm(dataloader):
+                x, x_len, pinch_points = (
+                    x.to(self._device),
+                    x_len.to(self._device),
+                    pinch_points.to(self._device),
+                )
+
+                y_pred_mean, y_pred_logvar, y_pred_mix = self._nn(
+                    x,
+                    x_len,
+                    pinch_points,
+                    mdn_mix_softmax_temperature=1.0,
+                )
+
+                if self._trained_on_log_runtime:
+                    y_pred_mean = torch.expm1(y_pred_mean)
+                    y_pred_logvar = torch.expm1(y_pred_logvar)
+
+                batch_size = x.size(0)
+                hash_to_id = {
+                    self._hash_query_id(node_data["query_id"]): node_data[
+                        "query_id"
+                    ]
+                    for node, node_data in overlap_graph.nodes(data=True)
+                }
+                for i in range(batch_size):
+                    query_id_hash = query_id_hashes[i].item()
+                    query_id = hash_to_id[query_id_hash]
+                    if self._nn_args["is_mdn"]:
+                        predictions[query_id] = ModelPrediction(
+                            mean_s=[
+                                float(it) for it in y_pred_mean[i].tolist()
+                            ],
+                            std_dev_s=[
+                                float(it)
+                                for it in torch.exp(
+                                    y_pred_logvar[i] / 2
+                                ).tolist()
+                            ],
+                            mix_coeffs=[
+                                float(it) for it in y_pred_mix[i].tolist()
+                            ],
+                        )
+                    elif self._nn_args["is_bayesian"]:
+                        predictions[query_id] = ModelPrediction(
+                            mean_s=[float(y_pred_mean[i].item())],
+                            std_dev_s=[
+                                float(torch.exp(y_pred_logvar[i] / 2).item())
+                            ],
+                        )
+                    else:
+                        predictions[query_id] = ModelPrediction(
+                            mean_s=[float(y_pred_mean[i].item())],
+                        )
+
+        return predictions
+
     def save(self) -> str:
         """
         Saves the IconqModel.
