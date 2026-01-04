@@ -19,6 +19,8 @@ data/runs/**/tpcds_temp_and_q_idxs*
 data/runs/run_summary*
 data/strategy_runs/
 
+data/iconq_models/**/dataset.pkl
+
 
 
 site/

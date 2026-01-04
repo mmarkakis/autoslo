@@ -1,8 +1,7 @@
 import logging
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from enum import Enum
 from typing import Any, Optional, cast
 
 import networkx as nx
@@ -89,6 +88,9 @@ class NNModelTrainConfig:
     split_seed: int = (
         42  # The seed for the random split of the data into training, validation and testing sets.
         # Unused if both val_split_type and test_split_type are "temporal".
+    )
+    training_dataloader_shuffle_seed: int = (
+        42  # The seed for shuffling the training DataLoader.
     )
     test_frac: float = (
         0.25  # The fraction of the data to use for testing (i.e. ignore for training).
@@ -241,7 +243,20 @@ class IconqModel:
         else:
             self._loss_type = LossType.SENSITIVE_Q_ERROR
 
-        # Set up logging.
+        # Save initial model parameters.
+        self._save_params()
+
+    def _hash_query_id(self, query_id: str) -> int:
+        """
+        Hashes the given query ID to an integer.
+
+        Parameters:
+            query_id: The query ID to hash.
+
+        Returns:
+            The hashed query ID as an integer.
+        """
+        return xxhash.xxh32(query_id).intdigest()
 
     def train(  # pylint: disable=arguments-differ,too-many-locals
         self,
@@ -264,6 +279,7 @@ class IconqModel:
             self._train_config_sequence = []
             self._nn = RuntimeNet(**self._nn_args).to(self._device)  # type: ignore
         self._train_config_sequence.append(train_config)
+        self._save_params()
 
         # During execution, what gets logged out is a list of query executions.
         # However, the inputs to our model are features regarding the concurrent
@@ -277,7 +293,10 @@ class IconqModel:
             overlap_graph,
             train_config,
             use_log_runtime=self._trained_on_log_runtime,
+            split=True,
+            save_dataset=True,
         )
+        assert val_dataloader is not None  # For linter
 
         # Now we are ready for the actual training loop
         return self._run_training_loop(
@@ -294,7 +313,16 @@ class IconqModel:
                 the parent_save_dir.
         """
 
-        # Save model parameters
+        self._save_params()
+        update_checkpoint(self._nn, self._save_dir)
+
+        return self._model_id
+
+    def _save_params(self) -> None:
+        """
+        Saves the model parameters to disk.
+        """
+
         param_path = os.path.join(self._save_dir, "params.yml")
         with open(param_path, "w") as f:
             yaml.safe_dump(
@@ -310,14 +338,9 @@ class IconqModel:
                 f,
             )
 
-        # Save the model checkpoint
-        update_checkpoint(self._nn, self._save_dir)
-
-        return self._model_id
-
     @staticmethod
     def load(
-        self, model_id: str, parent_load_dir: Optional[str] = None
+        model_id: str, parent_load_dir: Optional[str] = None
     ) -> "IconqModel":
         """
         Load the given IconqModel.
@@ -340,7 +363,7 @@ class IconqModel:
             params = yaml.safe_load(f)
 
         model = IconqModel(
-            init_config=cast(IconqModelInitConfig, params["init_config"]),
+            init_config=IconqModelInitConfig(**params["init_config"]),
             train_config_sequence=[
                 NNModelTrainConfig(**tc_dict)
                 for tc_dict in params["train_config_sequence"]
@@ -362,7 +385,9 @@ class IconqModel:
                 key=lambda f: int(f[len("model_") : -len(".pth")]),
             )
             checkpoint_path = os.path.join(load_dir, latest_checkpoint_file)
-            self._nn._state_dict = torch.load(checkpoint_path)
+            print(f"Loading model checkpoint from {checkpoint_path}")
+            state_dict = torch.load(checkpoint_path, map_location=model._device)
+            model._nn.load_state_dict(state_dict)
 
         return model
 
@@ -386,49 +411,67 @@ class IconqModel:
             trace = Trace(run_id)
             query_timeline = QueryTimeline(self._iconq_query_featurizer)
             query_timeline.initialize_from_trace(trace)
-            overlap_graph = query_timeline.overlap_graph()
 
-            # To each node in the graph, add its featurization and its stage
-            # model prediction.
-            for node, node_data in overlap_graph.nodes(data=True):
-                node_data["query_featurization"] = (
-                    self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                        node_data["tpcds_temp_and_q_idx"]
-                    )
-                )
-                node_data["stage_model_prediction"] = (
-                    self._stage_model.predict_from_tpcds_temp_and_q_idx(
-                        {
-                            node_data["query_id"]: node_data[
-                                "tpcds_temp_and_q_idx"
-                            ]
-                        }
-                    )[node_data["query_id"]]
-                )
+            overlap_graph = query_timeline.overlap_graph()
+            enhanced_overlap_graph = self._enhance_overlap_graph(overlap_graph)
             overall_overlap_graph = nx.compose(
-                overall_overlap_graph, overlap_graph
+                overall_overlap_graph, enhanced_overlap_graph
             )
 
         return overall_overlap_graph
 
+    def _enhance_overlap_graph(
+        self,
+        overlap_graph: nx.Graph,
+    ) -> nx.Graph:
+        """
+        Adds featurizations and stage model predictions to the given overlap
+        graph.
+
+        Parameters:
+            overlap_graph: The overlap graph to enhance.
+
+        Returns:
+            The enhanced overlap graph.
+        """
+
+        for node, node_data in overlap_graph.nodes(data=True):
+            node_data["query_featurization"] = (
+                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
+                    node_data["tpcds_temp_and_q_idx"]
+                )
+            )
+            node_data["stage_model_prediction"] = (
+                self._stage_model.predict_from_tpcds_temp_and_q_idx(
+                    {node_data["query_id"]: node_data["tpcds_temp_and_q_idx"]}
+                )[node_data["query_id"]]
+            )
+        return overlap_graph
+
     def _graph_to_dataloaders(  # pylint: disable=too-many-locals
         self,
         overlap_graph: nx.Graph,
-        train_config: NNModelTrainConfig,
-        use_log_runtime: bool,
-    ) -> tuple[DataLoader, DataLoader]:
+        train_config: Optional[NNModelTrainConfig] = None,
+        use_log_runtime: bool = True,
+        split: bool = True,
+        save_dataset: bool = False,
+    ) -> tuple[DataLoader, Optional[DataLoader]]:
         """
         Converts the given overlap graph into training and validation
-        dataloaders.
+        dataloaders, ignoring any nodes marked as ignored.
 
         Parameters:
             overlap_graph: The overlap graph to convert.
             train_config: The training configuration for the LSTM model.
             use_log_runtime: Whether to use the log of the runtime as target.
+            split: Whether to split the data into training and validation sets.
+            save_dataset: Whether to save the created dataset to disk.
 
         Returns:
-            train_dataloader: The training DataLoader.
-            val_dataloader: The validation DataLoader.
+            train_dataloader: The DataLoader for the training set, or the sole
+                dataloader if split is False.
+            val_dataloader: The DataLoader for the validation set, or None if
+                split is False.
         """
 
         x = []
@@ -436,8 +479,14 @@ class IconqModel:
         pinch_points = []
         query_id_hashes = []
 
+        if not train_config and split:
+            raise ValueError("train_config must be provided if split is True.")
+
         for node in overlap_graph.nodes:
             node_data = overlap_graph.nodes[node]
+            if node_data.get("ignored", False):
+                continue
+
             interaction_featurizations: dict[
                 float, IconqInteractionFeaturizer.IconqInteractionFeaturization
             ] = {}
@@ -495,9 +544,7 @@ class IconqModel:
             pinch_points.append(
                 neighbor_sort_order.index(node_data["start_time_s"])
             )
-            query_id_hashes.append(
-                xxhash.xxh32(node_data["query_id"]).intdigest()
-            )
+            query_id_hashes.append(self._hash_query_id(node_data["query_id"]))
 
         # Transform lists into tensors.
         x_tensorized = x
@@ -514,15 +561,32 @@ class IconqModel:
             y=y_tensorized,
             query_id_hashes=query_id_hashes_tensorized,
         )
-        train_idxs, val_idxs, _ = self._get_data_splits(
+        if save_dataset:
+            dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
+        if not split:
+            dataloader = DataLoader(
+                dataset,
+                batch_size=len(dataset),
+                shuffle=True,
+                collate_fn=ConcurrentQueryDataset.collate_and_pad,
+            )
+            return dataloader, None
+
+        assert train_config is not None  # For linter
+        train_idxs, val_idxs, test_idxs = self._get_data_splits(
             len(dataset), train_config
         )
         train_dataset = Subset(dataset, train_idxs)
         val_dataset = Subset(dataset, val_idxs)
+        train_generator = torch.Generator()
+        train_generator.manual_seed(
+            train_config.training_dataloader_shuffle_seed
+        )
         train_dataloader = DataLoader(
             train_dataset,
             batch_size=train_config.batch_size,
             shuffle=True,
+            generator=train_generator,
             collate_fn=ConcurrentQueryDataset.collate_and_pad,
         )
         val_dataloader = DataLoader(
@@ -811,9 +875,9 @@ class IconqModel:
                         var_reg_weight,
                     )
                     if self._trained_on_log_runtime:
-                        y = torch.exp(y)
-                        y_pred_mean = torch.exp(y_pred_mean)
-                        y_pred_logvar = torch.exp(y_pred_logvar)
+                        y = torch.expm1(y)
+                        y_pred_mean = torch.expm1(y_pred_mean)
+                        y_pred_logvar = torch.expm1(y_pred_logvar)
 
                     for m, l, x, y_, q in zip(
                         y_pred_mean.detach().numpy(),
@@ -839,9 +903,9 @@ class IconqModel:
                         y_pred_mean, y, y_pred_logvar, var_reg_weight
                     )
                     if self._trained_on_log_runtime:
-                        y = torch.exp(y)
-                        y_pred_mean = torch.exp(y_pred_mean)
-                        y_pred_logvar = torch.exp(y_pred_logvar)
+                        y = torch.expm1(y)
+                        y_pred_mean = torch.expm1(y_pred_mean)
+                        y_pred_logvar = torch.expm1(y_pred_logvar)
 
                     for m, l, y_, q in zip(
                         y_pred_mean.detach().numpy(),
@@ -863,8 +927,8 @@ class IconqModel:
                     batch_loss = sensitive_q_error_loss(y_pred_mean, y)
 
                     if self._trained_on_log_runtime:
-                        y = torch.exp(y)
-                        y_pred_mean = torch.exp(y_pred_mean)
+                        y = torch.expm1(y)
+                        y_pred_mean = torch.expm1(y_pred_mean)
 
                     for m, y_, q in zip(
                         y_pred_mean.detach().numpy(),

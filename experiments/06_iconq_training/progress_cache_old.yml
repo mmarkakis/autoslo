@@ -1,6 +1,6 @@
-cache_model_id: '1767456140'
-featurizer_id: '1767456128'
-iconq_model_id: '1767526817'
+cache_model_id: '1767012307'
+featurizer_id: '1767012296'
+#iconq_model_id: '1767016222'
 run_ids:
 - '1763346358'
 - '1763315325'
@@ -66,6 +66,5 @@ run_ids:
 - '1763299918'
 - '1763291740'
 - '1763966257'
-- '1767009691'
-stage_model_id: /home/markakis/chunkbench/data/stage_models/1767456153
-xgboost_model_id: '1767456141'
+stage_model_id: /home/markakis/chunkbench/data/stage_models/1767012322
+xgboost_model_id: '1767012307'

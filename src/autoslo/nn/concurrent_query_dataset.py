@@ -104,3 +104,41 @@ class ConcurrentQueryDataset(Dataset):
             y_out,
             query_id_hashes_out,
         )
+
+
+
+    def save_to(self, path: str) -> None:
+        """
+        Saves the dataset to disk at the specified path.
+        
+        Parameters:
+            path: The file path where the dataset will be saved.
+        """
+        torch.save(
+            {
+                "x": self.x,
+                "pinch_points": self.pinch_points,
+                "y": self.y,
+                "query_id_hashes": self.query_id_hashes,
+            },
+            path,
+        )
+
+    @classmethod
+    def load_from(cls, path: str) -> "ConcurrentQueryDataset":
+        """
+        Loads a dataset from disk at the specified path.
+
+        Parameters:
+            path: The file path from where the dataset will be loaded.
+
+        Returns:
+            An instance of ConcurrentQueryDataset loaded from the specified path.
+        """
+        data = torch.load(path)
+        return cls(
+            x=data["x"],
+            pinch_points=data["pinch_points"],
+            y=data["y"],
+            query_id_hashes=data["query_id_hashes"],
+        )

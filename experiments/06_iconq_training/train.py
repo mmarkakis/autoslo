@@ -39,12 +39,10 @@ def find_run_ids() -> list[str]:
                     run_ids.append(max(this_workload_run_ids))
 
     # Benchmarking workload runs.
-    if False:
-        benchmark_runs = df[
-            df["workload_name"] == "benchmarking_workload_99_3_3_shuffled_42"
-        ]
-        assert benchmark_runs["blueprint_name"].nunique() == len(benchmark_runs)
-        run_ids += benchmark_runs["run_id"].tolist()
+    benchmark_runs = df[
+        df["workload_name"] == "benchmarking_workload_99_3_3_shuffled_42"
+    ]
+    run_ids.append(benchmark_runs["run_id"].max())
     return run_ids
 
 
@@ -102,6 +100,7 @@ def train_iconq_model(
         stage_model_id=stage_model_id,
         is_bayesian=False,
         is_mdn=False,
+        train_on_log_runtime=True,
     )
     nn_model_train_config = NNModelTrainConfig(
         run_ids=run_ids,

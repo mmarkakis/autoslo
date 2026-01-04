@@ -1,6 +1,6 @@
 import bisect
 import heapq
-from typing import Optional
+from typing import Optional, Union
 from dataclasses import dataclass
 
 import networkx as nx
@@ -112,6 +112,7 @@ class QueryTimeline:
                         ingested_query.tpcds_temp_and_q_idx
                     )
                 ),
+                ignored=False,
             )
 
         self._compute_graph_edges(G)
@@ -196,6 +197,7 @@ class QueryTimeline:
                     tpcds_temp_and_q_idx
                 )
             ),
+            ignored=False,
         )
         insert_idx = bisect.bisect_left(
             self._ordered_start_times_s, (start_time_s, query_id)
@@ -297,3 +299,23 @@ class QueryTimeline:
                 if other_query_id == query_id:
                     continue
                 self._overlap_graph.add_edge(query_id, other_query_id)
+
+    def toggle_ignored_to(
+        self, ignored: bool, query_ids: Union[str, list[str]]
+    ) -> None:
+        """
+        Toggle the ignored status of one or more queries.
+
+        Parameters:
+            ignored: The new ignored status.
+            query_ids: The ID or list of IDs of the queries to update.
+        """
+        if isinstance(query_ids, str):
+            query_ids = [query_ids]
+
+        for query_id in query_ids:
+            if query_id not in self._overlap_graph:
+                raise ValueError(
+                    f"Query ID {query_id} does not exist in timeline."
+                )
+            self._overlap_graph.nodes[query_id]["ignored"] = ignored
