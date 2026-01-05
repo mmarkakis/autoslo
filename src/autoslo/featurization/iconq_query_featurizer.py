@@ -237,11 +237,11 @@ class IconqQueryFeaturizer:
         """
 
         # Load the database statistics.
-        # FIXME: We just load from cluster size 16.
+        # FIXME: We just load from cluster size 32.
         statistics_path = os.path.join(
             pu.get_data_path(),
             "db_stats",
-            f"cluster_16_{self._schema_name}.yml",
+            f"cluster_32_{self._schema_name}.yml",
         )
         with open(statistics_path, "r", encoding="utf-8") as f:
             stats = yaml.safe_load(f)
