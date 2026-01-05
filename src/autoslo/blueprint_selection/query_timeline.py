@@ -1,20 +1,16 @@
-import bisect
-import heapq
-from typing import Optional, Union
+from typing import Optional, defaultdict
 
-import torch
 import numpy as np
-
-import networkx as nx
+import torch
+from intervaltree import Interval, IntervalTree
 
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.stage_model import StageModel
-from autoslo.workload_execution.trace import Trace
-
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.workload_execution.trace import Trace
 
 
 class QueryTimeline:
@@ -31,14 +27,16 @@ class QueryTimeline:
         Parameters:
             iconq_query_featurizer: The IconqQueryFeaturizer to use for
                 featurizing the queries.
-            iconq_interaction_featurizer: The IconqInteractionFeaturizer to use 
+            iconq_interaction_featurizer: The IconqInteractionFeaturizer to use
                 for featurizing interactions between queries.
 
         """
         self._iconq_query_featurizer = iconq_query_featurizer
         self._iconq_interaction_featurizer = iconq_interaction_featurizer
-        self._overlap_graph: nx.Graph = nx.Graph()
-        self._ordered_start_times_s: list[tuple[float, str]] = []
+        self._interval_trees: dict[str, IntervalTree] = defaultdict(
+            IntervalTree
+        )
+        self._query_id_to_cluster_interval: dict[str, tuple[str, Interval]] = {}
 
     def initialize_from_trace(
         self, trace: Trace, stage_model: Optional[StageModel] = None
@@ -57,41 +55,39 @@ class QueryTimeline:
         end_times = trace.completion_times()
         query_ids = trace.query_ids
 
+        intervals_to_add: dict[str, list[Interval]] = defaultdict(list)
+
         for query_id in query_ids:
-            self._overlap_graph.add_node(
-                query_id,
-                query_id=query_id,
-                cluster_name=trace.cluster_name_from_query_id(query_id),
-                start_time_s=start_times[query_id].timestamp(),
-                end_time_s=end_times[query_id].timestamp(),
-                tpcds_temp_and_q_idx=tpcds_temp_and_q_idxs[query_id],
-                featurization=(
-                    self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                        tpcds_temp_and_q_idxs[query_id]
-                    )
-                ),
-                stage_model_prediction=(
-                    stage_model.predict_from_tpcds_temp_and_q_idx(
-                        {query_id: tpcds_temp_and_q_idxs[query_id]}
-                    )[query_id]
-                    if stage_model is not None
-                    else 0.0
-                ),
-                ignored=False,
+            cluster_name = trace.cluster_name_from_query_id(query_id)
+            temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+
+            interval = Interval(
+                begin=start_times[query_id].timestamp(),
+                end=end_times[query_id].timestamp(),
+                data={
+                    "query_id": query_id,
+                    "tpcds_temp_and_q_idx": temp_and_q_idx,
+                    "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
+                        temp_and_q_idx
+                    ),
+                    "stage_model_prediction": (
+                        stage_model.predict_from_tpcds_temp_and_q_idx(
+                            {query_id: temp_and_q_idx}
+                        )[query_id]
+                        if stage_model is not None
+                        else 0.0
+                    ),
+                },
             )
 
-        self._ordered_start_times_s.extend(
-            sorted(
-                [
-                    (data["start_time_s"], node)
-                    for node, data in self._overlap_graph.nodes(data=True)
-                ]
+            self._query_id_to_cluster_interval[query_id] = (
+                cluster_name,
+                interval,
             )
-        )  # FIXME: In theory there is an edge case where two queries have
-        #  same start time and the node name sort order gets messed up,
-        # but this is unlikely in practice.
+            intervals_to_add[cluster_name].append(interval)
 
-        self._compute_graph_edges() 
+        for cluster_name, intervals in intervals_to_add.items():
+            self._interval_trees[cluster_name].update(intervals)
 
     @property
     def query_ids(self) -> list[str]:
@@ -101,57 +97,17 @@ class QueryTimeline:
         Returns:
             A list of query IDs.
         """
-        return list(self._overlap_graph.nodes())
+        return list(self._query_id_to_cluster_interval.keys())
 
-    def _compute_graph_edges(self) -> None:
+    @property
+    def active_clusters(self) -> list[str]:
         """
-        Compute the edges of the overlap graph upon intialization.
+        Get the list of active cluster names in the timeline.
 
-        Raises:
-            ValueError: If the overlap graph already has edges.
+        Returns:
+            A list of active cluster names.
         """
-        # Make sure there are no edges.
-        if self._overlap_graph.number_of_edges() > 0:
-            raise ValueError(
-                "Overlap graph already has edges; cannot recompute edges."
-            )
-
-        # Re-add edges based on current start and end times
-        active_query_ids: list[tuple[float, str, str]] = []
-        sorted_queries = sorted(
-            self._overlap_graph.nodes(data=True),
-            key=lambda x: (x[1]["start_time_s"], x[1]["end_time_s"]),
-        )
-
-        for current_query_id, data in sorted_queries:
-
-            current_start_time_s = data["start_time_s"]
-            current_end_time_s = data["end_time_s"]
-            current_cluster_name = data["cluster_name"]
-
-            # Remove queries that have ended before the current query starts
-            while (
-                len(active_query_ids) > 0
-                and active_query_ids[0][0] <= current_start_time_s
-            ):
-                heapq.heappop(active_query_ids)
-
-            # Add edges to all currently active queries on the same cluster.
-            for (
-                _,
-                other_query_id,
-                other_cluster_name,
-            ) in active_query_ids:
-                if other_cluster_name == current_cluster_name:
-                    self._overlap_graph.add_edge(
-                        current_query_id, other_query_id
-                    )
-
-            # Add the current query to the list of active queries
-            heapq.heappush(
-                active_query_ids,
-                (current_end_time_s, current_query_id, current_cluster_name),
-            )
+        return list(self._interval_trees.keys())
 
     def overlap(self, query_id_a: str, query_id_b: str) -> bool:
         """
@@ -164,14 +120,58 @@ class QueryTimeline:
         Returns:
             True if the queries overlap on the same cluster, False otherwise.
         """
-        return self._overlap_graph.has_edge(query_id_a, query_id_b)
+        cluster_name_a, interval_a = self._query_id_to_cluster_interval[
+            query_id_a
+        ]
+        cluster_name_b, interval_b = self._query_id_to_cluster_interval[
+            query_id_b
+        ]
+        if cluster_name_a != cluster_name_b:
+            return False
 
+        return interval_a.overlaps(interval_b)
 
-    def get_dataset(self, use_log_runtime: bool) -> ConcurrentQueryDataset:
+    def queries_in_window(
+        self,
+        cluster_name: str,
+        start_time_s: float = -float("inf"),
+        end_time_s: float = float("inf"),
+    ) -> dict[Interval, list[Interval]]:
+        """
+        For each query that overlaps with the given time window on the specified
+        cluster, yield the query and all other queries that overlap with it.
+
+        Parameters:
+            cluster_name: The name of the cluster to consider.
+            start_time_s: The start time of the window (in seconds).
+            end_time_s: The end time of the window (in seconds).
+
+        Returns:
+            A dictionary mapping each query Interval to its list of overlapping
+                query Intervals.
+        """
+        tree = self._interval_trees[cluster_name]
+        seeds = list(tree.overlap(start_time_s, end_time_s))
+
+        result: dict[Interval, list[Interval]] = {}
+
+        for a in seeds:
+            result[a] = [b for b in tree.overlap(a.begin, a.end) if b != a]
+
+        return result
+
+    def get_dataset(
+        self,
+        start_time_s: float = -float("inf"),
+        end_time_s: float = float("inf"),
+        use_log_runtime: bool = True,
+    ) -> ConcurrentQueryDataset:
         """
         Get a ConcurrentQueryDataset representing the timeline.
 
         Parameters:
+            start_time_s: The start time of the window (in seconds).
+            end_time_s: The end time of the window (in seconds).
             use_log_runtime: Whether to use the log of the runtime as the
                 target variable (log1p), or the runtime itself.
 
@@ -183,71 +183,77 @@ class QueryTimeline:
         pinch_points = []
         query_id_hashes = []
 
-        for node, node_data in self._overlap_graph.nodes(data=True):
-            if node_data['ignored']:
-                continue
+        for cluster_name in self.active_clusters:
 
-            interaction_featurizations: dict[
-                float, IconqInteractionFeaturizer.IconqInteractionFeaturization
-            ] = {}
-
-            # Add oneself to the interaction featurizations. This helps with
-            # queries that do not have any overlapping neighbors.
-            interaction_featurizations[node_data["start_time_s"]] = (
-                self._iconq_interaction_featurizer.featurize_from_vectors(
-                    qa_features=node_data["featurization"],
-                    qa_start_time_s=node_data["start_time_s"],
-                    qa_latency_prediction=node_data[
-                        "stage_model_prediction"
-                    ].overall_mean_s(),
-                    qb_features=node_data["featurization"],
-                    qb_start_time_s=node_data["start_time_s"],
-                    qb_latency_prediction=node_data[
-                        "stage_model_prediction"
-                    ].overall_mean_s(),
-                )
+            query_overlap_mapping = self.queries_in_window(
+                cluster_name=cluster_name,
+                start_time_s=start_time_s,
+                end_time_s=end_time_s,
             )
 
-            # Collect the interaction featurizations with neighboring nodes, as
-            # long as they execute on the same cluster.
-            for neighbor in self._overlap_graph.neighbors(node):
-                neighbor_data = self._overlap_graph.nodes[neighbor]
-                if neighbor_data["cluster_name"] != node_data["cluster_name"]:
-                    continue
-                interaction_featurizations[neighbor_data["start_time_s"]] = (
+            for base_iv, overlapping_ivs in query_overlap_mapping.items():
+
+                interaction_featurizations: dict[
+                    float,
+                    IconqInteractionFeaturizer.IconqInteractionFeaturization,
+                ] = {}
+
+                # Add oneself to the interaction featurizations. This helps with
+                # queries that do not have any overlapping neighbors.
+                interaction_featurizations[base_iv.begin] = (
                     self._iconq_interaction_featurizer.featurize_from_vectors(
-                        qa_features=node_data["featurization"],
-                        qa_start_time_s=node_data["start_time_s"],
-                        qa_latency_prediction=node_data[
+                        qa_features=base_iv.data["featurization"],
+                        qa_start_time_s=base_iv.begin,
+                        qa_latency_prediction=base_iv.data[
                             "stage_model_prediction"
                         ].overall_mean_s(),
-                        qb_features=neighbor_data["featurization"],
-                        qb_start_time_s=neighbor_data["start_time_s"],
-                        qb_latency_prediction=neighbor_data[
+                        qb_features=base_iv.data["featurization"],
+                        qb_start_time_s=base_iv.begin,
+                        qb_latency_prediction=base_iv.data[
                             "stage_model_prediction"
                         ].overall_mean_s(),
                     )
                 )
-            neighbor_sort_order = sorted(interaction_featurizations.keys())
 
-            # Update the tensors.
-            x.append(
-                torch.stack(
-                    [
-                        torch.tensor(
-                            interaction_featurizations[neighbor_start_time_s],
-                            dtype=torch.float32,
+                # Collect the interaction featurizations with overlapping nodes.
+                for neighbor_iv in overlapping_ivs:
+
+                    interaction_featurizations[neighbor_iv.begin] = (
+                        self._iconq_interaction_featurizer.featurize_from_vectors(
+                            qa_features=base_iv.data["featurization"],
+                            qa_start_time_s=base_iv.begin,
+                            qa_latency_prediction=base_iv.data[
+                                "stage_model_prediction"
+                            ].overall_mean_s(),
+                            qb_features=neighbor_iv.data["featurization"],
+                            qb_start_time_s=neighbor_iv.begin,
+                            qb_latency_prediction=neighbor_iv.data[
+                                "stage_model_prediction"
+                            ].overall_mean_s(),
                         )
-                        for neighbor_start_time_s in neighbor_sort_order
-                    ]
+                    )
+                neighbor_sort_order = sorted(interaction_featurizations.keys())
+
+                # Update the tensors.
+                x.append(
+                    torch.stack(
+                        [
+                            torch.tensor(
+                                interaction_featurizations[
+                                    neighbor_start_time_s
+                                ],
+                                dtype=torch.float32,
+                            )
+                            for neighbor_start_time_s in neighbor_sort_order
+                        ]
+                    )
                 )
-            )
-            latency = node_data["end_time_s"] - node_data["start_time_s"]
-            y.append(latency if not use_log_runtime else np.log1p(latency))
-            pinch_points.append(
-                neighbor_sort_order.index(node_data["start_time_s"])
-            )
-            query_id_hashes.append(Trace.hash_query_id(node_data["query_id"]))
+                latency = base_iv.end - base_iv.begin
+                y.append(latency if not use_log_runtime else np.log1p(latency))
+                pinch_points.append(neighbor_sort_order.index(base_iv.begin))
+                query_id_hashes.append(
+                    Trace.hash_query_id(base_iv.data["query_id"])
+                )
 
         # Transform lists into tensors.
         x_tensorized = x
@@ -266,7 +272,6 @@ class QueryTimeline:
 
         return dataset
 
-
     def update_latency(
         self,
         query_id: str,
@@ -281,61 +286,39 @@ class QueryTimeline:
         Raises:
             ValueError: If the query ID does not exist in the timeline.
         """
-        if query_id not in self._overlap_graph:
+        if query_id not in self.query_ids:
             raise ValueError(f"Query ID {query_id} does not exist in timeline.")
 
-        # Determine new end time
-        start_time_s = self._overlap_graph.nodes[query_id]["start_time_s"]
-        old_end_time_s = self._overlap_graph.nodes[query_id]["end_time_s"]
-        new_end_time_s = start_time_s + latency_s
-        if new_end_time_s == old_end_time_s:
-            return
-        self._overlap_graph.nodes[query_id]["end_time_s"] = new_end_time_s
+        cluster_name, interval = self._query_id_to_cluster_interval[query_id]
+        self._interval_trees[cluster_name].remove(interval)
 
-        # If it got shorter, we only need to remove edges
-        if new_end_time_s < old_end_time_s:
-            original_neighbors = list(self._overlap_graph.neighbors(query_id))
-            for neighbor in original_neighbors:
-                neighbor_start_time_s = self._overlap_graph.nodes[neighbor][
-                    "start_time_s"
-                ]
-                if neighbor_start_time_s >= new_end_time_s:
-                    self._overlap_graph.remove_edge(query_id, neighbor)
+        new_interval = Interval(
+            begin=interval.begin,
+            end=interval.begin + latency_s,
+            data=interval.data,
+        )
+        self._interval_trees[cluster_name].add(new_interval)
 
-        else:
-            # If it got longer, we need to add edges for anyone starting
-            # during the extended period.
-            consideration_period_start_idx = bisect.bisect_left(
-                self._ordered_start_times_s, (old_end_time_s, "")
-            )
-            for i in range(
-                consideration_period_start_idx, len(self._ordered_start_times_s)
-            ):
-                other_start_time_s, other_query_id = (
-                    self._ordered_start_times_s[i]
-                )
-                if other_start_time_s >= new_end_time_s:
-                    break
-                if other_query_id == query_id:
-                    continue
-                self._overlap_graph.add_edge(query_id, other_query_id)
+        self._query_id_to_cluster_interval[query_id] = (
+            cluster_name,
+            new_interval,
+        )
 
-    def toggle_ignored_to(
-        self, ignored: bool, query_ids: Union[str, list[str]]
-    ) -> None:
+    def move_to_cluster(self, new_cluster_name: str, query_id: str) -> None:
         """
-        Toggle the ignored status of one or more queries.
+        Move a query to a different cluster.
 
         Parameters:
-            ignored: The new ignored status.
-            query_ids: The ID or list of IDs of the queries to update.
+            new_cluster_name: The name of the new cluster.
+            query_id: The ID of the query to move.
         """
-        if isinstance(query_ids, str):
-            query_ids = [query_ids]
 
-        for query_id in query_ids:
-            if query_id not in self._overlap_graph:
-                raise ValueError(
-                    f"Query ID {query_id} does not exist in timeline."
-                )
-            self._overlap_graph.nodes[query_id]["ignored"] = ignored
+        old_cluster_name, interval = self._query_id_to_cluster_interval[
+            query_id
+        ]
+        self._interval_trees[old_cluster_name].remove(interval)
+        self._interval_trees[new_cluster_name].add(interval)
+        self._query_id_to_cluster_interval[query_id] = (
+            new_cluster_name,
+            interval,
+        )
