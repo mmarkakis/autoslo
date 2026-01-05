@@ -42,8 +42,6 @@ def bootstrap_query_timeline_from_workload(
         iconq_interaction_featurizer=iconq_interaction_featurizer,
     )
 
-    query_id_hashes_to_query_ids: dict[int, str] = {}
-
     # Add the queries one by one.
     for query in workload.queries():
         query_id = query.query_id
@@ -63,7 +61,6 @@ def bootstrap_query_timeline_from_workload(
             tpcds_temp_and_q_idx=temp_and_q_idx,
             stage_model_prediction=stage_prediction_overall_mean,
         )
-        query_id_hashes_to_query_ids[Trace.hash_query_id(query_id)] = query_id
 
     for i in range(10):
 
@@ -74,7 +71,6 @@ def bootstrap_query_timeline_from_workload(
 
         predictions = iconq_model.predict_from_dataset(
             dataset=dataset,
-            query_id_hashes_to_query_ids=query_id_hashes_to_query_ids,
         )
         num_updated = 0
         for query_id, prediction in predictions.items():

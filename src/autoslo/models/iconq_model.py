@@ -315,19 +315,13 @@ class IconqModel:
         dataset = query_timeline.get_dataset(
             use_log_runtime=self._trained_on_log_runtime
         )
-        query_id_hashes_to_query_ids = {
-            Trace.hash_query_id(query_id): query_id
-            for query_id in query_timeline.query_ids
-        }
         return self.predict_from_dataset(
             dataset,
-            query_id_hashes_to_query_ids,
         )
 
     def predict_from_dataset(
         self,
         dataset: ConcurrentQueryDataset,
-        query_id_hashes_to_query_ids: dict[int, str],
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtimes for the queries in the given dataset.
@@ -349,7 +343,7 @@ class IconqModel:
         predictions: dict[str, ModelPrediction] = {}
         self._nn.eval()
         with torch.no_grad():
-            for x, x_len, pinch_points, _, query_id_hashes in tqdm(dataloader):
+            for x, x_len, pinch_points, _, query_ids in tqdm(dataloader):
                 x, x_len, pinch_points = (
                     x.to(self._device),
                     x_len.to(self._device),
@@ -367,10 +361,7 @@ class IconqModel:
                     y_pred_mean = torch.expm1(y_pred_mean)
                     y_pred_logvar = torch.expm1(y_pred_logvar)
 
-                batch_size = x.size(0)
-                for i in range(batch_size):
-                    query_id_hash = query_id_hashes[i].item()
-                    query_id = query_id_hashes_to_query_ids[query_id_hash]
+                for i, query_id in enumerate(query_ids):
                     if self._nn_args["is_mdn"]:
                         predictions[query_id] = ModelPrediction(
                             mean_s=[
@@ -803,7 +794,7 @@ class IconqModel:
         all_pred_v_true = []
         self._nn.eval()
         with torch.no_grad():
-            for x, x_len, pinch_points, y, query_uuid in val_dataloader:
+            for x, x_len, pinch_points, y, query_id in val_dataloader:
                 x, x_len, pinch_points, y = (
                     x.to(self._device),
                     x_len.to(self._device),
@@ -833,7 +824,7 @@ class IconqModel:
                         y_pred_logvar.detach().numpy(),
                         y_pred_mix.detach().numpy(),
                         y.numpy(),
-                        query_uuid.numpy(),
+                        query_id
                     ):
 
                         all_pred_v_true.append(
@@ -860,7 +851,7 @@ class IconqModel:
                         y_pred_mean.detach().numpy(),
                         y_pred_logvar.detach().numpy(),
                         y.numpy(),
-                        query_uuid.numpy(),
+                        query_id,
                     ):
                         all_pred_v_true.append(
                             (
@@ -882,7 +873,7 @@ class IconqModel:
                     for m, y_, q in zip(
                         y_pred_mean.detach().numpy(),
                         y.numpy(),
-                        query_uuid.numpy(),
+                        query_id
                     ):
                         all_pred_v_true.append(
                             (
@@ -926,8 +917,8 @@ class IconqModel:
         # Print out a dataframe of predictions
         if training_dir is not None:
             val_df = pd.DataFrame()
-            val_df["query_uuid"] = [
-                query_uuid for _, _, query_uuid in all_pred_v_true
+            val_df["query_id"] = [
+                query_id for _, _, query_id in all_pred_v_true
             ]
             val_df["y"] = [true for _, true, _ in all_pred_v_true]
             val_df["y_pred"] = [pred for pred, _, _ in all_pred_v_true]

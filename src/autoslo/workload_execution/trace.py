@@ -1,4 +1,3 @@
-import heapq
 import os
 import pickle
 import uuid
@@ -6,11 +5,9 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Optional, TypeAlias, cast
 
-import networkx as nx
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import xxhash
 import yaml
 
 import autoslo.utils.paralellism as plu
@@ -146,19 +143,6 @@ class Trace:
             The cluster name as a string.
         """
         return query_id.rsplit("_", maxsplit=1)[0]
-
-    @staticmethod
-    def hash_query_id(query_id: str) -> int:
-        """
-        Hashes the given query ID to an integer.
-
-        Parameters:
-            query_id: The query ID to hash.
-
-        Returns:
-            The hashed query ID as an integer.
-        """
-        return xxhash.xxh32(query_id).intdigest()
 
     @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:

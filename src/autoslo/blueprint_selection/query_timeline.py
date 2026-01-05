@@ -225,7 +225,7 @@ class QueryTimeline:
         x = []
         y = []
         pinch_points = []
-        query_id_hashes = []
+        query_ids = []
 
         for cluster_name in self.active_clusters:
 
@@ -297,23 +297,18 @@ class QueryTimeline:
                 latency = base_iv.end - base_iv.begin
                 y.append(latency if not use_log_runtime else np.log1p(latency))
                 pinch_points.append(neighbor_sort_order.index(base_iv.begin))
-                query_id_hashes.append(
-                    Trace.hash_query_id(base_iv.data["query_id"])
-                )
+                query_ids.append(base_iv.data["query_id"])
 
         # Transform lists into tensors.
         x_tensorized = x
         pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
         y_tensorized = torch.tensor(y, dtype=torch.float32)
-        query_id_hashes_tensorized = torch.tensor(
-            query_id_hashes, dtype=torch.int64
-        )
 
         dataset = ConcurrentQueryDataset(
             x=x_tensorized,
             pinch_points=pinch_points_tensorized,
             y=y_tensorized,
-            query_id_hashes=query_id_hashes_tensorized,
+            query_ids=query_ids,
         )
 
         return dataset
