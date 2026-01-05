@@ -1,3 +1,4 @@
+from math import isclose
 from typing import Optional, defaultdict
 
 import numpy as np
@@ -15,6 +16,8 @@ from autoslo.workload_execution.trace import Trace
 
 class QueryTimeline:
     """Represents a timestamped schedule of query submissions."""
+
+    ONE_MICROSECOND = 1e-6
 
     def __init__(
         self,
@@ -130,6 +133,47 @@ class QueryTimeline:
             return False
 
         return interval_a.overlaps(interval_b)
+
+    def add_query(
+        self,
+        cluster_name: str,
+        start_time_s: float,
+        end_time_s: float,
+        query_id: str,
+        tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        stage_model_prediction: float,
+    ) -> None:
+        """
+        Add a query to the timeline.
+
+        Parameters:
+            cluster_name: The name of the cluster where the query is executed.
+            start_time_s: The start time of the query (in seconds).
+            end_time_s: The end time of the query (in seconds).
+            query_id: The ID of the query.
+            tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
+            stage_model_prediction: The stage model latency prediction for
+                this query (in seconds).
+        """
+
+        interval = Interval(
+            begin=start_time_s,
+            end=end_time_s,
+            data={
+                "query_id": query_id,
+                "tpcds_temp_and_q_idx": tpcds_temp_and_q_idx,
+                "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
+                    tpcds_temp_and_q_idx
+                ),
+                "stage_model_prediction": stage_model_prediction,
+            },
+        )
+
+        self._query_id_to_cluster_interval[query_id] = (
+            cluster_name,
+            interval,
+        )
+        self._interval_trees[cluster_name].add(interval)
 
     def queries_in_window(
         self,
@@ -278,13 +322,17 @@ class QueryTimeline:
         self,
         query_id: str,
         latency_s: float,
-    ) -> None:
+    ) -> bool:
         """
         Update the latency of a query in the timeline.
 
         Parameters:
             query_id: The ID of the query to update.
             latency_s: The new latency of the query (in seconds).
+
+        Returns:
+            Whether the end time of the query changed.
+
         Raises:
             ValueError: If the query ID does not exist in the timeline.
         """
@@ -292,19 +340,26 @@ class QueryTimeline:
             raise ValueError(f"Query ID {query_id} does not exist in timeline.")
 
         cluster_name, interval = self._query_id_to_cluster_interval[query_id]
-        self._interval_trees[cluster_name].remove(interval)
+        if isclose(
+            interval.end - interval.begin,
+            latency_s,
+            abs_tol=QueryTimeline.ONE_MICROSECOND,
+        ):
+            return False
 
+        self._interval_trees[cluster_name].remove(interval)
         new_interval = Interval(
             begin=interval.begin,
             end=interval.begin + latency_s,
             data=interval.data,
         )
         self._interval_trees[cluster_name].add(new_interval)
-
         self._query_id_to_cluster_interval[query_id] = (
             cluster_name,
             new_interval,
         )
+
+        return True
 
     def move_to_cluster(self, new_cluster_name: str, query_id: str) -> None:
         """

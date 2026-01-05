@@ -315,16 +315,36 @@ class IconqModel:
         dataset = query_timeline.get_dataset(
             use_log_runtime=self._trained_on_log_runtime
         )
+        query_id_hashes_to_query_ids = {
+            Trace.hash_query_id(query_id): query_id
+            for query_id in query_timeline.query_ids
+        }
+        return self.predict_from_dataset(
+            dataset,
+            query_id_hashes_to_query_ids,
+        )
+
+    def predict_from_dataset(
+        self,
+        dataset: ConcurrentQueryDataset,
+        query_id_hashes_to_query_ids: dict[int, str],
+    ) -> dict[str, ModelPrediction]:
+        """
+        Predicts the runtimes for the queries in the given dataset.
+
+        Parameters:
+            dataset: The dataset to predict runtimes for.
+
+        Returns:
+            A dictionary mapping query IDs to their predicted ModelPrediction.
+        """
+
         dataloader, _ = self._get_dataloaders(
             dataset,
             train_config=None,
             split=False,
             save_dataset=False,
         )
-        query_id_hashes_to_query_ids = {
-            Trace.hash_query_id(query_id): query_id
-            for query_id in query_timeline.query_ids
-        }
 
         predictions: dict[str, ModelPrediction] = {}
         self._nn.eval()
@@ -490,7 +510,6 @@ class IconqModel:
                 split is False.
         """
 
-        
         if save_dataset:
             dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
         if not split:

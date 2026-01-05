@@ -9,10 +9,11 @@ import yaml
 
 import autoslo.utils.colors as cu
 import autoslo.utils.paths as pu
+from autoslo.workload_definition.workload import Query, Workload
 from autoslo.workload_execution.trace import Trace
 
 
-class Chunk:
+class Chunk(Workload):
     """
     A chunk represents a specific workload characterized by H and T values.
     """
@@ -110,6 +111,8 @@ class Chunk:
             H=self.H,
             T=self.T,
         )
+
+        self._queries: list[Query] = []
 
     def chunk_id(self) -> str:
         """Get the chunk ID string."""
@@ -225,7 +228,7 @@ class Chunk:
             query_texts[template_id] = {}
 
             # N.B. This could start at zero, but we started it as one-based
-            # and now all chunks are defined like that, so keeping it for 
+            # and now all chunks are defined like that, so keeping it for
             # compatibility.
             for query_num in range(1, self.num_queries_per_template + 1):
                 with open(
@@ -330,6 +333,38 @@ class Chunk:
             "w",
         ) as f:
             yaml.dump(stats, f, sort_keys=False)
+
+    @property
+    def queries(self) -> list[Query]:
+        """
+        Get the list of queries in the chunk workload.
+
+        Returns:
+            A list of Query instances.
+        """
+        if len(self._queries) > 0:
+            return self._queries
+
+        workload_path = os.path.join(
+            self.save_dir(),
+            f"chunk_workload.parquet",
+        )
+        if not os.path.exists(workload_path):
+            self.synthesize_chunk_workload()
+        df = pd.read_parquet(workload_path)
+
+        self._queries = [
+            Query(
+                query_id=row["query_id"],
+                start_time_s=row["rel_start_time_s"],
+                tpcds_temp_and_q_idx=(
+                    f"{row['query_template']:03d}_"
+                    f"{row['query_num_within_template']:03d}"
+                ),
+            )
+            for _, row in df.iterrows()
+        ]
+        return self._queries
 
     def get_most_recent_run_id_on(
         self, blueprint_name: str, query_router_name: str
