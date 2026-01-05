@@ -1,5 +1,6 @@
 from typing import Any, Optional
 
+import autoslo.utils.paths as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
@@ -49,6 +50,8 @@ class IconqInteractionFeaturizer:
                 iconq_query_featurizer_id
             )
 
+        self._cluster_dicts = pu.get_cluster_dicts_from_config()
+
     @property
     def num_dims(self) -> int:
         """
@@ -58,10 +61,11 @@ class IconqInteractionFeaturizer:
         Returns:
             The number of dimensions in the interaction feature vector.
         """
-        return 2 * self._iconq_query_featurizer.num_dims + 4
+        return 2 * self._iconq_query_featurizer.num_dims + 5
 
     def featurize(
         self,
+        cluster_name: str,
         qa_query_text: str,
         qa_start_time_s: float,
         qa_latency_prediction: float,
@@ -73,6 +77,8 @@ class IconqInteractionFeaturizer:
         Featurizes the interaction between two queries.
 
         Parameters:
+            cluster_name: The name of the cluster on which the queries are
+                executed.
             qa_query_text: The text of the first query.
             qa_features: The features of the first query.
             qa_start_time_s: The first query start time (Unix timestamp).
@@ -87,6 +93,7 @@ class IconqInteractionFeaturizer:
         qb_tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(qb_query_text)
 
         return self.featurize_from_tpcds_temp_and_q_idx(
+            cluster_name=cluster_name,
             qa_tpcds_temp_and_q_idx=qa_tpcds_temp_and_q_idx,
             qa_start_time_s=qa_start_time_s,
             qa_latency_prediction=qa_latency_prediction,
@@ -97,6 +104,7 @@ class IconqInteractionFeaturizer:
 
     def featurize_from_tpcds_temp_and_q_idx(
         self,
+        cluster_name: str,
         qa_tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
         qa_start_time_s: float,
         qa_latency_prediction: float,
@@ -109,6 +117,8 @@ class IconqInteractionFeaturizer:
         template and query indices.
 
         Parameters:
+            cluster_name: The name of the cluster on which the queries are
+                executed.
             qa_tpcds_temp_and_q_idx: The TPC-DS template and query index of the
                 first query.
             qa_start_time_s: The first query start time (Unix timestamp).
@@ -120,6 +130,7 @@ class IconqInteractionFeaturizer:
         """
 
         return self.featurize_from_vectors(
+            cluster_name=cluster_name,
             qa_features=self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                 qa_tpcds_temp_and_q_idx
             ),
@@ -134,6 +145,7 @@ class IconqInteractionFeaturizer:
 
     def featurize_from_vectors(
         self,
+        cluster_name: str,
         qa_features: list[float],
         qa_start_time_s: float,
         qa_latency_prediction: float,
@@ -146,6 +158,8 @@ class IconqInteractionFeaturizer:
         vectors.
 
         Parameters:
+            cluster_name: The name of the cluster on which the queries are
+                executed.
             qa_features: The features of the first query.
             qa_start_time_s: The first query start time (Unix timestamp).
             qa_latency_prediction: The latency prediction of the first query.
@@ -161,5 +175,6 @@ class IconqInteractionFeaturizer:
             + [
                 abs(qb_start_time_s - qa_start_time_s),
                 float(qa_start_time_s < qb_start_time_s),
+                self._cluster_dicts[cluster_name]["rpu"],
             ]
         )

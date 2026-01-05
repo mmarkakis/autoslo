@@ -202,6 +202,7 @@ class QueryTimeline:
                 # queries that do not have any overlapping neighbors.
                 interaction_featurizations[base_iv.begin] = (
                     self._iconq_interaction_featurizer.featurize_from_vectors(
+                        cluster_name=cluster_name,
                         qa_features=base_iv.data["featurization"],
                         qa_start_time_s=base_iv.begin,
                         qa_latency_prediction=base_iv.data[
@@ -220,6 +221,7 @@ class QueryTimeline:
 
                     interaction_featurizations[neighbor_iv.begin] = (
                         self._iconq_interaction_featurizer.featurize_from_vectors(
+                            cluster_name=cluster_name,
                             qa_features=base_iv.data["featurization"],
                             qa_start_time_s=base_iv.begin,
                             qa_latency_prediction=base_iv.data[
