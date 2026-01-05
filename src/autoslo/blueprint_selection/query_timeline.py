@@ -1,9 +1,10 @@
+from collections import defaultdict
 from math import isclose
-from typing import Optional, defaultdict
+from typing import Optional
 
 import numpy as np
 import torch
-from intervaltree import Interval, IntervalTree
+from intervaltree import Interval, IntervalTree  # type: ignore[import]
 
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
@@ -374,3 +375,71 @@ class QueryTimeline:
             new_cluster_name,
             interval,
         )
+
+    def find_worst_offending_interval(
+        self,
+        slo_s: float | dict[str, float],
+        weigh_by_violation_amount: bool = False,
+    ) -> list[tuple[str, Interval]]:
+        """
+        Label any query interval longer than the given SLO as a violation.
+        Return the time periods at which the number of violations is maximal.
+
+        Parameters:
+            slo_s: The SLO threshold (in seconds), or a mapping from query ids
+                to SLO thresholds.
+            weigh_by_violation_amount: Whether to weigh violations by their
+                amount (latency - SLO), or just count them equally.
+
+        Returns:
+            A list of pairs of cluster name and Interval, representing the time
+                period(s) with maximal violations per cluster.
+        """
+
+        result: list[tuple[str, Interval]] = []
+
+        for cluster_name in self.active_clusters:
+            tree = self._interval_trees[cluster_name]
+            events: list[tuple[float, int]] = []
+
+            for iv in tree:
+                latency = iv.end - iv.begin
+                if isinstance(slo_s, dict):
+                    slo_for_query = slo_s[iv.data["query_id"]]
+                else:
+                    slo_for_query = slo_s
+                violation_amount = latency - slo_for_query
+                if violation_amount > 0:
+                    penalty = (
+                        violation_amount if weigh_by_violation_amount else 1
+                    )
+                    events.append((iv.begin, +penalty))
+                    events.append((iv.end, -penalty))
+
+            events.sort()
+
+            current_violations = 0
+            max_violations = 0
+            max_intervals: list[Interval] = []
+            interval_start: Optional[float] = None
+
+            for time, change in events:
+                previous_violations = current_violations
+                current_violations += change
+
+                if current_violations > max_violations:
+                    max_violations = current_violations
+                    max_intervals = []
+                    interval_start = time
+                elif current_violations == max_violations:
+                    interval_start = time
+                elif interval_start is not None:
+                    max_intervals.append(
+                        Interval(begin=interval_start, end=time)
+                    )
+                    interval_start = None
+
+            for iv in max_intervals:
+                result.append((cluster_name, iv))
+
+        return result
