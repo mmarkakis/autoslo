@@ -19,6 +19,8 @@ class Cluster:
     UP_TO_32_RPU_SIZES = [4, 8, 16, 32]
     ALL_ALLOWED_RPU_SIZES = UP_TO_32_RPU_SIZES
 
+    _all_cluster_configs = None
+
     @staticmethod
     def all_allowed_rpu_sizes() -> list[int]:
         return Cluster.ALL_ALLOWED_RPU_SIZES
@@ -76,6 +78,29 @@ class Cluster:
         """
         self.destroy_conn_pool()
 
+    @classmethod
+    def all_cluster_configs(cls) -> dict[str, dict]:
+        """
+        Retrieve all cluster configurations from the configuration file.
+
+        Returns:
+            A dictionary mapping cluster names to their configuration
+            dictionaries.
+        """
+        if cls._all_cluster_configs is None:
+            cls._all_cluster_configs = pu.get_cluster_dicts_from_config()
+        return cls._all_cluster_configs
+
+    @classmethod
+    def all_cluster_names(cls) -> list[str]:
+        """
+        Retrieve all cluster names from the configuration file.
+
+        Returns:
+            A list of all cluster names.
+        """
+        return list(cls.all_cluster_configs().keys())
+
     @staticmethod
     def from_config(cluster_name: str) -> "Cluster":
         """
@@ -90,12 +115,12 @@ class Cluster:
         Raises:
             KeyError: If the cluster_name is not found in the configuration.
         """
-        cluster_config = pu.get_cluster_dicts_from_config()
-        if cluster_name not in cluster_config:
+        cluster_configs = Cluster.all_cluster_configs()
+        if cluster_name not in cluster_configs:
             raise KeyError(
                 f"Cluster name '{cluster_name}' not found in config."
             )
-        return Cluster.from_dict(cluster_config[cluster_name])
+        return Cluster.from_dict(cluster_configs[cluster_name])
 
     @staticmethod
     def from_dict(d: dict) -> "Cluster":

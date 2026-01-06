@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-import autoslo.utils.paths as pu
+from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
@@ -49,8 +49,6 @@ class IconqInteractionFeaturizer:
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
                 iconq_query_featurizer_id
             )
-
-        self._cluster_dicts = pu.get_cluster_dicts_from_config()
 
     @property
     def num_dims(self) -> int:
@@ -175,6 +173,6 @@ class IconqInteractionFeaturizer:
             + [
                 abs(qb_start_time_s - qa_start_time_s),
                 float(qa_start_time_s < qb_start_time_s),
-                self._cluster_dicts[cluster_name]["rpu"],
+                Cluster.from_config(cluster_name).rpu,
             ]
         )
