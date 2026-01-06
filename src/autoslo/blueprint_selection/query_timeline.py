@@ -79,7 +79,7 @@ class QueryTimeline:
                     "stage_model_prediction": (
                         stage_model.predict_from_tpcds_temp_and_q_idx(
                             {query_id: temp_and_q_idx}
-                        )[query_id]
+                        )[query_id].overall_mean_s()
                         if stage_model is not None
                         else 0.0
                     ),

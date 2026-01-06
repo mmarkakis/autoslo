@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from scipy.optimize import root_scalar
@@ -17,6 +17,7 @@ class ModelPrediction:
     mean_s: Optional[list[float]] = None
     std_dev_s: Optional[list[float]] = None
     mix_coeffs: Optional[list[float]] = None
+    metadata: Optional[dict[str, Any]] = None
 
     def _c_constant(self) -> bool:
         """

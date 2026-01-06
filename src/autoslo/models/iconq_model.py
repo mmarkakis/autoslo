@@ -245,7 +245,6 @@ class IconqModel:
         # Save initial model parameters.
         self._save_params()
 
-
     @property
     def stage_model(self) -> StageModel:
         """
@@ -354,7 +353,7 @@ class IconqModel:
         predictions: dict[str, ModelPrediction] = {}
         self._nn.eval()
         with torch.no_grad():
-            for x, x_len, pinch_points, _, query_ids in tqdm(dataloader):
+            for x, x_len, pinch_points, _, query_ids in dataloader:
                 x, x_len, pinch_points = (
                     x.to(self._device),
                     x_len.to(self._device),
@@ -373,6 +372,9 @@ class IconqModel:
                     y_pred_logvar = torch.expm1(y_pred_logvar)
 
                 for i, query_id in enumerate(query_ids):
+                    pred_meta = {
+                        "num_other_concurrent_queries": x_len[i].item() - 1
+                    }
                     if self._nn_args["is_mdn"]:
                         predictions[query_id] = ModelPrediction(
                             mean_s=[
@@ -387,6 +389,7 @@ class IconqModel:
                             mix_coeffs=[
                                 float(it) for it in y_pred_mix[i].tolist()
                             ],
+                            metadata=pred_meta,
                         )
                     elif self._nn_args["is_bayesian"]:
                         predictions[query_id] = ModelPrediction(
@@ -394,10 +397,12 @@ class IconqModel:
                             std_dev_s=[
                                 float(torch.exp(y_pred_logvar[i] / 2).item())
                             ],
+                            metadata=pred_meta,
                         )
                     else:
                         predictions[query_id] = ModelPrediction(
                             mean_s=[float(y_pred_mean[i].item())],
+                            metadata=pred_meta,
                         )
 
         return predictions
@@ -835,7 +840,7 @@ class IconqModel:
                         y_pred_logvar.detach().numpy(),
                         y_pred_mix.detach().numpy(),
                         y.numpy(),
-                        query_id
+                        query_id,
                     ):
 
                         all_pred_v_true.append(
@@ -882,9 +887,7 @@ class IconqModel:
                         y_pred_mean = torch.expm1(y_pred_mean)
 
                     for m, y_, q in zip(
-                        y_pred_mean.detach().numpy(),
-                        y.numpy(),
-                        query_id
+                        y_pred_mean.detach().numpy(), y.numpy(), query_id
                     ):
                         all_pred_v_true.append(
                             (
