@@ -6,7 +6,7 @@ from dataclasses import dataclass
 class Query:
     """Class representing a single query in the workload."""
 
-    query_id: int
+    query_id: str
     start_time_s: float
     tpcds_temp_and_q_idx: str
 

@@ -2,11 +2,12 @@ from datetime import datetime, timedelta, timezone
 from typing import cast
 
 import pytest
-from intervaltree import Interval # type: ignore[import]
+from intervaltree import Interval  # type: ignore[import]
 
 from autoslo.blueprint_selection.query_timeline import QueryTimeline
-from autoslo.featurization.iconq_interaction_featurizer import \
-    IconqInteractionFeaturizer
+from autoslo.featurization.iconq_interaction_featurizer import (
+    IconqInteractionFeaturizer,
+)
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
@@ -154,7 +155,7 @@ def test_move_to_cluster_unknown_query_id_raises_error() -> None:
         )
 
 
-def test_find_worst_offending_interval_unweighted() -> None:
+def test_find_worst_offending_intervals_unweighted() -> None:
     """Ensure worst offending intervals are found correctly."""
     timeline = build_timeline(
         [
@@ -164,7 +165,9 @@ def test_find_worst_offending_interval_unweighted() -> None:
             ("q4", 18.0, 25.0),
         ]
     )
-    worst_intervals = timeline.find_worst_offending_interval(slo_s=4.0)
+    worst_intervals = timeline.find_intervals_by_slo_adherence(
+        slo_s=4.0, look_for_slo_violations=True, weigh_by_distance=False
+    )
     expected_intervals = [
         (
             "default-cluster",
@@ -183,7 +186,8 @@ def test_find_worst_offending_interval_unweighted() -> None:
         worst_intervals == expected_intervals
     ), f"Expected {expected_intervals}, got {worst_intervals}"
 
-def test_find_worst_offending_interval_weighted() -> None:
+
+def test_find_worst_offending_intervals_weighted() -> None:
     """Ensure worst offending intervals are found correctly."""
     timeline = build_timeline(
         [
@@ -193,8 +197,9 @@ def test_find_worst_offending_interval_weighted() -> None:
             ("q4", 18.0, 25.0),
         ]
     )
-    worst_intervals = timeline.find_worst_offending_interval(slo_s=4.0, 
-        weigh_by_violation_amount=True)
+    worst_intervals = timeline.find_intervals_by_slo_adherence(
+        slo_s=4.0, look_for_slo_violations=True, weigh_by_distance=True
+    )
     expected_intervals = [
         (
             "default-cluster",
@@ -204,4 +209,75 @@ def test_find_worst_offending_interval_weighted() -> None:
     assert (
         worst_intervals == expected_intervals
     ), f"Expected {expected_intervals}, got {worst_intervals}"
-       
+
+
+def test_find_worst_offending_intervals_no_violations() -> None:
+    """Ensure no intervals are found when there are no SLO violations."""
+    timeline = build_timeline(
+        [
+            ("q1", 0.0, 3.0),
+            ("q2", 4.0, 7.0),
+            ("q3", 8.0, 11.0),
+        ]
+    )
+    worst_intervals = timeline.find_intervals_by_slo_adherence(
+        slo_s=5.0, look_for_slo_violations=True
+    )
+    expected_intervals: list[tuple[str, Interval]] = []
+    assert (
+        worst_intervals == expected_intervals
+    ), f"Expected {expected_intervals}, got {worst_intervals}"
+
+
+def test_find_slack_intervals() -> None:
+    """Ensure slack intervals are found correctly."""
+    timeline = build_timeline(
+        [
+            ("q1", 0.0, 3.0),
+            ("q2", 4.0, 7.0),
+            ("q3", 8.0, 11.0),
+        ]
+    )
+    slack_intervals = timeline.find_intervals_by_slo_adherence(
+        slo_s=5.0, look_for_slo_violations=False
+    )
+    expected_intervals = [
+        (
+            "default-cluster",
+            Interval(dt_after(0.0).timestamp(), dt_after(3.0).timestamp()),
+        ),
+        (
+            "default-cluster",
+            Interval(dt_after(4.0).timestamp(), dt_after(7.0).timestamp()),
+        ),
+        (
+            "default-cluster",
+            Interval(dt_after(8.0).timestamp(), dt_after(11.0).timestamp()),
+        ),
+    ]
+    assert (
+        slack_intervals == expected_intervals
+    ), f"Expected {expected_intervals}, got {slack_intervals}"
+
+
+def test_find_slack_intervals_overlapping() -> None:
+    """Ensure slack intervals are found correctly with overlaps."""
+    timeline = build_timeline(
+        [
+            ("q1", 0.0, 10.0),
+            ("q2", 5.0, 15.0),
+            ("q3", 20.0, 30.0),
+        ]
+    )
+    slack_intervals = timeline.find_intervals_by_slo_adherence(
+        slo_s=20.0, look_for_slo_violations=False
+    )
+    expected_intervals = [
+        (
+            "default-cluster",
+            Interval(dt_after(5.0).timestamp(), dt_after(10.0).timestamp()),
+        ),
+    ]
+    assert (
+        slack_intervals == expected_intervals
+    ), f"Expected {expected_intervals}, got {slack_intervals}"

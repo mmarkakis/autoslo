@@ -6,12 +6,14 @@ import numpy as np
 import torch
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
 
+from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.stage_model import StageModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.utils.billing import Billing
 from autoslo.workload_execution.trace import Trace
 
 
@@ -113,6 +115,34 @@ class QueryTimeline:
         """
         return list(self._interval_trees.keys())
 
+    def query_ids_to_cluster_names(self) -> dict[str, str]:
+        """
+        Get a mapping from query IDs to their corresponding cluster names.
+
+        Returns:
+            A dictionary mapping query IDs to cluster names.
+        """
+        return {
+            query_id: cluster_name
+            for query_id, (
+                cluster_name,
+                _,
+            ) in self._query_id_to_cluster_interval.items()
+        }
+
+    def interval_for_query_id(self, query_id: str) -> Interval:
+        """
+        Get the Interval for a given query ID.
+
+        Parameters:
+            query_id: The ID of the query.
+
+        Returns:
+            The Interval corresponding to the query ID.
+        """
+        _, interval = self._query_id_to_cluster_interval[query_id]
+        return interval
+
     def overlap(self, query_id_a: str, query_id_b: str) -> bool:
         """
         Check if the execution of two queries overlaps on the same cluster.
@@ -181,6 +211,7 @@ class QueryTimeline:
         cluster_name: str,
         start_time_s: float = -float("inf"),
         end_time_s: float = float("inf"),
+        skip_neighbors: bool = False,
     ) -> dict[Interval, list[Interval]]:
         """
         For each query that overlaps with the given time window on the specified
@@ -190,6 +221,8 @@ class QueryTimeline:
             cluster_name: The name of the cluster to consider.
             start_time_s: The start time of the window (in seconds).
             end_time_s: The end time of the window (in seconds).
+            skip_neighbors: Whether to skip finding overlapping neighbors, i.e.
+                just return an empty list for each query.
 
         Returns:
             A dictionary mapping each query Interval to its list of overlapping
@@ -198,12 +231,14 @@ class QueryTimeline:
         tree = self._interval_trees[cluster_name]
         seeds = list(tree.overlap(start_time_s, end_time_s))
 
-        result: dict[Interval, list[Interval]] = {}
-
-        for a in seeds:
-            result[a] = [b for b in tree.overlap(a.begin, a.end) if b != a]
-
-        return result
+        return {
+            a: (
+                []
+                if skip_neighbors
+                else [b for b in tree.overlap(a.begin, a.end) if b != a]
+            )
+            for a in seeds
+        }
 
     def get_dataset(
         self,
@@ -234,6 +269,7 @@ class QueryTimeline:
                 cluster_name=cluster_name,
                 start_time_s=start_time_s,
                 end_time_s=end_time_s,
+                skip_neighbors=False,
             )
 
             for base_iv, overlapping_ivs in query_overlap_mapping.items():
@@ -252,12 +288,12 @@ class QueryTimeline:
                         qa_start_time_s=base_iv.begin,
                         qa_latency_prediction=base_iv.data[
                             "stage_model_prediction"
-                        ].overall_mean_s(),
+                        ],
                         qb_features=base_iv.data["featurization"],
                         qb_start_time_s=base_iv.begin,
                         qb_latency_prediction=base_iv.data[
                             "stage_model_prediction"
-                        ].overall_mean_s(),
+                        ],
                     )
                 )
 
@@ -271,12 +307,12 @@ class QueryTimeline:
                             qa_start_time_s=base_iv.begin,
                             qa_latency_prediction=base_iv.data[
                                 "stage_model_prediction"
-                            ].overall_mean_s(),
+                            ],
                             qb_features=neighbor_iv.data["featurization"],
                             qb_start_time_s=neighbor_iv.begin,
                             qb_latency_prediction=neighbor_iv.data[
                                 "stage_model_prediction"
-                            ].overall_mean_s(),
+                            ],
                         )
                     )
                 neighbor_sort_order = sorted(interaction_featurizations.keys())
@@ -357,7 +393,11 @@ class QueryTimeline:
 
         return True
 
-    def move_to_cluster(self, new_cluster_name: str, query_id: str) -> None:
+    def move_to_cluster(
+        self,
+        new_cluster_name: str,
+        query_id: str,
+    ) -> None:
         """
         Move a query to a different cluster.
 
@@ -376,24 +416,63 @@ class QueryTimeline:
             interval,
         )
 
-    def find_worst_offending_interval(
+    def slo_violation_rate(
         self,
         slo_s: float | dict[str, float],
-        weigh_by_violation_amount: bool = False,
-    ) -> list[tuple[str, Interval]]:
+    ) -> float:
         """
-        Label any query interval longer than the given SLO as a violation.
-        Return the time periods at which the number of violations is maximal.
+        Calculate the SLO violation rate for the timeline.
 
         Parameters:
             slo_s: The SLO threshold (in seconds), or a mapping from query ids
                 to SLO thresholds.
-            weigh_by_violation_amount: Whether to weigh violations by their
-                amount (latency - SLO), or just count them equally.
 
         Returns:
-            A list of pairs of cluster name and Interval, representing the time
-                period(s) with maximal violations per cluster.
+            The SLO violation rate as a float between 0 and 1.
+        """
+        total_queries = 0
+        violating_queries = 0
+
+        for query_id, (
+            _,
+            interval,
+        ) in self._query_id_to_cluster_interval.items():
+            total_queries += 1
+            latency = interval.end - interval.begin
+            if isinstance(slo_s, dict):
+                slo_for_query = slo_s[query_id]
+            else:
+                slo_for_query = slo_s
+            if latency > slo_for_query:
+                violating_queries += 1
+
+        if total_queries == 0:
+            return 0.0
+
+        return violating_queries / total_queries
+
+    def find_intervals_by_slo_adherence(
+        self,
+        slo_s: float | dict[str, float],
+        look_for_slo_violations: bool = True,
+        weigh_by_distance: bool = True,
+    ) -> list[tuple[str, Interval]]:
+        """
+        Compare each query latency to its SLO. For each cluster, return the
+        interval(s) with the maximum total distance from the SLO, either in the
+        violation or the slack direction.
+
+        Parameters:
+            slo_s: The SLO threshold (in seconds), or a mapping from query ids
+                to SLO thresholds.
+            look_for_slo_violations: Whether to look for intervals with maximum
+                SLO violations (latency > SLO). If False, will look for
+                intervals with maximum SLO slack (latency < SLO).
+            weigh_by_distance: Whether to weigh queries by their distance from
+                the SLO (violation or slack), or just count them equally.
+
+        Returns:
+            A list of pairs of cluster name and Interval.
         """
 
         result: list[tuple[str, Interval]] = []
@@ -409,29 +488,30 @@ class QueryTimeline:
                 else:
                     slo_for_query = slo_s
                 violation_amount = latency - slo_for_query
-                if violation_amount > 0:
-                    penalty = (
-                        violation_amount if weigh_by_violation_amount else 1
-                    )
-                    events.append((iv.begin, +penalty))
-                    events.append((iv.end, -penalty))
+
+                is_violation = violation_amount > 0
+                if look_for_slo_violations != is_violation:
+                    continue
+
+                contribution = abs(violation_amount) if weigh_by_distance else 1
+                events.append((iv.begin, +contribution))
+                events.append((iv.end, -contribution))
 
             events.sort()
 
-            current_violations = 0
-            max_violations = 0
+            current_score = 0
+            max_score = 0
             max_intervals: list[Interval] = []
             interval_start: Optional[float] = None
 
             for time, change in events:
-                previous_violations = current_violations
-                current_violations += change
+                current_score += change
 
-                if current_violations > max_violations:
-                    max_violations = current_violations
+                if current_score > max_score:
+                    max_score = current_score
                     max_intervals = []
                     interval_start = time
-                elif current_violations == max_violations:
+                elif (current_score == max_score) and (max_score > 0):
                     interval_start = time
                 elif interval_start is not None:
                     max_intervals.append(
@@ -439,7 +519,28 @@ class QueryTimeline:
                     )
                     interval_start = None
 
+            assert max_score > 0 or len(max_intervals) == 0
             for iv in max_intervals:
                 result.append((cluster_name, iv))
 
         return result
+
+    def total_cost(
+        self,
+    ) -> float:
+        """
+        Calculate the total dollar cost of the timeline, considering billing
+        thresholds and granularities.
+
+        Returns:
+            The total cost of the timeline in dollars.
+        """
+
+        total_cost = 0.0
+        for cluster_name in self.active_clusters:
+            query_intervals = list(self._interval_trees[cluster_name])
+            cluster_billed_s = Billing.billed_s(query_intervals=query_intervals)
+            cost_per_second = Cluster.from_config(cluster_name).cost_per_second
+            cluster_cost = cluster_billed_s * cost_per_second
+            total_cost += cluster_cost
+        return total_cost

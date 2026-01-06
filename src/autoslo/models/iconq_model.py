@@ -245,6 +245,17 @@ class IconqModel:
         # Save initial model parameters.
         self._save_params()
 
+
+    @property
+    def stage_model(self) -> StageModel:
+        """
+        Get the stage model used by the IconqModel.
+
+        Returns:
+            The StageModel instance.
+        """
+        return self._stage_model
+
     def train(  # pylint: disable=arguments-differ,too-many-locals
         self,
         train_config: NNModelTrainConfig,

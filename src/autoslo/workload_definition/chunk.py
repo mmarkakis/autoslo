@@ -195,6 +195,19 @@ class Chunk(Workload):
         with open(out_path, "w") as f:
             yaml.dump(self.to_dict(), f, sort_keys=False)
 
+    @staticmethod
+    def load(chunk_id: str) -> "Chunk":
+        """Load the chunk definition from a YAML file."""
+        load_dir = os.path.join(
+            pu.get_data_path(),
+            "chunks",
+            chunk_id,
+        )
+        in_path = os.path.join(load_dir, "chunk_definition.yml")
+        with open(in_path, "r") as f:
+            params = yaml.safe_load(f)
+        return Chunk.from_dict(params)
+
     def color(self) -> str:
         """Get the color associated with the chunk's T value."""
         for t_threshold, color in sorted(
