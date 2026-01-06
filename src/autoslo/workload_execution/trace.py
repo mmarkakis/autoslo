@@ -9,11 +9,13 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
+from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
+from autoslo.utils.billing import Billing
 
 
 class Trace:
@@ -45,8 +47,6 @@ class Trace:
         ],
     }
 
-    REDSHIFT_BILLING_THRESHOLD_S = 60
-    REDSHIFT_BILLING_GRANULARITY_S = 1
     REDSHIFT_ELAPSED_TIME_UNIT = "us"  # microseconds
     BYTES_IN_MEGABYTE = 1_000_000
 
@@ -372,92 +372,13 @@ class Trace:
             return 0.0
 
         df = self._dfs["sys_query_history"][cluster_name]
-        billed_s = Trace._billed_s(df["start_time"], df["end_time"])
+        query_intervals = [
+            Interval(begin=start.timestamp(), end=end.timestamp())
+            for start, end in zip(df["start_time"], df["end_time"])
+        ]
+        billed_s = Billing.billed_s(query_intervals=query_intervals)
         cluster = Cluster.from_config(cluster_name)
         return billed_s * cluster.cost_per_second
-
-    @staticmethod
-    def _round_up(value: float, granularity: float) -> float:
-        """
-        Round up a value to the nearest multiple of granularity.
-
-        Parameters:
-            value: The value to round up.
-            granularity: The granularity to round up to.
-        """
-        return granularity * ((value + granularity - 1) // granularity)
-
-    @staticmethod
-    def _billed_s(
-        start_times: pd.Series,
-        end_times: pd.Series,
-        threshold_s: float = REDSHIFT_BILLING_THRESHOLD_S,
-        granularity_s: float = REDSHIFT_BILLING_GRANULARITY_S,
-    ) -> float:
-        """
-        Get the total billed time implied by the given start and end times,
-        according to the specified billing threshold and granularity.
-
-        Parameters:
-            start_times: A pandas Series of start times.
-            end_times: A pandas Series of end times.
-            threshold_s: The billing threshold in seconds. This is the minimum
-                time that will be billed - i.e. all smaller intervals are
-                rounded up to this threshold.
-            granularity_s: The billing granularity in seconds. This is the time
-                interval to which the billed time is rounded up.
-
-        Returns:
-            The total billed time for the trace, in seconds.
-        """
-
-        if len(start_times) != len(end_times):
-            raise ValueError(
-                "start_times and end_times must have the same length."
-            )
-        if any(start_times > end_times):
-            raise ValueError(
-                "All start_times must be less than or equal to "
-                "their corresponding end_times."
-            )
-
-        total_billed_s = 0.0
-        if start_times.empty:
-            return total_billed_s
-
-        current_interval_start = start_times.iloc[0]
-        current_interval_end = max(
-            end_times.iloc[0],
-            current_interval_start + pd.Timedelta(seconds=threshold_s),
-        )
-
-        for start_time, end_time in zip(start_times, end_times):
-            if start_time <= current_interval_end:
-                current_interval_end = max(current_interval_end, end_time)
-            else:
-                interval_duration_s = (
-                    current_interval_end - current_interval_start
-                ).total_seconds()
-                interval_billed_s = max(
-                    threshold_s,
-                    Trace._round_up(interval_duration_s, granularity_s),
-                )
-                total_billed_s += interval_billed_s
-                current_interval_start = start_time
-                current_interval_end = max(
-                    end_time,
-                    current_interval_start + pd.Timedelta(seconds=threshold_s),
-                )
-
-        interval_duration_s = (
-            current_interval_end - current_interval_start
-        ).total_seconds()
-        interval_billed_s = max(
-            threshold_s, Trace._round_up(interval_duration_s, granularity_s)
-        )
-        total_billed_s += interval_billed_s
-
-        return total_billed_s
 
     @property
     def query_ids(self) -> list[str]:
