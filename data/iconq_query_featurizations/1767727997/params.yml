@@ -1,6 +1,5 @@
-cache_model_id: '1767728009'
-featurizer_id: '1767727997'
-iconq_model_id: '1767787944'
+m: 15
+n: 20
 run_ids:
 - '1763346358'
 - '1763315325'
@@ -67,5 +66,65 @@ run_ids:
 - '1763291740'
 - '1763966257'
 - '1767009691'
-stage_model_id: /home/markakis/chunkbench/data/stage_models/1767787836
-xgboost_model_id: '1767787824'
+schema_name: tpcds1000
+top_operators:
+- XN Seq Scan
+- XN Hash
+- XN Hash Join DS_DIST_ALL_NONE
+- XN HashAggregate
+- XN Network
+- XN Hash Join DS_BCAST_INNER
+- XN Subquery Scan
+- XN Sort
+- XN Result
+- XN Merge
+- XN Hash Join DS_DIST_OUTER
+- XN Limit
+- XN Append
+- XN Hash Join DS_DIST_INNER
+- XN Aggregate
+top_tables:
+- - store_sales
+  - 2879987999
+- - catalog_sales
+  - 1439980416
+- - inventory
+  - 783000000
+- - web_sales
+  - 720000376
+- - store_returns
+  - 287999764
+- - catalog_returns
+  - 143996756
+- - web_returns
+  - 71997522
+- - customer
+  - 12000000
+- - customer_address
+  - 6000000
+- - customer_demographics
+  - 1920800
+- - item
+  - 300000
+- - time_dim
+  - 86400
+- - date_dim
+  - 73049
+- - catalog_page
+  - 30000
+- - household_demographics
+  - 7200
+- - web_page
+  - 3000
+- - promotion
+  - 1500
+- - store
+  - 1002
+- - reason
+  - 65
+- - web_site
+  - 54
+use_log: true
+use_size: true
+use_table_selectivity: false
+use_true_card: false

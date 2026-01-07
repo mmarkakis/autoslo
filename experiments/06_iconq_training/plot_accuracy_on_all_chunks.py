@@ -1,17 +1,15 @@
 import argparse
+import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.query_timeline import QueryTimeline
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
-
-from tqdm.auto import tqdm
-
-import os
 
 
 def plot_true_predicted(
@@ -27,7 +25,7 @@ def plot_true_predicted(
     points_y = []
     colors = []
     for query_id, true_latency in true_y.items():
-        predicted_latency = predicted_y[query_id]
+        predicted_latency = predicted_y[query_id]  # type: ignore
         points_x.append(true_latency)
         points_y.append(predicted_latency.overall_mean_s())
         if (
@@ -52,6 +50,45 @@ def plot_true_predicted(
     )  # Diagonal line
 
 
+def plot_qerror(
+    ax: plt.Axes,
+    title: str,
+    true_y: pd.Series,
+    predicted_y: dict[str, ModelPrediction],
+):
+    qerrors = []
+    for query_id, true_latency in true_y.items():
+        predicted_latency = predicted_y[query_id]  # type: ignore
+        pred_mean = predicted_latency.overall_mean_s()
+        if true_latency == 0 and pred_mean == 0:
+            qerror = 1.0
+        elif true_latency == 0 or pred_mean == 0:
+            qerror = float("inf")
+        else:
+            qerror = max(true_latency / pred_mean, pred_mean / true_latency)
+        qerrors.append(qerror)
+
+    # Plot a CDF of the Q-Errors using a lineplot
+    cdf = pd.Series(qerrors).value_counts().sort_index().cumsum()
+    cdf = cdf / cdf.iloc[-1]  # type: ignore
+    ax.plot(cdf.index, cdf.values)  # type: ignore
+
+    # At the bottom right of the plot, report the p50, p90 and p95 Q-Errors
+    p50 = pd.Series(qerrors).quantile(0.5)
+    p90 = pd.Series(qerrors).quantile(0.9)
+    p95 = pd.Series(qerrors).quantile(0.95)
+    ax.text(
+        0.6,
+        0.2,
+        f"p50: {p50:.2f}\np90: {p90:.2f}\np95: {p95:.2f}",
+        transform=ax.transAxes,
+    )
+
+    ax.set_xlabel("Q-Error")
+    ax.set_ylabel("Frequency")
+    ax.set_title(title)
+
+
 def main(iconq_model_id: str):
     model = IconqModel.load(
         model_id=iconq_model_id,
@@ -64,7 +101,8 @@ def main(iconq_model_id: str):
     for rpu in rpus:
         print(f"Plotting for RPU: {rpu}")
 
-        fig, ax = plt.subplots(4, 4, figsize=(20, 20))
+        fig, axs = plt.subplots(4, 4, figsize=(20, 20))
+        qerror_fig, qerror_axs = plt.subplots(4, 4, figsize=(20, 20))
 
         bar = tqdm(range(16))
 
@@ -94,15 +132,18 @@ def main(iconq_model_id: str):
                 true_y = trace.latencies_s
                 predicted_y = predictions
                 title = f"{pct_heavy}% Heavy, {mean_interarrival}s Mean Interarrival, {rpu} RPU"
-                plot_true_predicted(ax[i, j], title, true_y, predicted_y)
+                plot_true_predicted(axs[i, j], title, true_y, predicted_y)
+                plot_qerror(qerror_axs[i, j], title, true_y, predicted_y)
                 bar.update(1)
+        bar.close()
 
-        plt.suptitle(
+        # Post-process true vs predicted figure
+        fig.suptitle(
             f"IconQ Model {iconq_model_id} Predictions vs True Latencies for {rpu} RPU",
             fontsize=16,
         )
-        plt.tight_layout(rect=(0, 0.03, 1, 0.95))
-        plt.savefig(
+        fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+        fig.savefig(
             os.path.join(
                 pu.AUTOSLO_ROOT,
                 "experiments",
@@ -110,7 +151,23 @@ def main(iconq_model_id: str):
                 f"iconq_model_{iconq_model_id}_rpu_{rpu}.png",
             )
         )
-        plt.close()
+        plt.close(fig)
+
+        # Post-process Q-Error figure
+        qerror_fig.suptitle(
+            f"IconQ Model {iconq_model_id} Q-Error CDFs for {rpu} RPU",
+            fontsize=16,
+        )
+        qerror_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+        qerror_fig.savefig(
+            os.path.join(
+                pu.AUTOSLO_ROOT,
+                "experiments",
+                "06_iconq_training",
+                f"iconq_model_{iconq_model_id}_rpu_{rpu}_qerror.png",
+            )
+        )
+        plt.close(qerror_fig)
 
 
 if __name__ == "__main__":
@@ -122,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iconq_model_id",
         type=str,
-        default="1767629626",
+        default="1767787944",
         help="The IconQ model ID to use for predictions.",
     )
 
