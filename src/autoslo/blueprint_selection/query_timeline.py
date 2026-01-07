@@ -2,6 +2,7 @@ from collections import defaultdict
 from math import isclose
 from typing import Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
@@ -15,6 +16,8 @@ from autoslo.models.stage_model import StageModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
 from autoslo.workload_execution.trace import Trace
+
+from matplotlib.patches import Rectangle
 
 
 class QueryTimeline:
@@ -560,3 +563,110 @@ class QueryTimeline:
             cluster_cost = cluster_billed_s * cost_per_second
             total_cost += cluster_cost
         return total_cost
+
+    def draw_gantt_chart(
+        self,
+        slo_s: float | dict[str, float],
+    ) -> None:
+
+        # Simple Gantt chart of query assignments over time. Have a horizontal
+        # "lane" per cluster, and plot each query as a line segment. Make sure
+        # that line segments are offset vertically per cluster so that they don't
+        # overlap. Have the cluster IDs be strings on the y axis, not numbers, and
+        # include the number of their rpus.
+        fig, ax = plt.subplots(figsize=(12, 6))
+        y_ticks = []
+        y_labels = []
+        y_pos = 0
+
+        # Before plotting, compute for each cluster how much vertical space its
+        # lane needs, so that the queries will not visually overlap but we also
+        # won't take up excessive vertical space. That is, make sure to reuse
+        # vertical space within a cluster as much as possible.
+        min_time = float("inf")
+        max_time = -float("inf")
+
+        for cluster_name in self.active_clusters:
+            tree = self._interval_trees[cluster_name]
+            sorted_intervals = sorted(
+                [(iv.begin, iv.end, iv.data["query_id"]) for iv in tree]
+            )
+            min_time = min(min_time, sorted_intervals[0][0])
+            max_time = max(max_time, sorted_intervals[-1][1])
+
+            # Greedily assign intervals to lanes
+            lanes: list[list[tuple[float, float, str]]] = []
+            for interval in sorted_intervals:
+                placed = False
+                for lane in lanes:
+                    if all(
+                        not (
+                            interval[0] < existing[1]
+                            and interval[1] > existing[0]
+                        )
+                        for existing in lane
+                    ):
+                        lane.append(interval)
+                        placed = True
+                        break
+                if not placed:
+                    lanes.append([interval])
+
+            # Plot the queries. For each query, color any part of it that violates the SLO red.
+            for lane_idx, lane in enumerate(lanes):
+                for s, e, query_id in lane:
+                    rel_s = s - min_time
+                    rel_e = e - min_time
+
+                    slo_rel_e = rel_s + (
+                        slo_s if isinstance(slo_s, float) else slo_s[query_id]
+                    )
+                    if rel_e > slo_rel_e:
+                        # Plot violation part in red and have no edge between the two parts.
+                        ax.add_patch(
+                            Rectangle(
+                                (rel_s, y_pos + lane_idx - 0.4),
+                                rel_e - rel_s,
+                                0.8,
+                                edgecolor="black",
+                                facecolor="green",
+                                alpha=0.6,
+                            )
+                        )
+                        ax.add_patch(
+                            Rectangle(
+                                (slo_rel_e, y_pos + lane_idx - 0.4),
+                                rel_e - slo_rel_e,
+                                0.8,
+                                facecolor="red",
+                                alpha=1,
+                            )
+                        )
+                    else:
+                        # Plot entire query in blue.
+                        ax.add_patch(
+                            Rectangle(
+                                (rel_s, y_pos + lane_idx - 0.4),
+                                rel_e - rel_s,
+                                0.8,
+                                edgecolor="black",
+                                facecolor="green",
+                                alpha=0.6,
+                            )
+                        )
+
+            # Label the cluster on the y axis
+            y_ticks.append(y_pos + (len(lanes) - 1) / 2)
+            y_labels.append(
+                f"{cluster_name} (RPU {Cluster.from_config(cluster_name).rpu})"
+            )
+            y_pos += len(lanes) + 1  # add space between clusters
+
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_labels)
+        ax.set_xlabel("Time since start (s)")
+        ax.set_xlim(left=-1, right=max_time - min_time + 1)
+        ax.set_ylim(bottom=-1, top=y_pos)
+        ax.set_title("Cluster Query Assignments Over Time")
+        ax.grid(True)
+        plt.show()
