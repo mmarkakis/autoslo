@@ -63,8 +63,17 @@ class QueryTimeline:
 
         intervals_to_add: dict[str, list[Interval]] = defaultdict(list)
 
+        unique_eligible_rpus = set(
+            Cluster.from_config(cluster_name).rpu
+            for cluster_name in Cluster.all_cluster_names()
+        )
+        all_eligible_rpus_cluster_names = {
+            rpu: Cluster.first_cluster_name_for_rpu(rpu)
+            for rpu in unique_eligible_rpus
+        }
+
         for query_id in query_ids:
-            cluster_name = trace.cluster_name_from_query_id(query_id)
+            observed_cluster_name = trace.cluster_name_from_query_id(query_id)
             temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
 
             interval = Interval(
@@ -76,21 +85,24 @@ class QueryTimeline:
                     "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                         temp_and_q_idx
                     ),
-                    "stage_model_prediction": (
-                        stage_model.predict_from_tpcds_temp_and_q_idx(
-                            {query_id: temp_and_q_idx}
-                        )[query_id].overall_mean_s()
-                        if stage_model is not None
-                        else 0.0
-                    ),
+                    "stage_model_predictions_per_rpu": {
+                        rpu: (
+                            stage_model.predict_from_tpcds_temp_and_q_idx(
+                                {query_id: temp_and_q_idx}, cluster_name
+                            )[query_id].overall_mean_s()
+                            if stage_model is not None
+                            else 0.0
+                        )
+                        for rpu, cluster_name in all_eligible_rpus_cluster_names.items()
+                    },
                 },
             )
 
             self._query_id_to_cluster_interval[query_id] = (
-                cluster_name,
+                observed_cluster_name,
                 interval,
             )
-            intervals_to_add[cluster_name].append(interval)
+            intervals_to_add[observed_cluster_name].append(interval)
 
         for cluster_name, intervals in intervals_to_add.items():
             self._interval_trees[cluster_name].update(intervals)
@@ -172,7 +184,7 @@ class QueryTimeline:
         end_time_s: float,
         query_id: str,
         tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
-        stage_model_prediction: float,
+        stage_model_predictions_per_rpu: dict[int, float],
     ) -> None:
         """
         Add a query to the timeline.
@@ -183,8 +195,8 @@ class QueryTimeline:
             end_time_s: The end time of the query (in seconds).
             query_id: The ID of the query.
             tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
-            stage_model_prediction: The stage model latency prediction for
-                this query (in seconds).
+            stage_model_predictions_per_rpu: The stage model latency predictions
+                for this query (in seconds), keyed by RPU size.
         """
 
         interval = Interval(
@@ -196,7 +208,9 @@ class QueryTimeline:
                 "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                     tpcds_temp_and_q_idx
                 ),
-                "stage_model_prediction": stage_model_prediction,
+                "stage_model_predictions_per_rpu": (
+                    stage_model_predictions_per_rpu
+                ),
             },
         )
 
@@ -265,6 +279,8 @@ class QueryTimeline:
 
         for cluster_name in self.active_clusters:
 
+            cluster_rpu = Cluster.from_config(cluster_name).rpu
+
             query_overlap_mapping = self.queries_in_window(
                 cluster_name=cluster_name,
                 start_time_s=start_time_s,
@@ -287,13 +303,13 @@ class QueryTimeline:
                         qa_features=base_iv.data["featurization"],
                         qa_start_time_s=base_iv.begin,
                         qa_latency_prediction=base_iv.data[
-                            "stage_model_prediction"
-                        ],
+                            "stage_model_predictions_per_rpu"
+                        ][cluster_rpu],
                         qb_features=base_iv.data["featurization"],
                         qb_start_time_s=base_iv.begin,
                         qb_latency_prediction=base_iv.data[
-                            "stage_model_prediction"
-                        ],
+                            "stage_model_predictions_per_rpu"
+                        ][cluster_rpu],
                     )
                 )
 
@@ -306,13 +322,13 @@ class QueryTimeline:
                             qa_features=base_iv.data["featurization"],
                             qa_start_time_s=base_iv.begin,
                             qa_latency_prediction=base_iv.data[
-                                "stage_model_prediction"
-                            ],
+                                "stage_model_predictions_per_rpu"
+                            ][cluster_rpu],
                             qb_features=neighbor_iv.data["featurization"],
                             qb_start_time_s=neighbor_iv.begin,
                             qb_latency_prediction=neighbor_iv.data[
-                                "stage_model_prediction"
-                            ],
+                                "stage_model_predictions_per_rpu"
+                            ][cluster_rpu],
                         )
                     )
                 neighbor_sort_order = sorted(interaction_featurizations.keys())

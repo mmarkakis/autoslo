@@ -101,6 +101,26 @@ class Cluster:
         """
         return list(cls.all_cluster_configs().keys())
 
+    @classmethod
+    def first_cluster_name_for_rpu(cls, rpu: int) -> str:
+        """
+        Retrieve the first cluster name that matches the specified RPU size.
+
+        Parameters:
+            rpu: The RPU size to search for.
+
+        Returns:
+            The first cluster name with the specified RPU size.
+
+        Raises:
+            ValueError: If no cluster with the specified RPU size is found.
+        """
+        for cluster_name, config in cls.all_cluster_configs().items():
+            if config.get("rpu", None) == rpu:
+                return cluster_name
+        
+        raise ValueError(f"No cluster found with RPU size {rpu}.")
+
     @staticmethod
     def from_config(cluster_name: str) -> "Cluster":
         """

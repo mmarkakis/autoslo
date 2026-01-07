@@ -4,7 +4,9 @@ from typing import cast
 import pytest
 from intervaltree import Interval  # type: ignore[import]
 
+import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.query_timeline import QueryTimeline
+from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
@@ -16,6 +18,10 @@ BASE_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 def dt_after(seconds: float) -> datetime:
     return BASE_TIME + timedelta(seconds=seconds)
+
+
+def default_cluster_name() -> str:
+    return Cluster.all_cluster_names()[0]
 
 
 class DummyTrace:
@@ -41,7 +47,7 @@ class DummyTrace:
         return self._completion
 
     def cluster_name_from_query_id(self, query_id: str) -> str:
-        return "default-cluster"
+        return default_cluster_name()
 
 
 class DummyIconqQueryFeaturizer:
@@ -170,15 +176,15 @@ def test_find_worst_offending_intervals_unweighted() -> None:
     )
     expected_intervals = [
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(5.0).timestamp(), dt_after(10.0).timestamp()),
         ),
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(12.0).timestamp(), dt_after(15.0).timestamp()),
         ),
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(18.0).timestamp(), dt_after(20.0).timestamp()),
         ),
     ]
@@ -202,7 +208,7 @@ def test_find_worst_offending_intervals_weighted() -> None:
     )
     expected_intervals = [
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(5.0).timestamp(), dt_after(10.0).timestamp()),
         ),
     ]
@@ -243,15 +249,15 @@ def test_find_slack_intervals() -> None:
     )
     expected_intervals = [
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(0.0).timestamp(), dt_after(3.0).timestamp()),
         ),
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(4.0).timestamp(), dt_after(7.0).timestamp()),
         ),
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(8.0).timestamp(), dt_after(11.0).timestamp()),
         ),
     ]
@@ -274,7 +280,7 @@ def test_find_slack_intervals_overlapping() -> None:
     )
     expected_intervals = [
         (
-            "default-cluster",
+            default_cluster_name(),
             Interval(dt_after(5.0).timestamp(), dt_after(10.0).timestamp()),
         ),
     ]

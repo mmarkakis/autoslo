@@ -82,7 +82,7 @@ class StageModel:
             )
 
     def predict(
-        self, query_texts: dict[str, str]
+        self, query_texts: dict[str, str], cluster_name: str
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given query texts.
@@ -90,6 +90,7 @@ class StageModel:
         Parameters:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
+            cluster_name: The name of the cluster where the queries will be run.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
@@ -99,10 +100,10 @@ class StageModel:
             query_id: Trace.extract_temp_and_q_idxs(query_text)
             for query_id, query_text in query_texts.items()
         }
-        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs)
+        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs, cluster_name)
 
     def predict_from_tpcds_temp_and_q_idx(
-        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx]
+        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx], cluster_name: str
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given queries, based on their TPC-DS
@@ -112,6 +113,7 @@ class StageModel:
             query_temp_and_q_idxs: The TPC-DS template and query indices of
                 the queries to predict the runtime of, as a dictionary mapping
                 query ids to TPC-DS template and query indices.
+            cluster_name: The name of the cluster where the queries will be run.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
@@ -121,7 +123,8 @@ class StageModel:
 
         # Process cache model first
         cache_predictions = self._cache_model.predict_from_tpcds_temp_and_q_idx(
-            query_temp_and_q_idxs
+            query_temp_and_q_idxs, 
+            cluster_name=cluster_name,
         )
         remaining_query_temp_and_q_idxs = {}
         for query_id, prediction in cache_predictions.items():
@@ -135,7 +138,8 @@ class StageModel:
         # Use XGBoost only for the queries that were not cache hits.
         xgboost_predictions = (
             self._xgboost_model.predict_from_tpcds_temp_and_q_idx(
-                remaining_query_temp_and_q_idxs
+                remaining_query_temp_and_q_idxs, 
+                cluster_name=cluster_name,
             )
         )
         overall_predictions |= xgboost_predictions

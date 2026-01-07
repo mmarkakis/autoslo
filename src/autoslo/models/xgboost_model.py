@@ -13,6 +13,8 @@ from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
 
+from autoslo.blueprints.cluster import Cluster
+
 
 class XGBoostModel:
     """
@@ -94,7 +96,7 @@ class XGBoostModel:
         self._random_seed = random_seed
 
     def predict(
-        self, query_texts: dict[str, str]
+        self, query_texts: dict[str, str], cluster_name: str
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given query texts.
@@ -102,6 +104,7 @@ class XGBoostModel:
         Parameters:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
+            cluster_name: The name of the cluster where the queries will be run.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
@@ -111,10 +114,14 @@ class XGBoostModel:
             query_id: Trace.extract_temp_and_q_idxs(query_text)
             for query_id, query_text in query_texts.items()
         }
-        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs)
+        return self.predict_from_tpcds_temp_and_q_idx(
+            query_temp_and_q_idxs, cluster_name
+        )
 
     def predict_from_tpcds_temp_and_q_idx(
-        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx]
+        self,
+        query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx],
+        cluster_name: str,
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given queries, based on their TPC-DS
@@ -124,23 +131,26 @@ class XGBoostModel:
             query_temp_and_q_idxs: The TPC-DS template and query indices of
                 the queries to predict the runtime of, as a dictionary mapping
                 query ids to TPC-DS template and query indices.
+            cluster_name: The name of the cluster where the queries will be run.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
         predictions: dict[str, ModelPrediction] = {}
+        cluster_rpu = Cluster.from_config(cluster_name).rpu
 
         for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
             featurization = self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                 temp_and_q_idx
-            )
+            ).copy()
             if featurization is None:
                 raise ValueError(
                     f"Query {query_id} could not be featurized using "
                     f"IconqQueryFeaturizer "
                     f"{self._iconq_query_featurizer_id}."
                 )
+            featurization.append(cluster_rpu)
             featurization_array = np.array(featurization).reshape(1, -1)
             raw_prediction = self._model.predict(featurization_array)[0]
             if self._train_on_log_runtime:
@@ -201,15 +211,24 @@ class XGBoostModel:
             trace = Trace(run_id)
             featurizations = self._iconq_query_featurizer.featurize_trace(trace)
             latencies = trace.latencies_s
-            new_items = [
-                {
-                    "query_id": query_id,
-                    "query_featurization": featurizations[query_id],
-                    "runtime_s": latencies[query_id],
-                }
-                for query_id in featurizations.keys()
-                if len(featurizations[query_id]) > 0
-            ]
+            new_items = []
+
+            for query_id in featurizations.keys():
+                featurization = featurizations[query_id].copy()
+                latency = latencies[query_id]
+                if featurization is None or len(featurization) == 0:
+                    continue
+                rpu = Cluster.from_config(
+                    trace.cluster_name_from_query_id(query_id)
+                ).rpu
+                featurization.append(rpu)
+                new_items.append(
+                    {
+                        "query_id": query_id,
+                        "query_featurization": featurization,
+                        "runtime_s": latency,
+                    }
+                )
 
             l.extend(new_items)
 

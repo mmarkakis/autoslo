@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
-from scipy.optimize import root_scalar
-from scipy.stats import norm
+from scipy.optimize import root_scalar  # type: ignore[import]
+from scipy.stats import norm  # type: ignore[import]
 
 
 @dataclass(frozen=True)
