@@ -42,7 +42,7 @@ def find_run_ids() -> list[str]:
     benchmark_runs = df[
         df["workload_name"] == "benchmarking_workload_99_3_3_shuffled_42"
     ]
-    run_ids.append(benchmark_runs["run_id"].max())
+    run_ids.extend(benchmark_runs["run_id"].to_list())
     return run_ids
 
 

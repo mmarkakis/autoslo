@@ -477,6 +477,9 @@ class IconqQueryFeaturizer:
 
         if "plan_parameters" in plan and "op_name" in plan["plan_parameters"]:
             op = plan["plan_parameters"]["op_name"]
+            op = " ".join(
+                [word for word in op.split() if "tpcds" not in word]
+            )
             if op in self._top_operators:
 
                 # Compute cardinality of the operator.
@@ -608,3 +611,35 @@ class IconqQueryFeaturizer:
         )
 
         return featurizer
+
+    def table_access_pattern_cosine_similarity(
+        self,
+        featurization_a: IconqQueryFeaturization,
+        featurization_b: IconqQueryFeaturization,
+    ) -> float:
+        """
+        Computes the cosine similarity between two queries based on their table 
+        access patterns.
+
+        Parameters:
+            featurization_a: The featurization of the first query.
+            featurization_b: The featurization of the second query.
+
+        Returns:
+            A cosine similarity score between 0 and 1, where 1 means identical 
+            table access patterns.
+        """
+        table_features_a = featurization_a[2 * self._m :]
+        table_features_b = featurization_b[2 * self._m :]
+
+        dot_product = sum(
+            a * b for a, b in zip(table_features_a, table_features_b)
+        )
+
+        norm_a = sum(a * a for a in table_features_a) ** 0.5
+        norm_b = sum(b * b for b in table_features_b) ** 0.5
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        return dot_product / (norm_a * norm_b)

@@ -67,20 +67,24 @@ class PlanOperator(dict):
         op_name_match = op_name_regex.search(op_line)
         assert op_name_match is not None
         op_name = op_name_match.groups()[0]
+        if "->" in op_name:
+            op_name = op_name.replace("->", "").strip()
         for split_word in ["on", "using"]:
             if f" {split_word} " in op_name:
                 op_name = op_name.split(f" {split_word} ")[0]
+        if "Scan" in op_name:
+            op_name = op_name.split("Scan")[0] + "Scan"
         op_name = op_name.strip()
 
         # Operator table
         if " on " in op_line or (
-            (schema_name is not None) and (f"{schema_name}." in op_name)
+            (schema_name is not None) and (f"{schema_name}." in op_line)
         ):
             table_name = ""
             if " on " in op_line:
                 table_name = op_line.split(" on ")[1].strip()
             else:
-                table_name = op_name.split(f"{schema_name}.")[1].strip()
+                table_name = op_line.split(f"{schema_name}.")[1].strip()
             table_name_parts = table_name.split(" ")
 
             table_name = table_name_parts[0].strip('"')
@@ -293,6 +297,7 @@ class PlanOperator(dict):
         Returns:
             A serializable dictionary representation of the operator.
         """
+
         def _make_serializable(obj: Any) -> Any:
             # PlanOperator → dict
             if isinstance(obj, PlanOperator):
@@ -312,15 +317,9 @@ class PlanOperator(dict):
 
             # dict → dict with string keys and serialized values
             if isinstance(obj, dict):
-                return {
-                    str(k): _make_serializable(v)
-                    for k, v in obj.items()
-                }
+                return {str(k): _make_serializable(v) for k, v in obj.items()}
 
             # everything else left as-is
             return obj
 
-        return {
-            k: _make_serializable(v)
-            for k, v in self.__dict__.items()
-        }
+        return {k: _make_serializable(v) for k, v in self.__dict__.items()}

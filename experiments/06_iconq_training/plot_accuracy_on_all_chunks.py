@@ -179,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iconq_model_id",
         type=str,
-        default="1767787944",
+        required=True,
         help="The IconQ model ID to use for predictions.",
     )
 
