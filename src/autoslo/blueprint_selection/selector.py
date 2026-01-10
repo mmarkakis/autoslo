@@ -1,9 +1,16 @@
 from dataclasses import dataclass
 
+from tqdm.auto import tqdm
+
 from autoslo.blueprint_selection.query_timeline import QueryTimeline
 from autoslo.blueprints.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.workload_definition.workload import Workload
+
+from autoslo.blueprint_selection.query_timeline_visualizer import (
+    GanttRecorder, 
+    render_gantt_scrubber,
+)
 
 
 @dataclass
@@ -53,6 +60,9 @@ class BlueprintSelector:
         self._default_cluster_name = default_cluster_name
         self._query_timeline = self._bootstrap_query_timeline_from_workload()
 
+        self._recorder = GanttRecorder()
+        self._recorder.snapshot(self._query_timeline, label="Start", slo_s=self._slo_s)
+
     def _bootstrap_query_timeline_from_workload(
         self,
     ) -> QueryTimeline:
@@ -76,7 +86,7 @@ class BlueprintSelector:
 
             stage_prediction_overall_mean = (
                 self._iconq_model.stage_model.predict_from_tpcds_temp_and_q_idx(
-                    {query_id: temp_and_q_idx}
+                    {query_id: temp_and_q_idx}, self._default_cluster_name
                 )[query_id].overall_mean_s()
             )
             timeline.add_query(
@@ -85,11 +95,11 @@ class BlueprintSelector:
                 end_time_s=(start_time_s + stage_prediction_overall_mean),
                 query_id=query_id,
                 tpcds_temp_and_q_idx=temp_and_q_idx,
-                stage_model_prediction=stage_prediction_overall_mean,
+                stage_model=self._iconq_model.stage_model,
             )
 
         # Bootstrap the latencies via iterative prediction.
-        for i in range(10):
+        for i in tqdm(range(100), desc="Bootstrapping latencies"):
 
             # Get a dataset of overlapping queries.
             dataset = timeline.get_dataset(
@@ -108,14 +118,9 @@ class BlueprintSelector:
                 if updated:
                     num_updated += 1
 
-            print(
-                f"Bootstrap iteration {i + 1}: "
-                f"updated latencies for {num_updated} queries."
-            )
-
         return timeline
 
-    def solve(self, max_iters: int = 200) -> QueryTimeline:
+    def solve(self, max_iters: int = 20) -> QueryTimeline:
         """
         Solve for the optimal blueprint and query assignment.
 
@@ -129,15 +134,29 @@ class BlueprintSelector:
 
         eligible_cluster_names: list[str] = Cluster.all_cluster_names()
 
+        
+
         # Phase I: SLO repair
-        for _ in range(max_iters):
-            if not self._maybe_apply_best_move_for_slo(eligible_cluster_names):
+        for it in range(max_iters):
+            if not self._maybe_apply_best_move_for_slo(
+                eligible_cluster_names, it
+            ):
                 break
 
         # Phase II: cost reduction
-        for _ in range(max_iters):
-            if not self._maybe_apply_best_move_for_cost(eligible_cluster_names):
+        for it in range(max_iters):
+            if not self._maybe_apply_best_move_for_cost(
+                eligible_cluster_names, it
+            ):
                 break
+
+        fig = render_gantt_scrubber(
+            self._recorder.snapshots,
+            slo_s=self._slo_s,
+            constant_layout=True,
+            violation_rate_threshold=self._slo_violation_rate_threshold,
+        )
+        fig.write_html("blueprint_selection_timeline.html", auto_play=False)
 
         return self._query_timeline
 
@@ -160,13 +179,14 @@ class BlueprintSelector:
         )
 
     def _maybe_apply_best_move_for_slo(
-        self, eligible_cluster_names: list[str]
+        self, eligible_cluster_names: list[str], iteration: int
     ) -> bool:
         """
         Find and apply the best move to reduce the SLO violation rate.
 
         Parameters:
             eligible_cluster_names: A list of cluster names eligible for moves.
+            iteration: The current iteration number.
 
         Returns:
             Whether a move was made.
@@ -201,16 +221,29 @@ class BlueprintSelector:
             return False
 
         self._apply_move(best_move)
+        print(
+            f"SLO iteration {iteration}: "
+            f"reduced SLO violation rate from "
+            f"{initial_slo_violation_rate:.4f} to "
+            f"{best_slo_violation_rate:.4f} "
+            f"by applying move {best_move}."
+        )
+        self._recorder.snapshot(
+            self._query_timeline,
+            label=f"SLO iter {iteration}",
+            slo_s=self._slo_s,
+        )
         return True
 
     def _maybe_apply_best_move_for_cost(
-        self, eligible_cluster_names: list[str]
+        self, eligible_cluster_names: list[str], iteration: int
     ) -> bool:
         """
         Find and apply the best move to reduce cost while maintaining SLO.
 
         Parameters:
             eligible_cluster_names: A list of cluster names eligible for moves.
+            iteration: The current iteration number.
 
         Returns:
             Whether a move was made.
@@ -242,7 +275,19 @@ class BlueprintSelector:
             return False
 
         self._apply_move(best_move)
+        print(
+            f"Cost iteration {iteration}: "
+            f"reduced cost from {initial_cost:.4f} to {best_cost:.4f} "
+            f"by applying move {best_move}."
+        )
+        self._recorder.snapshot(
+            self._query_timeline,
+            label=f"Cost iter {iteration}",
+            slo_s=self._slo_s,
+        )
         return True
+
+    # Legacy: no longer needed since annotations are computed per snapshot in the visualizer
 
     def _apply_move(self, move: QueryMove):
         """
@@ -302,13 +347,13 @@ class BlueprintSelector:
                 end_time_s=interval.end,
                 skip_neighbors=True,
             )
-            for query_id in queries:
+            for query in queries:
                 for target_cluster_name in eligible_cluster_names:
                     if target_cluster_name == origin_cluster_name:
                         continue
                     moves.append(
                         QueryMove(
-                            query_id=query_id,
+                            query_id=query.data["query_id"],
                             from_cluster_name=origin_cluster_name,
                             to_cluster_name=target_cluster_name,
                         )

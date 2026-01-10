@@ -145,6 +145,19 @@ class Trace:
         return query_id.rsplit("_", maxsplit=1)[0]
 
     @staticmethod
+    def redshift_query_id_from_query_id(query_id: str) -> str:
+        """
+        Extract the Redshift query ID from a query ID.
+
+        Parameters:
+            query_id: The query ID from which to extract the Redshift query ID.
+
+        Returns:
+            The Redshift query ID as a string.
+        """ 
+        return query_id.rsplit("_", maxsplit=1)[-1].split("#", maxsplit=1)[0]
+
+    @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
         """
         Check if the Parquet file at the specified path contains the required

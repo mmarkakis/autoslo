@@ -14,6 +14,10 @@ class ModelPrediction:
     each Gaussian, as well as the mixing coefficients.
     """
 
+    MINIMUM_OUTPUT_LATENCY_S = (
+        0.001  # Minimum output latency in seconds to avoid zero or negative
+    )
+
     mean_s: Optional[list[float]] = None
     std_dev_s: Optional[list[float]] = None
     mix_coeffs: Optional[list[float]] = None
@@ -80,13 +84,13 @@ class ModelPrediction:
         """
 
         if self._c_constant() or self._c_norm():
-            return self.mean_s[0]  # type: ignore
+            return max(self.mean_s[0], self.MINIMUM_OUTPUT_LATENCY_S)  # type: ignore
 
         if self._c_constant_mix() or self._c_norm_mix():
             unnormalized_mean = sum(
                 mu * w for mu, w in zip(self.mean_s, self.mix_coeffs)  # type: ignore
             )
-            return unnormalized_mean / sum(self.mix_coeffs)  # type: ignore
+            return max(unnormalized_mean / sum(self.mix_coeffs), self.MINIMUM_OUTPUT_LATENCY_S)  # type: ignore
 
         raise ValueError("Model prediction is not well-formed.")
 

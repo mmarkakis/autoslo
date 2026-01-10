@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
+from matplotlib.patches import Rectangle
 
 from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
@@ -16,8 +17,6 @@ from autoslo.models.stage_model import StageModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
 from autoslo.workload_execution.trace import Trace
-
-from matplotlib.patches import Rectangle
 
 
 class QueryTimeline:
@@ -90,9 +89,11 @@ class QueryTimeline:
                     ),
                     "stage_model_predictions_per_rpu": {
                         rpu: (
-                            stage_model.predict_from_tpcds_temp_and_q_idx(
-                                {query_id: temp_and_q_idx}, cluster_name
-                            )[query_id].overall_mean_s()
+                            float(
+                                stage_model.predict_from_tpcds_temp_and_q_idx(
+                                    {query_id: temp_and_q_idx}, cluster_name
+                                )[query_id].overall_mean_s()
+                            )
                             if stage_model is not None
                             else 0.0
                         )
@@ -187,7 +188,7 @@ class QueryTimeline:
         end_time_s: float,
         query_id: str,
         tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
-        stage_model_predictions_per_rpu: dict[int, float],
+        stage_model: Optional[StageModel] = None,
     ) -> None:
         """
         Add a query to the timeline.
@@ -198,9 +199,18 @@ class QueryTimeline:
             end_time_s: The end time of the query (in seconds).
             query_id: The ID of the query.
             tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
-            stage_model_predictions_per_rpu: The stage model latency predictions
-                for this query (in seconds), keyed by RPU size.
+            stage_model: The optional model to use for predicting single-query
+                latencies.
         """
+
+        unique_eligible_rpus = set(
+            Cluster.from_config(cluster_name).rpu
+            for cluster_name in Cluster.all_cluster_names()
+        )
+        all_eligible_rpus_cluster_names = {
+            rpu: Cluster.first_cluster_name_for_rpu(rpu)
+            for rpu in unique_eligible_rpus
+        }
 
         interval = Interval(
             begin=start_time_s,
@@ -211,9 +221,18 @@ class QueryTimeline:
                 "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                     tpcds_temp_and_q_idx
                 ),
-                "stage_model_predictions_per_rpu": (
-                    stage_model_predictions_per_rpu
-                ),
+                "stage_model_predictions_per_rpu": {
+                    rpu: (
+                        float(
+                            stage_model.predict_from_tpcds_temp_and_q_idx(
+                                {query_id: tpcds_temp_and_q_idx}, cluster_name
+                            )[query_id].overall_mean_s()
+                        )
+                        if stage_model is not None
+                        else 0.0
+                    )
+                    for rpu, cluster_name in all_eligible_rpus_cluster_names.items()
+                },
             },
         )
 
@@ -389,6 +408,8 @@ class QueryTimeline:
         """
         if query_id not in self.query_ids:
             raise ValueError(f"Query ID {query_id} does not exist in timeline.")
+        if latency_s < 0:
+            raise ValueError("Latency must be non-negative.")
 
         cluster_name, interval = self._query_id_to_cluster_interval[query_id]
         if isclose(
@@ -399,6 +420,9 @@ class QueryTimeline:
             return False
 
         self._interval_trees[cluster_name].remove(interval)
+        if len(self._interval_trees[cluster_name]) == 0:
+            del self._interval_trees[cluster_name]
+
         new_interval = Interval(
             begin=interval.begin,
             end=interval.begin + latency_s,
@@ -424,11 +448,12 @@ class QueryTimeline:
             new_cluster_name: The name of the new cluster.
             query_id: The ID of the query to move.
         """
-
         old_cluster_name, interval = self._query_id_to_cluster_interval[
             query_id
         ]
         self._interval_trees[old_cluster_name].remove(interval)
+        if len(self._interval_trees[old_cluster_name]) == 0:
+            del self._interval_trees[old_cluster_name]
         self._interval_trees[new_cluster_name].add(interval)
         self._query_id_to_cluster_interval[query_id] = (
             new_cluster_name,
@@ -557,16 +582,51 @@ class QueryTimeline:
 
         total_cost = 0.0
         for cluster_name in self.active_clusters:
-            query_intervals = list(self._interval_trees[cluster_name])
-            cluster_billed_s = Billing.billed_s(query_intervals=query_intervals)
-            cost_per_second = Cluster.from_config(cluster_name).cost_per_second
-            cluster_cost = cluster_billed_s * cost_per_second
-            total_cost += cluster_cost
+            total_cost += self.cost_for_cluster(cluster_name)
         return total_cost
+
+    def cost_per_cluster(
+        self,
+    ) -> dict[str, float]:
+        """
+        Calculate the total dollar cost per cluster in the timeline,
+        considering billing thresholds and granularities.
+
+        Returns:
+            A dictionary mapping cluster names to their total cost in dollars.
+        """
+        return {
+            cluster_name: self.cost_for_cluster(cluster_name)
+            for cluster_name in self.active_clusters
+        }
+
+    def cost_for_cluster(
+        self,
+        cluster_name: str,
+    ) -> float:
+        """
+        Calculate the total dollar cost of a specific cluster in the timeline,
+        considering billing thresholds and granularities.
+
+        Parameters:
+            cluster_name: The name of the cluster.
+
+        Returns:
+            The total cost of the cluster in dollars.
+        """
+        if cluster_name not in self.active_clusters:
+            return 0.0
+
+        query_intervals = list(self._interval_trees[cluster_name])
+        cluster_billed_s = Billing.billed_s(query_intervals=query_intervals)
+        cost_per_second = Cluster.from_config(cluster_name).cost_per_second
+        cluster_cost = cluster_billed_s * cost_per_second
+        return cluster_cost
 
     def draw_gantt_chart(
         self,
         slo_s: float | dict[str, float],
+        path: Optional[str] = None,
     ) -> None:
 
         # Simple Gantt chart of query assignments over time. Have a horizontal
@@ -622,13 +682,12 @@ class QueryTimeline:
                         slo_s if isinstance(slo_s, float) else slo_s[query_id]
                     )
                     if rel_e > slo_rel_e:
-                        # Plot violation part in red and have no edge between the two parts.
+                        # Plot violation part in red.
                         ax.add_patch(
                             Rectangle(
                                 (rel_s, y_pos + lane_idx - 0.4),
-                                rel_e - rel_s,
+                                slo_rel_e - rel_s,
                                 0.8,
-                                edgecolor="black",
                                 facecolor="green",
                                 alpha=0.6,
                             )
@@ -642,6 +701,7 @@ class QueryTimeline:
                                 alpha=1,
                             )
                         )
+
                     else:
                         # Plot entire query in blue.
                         ax.add_patch(
@@ -654,6 +714,17 @@ class QueryTimeline:
                                 alpha=0.6,
                             )
                         )
+                    # Outline
+                    ax.add_patch(
+                        Rectangle(
+                            (rel_s, y_pos + lane_idx - 0.4),
+                            rel_e - rel_s,
+                            0.8,
+                            edgecolor="black",
+                            facecolor="none",
+                            alpha=1,
+                        )
+                    )
 
             # Label the cluster on the y axis
             y_ticks.append(y_pos + (len(lanes) - 1) / 2)
@@ -669,4 +740,8 @@ class QueryTimeline:
         ax.set_ylim(bottom=-1, top=y_pos)
         ax.set_title("Cluster Query Assignments Over Time")
         ax.grid(True)
-        plt.show()
+
+        if path is not None:
+            plt.savefig(path, bbox_inches="tight", dpi=300)
+        else:
+            plt.show()
