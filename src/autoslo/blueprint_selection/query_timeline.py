@@ -1,4 +1,6 @@
+import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from math import isclose
 from typing import Optional
 
@@ -12,11 +14,36 @@ from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
-from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
-from autoslo.models.stage_model import StageModel
+from autoslo.models.iconq_model import IconqModel
+from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
 from autoslo.workload_execution.trace import Trace
+
+
+@dataclass
+class QueryMove:
+    """
+    Represents a move of a query from one cluster to another.
+    """
+
+    query_id: str
+    from_cluster_name: str
+    to_cluster_name: str
+
+    def inverse(self) -> "QueryMove":
+        return QueryMove(
+            query_id=self.query_id,
+            from_cluster_name=self.to_cluster_name,
+            to_cluster_name=self.from_cluster_name,
+        )
+
+    def __str__(self) -> str:
+        return (
+            f"{Trace.redshift_query_id_from_query_id(self.query_id)}: "
+            f"{self.from_cluster_name} -> "
+            f"{self.to_cluster_name}"
+        )
 
 
 class QueryTimeline:
@@ -26,42 +53,45 @@ class QueryTimeline:
 
     def __init__(
         self,
-        iconq_query_featurizer: IconqQueryFeaturizer,
-        iconq_interaction_featurizer: IconqInteractionFeaturizer,
+        iconq_model: IconqModel,
     ) -> None:
         """
         Initializes the QueryTimeline.
 
         Parameters:
-            iconq_query_featurizer: The IconqQueryFeaturizer to use for
-                featurizing the queries.
-            iconq_interaction_featurizer: The IconqInteractionFeaturizer to use
-                for featurizing interactions between queries.
+            iconq_model: The IconqModel to use for predictions.
 
         """
-        self._iconq_query_featurizer = iconq_query_featurizer
-        self._iconq_interaction_featurizer = iconq_interaction_featurizer
+        self._iconq_model = iconq_model
+        self._iconq_query_featurizer = self._iconq_model.iconq_query_featurizer
+        self._iconq_interaction_featurizer = (
+            self._iconq_model.iconq_interaction_featurizer
+        )
+        self._stage_model = self._iconq_model.stage_model
         self._interval_trees: dict[str, IntervalTree] = defaultdict(
             IntervalTree
         )
         self._query_id_to_cluster_interval: dict[str, tuple[str, Interval]] = {}
 
     def initialize_from_trace(
-        self, trace: Trace, stage_model: Optional[StageModel] = None
+        self,
+        trace: Trace,
     ) -> None:
         """
         Initialize the timeline from a Trace.
 
         Parameters:
             trace: The Trace containing the query submission events.
-            stage_model: The optional model to use for predicting single-query
-                latencies.
         """
 
         tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
         start_times = trace.arrival_times()
         end_times = trace.completion_times()
         query_ids = trace.query_ids
+
+        reference_timestamp = min(
+            start_times[query_id].timestamp() for query_id in query_ids
+        )
 
         intervals_to_add: dict[str, list[Interval]] = defaultdict(list)
 
@@ -79,8 +109,8 @@ class QueryTimeline:
             temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
 
             interval = Interval(
-                begin=start_times[query_id].timestamp(),
-                end=end_times[query_id].timestamp(),
+                begin=start_times[query_id].timestamp() - reference_timestamp,
+                end=end_times[query_id].timestamp() - reference_timestamp,
                 data={
                     "query_id": query_id,
                     "tpcds_temp_and_q_idx": temp_and_q_idx,
@@ -90,12 +120,12 @@ class QueryTimeline:
                     "stage_model_predictions_per_rpu": {
                         rpu: (
                             float(
-                                stage_model.predict_from_tpcds_temp_and_q_idx(
+                                self._stage_model.predict_from_tpcds_temp_and_q_idx(
                                     {query_id: temp_and_q_idx}, cluster_name
-                                )[query_id].overall_mean_s()
+                                )[
+                                    query_id
+                                ].overall_mean_s()
                             )
-                            if stage_model is not None
-                            else 0.0
                         )
                         for rpu, cluster_name in all_eligible_rpus_cluster_names.items()
                     },
@@ -181,6 +211,27 @@ class QueryTimeline:
 
         return interval_a.overlaps(interval_b)
 
+    def predict_all(
+        self,
+    ) -> dict[str, ModelPrediction]:
+        """
+        Predicts the runtimes for the queries in the given QueryTimeline,
+        taking into account their overlaps, unless they are ignored.
+
+        Parameters:
+            query_timeline: The QueryTimeline to predict runtimes for.
+
+        Returns:
+            A dictionary mapping query IDs to their predicted ModelPrediction.
+        """
+
+        dataset = self.get_dataset(
+            use_log_runtime=self._iconq_model.trained_on_log_runtime
+        )
+        return self._iconq_model.predict_from_dataset(
+            dataset,
+        )
+
     def add_query(
         self,
         cluster_name: str,
@@ -188,7 +239,6 @@ class QueryTimeline:
         end_time_s: float,
         query_id: str,
         tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
-        stage_model: Optional[StageModel] = None,
     ) -> None:
         """
         Add a query to the timeline.
@@ -199,8 +249,6 @@ class QueryTimeline:
             end_time_s: The end time of the query (in seconds).
             query_id: The ID of the query.
             tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
-            stage_model: The optional model to use for predicting single-query
-                latencies.
         """
 
         unique_eligible_rpus = set(
@@ -224,12 +272,10 @@ class QueryTimeline:
                 "stage_model_predictions_per_rpu": {
                     rpu: (
                         float(
-                            stage_model.predict_from_tpcds_temp_and_q_idx(
+                            self._stage_model.predict_from_tpcds_temp_and_q_idx(
                                 {query_id: tpcds_temp_and_q_idx}, cluster_name
                             )[query_id].overall_mean_s()
                         )
-                        if stage_model is not None
-                        else 0.0
                     )
                     for rpu, cluster_name in all_eligible_rpus_cluster_names.items()
                 },
@@ -388,11 +434,80 @@ class QueryTimeline:
 
         return dataset
 
-    def update_latency(
+    @staticmethod
+    def _maybe_log(message: str, verbose: bool):
+        if verbose:
+            logging.info(message)
+
+    def apply_move(
+        self,
+        move: QueryMove,
+        new_latencies: Optional[dict[str, float]] = None,
+        verbose: bool = False,
+    ) -> tuple[QueryMove, dict[str, float]]:
+        """
+        Apply a query move, and return appropriate information to invert it.
+
+        Parameters:
+            move: The QueryMove to apply.
+            new_latencies: Optional mapping from query IDs to their new
+                latencies (in seconds) to update after the move. If not provided,
+                updated latencies will be predicted using the IconqModel.
+            verbose: Whether to log verbose output.
+
+        Returns:
+            inverse_move: The inverse of the applied move.
+            old_latencies: A mapping from query IDs to their old
+                latencies (in seconds).
+        """
+        self._maybe_log(f"Applying move: {move}", verbose)
+        self._move_to_cluster(
+            new_cluster_name=move.to_cluster_name, query_id=move.query_id
+        )
+
+        if new_latencies is None:
+            interval = self.interval_for_query_id(query_id=move.query_id)
+            self._maybe_log(
+                f"Predicting latencies for interval {interval} after move.",
+                verbose,
+            )
+            dataset = self.get_dataset(
+                start_time_s=interval.begin,
+                end_time_s=interval.end,
+                use_log_runtime=self._iconq_model._trained_on_log_runtime,
+            )
+            predictions = self._iconq_model.predict_from_dataset(
+                dataset=dataset,
+            )
+            self._maybe_log(f"Predictions: {predictions}", verbose)
+
+            new_latencies = {
+                q_id: prediction.overall_mean_s()
+                for q_id, prediction in predictions.items()
+            }
+
+        inverse_move = move.inverse()
+        old_latencies = {}
+
+        for q_id, new_latency_s in new_latencies.items():
+            old_latency_s = self._update_latency(
+                query_id=q_id,
+                latency_s=new_latency_s,
+            )
+            self._maybe_log(
+                f"Updated latency for query {Trace.redshift_query_id_from_query_id(q_id)}"
+                f"from {old_latency_s:.4f}s to {new_latency_s:.4f}s",
+                verbose,
+            )
+            old_latencies[q_id] = old_latency_s
+
+        return inverse_move, old_latencies
+
+    def _update_latency(
         self,
         query_id: str,
         latency_s: float,
-    ) -> bool:
+    ) -> float:
         """
         Update the latency of a query in the timeline.
 
@@ -401,7 +516,7 @@ class QueryTimeline:
             latency_s: The new latency of the query (in seconds).
 
         Returns:
-            Whether the end time of the query changed.
+            The old latency of the query (in seconds).
 
         Raises:
             ValueError: If the query ID does not exist in the timeline.
@@ -412,12 +527,7 @@ class QueryTimeline:
             raise ValueError("Latency must be non-negative.")
 
         cluster_name, interval = self._query_id_to_cluster_interval[query_id]
-        if isclose(
-            interval.end - interval.begin,
-            latency_s,
-            abs_tol=QueryTimeline.ONE_MICROSECOND,
-        ):
-            return False
+        old_latency_s = interval.end - interval.begin
 
         self._interval_trees[cluster_name].remove(interval)
         if len(self._interval_trees[cluster_name]) == 0:
@@ -434,9 +544,9 @@ class QueryTimeline:
             new_interval,
         )
 
-        return True
+        return old_latency_s
 
-    def move_to_cluster(
+    def _move_to_cluster(
         self,
         new_cluster_name: str,
         query_id: str,
