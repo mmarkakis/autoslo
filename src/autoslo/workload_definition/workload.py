@@ -17,6 +17,12 @@ class Workload(ABC):
 
     @property
     @abstractmethod
+    def name(self) -> str:
+        """Returns the name of the workload."""
+        pass
+
+    @property
+    @abstractmethod
     def queries(self) -> list[Query]:
         """Returns the list of queries in the workload."""
         pass

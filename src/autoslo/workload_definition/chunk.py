@@ -114,6 +114,11 @@ class Chunk(Workload):
 
         self._queries: list[Query] = []
 
+    @property
+    def name(self) -> str:
+        """Returns the name of the workload."""
+        return self.chunk_id()
+
     def chunk_id(self) -> str:
         """Get the chunk ID string."""
         return self._chunk_id
