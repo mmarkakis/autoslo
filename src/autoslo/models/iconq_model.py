@@ -15,7 +15,6 @@ from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.query_timeline import QueryTimeline
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
@@ -255,79 +254,35 @@ class IconqModel:
         """
         return self._stage_model
 
-    def train(  # pylint: disable=arguments-differ,too-many-locals
-        self,
-        train_config: NNModelTrainConfig,
-        from_scratch: bool = True,
-    ) -> tuple[float, float]:
+    @property
+    def trained_on_log_runtime(self) -> bool:
         """
-        Train the model on the given workload and return the final training and validation loss.
-
-        Parameters:
-            train_config: The training configuration for the LSTM model.
-            from_scratch: Whether to train the model from scratch.
+        Returns whether the model was trained on log runtimes.
 
         Returns:
-            final_train_loss: The final training loss.
-            final_val_loss: The final validation loss.
+            True if the model was trained on log runtimes, False otherwise.
         """
-
-        if from_scratch:
-            self._train_config_sequence = []
-            self._nn = RuntimeNet(**self._nn_args).to(self._device)  # type: ignore
-        self._train_config_sequence.append(train_config)
-        self._save_params()
-
-        datasets = []
-        for run_id in train_config.run_ids:
-            trace = Trace(run_id)
-            query_timeline = QueryTimeline(
-                self._iconq_query_featurizer, self._iconq_interaction_featurizer
-            )
-            query_timeline.initialize_from_trace(
-                trace, stage_model=self._stage_model
-            )
-            dataset = query_timeline.get_dataset(
-                use_log_runtime=self._trained_on_log_runtime
-            )
-
-            datasets.append(dataset)
-        overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
-
-        train_dataloader, val_dataloader = self._get_dataloaders(
-            overall_dataset,
-            train_config,
-            split=True,
-            save_dataset=True,
-        )
-        assert val_dataloader is not None  # For linter
-
-        # Now we are ready for the actual training loop
-        return self._run_training_loop(
-            train_dataloader=train_dataloader,
-            val_dataloader=val_dataloader,
-        )
-
-    def predict_from_query_timeline(
-        self, query_timeline: QueryTimeline
-    ) -> dict[str, ModelPrediction]:
+        return self._trained_on_log_runtime
+    
+    @property
+    def iconq_query_featurizer(self) -> IconqQueryFeaturizer:
         """
-        Predicts the runtimes for the queries in the given QueryTimeline,
-        taking into account their overlaps, unless they are ignored.
-
-        Parameters:
-            query_timeline: The QueryTimeline to predict runtimes for.
+        Get the IconqQueryFeaturizer used by the IconqModel.
 
         Returns:
-            A dictionary mapping query IDs to their predicted ModelPrediction.
+            The IconqQueryFeaturizer instance.
         """
+        return self._iconq_query_featurizer
+    
+    @property
+    def iconq_interaction_featurizer(self) -> IconqInteractionFeaturizer:  
+        """
+        Get the IconqInteractionFeaturizer used by the IconqModel.
 
-        dataset = query_timeline.get_dataset(
-            use_log_runtime=self._trained_on_log_runtime
-        )
-        return self.predict_from_dataset(
-            dataset,
-        )
+        Returns:
+            The IconqInteractionFeaturizer instance.
+        """
+        return self._iconq_interaction_featurizer
 
     def predict_from_dataset(
         self,

@@ -12,6 +12,7 @@ from autoslo.models.iconq_model import (
 )
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
+from autoslo.models.iconq_model_trainer import iconq_model_trainer
 
 
 def find_run_ids() -> list[str]:
@@ -108,7 +109,8 @@ def train_iconq_model(
     iconq_model = IconqModel(
         init_config=iconq_model_init_config,
     )
-    iconq_model.train(
+    iconq_model_trainer(
+        iconq_model=iconq_model,
         train_config=nn_model_train_config,
     )
     iconq_model_id = iconq_model.save()
