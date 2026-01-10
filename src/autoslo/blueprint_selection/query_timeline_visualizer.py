@@ -144,27 +144,20 @@ def _format_hover_text(
         Trace.redshift_query_id_from_query_id(qid) if type(qid) == str else qid
     )
     dur = e - s
-    slo_val: Optional[float] = (
-        slo_s
-        if isinstance(slo_s, float)
-        else (slo_s.get(qid) if isinstance(slo_s, dict) else None)
+    if isinstance(slo_s, dict):
+        slo_s = slo_s.get(qid, -1)
+
+    msg = (
+        f"Cluster: {cluster_name}<br>"
+        f"Query: {pure_qid}<br>"
+        f"TPC-DS Temp and Q Idx: {meta['tpcds_temp_and_q_idx']}<br>"
+        f"Start: {s:.3f}s<br>"
+        f"End: {e:.3f}s<br>"
+        f"Duration: {dur:.3f}s<br>"
+        f"SLO: {slo_s:.3f}s"
     )
-    header = f"Cluster: {cluster_name}<br>Query: {pure_qid}"
-    timing = f"Start: {s:.3f}s<br>End: {e:.3f}s<br>Duration: {dur:.3f}s"
-    slo = (
-        f"SLO: {slo_val:.3f}s"
-        if isinstance(slo_val, (float, int))
-        else "SLO: -"
-    )
-    meta_lines: list[str] = []
-    # for k, v in meta.items():
-    #     if k == "query_id":
-    #         continue
-    #     meta_lines.append(f"{k}: {v}")
-    meta_block = "<br>".join(meta_lines)
-    if meta_block:
-        return f"{header}<br>{timing}<br>{slo}<br><br>{meta_block}"
-    return f"{header}<br>{timing}<br>{slo}"
+
+    return msg
 
 
 def _build_shapes_for_snapshot(
@@ -411,7 +404,11 @@ def render_gantt_scrubber(
 
     # Build per-snapshot annotations
     def _ann_for_snap(snap: GanttSnapshot):
-        txt = f"<b>SLO:</b> {snap.violation_rate*100:.1f}% ({snap.violating_queries}/{snap.total_queries}) • <b>Cost:</b> ${snap.total_cost:,.2f}"
+        txt = (
+            f"<b>SLO Violation Rate:</b> {snap.violation_rate*100:.1f}% "
+            f"({snap.violating_queries}/{snap.total_queries}) • "
+            f"<b>Cost:</b> ${snap.total_cost:,.2f}"
+        )
         color = (
             (
                 "red"
@@ -463,7 +460,13 @@ def render_gantt_scrubber(
                 if (e - s) > slo_val:
                     viol += 1
             viol_rate = (viol / q_count) if q_count > 0 else 0.0
-            hover = f"Cluster: {cluster_name}<br>RPU: {Cluster.from_config(cluster_name).rpu}<br>Queries: {q_count}<br>SLO Viol.: {viol_rate*100:.1f}% ({viol}/{q_count})<br>Cost: ${snap.cost_per_cluster.get(cluster_name, 0.0):,.2f}"
+            hover = (
+                f"Cluster: {cluster_name}<br>"
+                f"RPU: {Cluster.from_config(cluster_name).rpu}<br>"
+                f"Queries: {q_count}<br>"
+                f"SLO Viol.: {viol_rate*100:.1f}% ({viol}/{q_count})<br>"
+                f"Cost: ${snap.cost_per_cluster.get(cluster_name, 0.0):,.2f}"
+            )
             color = "#cccccc" if q_count == 0 else "#444444"
             traces.append(
                 go.Scatter(
