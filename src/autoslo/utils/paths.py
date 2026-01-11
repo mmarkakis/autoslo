@@ -93,6 +93,22 @@ def get_blueprint_dicts_from_config() -> dict[str, dict]:
         blueprint_dicts = yaml.safe_load(f)
     return blueprint_dicts
 
+def add_blueprint_to_config(
+    blueprint_name: str, cluster_names: list[str]
+) -> None:
+    """
+    Add a new blueprint configuration to the autoslo config file.
+
+    Parameters:
+        blueprint_name: The name of the blueprint to add.
+        cluster_names: A list of cluster names that are part of the blueprint.
+    """
+    blueprint_dicts = get_blueprint_dicts_from_config()
+    blueprint_dicts[blueprint_name] = {"cluster_names": cluster_names}
+
+    config_path = os.path.join(AUTOSLO_ROOT, "config", "blueprints.yml")
+    with open(config_path, "w") as f:
+        yaml.safe_dump(blueprint_dicts, f, sort_keys=False)
 
 def get_data_path() -> str:
     """

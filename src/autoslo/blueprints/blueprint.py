@@ -18,13 +18,12 @@ class Blueprint:
     # Maps cluster names to their usage in seconds
     ClusterUsageMap = dict[str, float]
 
-    def __init__(self, clusters: list[Cluster], name: str) -> None:
+    def __init__(self, clusters: list[Cluster]) -> None:
         """
         Initialize a Blueprint instance.
 
         Parameters:
             clusters: A list of Cluster instances that this blueprint contains.
-            name: The name of the blueprint.
 
         Raises:
             ValueError: If the clusters list is empty.
@@ -35,7 +34,42 @@ class Blueprint:
         self._clusters: dict[str, Cluster] = {}
         for cluster in clusters:
             self._clusters[cluster.name] = cluster
-        self._name = name
+
+        # Find the bluepirnt name from config, if it exists. If not, create it
+        # and write it out to the config.
+        blueprint_config = pu.get_blueprint_dicts_from_config()
+        matching_name: Optional[str] = None
+        for name, config in blueprint_config.items():
+            if "cluster_names" not in config:
+                continue
+            config_cluster_names = sorted(config["cluster_names"])
+            if config_cluster_names == self.cluster_names:
+                matching_name = name
+                break
+        if matching_name is not None:
+            self._name = matching_name
+        else:
+            # Create a new name and write it out to the config.
+            self._name = self._generate_name_from_clusters()
+            pu.add_blueprint_to_config(
+                blueprint_name=self._name, cluster_names=self.cluster_names
+            )
+
+    def _generate_name_from_clusters(self) -> str:
+        """
+        Generate a name for the blueprint based on its clusters.
+
+        Returns:
+            A string representing the generated name.
+        """
+        if len(self.cluster_names) == 1:
+            return f"single_{self._clusters[self.cluster_names[0]].rpu}"
+        else:
+            suffixes = []
+            for cluster_name in self.cluster_names:
+                suffixes.append(cluster_name.split("_")[-1])
+            suffixes.sort()
+            return f"multi_{'_'.join(suffixes)}"
 
     def __eq__(self, other: object) -> bool:
         """
@@ -51,10 +85,6 @@ class Blueprint:
         if not isinstance(other, Blueprint):
             return False
         if self._name != other._name:
-            return False
-        if self.cluster_names != other.cluster_names:
-            return False
-        if self.clusters != other.clusters:
             return False
         return True
 
@@ -85,7 +115,7 @@ class Blueprint:
             )
         cluster_names = blueprint_config[blueprint_name]["cluster_names"]
         clusters = [Cluster.from_config(name) for name in cluster_names]
-        return Blueprint(clusters=clusters, name=blueprint_name)
+        return Blueprint(clusters=clusters)
 
     @staticmethod
     def one_cluster_with(cluster_rpu: float) -> "Blueprint":
@@ -101,7 +131,7 @@ class Blueprint:
         cluster = Cluster(
             rpu=int(cluster_rpu), name=f"cluster_{int(cluster_rpu)}"
         )
-        return Blueprint(clusters=[cluster], name=f"single_{int(cluster_rpu)}")
+        return Blueprint(clusters=[cluster])
 
     @property
     def name(self) -> str:
@@ -116,22 +146,22 @@ class Blueprint:
     @property
     def clusters(self) -> list[Cluster]:
         """
-        Get all clusters of the blueprint.
+        Get all clusters of the blueprint, sorted by name.
 
         Returns:
             A list of Cluster instances in the clusters list.
         """
-        return list(self._clusters.values())
+        return [self._clusters[name] for name in self.cluster_names]
 
     @property
     def cluster_names(self) -> list[str]:
         """
-        Get the names of all clusters in the blueprint.
+        Get the names of all clusters in the blueprint, sorted.
 
         Returns:
             A list of cluster names.
         """
-        return list(self._clusters.keys())
+        return sorted(list(self._clusters.keys()))
 
     def total_cost(self, cluster_usage: ClusterUsageMap) -> float:
         """
@@ -154,9 +184,7 @@ class Blueprint:
                 raise KeyError(
                     f"Cluster name '{cluster_name}' not found in blueprint."
                 )
-            total_cost += (
-                self._clusters[cluster_name].cost_per_second * usage_s
-            )
+            total_cost += self._clusters[cluster_name].cost_per_second * usage_s
 
         return total_cost
 

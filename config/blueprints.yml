@@ -1,23 +1,37 @@
 single_4:
-  cluster_names: ["cluster_4"]
-
+  cluster_names:
+  - cluster_4
 single_8:
-  cluster_names: ["cluster_8"]
-
+  cluster_names:
+  - cluster_8
 single_16:
-  cluster_names: ["cluster_16"]
-
+  cluster_names:
+  - cluster_16
 single_32:
-  cluster_names: ["cluster_32"]
-
+  cluster_names:
+  - cluster_32
 single_64:
-  cluster_names: ["cluster_64"]
-
+  cluster_names:
+  - cluster_64
 single_128:
-  cluster_names: ["cluster_128"]
-
+  cluster_names:
+  - cluster_128
 single_256:
-  cluster_names: ["cluster_256"]
-
+  cluster_names:
+  - cluster_256
 single_512:
-  cluster_names: ["cluster_512"]
+  cluster_names:
+  - cluster_512
+multi_4_8:
+  cluster_names:
+  - cluster_4
+  - cluster_8
+multi_4b_8:
+  cluster_names:
+  - cluster_4b
+  - cluster_8
+multi_4_4b_8:
+  cluster_names:
+  - cluster_4
+  - cluster_4b
+  - cluster_8
