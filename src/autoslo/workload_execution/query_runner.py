@@ -259,7 +259,7 @@ class QueryRunner:
             query_text = row["query_text"]
             rel_start_time_s = row["rel_start_time_s"]
 
-            cluster_name = self.query_router.route_query(query_text)
+            cluster_name = self.query_router.route_query(query_text=query_text)
             if cluster_name not in self.conn_pools:
                 print(
                     f"QueryRouter returned unknown cluster name "

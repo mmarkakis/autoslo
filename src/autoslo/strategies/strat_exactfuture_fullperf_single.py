@@ -62,7 +62,7 @@ class StratExactFutureFullPerfSingle(SLOStrategy):
         # on the specified day.
         for rpu in Cluster.all_allowed_rpu_sizes():
             blueprint = Blueprint.one_cluster_with(rpu)
-            query_router = RFixed(blueprint, blueprint.cluster_names[0])
+            query_router = RFixed(fixed_cluster_name=blueprint.cluster_names[0])
             options.append((blueprint, query_router))
 
             perf = SLOStrategy.evaluate_suggestion(

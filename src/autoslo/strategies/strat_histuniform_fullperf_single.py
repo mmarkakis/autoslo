@@ -60,7 +60,7 @@ class StratHistUniformFullPerfSingle(SLOStrategy):
         # performance over the specified window size.
         for rpu in Cluster.all_allowed_rpu_sizes():
             blueprint = Blueprint.one_cluster_with(rpu)
-            query_router = RFixed(blueprint, blueprint.cluster_names[0])
+            query_router = RFixed(fixed_cluster_name=blueprint.cluster_names[0])
             options.append((blueprint, query_router))
             day_perfs = []
 

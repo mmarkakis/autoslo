@@ -10,19 +10,17 @@ class QueryRouter(ClassWithFactory):
     of a blueprint. Can be instantiated via the from_name factory method.
     """
 
-    def __init__(self, blueprint: Blueprint, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         """
         Initialize a QueryRouter instance.
 
         Parameters:
-            blueprint: The Blueprint instance containing the clusters to route
-                queries to.
             *args: Additional positional arguments, as needed.
             **kwargs: Additional keyword arguments, as needed.
         """
-        self._blueprint = blueprint
 
     @property
+    @abstractmethod
     def blueprint(self) -> Blueprint:
         """
         Get the Blueprint instance associated with this QueryRouter.
@@ -30,19 +28,23 @@ class QueryRouter(ClassWithFactory):
         Returns:
             The Blueprint instance.
         """
-        return self._blueprint
+        raise NotImplementedError(
+            "Subclasses must implement blueprint property."
+        )
 
     @abstractmethod
-    def route_query(self, query: str, *args, **kwargs) -> str:
+    def route_query(self, *args, **kwargs) -> str:
         """
-        Given a query string, determine the appropriate cluster to route it to.
+        Given appropriate information, determine the appropriate cluster to 
+        route a query to.
 
         Parameters:
-            query: The SQL query string to be routed.
             *args: Additional positional arguments, as needed.
             **kwargs: Additional keyword arguments, as needed.
 
         Returns:
             The cluster name to which the query should be routed.
         """
-        pass
+        raise NotImplementedError(
+            "Subclasses must implement route_query method."
+        )

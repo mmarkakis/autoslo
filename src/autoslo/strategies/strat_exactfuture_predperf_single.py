@@ -79,7 +79,7 @@ class StratExactFuturePredPerfSingle(SLOStrategy):
         # performance over the specified window size.
         for rpu in sorted(Cluster.all_allowed_rpu_sizes()):
             blueprint = Blueprint.one_cluster_with(rpu)
-            query_router = RFixed(blueprint, blueprint.cluster_names[0])
+            query_router = RFixed(fixed_cluster_name=blueprint.cluster_names[0])
             options.append((blueprint, query_router))
 
             features, _ = workload.get_most_recent_featurization_on(
