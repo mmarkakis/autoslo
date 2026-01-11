@@ -1,11 +1,13 @@
 import logging
+import os
 from datetime import datetime
 from math import isclose
 
+import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.query_timeline import QueryTimeline, QueryMove
+from autoslo.blueprint_selection.query_timeline import QueryMove, QueryTimeline
 from autoslo.blueprint_selection.query_timeline_visualizer import (
     GanttRecorder,
     render_gantt_scrubber,
@@ -15,6 +17,8 @@ from autoslo.blueprints.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_execution.trace import Trace
+
+from typing import Optional
 
 
 class BlueprintSelector:
@@ -27,6 +31,9 @@ class BlueprintSelector:
         iconq_model_id: str,
         cluster_name: str,
         init_from_trace: bool = True,
+        use_stage_for_isolated_queries: bool = False,
+        max_iters: int = 20,
+        verbose: bool = False,
     ) -> None:
         """
         Initialize a BlueprintSelector instance.
@@ -41,6 +48,11 @@ class BlueprintSelector:
             init_from_trace: Whether to initialize the timeline from the most
                 recent trace of the workload on the specified cluster. If False,
                 instead bootstrap from the workload queries.
+            use_stage_for_isolated_queries: Whether to use the StageModel for
+                isolated queries when bootstrapping the timeline.
+            max_iters: The maximum number of iterations for the optimization
+                process.
+            verbose: Whether to log verbose output.
         """
         self._workload_name = workload_name
         workload = Chunk.load(workload_name)  # FIXME: generalize to workloads.
@@ -51,6 +63,10 @@ class BlueprintSelector:
         self._iconq_model = IconqModel.load(model_id=iconq_model_id)
         self._default_cluster_name = cluster_name
         self._init_from_trace = init_from_trace
+        self._use_stage_for_isolated_queries = use_stage_for_isolated_queries
+        self._max_iters = max_iters
+        self._verbose = verbose
+        self._solve_was_invoked = False
 
         self._recorder: GanttRecorder
         if init_from_trace:
@@ -79,6 +95,27 @@ class BlueprintSelector:
                 self._bootstrap_query_timeline_from_workload()
             )
 
+        # Setup the outputs directory.
+        self._run_id = str(int(datetime.now().timestamp()))
+        self._out_dir = os.path.join(
+            pu.get_data_path(), "selector_runs", self._run_id
+        )
+        os.makedirs(self._out_dir, exist_ok=False)
+        config_out_path = os.path.join(self._out_dir, "config.yml")
+        with open(config_out_path, "w") as f:
+            d = {
+                "workload_name": self._workload_name,
+                "slo_s": self._slo_s,
+                "slo_violation_rate_threshold": self._slo_violation_rate_threshold,
+                "iconq_model_id": self._iconq_model_id,
+                "default_cluster_name": self._default_cluster_name,
+                "init_from_trace": self._init_from_trace,
+                "use_stage_for_isolated_queries": self._use_stage_for_isolated_queries,
+                "max_iters": self._max_iters,
+                "verbose": self._verbose,
+            }
+            yaml.safe_dump(d, f, sort_keys=False)
+
     def _bootstrap_query_timeline_from_workload(
         self,
     ) -> QueryTimeline:
@@ -92,7 +129,7 @@ class BlueprintSelector:
         timeline = QueryTimeline(iconq_model=self._iconq_model)
 
         # Add the queries.
-        for query in self._workload.queries:
+        for i, query in enumerate(self._workload.queries):
             query_id = query.query_id
             start_time_s = query.start_time_s
             temp_and_q_idx = query.tpcds_temp_and_q_idx
@@ -107,6 +144,7 @@ class BlueprintSelector:
                 start_time_s=start_time_s,
                 end_time_s=(start_time_s + stage_prediction_overall_mean),
                 query_id=query_id,
+                seq_num=i,
                 tpcds_temp_and_q_idx=temp_and_q_idx,
             )
 
@@ -138,30 +176,25 @@ class BlueprintSelector:
             logging.info(message)
 
     def solve(
-        self, max_iters: int = 20, verbose: bool = False
-    ) -> QueryTimeline:
+        self,
+    ) -> dict[int, str]:
         """
-        Solve for the optimal blueprint and query assignment.
-
-        Parameters:
-            max_iters: The maximum number of iterations for the optimization
-                process.
-
-        Returns:
-            The optimized QueryTimeline instance.
+        Solve for the optimal blueprint and query assignment. Once per instance
+        of BlueprintSelector; afterwards returns the cached solution.
         """
 
-        eligible_cluster_names: list[str] = Cluster.all_cluster_names()
+        if self._solve_was_invoked:
+            # TODO: process and return from the saved state.
+            pass
 
         self._recorder = GanttRecorder()
         self._recorder.snapshot(
             self._query_timeline, label="Start", slo_s=self._slo_s
         )
 
-        if verbose:
-            solve_id = datetime.now().timestamp()
+        if self._verbose:
             logging.basicConfig(
-                filename=f"blueprint_selection_verbose_{solve_id}.log",
+                filename=os.path.join(self._out_dir, "solve.log"),
                 level=logging.INFO,
                 format="%(asctime)s - %(levelname)s - %(message)s",
             )
@@ -173,38 +206,86 @@ class BlueprintSelector:
             )
 
         # Phase I: SLO repair
-        for it in range(max_iters):
-            self._maybe_log(f"Starting SLO repair iteration {it}.", verbose)
+        for it in range(self._max_iters):
+            self._maybe_log(
+                f"Starting SLO repair iteration {it}.", self._verbose
+            )
+            eligible_cluster_names = (
+                self._eligible_cluster_names_for_next_move()
+            )
             if not self._maybe_apply_best_move_for_slo(
-                eligible_cluster_names, it, verbose
+                eligible_cluster_names, it, self._verbose
             ):
                 self._maybe_log(
                     f"No more SLO-improving moves found in iteration {it}; ending SLO repair phase.",
-                    verbose,
+                    self._verbose,
                 )
                 break
 
         # Phase II: cost reduction
-        for it in range(max_iters):
-            self._maybe_log(f"Starting cost reduction iteration {it}.", verbose)
+        for it in range(self._max_iters):
+            self._maybe_log(
+                f"Starting cost reduction iteration {it}.", self._verbose
+            )
+            eligible_cluster_names = (
+                self._eligible_cluster_names_for_next_move()
+            )
             if not self._maybe_apply_best_move_for_cost(
-                eligible_cluster_names, it, verbose
+                eligible_cluster_names, it, self._verbose
             ):
                 self._maybe_log(
                     f"No more cost-reducing moves found in iteration {it}; ending cost reduction phase.",
-                    verbose,
+                    self._verbose,
                 )
                 break
 
+        self.write_out_timeline_visualization()
+
+        mapping = self._query_timeline.seq_num_to_cluster_name()
+
+        mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
+        with open(mapping_out_path, "w") as f:
+            yaml.safe_dump(mapping, f, sort_keys=False)
+
+        return mapping
+
+    def write_out_timeline_visualization(self) -> None:
+        """
+        Write out an HTML visualization of the timeline.
+        """
         fig = render_gantt_scrubber(
             self._recorder.snapshots,
             slo_s=self._slo_s,
             constant_layout=True,
             violation_rate_threshold=self._slo_violation_rate_threshold,
+            workload_name=self._workload_name,
         )
-        fig.write_html("blueprint_selection_timeline.html", auto_play=False)
 
-        return self._query_timeline
+        out_path = os.path.join(
+            self._out_dir, "visualization.html"
+        )
+
+        fig.write_html(out_path, auto_play=False)
+
+    def _eligible_cluster_names_for_next_move(self) -> list[str]:
+        """
+        Get the list of eligible cluster names for the next move. These are the
+        clusters that already have at least one query assigned to them, plus at
+        most one additional cluster at each size.
+
+        Returns:
+            A list of eligible cluster names.
+        """
+        ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
+        eligible_cluster_names: list[str] = []
+        for rpu, cluster_names in ordered_cluster_names_per_rpu.items():
+            if rpu > 32:
+                continue  # Limit to clusters up to 32 RPUs for practicality.
+            for cluster_name in cluster_names:
+                eligible_cluster_names.append(cluster_name)
+                if cluster_name not in self._query_timeline.active_clusters:
+                    break  # Only add at most one inactive cluster per RPU size.
+        return eligible_cluster_names
 
     def _slo_ok(self) -> tuple[float, bool]:
         """
@@ -269,7 +350,9 @@ class BlueprintSelector:
         for move in candidate_moves:
             self._maybe_log(f"Evaluating move: {move}", verbose)
             inverse_move, old_latencies = self._query_timeline.apply_move(
-                move, verbose=verbose
+                move,
+                verbose=verbose,
+                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             new_slo_violation_rate = self._query_timeline.slo_violation_rate(
                 slo_s=self._slo_s
@@ -291,7 +374,10 @@ class BlueprintSelector:
 
             self._maybe_log(f"Applying inverse move: {inverse_move}", verbose)
             self._query_timeline.apply_move(
-                inverse_move, old_latencies, verbose=verbose
+                inverse_move,
+                old_latencies,
+                verbose=verbose,
+                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             self._maybe_log(
                 f"After undoing, SLO violation rate is {self._query_timeline.slo_violation_rate(slo_s=self._slo_s):.4f}",
@@ -302,7 +388,11 @@ class BlueprintSelector:
             self._maybe_log("No SLO-improving moves found.", verbose)
             return False
 
-        self._query_timeline.apply_move(best_move, verbose=verbose)
+        self._query_timeline.apply_move(
+            best_move,
+            verbose=verbose,
+            use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
+        )
         self._maybe_log(
             f"SLO iteration {iteration}: "
             f"reduced SLO violation rate from "
@@ -354,7 +444,9 @@ class BlueprintSelector:
         for move in candidate_moves:
             self._maybe_log(f"Evaluating move: {move}", verbose)
             inverse_move, old_latencies = self._query_timeline.apply_move(
-                move, verbose=verbose
+                move,
+                verbose=verbose,
+                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             _, slo_ok = self._slo_ok()
             new_cost = self._query_timeline.total_cost()
@@ -387,7 +479,10 @@ class BlueprintSelector:
                 best_move = move
             self._maybe_log(f"Applying inverse move: {inverse_move}", verbose)
             self._query_timeline.apply_move(
-                inverse_move, old_latencies, verbose=verbose
+                inverse_move,
+                old_latencies,
+                verbose=verbose,
+                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
 
         if best_move is None:
@@ -396,7 +491,11 @@ class BlueprintSelector:
             )
             return False
 
-        self._query_timeline.apply_move(best_move, verbose=verbose)
+        self._query_timeline.apply_move(
+            best_move,
+            verbose=verbose,
+            use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
+        )
         self._maybe_log(
             f"Cost iteration {iteration}: "
             f"reduced cost from {initial_cost:.4f} to {best_cost:.4f} "

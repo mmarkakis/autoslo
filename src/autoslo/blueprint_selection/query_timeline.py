@@ -88,6 +88,7 @@ class QueryTimeline:
         start_times = trace.arrival_times()
         end_times = trace.completion_times()
         query_ids = trace.query_ids
+        seq_nums = trace.seq_nums
 
         reference_timestamp = min(
             start_times[query_id].timestamp() for query_id in query_ids
@@ -95,18 +96,12 @@ class QueryTimeline:
 
         intervals_to_add: dict[str, list[Interval]] = defaultdict(list)
 
-        unique_eligible_rpus = set(
-            Cluster.from_config(cluster_name).rpu
-            for cluster_name in Cluster.all_cluster_names()
-        )
-        all_eligible_rpus_cluster_names = {
-            rpu: Cluster.first_cluster_name_for_rpu(rpu)
-            for rpu in unique_eligible_rpus
-        }
+        ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
 
         for query_id in query_ids:
             observed_cluster_name = trace.cluster_name_from_query_id(query_id)
             temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+            seq_num = seq_nums[query_id]
 
             interval = Interval(
                 begin=start_times[query_id].timestamp() - reference_timestamp,
@@ -114,6 +109,7 @@ class QueryTimeline:
                 data={
                     "query_id": query_id,
                     "tpcds_temp_and_q_idx": temp_and_q_idx,
+                    "seq_num": int(seq_num),
                     "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                         temp_and_q_idx
                     ),
@@ -121,13 +117,13 @@ class QueryTimeline:
                         rpu: (
                             float(
                                 self._stage_model.predict_from_tpcds_temp_and_q_idx(
-                                    {query_id: temp_and_q_idx}, cluster_name
+                                    {query_id: temp_and_q_idx}, cluster_names[0]
                                 )[
                                     query_id
                                 ].overall_mean_s()
                             )
                         )
-                        for rpu, cluster_name in all_eligible_rpus_cluster_names.items()
+                        for rpu, cluster_names in ordered_cluster_names_per_rpu.items()
                     },
                 },
             )
@@ -176,6 +172,22 @@ class QueryTimeline:
             ) in self._query_id_to_cluster_interval.items()
         }
 
+    def seq_num_to_cluster_name(self) -> dict[int, str]:
+        """
+        Get a mapping from query sequence numbers to their corresponding
+        cluster names.
+
+        Returns:
+            A dictionary mapping query sequence numbers to cluster names.
+        """
+        return {
+            interval.data["seq_num"]: cluster_name
+            for query_id, (
+                cluster_name,
+                interval,
+            ) in self._query_id_to_cluster_interval.items()
+        }
+
     def interval_for_query_id(self, query_id: str) -> Interval:
         """
         Get the Interval for a given query ID.
@@ -213,6 +225,7 @@ class QueryTimeline:
 
     def predict_all(
         self,
+        use_stage_for_isolated_queries: bool = False,
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtimes for the queries in the given QueryTimeline,
@@ -220,6 +233,8 @@ class QueryTimeline:
 
         Parameters:
             query_timeline: The QueryTimeline to predict runtimes for.
+            use_stage_for_isolated_queries: Whether to use the StageModel for
+                queries that do not overlap with any other queries.
 
         Returns:
             A dictionary mapping query IDs to their predicted ModelPrediction.
@@ -230,6 +245,7 @@ class QueryTimeline:
         )
         return self._iconq_model.predict_from_dataset(
             dataset,
+            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         )
 
     def add_query(
@@ -238,6 +254,7 @@ class QueryTimeline:
         start_time_s: float,
         end_time_s: float,
         query_id: str,
+        seq_num: int,
         tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
     ) -> None:
         """
@@ -248,17 +265,11 @@ class QueryTimeline:
             start_time_s: The start time of the query (in seconds).
             end_time_s: The end time of the query (in seconds).
             query_id: The ID of the query.
+            seq_num: The sequence number of the query.
             tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
         """
 
-        unique_eligible_rpus = set(
-            Cluster.from_config(cluster_name).rpu
-            for cluster_name in Cluster.all_cluster_names()
-        )
-        all_eligible_rpus_cluster_names = {
-            rpu: Cluster.first_cluster_name_for_rpu(rpu)
-            for rpu in unique_eligible_rpus
-        }
+        ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
 
         interval = Interval(
             begin=start_time_s,
@@ -266,6 +277,7 @@ class QueryTimeline:
             data={
                 "query_id": query_id,
                 "tpcds_temp_and_q_idx": tpcds_temp_and_q_idx,
+                "seq_num": int(seq_num),
                 "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
                     tpcds_temp_and_q_idx
                 ),
@@ -273,11 +285,12 @@ class QueryTimeline:
                     rpu: (
                         float(
                             self._stage_model.predict_from_tpcds_temp_and_q_idx(
-                                {query_id: tpcds_temp_and_q_idx}, cluster_name
+                                {query_id: tpcds_temp_and_q_idx},
+                                cluster_names[0],
                             )[query_id].overall_mean_s()
                         )
                     )
-                    for rpu, cluster_name in all_eligible_rpus_cluster_names.items()
+                    for rpu, cluster_names in ordered_cluster_names_per_rpu.items()
                 },
             },
         )
@@ -344,6 +357,7 @@ class QueryTimeline:
         y = []
         pinch_points = []
         query_ids = []
+        tpcds_temp_and_q_idx = []
 
         for cluster_name in self.active_clusters:
 
@@ -419,6 +433,9 @@ class QueryTimeline:
                 y.append(latency if not use_log_runtime else np.log1p(latency))
                 pinch_points.append(neighbor_sort_order.index(base_iv.begin))
                 query_ids.append(base_iv.data["query_id"])
+                tpcds_temp_and_q_idx.append(
+                    base_iv.data["tpcds_temp_and_q_idx"]
+                )
 
         # Transform lists into tensors.
         x_tensorized = x
@@ -430,6 +447,7 @@ class QueryTimeline:
             pinch_points=pinch_points_tensorized,
             y=y_tensorized,
             query_ids=query_ids,
+            tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
         )
 
         return dataset
@@ -444,6 +462,7 @@ class QueryTimeline:
         move: QueryMove,
         new_latencies: Optional[dict[str, float]] = None,
         verbose: bool = False,
+        use_stage_for_isolated_queries: bool = False,
     ) -> tuple[QueryMove, dict[str, float]]:
         """
         Apply a query move, and return appropriate information to invert it.
@@ -454,6 +473,8 @@ class QueryTimeline:
                 latencies (in seconds) to update after the move. If not provided,
                 updated latencies will be predicted using the IconqModel.
             verbose: Whether to log verbose output.
+            use_stage_for_isolated_queries: Whether to use the StageModel for
+                isolated queries when predicting latencies.
 
         Returns:
             inverse_move: The inverse of the applied move.
@@ -478,6 +499,7 @@ class QueryTimeline:
             )
             predictions = self._iconq_model.predict_from_dataset(
                 dataset=dataset,
+                use_stage_for_isolated_queries=use_stage_for_isolated_queries,
             )
             self._maybe_log(f"Predictions: {predictions}", verbose)
 
@@ -490,7 +512,7 @@ class QueryTimeline:
         old_latencies = {}
 
         for q_id, new_latency_s in new_latencies.items():
-            old_latency_s = self._update_latency(
+            old_latency_s = self.update_latency(
                 query_id=q_id,
                 latency_s=new_latency_s,
             )
@@ -503,7 +525,7 @@ class QueryTimeline:
 
         return inverse_move, old_latencies
 
-    def _update_latency(
+    def update_latency(
         self,
         query_id: str,
         latency_s: float,
@@ -526,18 +548,17 @@ class QueryTimeline:
         if latency_s < 0:
             raise ValueError("Latency must be non-negative.")
 
-        cluster_name, interval = self._query_id_to_cluster_interval[query_id]
-        old_latency_s = interval.end - interval.begin
-
-        self._interval_trees[cluster_name].remove(interval)
-        if len(self._interval_trees[cluster_name]) == 0:
-            del self._interval_trees[cluster_name]
-
+        cluster_name, old_interval = self._query_id_to_cluster_interval[
+            query_id
+        ]
+        old_latency_s = old_interval.end - old_interval.begin
         new_interval = Interval(
-            begin=interval.begin,
-            end=interval.begin + latency_s,
-            data=interval.data,
+            begin=old_interval.begin,
+            end=old_interval.begin + latency_s,
+            data=old_interval.data,
         )
+
+        self._interval_trees[cluster_name].remove(old_interval)
         self._interval_trees[cluster_name].add(new_interval)
         self._query_id_to_cluster_interval[query_id] = (
             cluster_name,

@@ -89,7 +89,7 @@ def plot_qerror(
     ax.set_title(title)
 
 
-def main(iconq_model_id: str):
+def main(iconq_model_id: str, use_stage_for_isolated_queries: bool):
     model = IconqModel.load(
         model_id=iconq_model_id,
     )
@@ -119,29 +119,33 @@ def main(iconq_model_id: str):
                 )
 
                 trace = Trace(trace_run_id)
-                query_timeline = QueryTimeline(
-                    model._iconq_query_featurizer,
-                    model._iconq_interaction_featurizer,
-                )
+                query_timeline = QueryTimeline(model)
                 query_timeline.initialize_from_trace(
-                    trace, stage_model=model.stage_model
+                    trace,
                 )
 
-                predictions = model.predict_from_query_timeline(query_timeline)
+                predictions = query_timeline.predict_all(
+                    use_stage_for_isolated_queries=use_stage_for_isolated_queries
+                )
 
                 true_y = trace.latencies_s
                 predicted_y = predictions
                 title = f"{pct_heavy}% Heavy, {mean_interarrival}s Mean Interarrival, {rpu} RPU"
+
                 plot_true_predicted(axs[i, j], title, true_y, predicted_y)
                 plot_qerror(qerror_axs[i, j], title, true_y, predicted_y)
                 bar.update(1)
         bar.close()
 
         # Post-process true vs predicted figure
+        suptitle = f"IconQ Model {iconq_model_id} Predictions vs True Latencies for {rpu} RPU"
+        if use_stage_for_isolated_queries:
+            suptitle += " (Stage Fallback)"
         fig.suptitle(
-            f"IconQ Model {iconq_model_id} Predictions vs True Latencies for {rpu} RPU",
+            suptitle,
             fontsize=16,
         )
+
         fig.tight_layout(rect=(0, 0.03, 1, 0.95))
         fig.savefig(
             os.path.join(
@@ -154,8 +158,11 @@ def main(iconq_model_id: str):
         plt.close(fig)
 
         # Post-process Q-Error figure
+        suptitle = f"IconQ Model {iconq_model_id} Q-Error CDFs for {rpu} RPU"
+        if use_stage_for_isolated_queries:
+            suptitle += " (Stage Fallback)"
         qerror_fig.suptitle(
-            f"IconQ Model {iconq_model_id} Q-Error CDFs for {rpu} RPU",
+            suptitle,
             fontsize=16,
         )
         qerror_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
@@ -182,7 +189,12 @@ if __name__ == "__main__":
         required=True,
         help="The IconQ model ID to use for predictions.",
     )
+    parser.add_argument(
+        "--use_stage_for_isolated_queries",
+        action="store_true",
+        help="Whether to use the StageModel for isolated queries.",
+    )
 
     args = parser.parse_args()
 
-    main(args.iconq_model_id)
+    main(args.iconq_model_id, args.use_stage_for_isolated_queries)

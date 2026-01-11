@@ -6,10 +6,12 @@ Mock extended benchmark workloads by composing chunks
 # Workgroup creation runbook
 
 1. Create workgroup
-    - Make sure to add the admin password manually.
-    - Export logs as needed.
-    - Attach IAM roles.
     - Impose base RPU = max RPU
+    - Make sure to add the admin password manually.
+    - Attach IAM roles (command access, loader)
+    - Export logs as needed.
+    
+    
 
 2. Make publicly accessible:
 ```bash

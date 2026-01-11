@@ -149,7 +149,8 @@ def _format_hover_text(
 
     msg = (
         f"Cluster: {cluster_name}<br>"
-        f"Query: {pure_qid}<br>"
+        f"Query ID: {pure_qid}<br>"
+        f"Workload Seq Num: {meta['seq_num']}<br>"
         f"TPC-DS Temp and Q Idx: {meta['tpcds_temp_and_q_idx']}<br>"
         f"Start: {s:.3f}s<br>"
         f"End: {e:.3f}s<br>"
@@ -339,9 +340,14 @@ def render_gantt_scrubber(
     title: str = "Cluster Query Assignments Over Time",
     constant_layout: bool = False,
     violation_rate_threshold: Optional[float] = None,
+    workload_name: Optional[str] = None,
 ) -> go.Figure:
     if not snapshots:
         raise ValueError("No snapshots to render")
+    
+    # For subtitle, require slo_s to be a single float
+    if workload_name is not None and not isinstance(slo_s, float):
+        raise ValueError("Subtitle can only be generated when slo_s is a single float value, not a dict")
 
     if constant_layout:
         # Build global layout plan
@@ -491,10 +497,18 @@ def render_gantt_scrubber(
 
     base_label_traces = _build_label_traces(base, snapshots[0])
 
+    # Build title dict with optional subtitle
+    title_dict: dict[str, Any] = dict(text=title)
+    if workload_name is not None and isinstance(slo_s, float):
+        title_dict = dict(
+            text=title,
+            subtitle={'text': f"Workload: {workload_name} | SLO: {slo_s:.2f}s"}
+        )
+
     fig = go.Figure(
         data=base["hover_traces"] + base_label_traces,
         layout=go.Layout(
-            title=title,
+            title=title_dict,
             template="plotly_white",
             xaxis=dict(
                 title="Time since start (s)", range=[-500, base["x_max"] + 500]

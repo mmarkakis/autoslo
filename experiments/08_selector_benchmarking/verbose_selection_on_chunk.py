@@ -12,9 +12,12 @@ def main(args):
         iconq_model_id=args.iconq_model_id,
         cluster_name=args.cluster_name,
         init_from_trace=True,
+        use_stage_for_isolated_queries=args.use_stage_for_isolated_queries,
+        max_iters = 20, 
+        verbose=True
     )
 
-    selector.solve(verbose=True)
+    selector.solve()
 
 
 if __name__ == "__main__":
@@ -25,13 +28,13 @@ if __name__ == "__main__":
         "--iconq_model_id",
         type=str,
         help="The ID of the Iconq model to use.",
-        default="1767983798",
+        default="1768080208",
     )
     parser.add_argument(
         "--workload_name",
         type=str,
         help="The name of the workload to use.",
-        default="tpcds_99templates_25pctheavy_60meaninterarrivals",
+        default="tpcds_99templates_25pctheavy_30meaninterarrivals",
     )
     parser.add_argument(
         "--cluster_name",
@@ -50,6 +53,11 @@ if __name__ == "__main__":
         type=float,
         help="The threshold for acceptable SLO violation rate.",
         default=0.05,
+    )
+    parser.add_argument(
+        "--use_stage_for_isolated_queries",
+        action="store_true",
+        help="Whether to use the StageModel for isolated queries.",
     )
     args = parser.parse_args()
     main(args)
