@@ -1,0 +1,9 @@
+workload_name: tpcds_99templates_00pctheavy_120meaninterarrivals
+slo_s: 120.0
+slo_violation_rate_threshold: 0.05
+iconq_model_id: '1768080208'
+default_cluster_name: cluster_8
+init_from_trace: true
+use_stage_for_isolated_queries: true
+max_iters: 20
+verbose: false
