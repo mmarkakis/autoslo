@@ -2,6 +2,7 @@ from autoslo.blueprint_selection.query_timeline import QueryTimeline
 from autoslo.models.iconq_model import IconqModel, NNModelTrainConfig
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.workload_execution.trace import Trace
+from autoslo.nn.runtime_net import RuntimeNet
 
 
 def iconq_model_trainer(  # pylint: disable=arguments-differ,too-many-locals
@@ -30,17 +31,11 @@ def iconq_model_trainer(  # pylint: disable=arguments-differ,too-many-locals
     datasets = []
     for run_id in train_config.run_ids:
         trace = Trace(run_id)
-        query_timeline = QueryTimeline(
-            iconq_model._iconq_query_featurizer,
-            iconq_model._iconq_interaction_featurizer,
-        )
-        query_timeline.initialize_from_trace(
-            trace, stage_model=iconq_model._stage_model
-        )
+        query_timeline = QueryTimeline(iconq_model=iconq_model)
+        query_timeline.initialize_from_trace(trace)
         dataset = query_timeline.get_dataset(
-            use_log_runtime=iconq_model._trained_on_log_runtime
+            use_log_runtime=iconq_model.trained_on_log_runtime
         )
-
         datasets.append(dataset)
     overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
 

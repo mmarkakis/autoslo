@@ -33,6 +33,7 @@ class Trace:
             "status",
             "result_cache_hit",
             "query_type",
+            "query_text",
         ],
         "sys_query_detail": [
             "query_id",
@@ -406,6 +407,23 @@ class Trace:
             all_query_ids.extend(list(df["query_id"].unique()))
 
         return all_query_ids
+    
+    @property
+    def seq_nums(self) -> pd.Series:
+        """
+        Get the sequence numbers of the queries in the trace.
+
+        Returns:
+            A pandas Series containing the sequence numbers.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["query_text"].apply(
+                lambda x: int(x.split("\\n")[0].split("/")[1])
+            )
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
 
     @staticmethod
     def extract_temp_and_q_idxs(query_text: str) -> "TPCDSTempAndQIdx":
@@ -515,6 +533,40 @@ class Trace:
             tpcds_temp_and_q_idxs_path, index=True
         )
         return pd.Series(concatenated)
+
+    def query_is_non_overlapping(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        booleans indicating whether each query does not overlap with any other
+        query in the trace.
+        """
+        non_overlapping_dict: dict[str, bool] = {}
+        for df in self._dfs["sys_query_history"].values():
+            events = []
+            for _, row in df.iterrows():
+                events.append((row["start_time"], "start", row["query_id"]))
+                events.append((row["end_time"], "end", row["query_id"]))
+
+            # Sort events by time, with 'end' events before 'start' events at
+            # the same time.
+            events.sort(key=lambda x: (x[0], 0 if x[1] == "end" else 1))
+
+            active_queries: set[str] = set()
+            for event_time, event_type, query_id in events:
+                if event_type == "start":
+                    if len(active_queries) == 0:
+                        non_overlapping_dict[query_id] = True
+                    else:
+                        non_overlapping_dict[query_id] = False
+                        for active_query in active_queries:
+                            non_overlapping_dict[active_query] = False
+                    active_queries.add(query_id)
+                elif event_type == "end":
+                    active_queries.remove(query_id)
+
+        return pd.Series(non_overlapping_dict).reindex(self.query_ids)
+        
+            
 
     def mbytes_scanned(self) -> pd.Series:
         """

@@ -3,6 +3,8 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
+from autoslo.workload_execution.trace import Trace
+
 
 class ConcurrentQueryDataset(Dataset):
     """
@@ -15,6 +17,7 @@ class ConcurrentQueryDataset(Dataset):
         - pinch_point is the pinch points tensor, of shape (1,).
         - y is the target tensor, of shape (1,).
         - query_ids is the list of query IDs.
+        - tpcds_temp_and_q_idx is the TPC-DS template and query index.
     """
 
     def __init__(
@@ -23,11 +26,13 @@ class ConcurrentQueryDataset(Dataset):
         pinch_points: torch.Tensor,
         y: torch.Tensor,
         query_ids: list[str],
+        tpcds_temp_and_q_idx: list[Trace.TPCDSTempAndQIdx],
     ):
         self.x = x
         self.pinch_points = pinch_points
         self.y = y
         self.query_ids = query_ids
+        self.tpcds_temp_and_q_idx = tpcds_temp_and_q_idx
 
     def __len__(self) -> int:
         return len(self.y)
@@ -37,12 +42,14 @@ class ConcurrentQueryDataset(Dataset):
         torch.Tensor,
         torch.Tensor,
         str,
+        Trace.TPCDSTempAndQIdx,
     ]:
         return (
             self.x[idx],
             self.pinch_points[idx],
             self.y[idx],
             self.query_ids[idx],
+            self.tpcds_temp_and_q_idx[idx],
         )
 
     @staticmethod
@@ -65,19 +72,23 @@ class ConcurrentQueryDataset(Dataset):
         new_query_ids = []
         for dataset in datasets:
             new_query_ids.extend(dataset.query_ids)
+        new_tpcds_temp_and_q_idx = []
+        for dataset in datasets:
+            new_tpcds_temp_and_q_idx.extend(dataset.tpcds_temp_and_q_idx)
 
         return ConcurrentQueryDataset(
             x=new_x,
             pinch_points=new_pinch_points,
             y=new_y,
             query_ids=new_query_ids,
+            tpcds_temp_and_q_idx=new_tpcds_temp_and_q_idx,
         )
 
     @staticmethod
     def collate_and_pad(
-        batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, str]],
+        batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, str, Trace.TPCDSTempAndQIdx]],
     ) -> tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[str]
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[str], list[Trace.TPCDSTempAndQIdx]
     ]:
         """
         Custom collation function for DataLoader of ConcurrentQueryDataset.
@@ -86,7 +97,7 @@ class ConcurrentQueryDataset(Dataset):
         Parameters:
             batch: The batch of data to collate. Each element in the batch is a
                 tuple produced by ConcurrentQueryDataset, so its elements are
-                (x, pinch_point, y, query_id).
+                (x, pinch_point, y, query_id, tpcds_temp_and_q_idx).
 
         Returns:
             x: The input tensor (for the model), of shape
@@ -97,8 +108,10 @@ class ConcurrentQueryDataset(Dataset):
                 sequences in the batch. This tensor has shape (batch_size,).
             y: The target tensor, of shape (batch_size,).
             query_ids: The list of query IDs, of shape (batch_size,).
+            tpcds_temp_and_q_idx: The list of TPC-DS template and query indices,
+                of shape (batch_size,).
         """
-        (x, pinch_points, y, query_ids) = zip(*batch)
+        (x, pinch_points, y, query_ids, tpcds_temp_and_q_idx) = zip(*batch)
         x_len = [len(i) for i in x]
         sort_idx = torch.tensor(
             np.argsort(x_len)[::-1].copy(), dtype=torch.long
@@ -112,11 +125,14 @@ class ConcurrentQueryDataset(Dataset):
         ]
         y_out = torch.tensor(y, dtype=torch.float)[sort_idx]
         query_ids_out: list[str] = [query_ids[i] for i in sort_idx]
+        tpcds_temp_and_q_idx_out: list[Trace.TPCDSTempAndQIdx] = [
+            tpcds_temp_and_q_idx[i] for i in sort_idx
+        ]
 
         # Pad sequences to the maximum length per batch
         padded_x_out = pad_sequence(x_out, batch_first=True, padding_value=0)
-        return (padded_x_out, x_len_out, pinch_points_out, y_out, query_ids_out)
-
+        return (padded_x_out, x_len_out, pinch_points_out, y_out, query_ids_out, tpcds_temp_and_q_idx_out)
+    
     def save_to(self, path: str) -> None:
         """
         Saves the dataset to disk at the specified path.
@@ -130,6 +146,7 @@ class ConcurrentQueryDataset(Dataset):
                 "pinch_points": self.pinch_points,
                 "y": self.y,
                 "query_ids": self.query_ids,
+                "tpcds_temp_and_q_idx": self.tpcds_temp_and_q_idx,
             },
             path,
         )
@@ -151,4 +168,5 @@ class ConcurrentQueryDataset(Dataset):
             pinch_points=data["pinch_points"],
             y=data["y"],
             query_ids=data["query_ids"],
+            tpcds_temp_and_q_idx=data["tpcds_temp_and_q_idx"],
         )

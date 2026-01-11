@@ -159,6 +159,7 @@ class CacheModel:
         self,
         run_ids: list[str],
         from_scratch: bool = False,
+        only_non_overlapping_queries: bool = False,
     ) -> None:
         """
         Trains the model on the given run IDs.
@@ -167,6 +168,8 @@ class CacheModel:
             run_ids: The run IDs to train the model on.
             from_scratch: Whether to train the model from scratch, or
                 continue training from the existing model.
+            only_non_overlapping_queries: Whether to only use train on queries
+                that do not overlap with any other queries in the trace.
         """
 
         # If retraining from scratch, reset the cache.
@@ -180,14 +183,20 @@ class CacheModel:
             trace = Trace(run_id)
             latencies = trace.latencies_s
             temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+            query_is_non_overlapping = trace.query_is_non_overlapping()
 
             for (query_id, latency), temp_and_q_idx in zip(
                 latencies.items(), temp_and_q_idxs
             ):
+                if (
+                    only_non_overlapping_queries
+                    and not query_is_non_overlapping[query_id] # type: ignore
+                ):
+                    continue
 
                 cluster_name = trace.cluster_name_from_query_id(
-                    query_id # type: ignore
-                )  
+                    query_id  # type: ignore
+                )
                 cluster_rpu = Cluster.from_config(cluster_name).rpu
                 template_id = Trace.extract_temp(temp_and_q_idx)
                 query_within_template_id = Trace.extract_q_idx(temp_and_q_idx)
@@ -224,7 +233,7 @@ class CacheModel:
         for cluster_rpu, template_dict in self._cache.items():
             runtimes_for_rpu = []
             for query_dict in template_dict.values():
-                for (runtimes, _, _) in query_dict.values():
+                for runtimes, _, _ in query_dict.values():
                     runtimes_for_rpu.extend(runtimes)
             self._mean_runtime_s_for_rpu[cluster_rpu] = float(
                 np.mean(runtimes_for_rpu)
@@ -266,7 +275,9 @@ class CacheModel:
                     "enable_template_cache": self._enable_template_cache,
                     "best_effort": self._best_effort,
                     "run_ids": self._run_ids,
-                    "mean_runtime_s_for_rpu": dict(self._mean_runtime_s_for_rpu),
+                    "mean_runtime_s_for_rpu": dict(
+                        self._mean_runtime_s_for_rpu
+                    ),
                     "std_runtime_s_for_rpu": dict(self._std_runtime_s_for_rpu),
                 },
                 f,

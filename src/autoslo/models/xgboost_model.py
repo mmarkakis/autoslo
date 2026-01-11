@@ -163,6 +163,7 @@ class XGBoostModel:
         self,
         run_ids: list[str],
         parent_save_dir: Optional[str] = None,
+        only_non_overlapping_queries: bool = False,
     ) -> tuple[float, float]:
         """
         Trains the model on the given run IDs.
@@ -171,6 +172,8 @@ class XGBoostModel:
             run_ids: The run IDs to train the model on.
             parent_save_dir: The parent directory where xgboost models are
                 stored. If None, defaults to `data/xgboost_models/`.
+            only_non_overlapping_queries: Whether to only use train on queries
+                that do not overlap with any other queries in the trace.
 
         Returns:
             A tuple containing the final training and validation loss.
@@ -211,9 +214,16 @@ class XGBoostModel:
             trace = Trace(run_id)
             featurizations = self._iconq_query_featurizer.featurize_trace(trace)
             latencies = trace.latencies_s
+            query_is_non_overlapping = trace.query_is_non_overlapping()
             new_items = []
 
             for query_id in featurizations.keys():
+                if (
+                    only_non_overlapping_queries
+                    and not query_is_non_overlapping[query_id]  # type: ignore
+                ):
+                    continue
+
                 featurization = featurizations[query_id].copy()
                 latency = latencies[query_id]
                 if featurization is None or len(featurization) == 0:

@@ -60,6 +60,16 @@ class IconqInteractionFeaturizer:
             The number of dimensions in the interaction feature vector.
         """
         return 2 * self._iconq_query_featurizer.num_dims + 5
+    
+    @property
+    def rpu_dim_idx(self) -> int:
+        """
+        Returns the index of the RPU feature in the interaction feature vector.
+
+        Returns:
+            The index of the RPU feature.
+        """
+        return self.num_dims - 1
 
     def featurize(
         self,

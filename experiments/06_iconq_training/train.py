@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import yaml
@@ -10,9 +11,9 @@ from autoslo.models.iconq_model import (
     IconqModelInitConfig,
     NNModelTrainConfig,
 )
+from autoslo.models.iconq_model_trainer import iconq_model_trainer
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
-from autoslo.models.iconq_model_trainer import iconq_model_trainer
 
 
 def find_run_ids() -> list[str]:
@@ -54,20 +55,25 @@ def set_up_featurizer(run_ids: list[str]) -> str:
     return featurizer.save()
 
 
-def train_cache_model(run_ids: list[str]) -> str:
+def train_cache_model(
+    run_ids: list[str], only_non_overlapping_queries: bool
+) -> str:
     """Trains a CacheModel and returns its ID."""
 
     cache_model = CacheModel(enable_template_cache=False, best_effort=False)
     cache_model.train(
         run_ids=run_ids,
         from_scratch=True,
+        only_non_overlapping_queries=only_non_overlapping_queries,
     )
     cache_model_id = cache_model.save()
     return cache_model_id
 
 
 def train_xgboost_model(
-    iconq_query_featurizer_id: str, run_ids: list[str]
+    iconq_query_featurizer_id: str,
+    run_ids: list[str],
+    only_non_overlapping_queries: bool,
 ) -> str:
     """Trains an XGBoostModel and returns its ID."""
     xgboost_model = XGBoostModel(
@@ -77,6 +83,7 @@ def train_xgboost_model(
     )
     xgboost_model.train(
         run_ids=run_ids,
+        only_non_overlapping_queries=only_non_overlapping_queries,
     )
     xgboost_model_id = xgboost_model.save()
     return xgboost_model_id
@@ -118,6 +125,17 @@ def train_iconq_model(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Trains an IconqModel step-by-step, caching progress."
+    )
+    parser.add_argument(
+        "--only_non_overlapping_queries",
+        action="store_true",
+        help="Whether to only train on queries that do not overlap with any other queries in the trace.",
+    )
+    args = parser.parse_args()
+    print(f"Value of only_non_overlapping_queries: {args.only_non_overlapping_queries}")
+
     progress_cache_path = os.path.join(
         pu.AUTOSLO_ROOT,
         "experiments",
@@ -157,7 +175,10 @@ if __name__ == "__main__":
     print("Step 3: Training CacheModel...")
     if "cache_model_id" not in cached_progress:
         print("\tCacheModel not cached. Training...")
-        cache_model_id = train_cache_model(run_ids)
+        cache_model_id = train_cache_model(
+            run_ids,
+            only_non_overlapping_queries=args.only_non_overlapping_queries,
+        )
         cached_progress["cache_model_id"] = cache_model_id
         with open(progress_cache_path, "w") as f:
             yaml.safe_dump(cached_progress, f)
@@ -171,6 +192,7 @@ if __name__ == "__main__":
         xgboost_model_id = train_xgboost_model(
             iconq_query_featurizer_id=featurizer_id,
             run_ids=run_ids,
+            only_non_overlapping_queries=args.only_non_overlapping_queries,
         )
         cached_progress["xgboost_model_id"] = xgboost_model_id
         with open(progress_cache_path, "w") as f:

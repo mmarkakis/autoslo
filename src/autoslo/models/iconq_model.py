@@ -33,7 +33,8 @@ from autoslo.nn.loss_functions import (
     sensitive_q_error_loss,
 )
 from autoslo.nn.runtime_net import RuntimeNet
-from autoslo.workload_execution.trace import Trace
+
+from autoslo.blueprints.cluster import Cluster
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +264,7 @@ class IconqModel:
             True if the model was trained on log runtimes, False otherwise.
         """
         return self._trained_on_log_runtime
-    
+
     @property
     def iconq_query_featurizer(self) -> IconqQueryFeaturizer:
         """
@@ -273,9 +274,9 @@ class IconqModel:
             The IconqQueryFeaturizer instance.
         """
         return self._iconq_query_featurizer
-    
+
     @property
-    def iconq_interaction_featurizer(self) -> IconqInteractionFeaturizer:  
+    def iconq_interaction_featurizer(self) -> IconqInteractionFeaturizer:
         """
         Get the IconqInteractionFeaturizer used by the IconqModel.
 
@@ -287,12 +288,16 @@ class IconqModel:
     def predict_from_dataset(
         self,
         dataset: ConcurrentQueryDataset,
+        use_stage_for_isolated_queries: bool = False,
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtimes for the queries in the given dataset.
 
         Parameters:
             dataset: The dataset to predict runtimes for.
+            use_stage_for_isolated_queries: Whether to just fall back to the
+                underlying stage model for isolated queries (i.e., those without
+                any concurrent queries).
 
         Returns:
             A dictionary mapping query IDs to their predicted ModelPrediction.
@@ -308,7 +313,14 @@ class IconqModel:
         predictions: dict[str, ModelPrediction] = {}
         self._nn.eval()
         with torch.no_grad():
-            for x, x_len, pinch_points, _, query_ids in dataloader:
+            for (
+                x,
+                x_len,
+                pinch_points,
+                _,
+                query_ids,
+                tpcds_temp_and_q_idxs,
+            ) in dataloader:
                 x, x_len, pinch_points = (
                     x.to(self._device),
                     x_len.to(self._device),
@@ -327,10 +339,27 @@ class IconqModel:
                     y_pred_logvar = torch.expm1(y_pred_logvar)
 
                 for i, query_id in enumerate(query_ids):
+                    num_other_concurrent_queries = x_len[i].item() - 1
                     pred_meta = {
-                        "num_other_concurrent_queries": x_len[i].item() - 1
+                        "num_other_concurrent_queries": num_other_concurrent_queries
                     }
-                    if self._nn_args["is_mdn"]:
+                    if use_stage_for_isolated_queries and (
+                        num_other_concurrent_queries == 0
+                    ):
+                        rpu = x[i][pinch_points[i]][
+                            self._iconq_interaction_featurizer.rpu_dim_idx
+                        ].item()
+                        cluster_name = Cluster.ordered_cluster_names_per_rpu()[
+                            int(rpu)
+                        ][0]
+
+                        predictions[query_id] = (
+                            self.stage_model.predict_from_tpcds_temp_and_q_idx(
+                                {query_id: tpcds_temp_and_q_idxs[i]},
+                                cluster_name=cluster_name,
+                            )[query_id]
+                        )
+                    elif self._nn_args["is_mdn"]:
                         predictions[query_id] = ModelPrediction(
                             mean_s=[
                                 float(it) for it in y_pred_mean[i].tolist()

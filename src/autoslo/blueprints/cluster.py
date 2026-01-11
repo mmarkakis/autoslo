@@ -5,6 +5,7 @@ from psycopg2.pool import ThreadedConnectionPool
 import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_execution.conn_utils import ConnWithSetup
+from collections import defaultdict
 
 
 class Cluster:
@@ -102,24 +103,19 @@ class Cluster:
         return list(cls.all_cluster_configs().keys())
 
     @classmethod
-    def first_cluster_name_for_rpu(cls, rpu: int) -> str:
+    def ordered_cluster_names_per_rpu(cls) -> dict[int, list[str]]:
         """
-        Retrieve the first cluster name that matches the specified RPU size.
-
-        Parameters:
-            rpu: The RPU size to search for.
+        Retrieve the cluster_names for each RPU size in a consistent order.
 
         Returns:
-            The first cluster name with the specified RPU size.
-
-        Raises:
-            ValueError: If no cluster with the specified RPU size is found.
+            A list of cluster names that have the specified RPU size.
         """
+        d = defaultdict(list)
         for cluster_name, config in cls.all_cluster_configs().items():
-            if config.get("rpu", None) == rpu:
-                return cluster_name
-        
-        raise ValueError(f"No cluster found with RPU size {rpu}.")
+            rpu = config["rpu"]
+            d[rpu].append(cluster_name)
+
+        return {rpu: sorted(cluster_names) for rpu, cluster_names in d.items()}
 
     @staticmethod
     def from_config(cluster_name: str) -> "Cluster":

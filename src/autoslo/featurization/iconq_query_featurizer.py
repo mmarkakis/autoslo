@@ -477,9 +477,7 @@ class IconqQueryFeaturizer:
 
         if "plan_parameters" in plan and "op_name" in plan["plan_parameters"]:
             op = plan["plan_parameters"]["op_name"]
-            op = " ".join(
-                [word for word in op.split() if "tpcds" not in word]
-            )
+            op = " ".join([word for word in op.split() if "tpcds" not in word])
             if op in self._top_operators:
 
                 # Compute cardinality of the operator.
@@ -612,25 +610,64 @@ class IconqQueryFeaturizer:
 
         return featurizer
 
+    def table_access_pattern_cosine_similarity_from_tpcds_temp_and_q_idxs(
+        self,
+        tpcds_temp_and_q_idx_a: Trace.TPCDSTempAndQIdx,
+        tpcds_temp_and_q_idx_b: Trace.TPCDSTempAndQIdx,
+        binarize: float = False,
+    ) -> float:
+        """
+        Computes the cosine similarity between two queries based on their table
+        access patterns, given their TPC-DS template and query indices.
+
+        Parameters:
+            tpcds_temp_and_q_idx_a: The TPC-DS template and query index of the
+                first query.
+            tpcds_temp_and_q_idx_b: The TPC-DS template and query index of the
+                second query.
+            binarize: Whether to ignore the exact values of the table-related
+                features, instead only considering whether or not they are zero.
+
+        Returns:
+            A cosine similarity score between 0 and 1, where 1 means identical
+            table access patterns.
+        """
+        featurization_a = self.featurize_from_tpcds_temp_and_q_idx(
+            tpcds_temp_and_q_idx_a
+        )
+        featurization_b = self.featurize_from_tpcds_temp_and_q_idx(
+            tpcds_temp_and_q_idx_b
+        )
+        return self.table_access_pattern_cosine_similarity(
+            featurization_a, featurization_b, binarize
+        )
+
     def table_access_pattern_cosine_similarity(
         self,
         featurization_a: IconqQueryFeaturization,
         featurization_b: IconqQueryFeaturization,
+        binarize: float = False,
     ) -> float:
         """
-        Computes the cosine similarity between two queries based on their table 
+        Computes the cosine similarity between two queries based on their table
         access patterns.
 
         Parameters:
             featurization_a: The featurization of the first query.
             featurization_b: The featurization of the second query.
+            binarize: Whether to ignore the exact values of the table-related
+                features, instead only considering whether or not they are zero.
 
         Returns:
-            A cosine similarity score between 0 and 1, where 1 means identical 
+            A cosine similarity score between 0 and 1, where 1 means identical
             table access patterns.
         """
         table_features_a = featurization_a[2 * self._m :]
         table_features_b = featurization_b[2 * self._m :]
+
+        if binarize:
+            table_features_a = [int(f != 0) for f in table_features_a]
+            table_features_b = [int(f != 0) for f in table_features_b]
 
         dot_product = sum(
             a * b for a, b in zip(table_features_a, table_features_b)
@@ -643,3 +680,64 @@ class IconqQueryFeaturizer:
             return 0.0
 
         return dot_product / (norm_a * norm_b)
+
+
+    def table_access_pattern_coverage_from_tpcds_temp_and_q_idxs(
+        self,
+        tpcds_temp_and_q_idx_a: Trace.TPCDSTempAndQIdx,
+        tpcds_temp_and_q_idx_b: Trace.TPCDSTempAndQIdx,
+    ) -> float:
+        """
+        Computes the coverage between two queries based on their table
+        access patterns, given their TPC-DS template and query indices. Assume
+        that query A is the reference query, and query B is the query whose
+        coverage is being measured.
+
+        Parameters:
+            tpcds_temp_and_q_idx_a: The TPC-DS template and query index of the
+                first query.
+            tpcds_temp_and_q_idx_b: The TPC-DS template and query index of the
+                second query.
+
+        Returns:
+            A coverage score between 0 and 1, where 1 means query A had already
+            accessed all tables that query B accessed.
+        """
+        featurization_a = self.featurize_from_tpcds_temp_and_q_idx(
+            tpcds_temp_and_q_idx_a
+        )
+        featurization_b = self.featurize_from_tpcds_temp_and_q_idx(
+            tpcds_temp_and_q_idx_b
+        )
+        return self.table_access_pattern_coverage(
+            featurization_a, featurization_b
+        )
+
+    def table_access_pattern_coverage(
+        self,
+        featurization_a: IconqQueryFeaturization,
+        featurization_b: IconqQueryFeaturization,
+    ) -> float:
+        """
+        Computes the coverage between two queries based on their table
+        access patterns. Assume that query A is the reference query, and query B
+        is the query whose coverage is being measured.
+
+        Parameters:
+            featurization_a: The featurization of the first query.
+            featurization_b: The featurization of the second query.
+
+        Returns:
+            A coverage score between 0 and 1, where 1 means query A had already
+            accessed all tables that query B accessed.
+        """
+        table_features_a = featurization_a[2 * self._m :]
+        table_features_b = featurization_b[2 * self._m :]
+
+        numerator = sum([min(a, b) for a, b in zip(table_features_a, table_features_b)])
+        denominator = sum(table_features_b)
+
+        if denominator == 0:
+            return 1.0
+
+        return numerator / denominator
