@@ -1,0 +1,2971 @@
+benchmark_start: '2026-01-12T21:19:39.975787'
+base_workgroup_name: benchmark
+aws_region: us-east-1
+iterations_per_rpu: 5
+rpu_results:
+  rpu_4:
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu4-iter1
+        namespace_name: benchmark-rpu4-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 4
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 462.18
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T00:38:38.166316'
+        end: '2026-01-13T00:38:38.398919'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T00:38:38.398955'
+        end: '2026-01-13T00:38:38.537479'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T00:38:38.537529'
+        end: '2026-01-13T00:38:40.159578'
+        duration_seconds: 1.62
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T00:38:40.159634'
+        end: '2026-01-13T00:39:33.476818'
+        duration_seconds: 53.32
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T00:39:33.476872'
+        end: '2026-01-13T00:39:36.697372'
+        duration_seconds: 3.22
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T00:39:36.697422'
+        end: '2026-01-13T00:39:57.804443'
+        duration_seconds: 21.11
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T00:39:57.804493'
+        end: '2026-01-13T00:42:57.804679'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T00:42:57.804766'
+        end: '2026-01-13T00:42:58.171362'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T00:42:58.171393'
+        end: '2026-01-13T00:44:03.499749'
+        duration_seconds: 65.33
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T00:44:03.499813'
+        end: '2026-01-13T00:44:03.865581'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T00:44:03.865632'
+        end: '2026-01-13T00:46:20.341008'
+        duration_seconds: 136.48
+        success: true
+        skipped: false
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu4-iter3
+        namespace_name: benchmark-rpu4-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 4
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 557.31
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T01:20:54.763999'
+        end: '2026-01-13T01:20:55.007714'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T01:20:55.007757'
+        end: '2026-01-13T01:20:55.159752'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T01:20:55.159812'
+        end: '2026-01-13T01:20:56.704666'
+        duration_seconds: 1.54
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T01:20:56.704723'
+        end: '2026-01-13T01:22:10.081336'
+        duration_seconds: 73.38
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T01:22:10.081390'
+        end: '2026-01-13T01:22:14.711865'
+        duration_seconds: 4.63
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T01:22:14.711915'
+        end: '2026-01-13T01:23:48.040505'
+        duration_seconds: 93.33
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T01:23:48.040555'
+        end: '2026-01-13T01:26:48.040734'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T01:26:48.040864'
+        end: '2026-01-13T01:26:48.402184'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T01:26:48.402239'
+        end: '2026-01-13T01:28:00.358591'
+        duration_seconds: 71.96
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T01:28:00.358640'
+        end: '2026-01-13T01:28:00.703050'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T01:28:00.703103'
+        end: '2026-01-13T01:30:12.069298'
+        duration_seconds: 131.37
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu4-iter4
+        namespace_name: benchmark-rpu4-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 4
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 567.46
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T02:04:31.414232'
+        end: '2026-01-13T02:04:31.663037'
+        duration_seconds: 0.25
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T02:04:31.663079'
+        end: '2026-01-13T02:04:31.819366'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T02:04:31.819418'
+        end: '2026-01-13T02:04:33.335867'
+        duration_seconds: 1.52
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T02:04:33.335916'
+        end: '2026-01-13T02:05:27.056275'
+        duration_seconds: 53.72
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T02:05:27.056330'
+        end: '2026-01-13T02:05:35.603605'
+        duration_seconds: 8.55
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T02:05:35.603655'
+        end: '2026-01-13T02:07:32.524952'
+        duration_seconds: 116.92
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T02:07:32.525003'
+        end: '2026-01-13T02:10:32.525245'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T02:10:32.525340'
+        end: '2026-01-13T02:10:32.899143'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T02:10:32.899194'
+        end: '2026-01-13T02:11:36.691916'
+        duration_seconds: 63.79
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T02:11:36.691968'
+        end: '2026-01-13T02:11:37.021260'
+        duration_seconds: 0.33
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T02:11:37.021312'
+        end: '2026-01-13T02:13:58.871721'
+        duration_seconds: 141.85
+        success: true
+        skipped: false
+  - iteration: 5
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu4-iter5
+        namespace_name: benchmark-rpu4-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 4
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 571.88
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T02:27:12.423577'
+        end: '2026-01-13T02:27:12.657362'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T02:27:12.657390'
+        end: '2026-01-13T02:27:12.816817'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T02:27:12.816866'
+        end: '2026-01-13T02:27:14.465019'
+        duration_seconds: 1.65
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T02:27:14.465067'
+        end: '2026-01-13T02:28:09.285399'
+        duration_seconds: 54.82
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T02:28:09.285452'
+        end: '2026-01-13T02:28:12.587892'
+        duration_seconds: 3.3
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T02:28:12.587940'
+        end: '2026-01-13T02:30:17.587267'
+        duration_seconds: 125.0
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T02:30:17.587317'
+        end: '2026-01-13T02:33:17.587500'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T02:33:17.587590'
+        end: '2026-01-13T02:33:17.957947'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T02:33:17.958002'
+        end: '2026-01-13T02:34:30.729159'
+        duration_seconds: 72.77
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T02:34:30.729213'
+        end: '2026-01-13T02:34:31.110006'
+        duration_seconds: 0.38
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T02:34:31.110058'
+        end: '2026-01-13T02:36:44.306776'
+        duration_seconds: 133.2
+        success: true
+        skipped: false
+  - iteration: 2
+    success: false
+    data:
+      meta:
+        workgroup_name: benchmark-rpu4-iter2
+        namespace_name: benchmark-rpu4-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 4
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 326.8
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T03:09:44.619161'
+        end: '2026-01-13T03:09:44.845114'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T03:09:44.845151'
+        end: '2026-01-13T03:09:45.081678'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T03:09:45.081730'
+        end: '2026-01-13T03:09:46.648583'
+        duration_seconds: 1.57
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T03:09:46.648637'
+        end: '2026-01-13T03:10:45.224731'
+        duration_seconds: 58.58
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T03:10:45.224785'
+        end: '2026-01-13T03:10:48.530167'
+        duration_seconds: 3.31
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T03:10:48.530216'
+        end: '2026-01-13T03:11:09.943877'
+        duration_seconds: 21.41
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T03:11:09.943927'
+        end: '2026-01-13T03:14:09.944119'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T03:14:09.944205'
+        end: '2026-01-13T03:14:10.272418'
+        duration_seconds: 0.33
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T03:14:10.272469'
+        end: '2026-01-13T03:15:11.219878'
+        duration_seconds: 60.95
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T03:15:11.219930'
+        end: '2026-01-13T03:15:11.418481'
+        duration_seconds: 0.2
+        success: false
+        skipped: false
+  rpu_8:
+  - iteration: 5
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu8-iter5
+        namespace_name: benchmark-rpu8-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 8
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 468.02
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T21:19:39.976563'
+        end: '2026-01-12T21:19:40.237549'
+        duration_seconds: 0.26
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T21:19:40.237570'
+        end: '2026-01-12T21:19:40.332897'
+        duration_seconds: 0.1
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T21:19:40.332925'
+        end: '2026-01-12T21:19:41.814495'
+        duration_seconds: 1.48
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T21:19:41.814522'
+        end: '2026-01-12T21:20:25.078051'
+        duration_seconds: 43.26
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T21:20:25.078081'
+        end: '2026-01-12T21:20:27.377094'
+        duration_seconds: 2.3
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T21:20:27.377151'
+        end: '2026-01-12T21:20:39.861177'
+        duration_seconds: 12.48
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T21:20:39.861232'
+        end: '2026-01-12T21:23:39.861420'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T21:23:39.861524'
+        end: '2026-01-12T21:23:40.248471'
+        duration_seconds: 0.39
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T21:23:40.248539'
+        end: '2026-01-12T21:24:30.478067'
+        duration_seconds: 50.23
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T21:24:30.478181'
+        end: '2026-01-12T21:24:30.861217'
+        duration_seconds: 0.38
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T21:24:30.861273'
+        end: '2026-01-12T21:27:27.991194'
+        duration_seconds: 177.13
+        success: true
+        skipped: false
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu8-iter1
+        namespace_name: benchmark-rpu8-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 8
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 470.18
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T21:41:09.261299'
+        end: '2026-01-12T21:41:09.511186'
+        duration_seconds: 0.25
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T21:41:09.511233'
+        end: '2026-01-12T21:41:09.660740'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T21:41:09.660790'
+        end: '2026-01-12T21:41:11.320871'
+        duration_seconds: 1.66
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T21:41:11.320927'
+        end: '2026-01-12T21:41:55.955608'
+        duration_seconds: 44.63
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T21:41:55.955692'
+        end: '2026-01-12T21:41:58.237594'
+        duration_seconds: 2.28
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T21:41:58.237646'
+        end: '2026-01-12T21:42:10.930524'
+        duration_seconds: 12.69
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T21:42:10.930591'
+        end: '2026-01-12T21:45:10.930782'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T21:45:10.930906'
+        end: '2026-01-12T21:45:11.287529'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T21:45:11.287585'
+        end: '2026-01-12T21:46:27.903086'
+        duration_seconds: 76.62
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T21:46:27.903149'
+        end: '2026-01-12T21:46:28.231589'
+        duration_seconds: 0.33
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T21:46:28.231644'
+        end: '2026-01-12T21:48:59.439847'
+        duration_seconds: 151.21
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu8-iter4
+        namespace_name: benchmark-rpu8-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 8
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 425.98
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T23:48:42.836300'
+        end: '2026-01-12T23:48:43.161481'
+        duration_seconds: 0.33
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T23:48:43.161520'
+        end: '2026-01-12T23:48:43.316850'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T23:48:43.316899'
+        end: '2026-01-12T23:48:46.121652'
+        duration_seconds: 2.8
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T23:48:46.121706'
+        end: '2026-01-12T23:49:44.254708'
+        duration_seconds: 58.13
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T23:49:44.254765'
+        end: '2026-01-12T23:49:46.400140'
+        duration_seconds: 2.15
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T23:49:46.400189'
+        end: '2026-01-12T23:49:58.745940'
+        duration_seconds: 12.35
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T23:49:58.745988'
+        end: '2026-01-12T23:52:58.746173'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T23:52:58.746260'
+        end: '2026-01-12T23:52:59.159826'
+        duration_seconds: 0.41
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T23:52:59.159876'
+        end: '2026-01-12T23:53:46.069479'
+        duration_seconds: 46.91
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T23:53:46.069534'
+        end: '2026-01-12T23:53:46.414543'
+        duration_seconds: 0.35
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T23:53:46.414592'
+        end: '2026-01-12T23:55:48.819858'
+        duration_seconds: 122.41
+        success: true
+        skipped: false
+  - iteration: 2
+    success: false
+    data:
+      meta:
+        workgroup_name: benchmark-rpu8-iter2
+        namespace_name: benchmark-rpu8-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 8
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 292.71
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T00:20:24.162137'
+        end: '2026-01-13T00:20:24.409427'
+        duration_seconds: 0.25
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T00:20:24.409480'
+        end: '2026-01-13T00:20:24.570520'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T00:20:24.570577'
+        end: '2026-01-13T00:20:26.092425'
+        duration_seconds: 1.52
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T00:20:26.092475'
+        end: '2026-01-13T00:21:08.067313'
+        duration_seconds: 41.97
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T00:21:08.067367'
+        end: '2026-01-13T00:21:10.277893'
+        duration_seconds: 2.21
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T00:21:10.277947'
+        end: '2026-01-13T00:21:23.623073'
+        duration_seconds: 13.35
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T00:21:23.623127'
+        end: '2026-01-13T00:24:23.623314'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T00:24:23.623418'
+        end: '2026-01-13T00:24:24.052860'
+        duration_seconds: 0.43
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T00:24:24.052913'
+        end: '2026-01-13T00:25:16.685697'
+        duration_seconds: 52.63
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T00:25:16.685751'
+        end: '2026-01-13T00:25:16.867494'
+        duration_seconds: 0.18
+        success: false
+        skipped: false
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu8-iter3
+        namespace_name: benchmark-rpu8-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 8
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 424.64
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T03:18:11.653450'
+        end: '2026-01-13T03:18:11.883749'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T03:18:11.883781'
+        end: '2026-01-13T03:18:12.030496'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T03:18:12.030545'
+        end: '2026-01-13T03:18:13.857076'
+        duration_seconds: 1.83
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T03:18:13.857126'
+        end: '2026-01-13T03:19:05.459952'
+        duration_seconds: 51.6
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T03:19:05.460009'
+        end: '2026-01-13T03:19:07.628551'
+        duration_seconds: 2.17
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T03:19:07.628600'
+        end: '2026-01-13T03:19:20.165058'
+        duration_seconds: 12.54
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T03:19:20.165108'
+        end: '2026-01-13T03:22:20.165292'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T03:22:20.165380'
+        end: '2026-01-13T03:22:20.532015'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T03:22:20.532066'
+        end: '2026-01-13T03:23:09.386883'
+        duration_seconds: 48.85
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T03:23:09.386933'
+        end: '2026-01-13T03:23:09.731126'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T03:23:09.731182'
+        end: '2026-01-13T03:25:16.292850'
+        duration_seconds: 126.56
+        success: true
+        skipped: false
+  rpu_16:
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu16-iter3
+        namespace_name: benchmark-rpu16-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 16
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 461.16
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T21:30:28.047463'
+        end: '2026-01-12T21:30:28.315942'
+        duration_seconds: 0.27
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T21:30:28.316002'
+        end: '2026-01-12T21:30:28.486863'
+        duration_seconds: 0.17
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T21:30:28.486915'
+        end: '2026-01-12T21:30:30.194641'
+        duration_seconds: 1.71
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T21:30:30.194697'
+        end: '2026-01-12T21:31:09.889083'
+        duration_seconds: 39.69
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T21:31:09.889140'
+        end: '2026-01-12T21:31:12.296164'
+        duration_seconds: 2.41
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T21:31:12.296218'
+        end: '2026-01-12T21:31:25.133092'
+        duration_seconds: 12.84
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T21:31:25.133148'
+        end: '2026-01-12T21:34:25.133345'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T21:34:25.133441'
+        end: '2026-01-12T21:34:25.505106'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T21:34:25.505159'
+        end: '2026-01-12T21:35:12.314345'
+        duration_seconds: 46.81
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T21:35:12.314496'
+        end: '2026-01-12T21:35:12.675601'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T21:35:12.675654'
+        end: '2026-01-12T21:38:09.209587'
+        duration_seconds: 176.53
+        success: true
+        skipped: false
+  - iteration: 5
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu16-iter5
+        namespace_name: benchmark-rpu16-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 16
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 458.9
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T23:07:04.427493'
+        end: '2026-01-12T23:07:04.695034'
+        duration_seconds: 0.27
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T23:07:04.695077'
+        end: '2026-01-12T23:07:04.861490'
+        duration_seconds: 0.17
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T23:07:04.861541'
+        end: '2026-01-12T23:07:06.512543'
+        duration_seconds: 1.65
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T23:07:06.512595'
+        end: '2026-01-12T23:07:47.177081'
+        duration_seconds: 40.66
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T23:07:47.177136'
+        end: '2026-01-12T23:07:49.379984'
+        duration_seconds: 2.2
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T23:07:49.380035'
+        end: '2026-01-12T23:08:02.004238'
+        duration_seconds: 12.62
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T23:08:02.004287'
+        end: '2026-01-12T23:11:02.004471'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T23:11:02.004557'
+        end: '2026-01-12T23:11:02.383551'
+        duration_seconds: 0.38
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T23:11:02.383605'
+        end: '2026-01-12T23:12:18.269039'
+        duration_seconds: 75.89
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T23:12:18.269091'
+        end: '2026-01-12T23:12:18.587103'
+        duration_seconds: 0.32
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T23:12:18.587156'
+        end: '2026-01-12T23:14:43.328389'
+        duration_seconds: 144.74
+        success: true
+        skipped: false
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu16-iter1
+        namespace_name: benchmark-rpu16-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 16
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 468.01
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T23:17:43.442234'
+        end: '2026-01-12T23:17:43.674109'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T23:17:43.674147'
+        end: '2026-01-12T23:17:43.818244'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T23:17:43.818292'
+        end: '2026-01-12T23:17:45.480466'
+        duration_seconds: 1.66
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T23:17:45.480519'
+        end: '2026-01-12T23:18:56.186483'
+        duration_seconds: 70.71
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T23:18:56.186539'
+        end: '2026-01-12T23:18:58.419683'
+        duration_seconds: 2.23
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T23:18:58.419733'
+        end: '2026-01-12T23:19:11.380767'
+        duration_seconds: 12.96
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T23:19:11.380833'
+        end: '2026-01-12T23:22:11.381020'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T23:22:11.381106'
+        end: '2026-01-12T23:22:11.760858'
+        duration_seconds: 0.38
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T23:22:11.760908'
+        end: '2026-01-12T23:23:04.067534'
+        duration_seconds: 52.31
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T23:23:04.067588'
+        end: '2026-01-12T23:23:04.412384'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T23:23:04.412435'
+        end: '2026-01-12T23:25:31.454384'
+        duration_seconds: 147.04
+        success: true
+        skipped: false
+  - iteration: 2
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu16-iter2
+        namespace_name: benchmark-rpu16-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 16
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 437.1
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T23:28:31.573494'
+        end: '2026-01-12T23:28:31.800996'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T23:28:31.801032'
+        end: '2026-01-12T23:28:31.957687'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T23:28:31.957736'
+        end: '2026-01-12T23:28:33.537059'
+        duration_seconds: 1.58
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T23:28:33.537126'
+        end: '2026-01-12T23:29:19.637520'
+        duration_seconds: 46.1
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T23:29:19.637577'
+        end: '2026-01-12T23:29:21.828752'
+        duration_seconds: 2.19
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T23:29:21.828821'
+        end: '2026-01-12T23:29:34.573852'
+        duration_seconds: 12.75
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T23:29:34.573920'
+        end: '2026-01-12T23:32:34.574064'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T23:32:34.574171'
+        end: '2026-01-12T23:32:34.947740'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T23:32:34.947807'
+        end: '2026-01-12T23:33:28.770001'
+        duration_seconds: 53.82
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T23:33:28.770052'
+        end: '2026-01-12T23:33:29.110918'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T23:33:29.110967'
+        end: '2026-01-12T23:35:48.674279'
+        duration_seconds: 139.56
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu16-iter4
+        namespace_name: benchmark-rpu16-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 16
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 429.41
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T01:00:06.703484'
+        end: '2026-01-13T01:00:06.946876'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T01:00:06.946911'
+        end: '2026-01-13T01:00:07.084433'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T01:00:07.084484'
+        end: '2026-01-13T01:00:08.737509'
+        duration_seconds: 1.65
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T01:00:08.737564'
+        end: '2026-01-13T01:01:10.073631'
+        duration_seconds: 61.34
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T01:01:10.073684'
+        end: '2026-01-13T01:01:12.420449'
+        duration_seconds: 2.35
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T01:01:12.420498'
+        end: '2026-01-13T01:01:25.362411'
+        duration_seconds: 12.94
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T01:01:25.362463'
+        end: '2026-01-13T01:04:25.362654'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T01:04:25.362740'
+        end: '2026-01-13T01:04:25.836306'
+        duration_seconds: 0.47
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T01:04:25.836358'
+        end: '2026-01-13T01:05:05.843558'
+        duration_seconds: 40.01
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T01:05:05.843607'
+        end: '2026-01-13T01:05:06.287966'
+        duration_seconds: 0.44
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T01:05:06.288019'
+        end: '2026-01-13T01:07:16.111881'
+        duration_seconds: 129.82
+        success: true
+        skipped: false
+  rpu_32:
+  - iteration: 2
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu32-iter2
+        namespace_name: benchmark-rpu32-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 32
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 474.56
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T22:35:18.239367'
+        end: '2026-01-12T22:35:18.472198'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T22:35:18.472236'
+        end: '2026-01-12T22:35:18.626235'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T22:35:18.626288'
+        end: '2026-01-12T22:35:20.165331'
+        duration_seconds: 1.54
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T22:35:20.165387'
+        end: '2026-01-12T22:35:59.513446'
+        duration_seconds: 39.35
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T22:35:59.513500'
+        end: '2026-01-12T22:36:08.218171'
+        duration_seconds: 8.7
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T22:36:08.218225'
+        end: '2026-01-12T22:36:20.934290'
+        duration_seconds: 12.72
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T22:36:20.934342'
+        end: '2026-01-12T22:39:20.934523'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T22:39:20.934611'
+        end: '2026-01-12T22:39:21.346923'
+        duration_seconds: 0.41
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T22:39:21.346978'
+        end: '2026-01-12T22:40:06.383416'
+        duration_seconds: 45.04
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T22:40:06.383471'
+        end: '2026-01-12T22:40:06.705663'
+        duration_seconds: 0.32
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T22:40:06.705714'
+        end: '2026-01-12T22:43:12.800486'
+        duration_seconds: 186.09
+        success: true
+        skipped: false
+  - iteration: 5
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu32-iter5
+        namespace_name: benchmark-rpu32-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 32
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 416.57
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T23:58:48.954724'
+        end: '2026-01-12T23:58:49.175916'
+        duration_seconds: 0.22
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T23:58:49.175950'
+        end: '2026-01-12T23:58:49.320854'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T23:58:49.320903'
+        end: '2026-01-12T23:58:51.131583'
+        duration_seconds: 1.81
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T23:58:51.131639'
+        end: '2026-01-12T23:59:31.842496'
+        duration_seconds: 40.71
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T23:59:31.842548'
+        end: '2026-01-12T23:59:34.035618'
+        duration_seconds: 2.19
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T23:59:34.035669'
+        end: '2026-01-12T23:59:46.716965'
+        duration_seconds: 12.68
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T23:59:46.717015'
+        end: '2026-01-13T00:02:46.717194'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T00:02:46.717279'
+        end: '2026-01-13T00:02:47.096041'
+        duration_seconds: 0.38
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T00:02:47.096094'
+        end: '2026-01-13T00:03:35.646134'
+        duration_seconds: 48.55
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T00:03:35.646187'
+        end: '2026-01-13T00:03:35.993241'
+        duration_seconds: 0.35
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T00:03:35.993292'
+        end: '2026-01-13T00:05:45.519272'
+        duration_seconds: 129.53
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu32-iter4
+        namespace_name: benchmark-rpu32-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 32
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 458.27
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T01:10:16.315277'
+        end: '2026-01-13T01:10:16.568128'
+        duration_seconds: 0.25
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T01:10:16.568159'
+        end: '2026-01-13T01:10:16.728669'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T01:10:16.728720'
+        end: '2026-01-13T01:10:18.327373'
+        duration_seconds: 1.6
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T01:10:18.327429'
+        end: '2026-01-13T01:11:10.055142'
+        duration_seconds: 51.73
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T01:11:10.055196'
+        end: '2026-01-13T01:11:12.305014'
+        duration_seconds: 2.25
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T01:11:12.305066'
+        end: '2026-01-13T01:11:24.878652'
+        duration_seconds: 12.57
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T01:11:24.878706'
+        end: '2026-01-13T01:14:24.878903'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T01:14:24.878990'
+        end: '2026-01-13T01:14:25.300914'
+        duration_seconds: 0.42
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T01:14:25.300967'
+        end: '2026-01-13T01:15:26.657041'
+        duration_seconds: 61.36
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T01:15:26.657091'
+        end: '2026-01-13T01:15:27.005364'
+        duration_seconds: 0.35
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T01:15:27.005413'
+        end: '2026-01-13T01:17:54.586647'
+        duration_seconds: 147.58
+        success: true
+        skipped: false
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu32-iter1
+        namespace_name: benchmark-rpu32-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 32
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 480.07
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T02:47:59.717289'
+        end: '2026-01-13T02:47:59.998637'
+        duration_seconds: 0.28
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T02:47:59.998673'
+        end: '2026-01-13T02:48:00.151790'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T02:48:00.151852'
+        end: '2026-01-13T02:48:01.695482'
+        duration_seconds: 1.54
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T02:48:01.695533'
+        end: '2026-01-13T02:48:44.710849'
+        duration_seconds: 43.02
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T02:48:44.710904'
+        end: '2026-01-13T02:48:46.915277'
+        duration_seconds: 2.2
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T02:48:46.915328'
+        end: '2026-01-13T02:48:59.658898'
+        duration_seconds: 12.74
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T02:48:59.658947'
+        end: '2026-01-13T02:51:59.659135'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T02:51:59.659220'
+        end: '2026-01-13T02:52:00.025065'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T02:52:00.025117'
+        end: '2026-01-13T02:53:14.339426'
+        duration_seconds: 74.31
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T02:53:14.339475'
+        end: '2026-01-13T02:53:14.677782'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T02:53:14.677845'
+        end: '2026-01-13T02:55:59.784007'
+        duration_seconds: 165.11
+        success: true
+        skipped: false
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu32-iter3
+        namespace_name: benchmark-rpu32-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 32
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 464.41
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T02:59:00.010079'
+        end: '2026-01-13T02:59:00.241884'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T02:59:00.241921'
+        end: '2026-01-13T02:59:00.388547'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T02:59:00.388596'
+        end: '2026-01-13T02:59:02.101724'
+        duration_seconds: 1.71
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T02:59:02.101775'
+        end: '2026-01-13T02:59:41.565855'
+        duration_seconds: 39.46
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T02:59:41.565907'
+        end: '2026-01-13T02:59:43.759730'
+        duration_seconds: 2.19
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T02:59:43.759780'
+        end: '2026-01-13T02:59:56.465191'
+        duration_seconds: 12.71
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T02:59:56.465241'
+        end: '2026-01-13T03:02:56.465421'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T03:02:56.465509'
+        end: '2026-01-13T03:02:56.822135'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T03:02:56.822189'
+        end: '2026-01-13T03:03:42.876186'
+        duration_seconds: 46.05
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T03:03:42.876237'
+        end: '2026-01-13T03:03:43.270492'
+        duration_seconds: 0.39
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T03:03:43.270546'
+        end: '2026-01-13T03:06:44.418143'
+        duration_seconds: 181.15
+        success: true
+        skipped: false
+  rpu_64:
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu64-iter1
+        namespace_name: benchmark-rpu64-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 64
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 495.51
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T21:51:59.509409'
+        end: '2026-01-12T21:51:59.733500'
+        duration_seconds: 0.22
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T21:51:59.733551'
+        end: '2026-01-12T21:51:59.902046'
+        duration_seconds: 0.17
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T21:51:59.902099'
+        end: '2026-01-12T21:52:01.526651'
+        duration_seconds: 1.62
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T21:52:01.526706'
+        end: '2026-01-12T21:52:52.114672'
+        duration_seconds: 50.59
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T21:52:52.114726'
+        end: '2026-01-12T21:52:54.618980'
+        duration_seconds: 2.5
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T21:52:54.619035'
+        end: '2026-01-12T21:53:07.598574'
+        duration_seconds: 12.98
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T21:53:07.598631'
+        end: '2026-01-12T21:56:07.598853'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T21:56:07.598942'
+        end: '2026-01-12T21:56:07.967894'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T21:56:07.967949'
+        end: '2026-01-12T21:57:06.433252'
+        duration_seconds: 58.47
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T21:57:06.433306'
+        end: '2026-01-12T21:57:06.772524'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T21:57:06.772574'
+        end: '2026-01-12T22:00:15.023265'
+        duration_seconds: 188.25
+        success: true
+        skipped: false
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu64-iter3
+        namespace_name: benchmark-rpu64-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 64
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 433.18
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T22:13:54.929423'
+        end: '2026-01-12T22:13:55.189672'
+        duration_seconds: 0.26
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T22:13:55.189729'
+        end: '2026-01-12T22:13:55.350210'
+        duration_seconds: 0.16
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T22:13:55.350261'
+        end: '2026-01-12T22:13:56.990313'
+        duration_seconds: 1.64
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T22:13:56.990365'
+        end: '2026-01-12T22:14:45.099621'
+        duration_seconds: 48.11
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T22:14:45.099677'
+        end: '2026-01-12T22:14:47.312515'
+        duration_seconds: 2.21
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T22:14:47.312567'
+        end: '2026-01-12T22:14:59.872805'
+        duration_seconds: 12.56
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T22:14:59.872859'
+        end: '2026-01-12T22:17:59.873039'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T22:17:59.873126'
+        end: '2026-01-12T22:18:00.320083'
+        duration_seconds: 0.45
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T22:18:00.320139'
+        end: '2026-01-12T22:18:45.640295'
+        duration_seconds: 45.32
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T22:18:45.640347'
+        end: '2026-01-12T22:18:45.954963'
+        duration_seconds: 0.31
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T22:18:45.955019'
+        end: '2026-01-12T22:21:08.105714'
+        duration_seconds: 142.15
+        success: true
+        skipped: false
+  - iteration: 5
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu64-iter5
+        namespace_name: benchmark-rpu64-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 64
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 483.68
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T22:56:00.637537'
+        end: '2026-01-12T22:56:00.892091'
+        duration_seconds: 0.25
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T22:56:00.892137'
+        end: '2026-01-12T22:56:01.038230'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T22:56:01.038280'
+        end: '2026-01-12T22:56:02.682965'
+        duration_seconds: 1.64
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T22:56:02.683018'
+        end: '2026-01-12T22:57:01.698403'
+        duration_seconds: 59.02
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T22:57:01.698458'
+        end: '2026-01-12T22:57:04.930461'
+        duration_seconds: 3.23
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T22:57:04.930514'
+        end: '2026-01-12T22:57:17.627703'
+        duration_seconds: 12.7
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T22:57:17.627753'
+        end: '2026-01-12T23:00:17.627933'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T23:00:17.628038'
+        end: '2026-01-12T23:00:18.044321'
+        duration_seconds: 0.42
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T23:00:18.044375'
+        end: '2026-01-12T23:01:19.174302'
+        duration_seconds: 61.13
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T23:01:19.174353'
+        end: '2026-01-12T23:01:19.543995'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T23:01:19.544048'
+        end: '2026-01-12T23:04:04.320182'
+        duration_seconds: 164.78
+        success: true
+        skipped: false
+  - iteration: 2
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu64-iter2
+        namespace_name: benchmark-rpu64-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 64
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 480.61
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T01:53:30.606179'
+        end: '2026-01-13T01:53:30.843245'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T01:53:30.843276'
+        end: '2026-01-13T01:53:30.978446'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T01:53:30.978495'
+        end: '2026-01-13T01:53:32.606093'
+        duration_seconds: 1.63
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T01:53:32.606146'
+        end: '2026-01-13T01:54:34.425983'
+        duration_seconds: 61.82
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T01:54:34.426036'
+        end: '2026-01-13T01:54:36.588842'
+        duration_seconds: 2.16
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T01:54:36.588893'
+        end: '2026-01-13T01:54:49.389640'
+        duration_seconds: 12.8
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T01:54:49.389691'
+        end: '2026-01-13T01:57:49.389884'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T01:57:49.389969'
+        end: '2026-01-13T01:57:49.708852'
+        duration_seconds: 0.32
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T01:57:49.708903'
+        end: '2026-01-13T01:59:17.643709'
+        duration_seconds: 87.93
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T01:59:17.643762'
+        end: '2026-01-13T01:59:18.015343'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T01:59:18.015394'
+        end: '2026-01-13T02:01:31.213558'
+        duration_seconds: 133.2
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu64-iter4
+        namespace_name: benchmark-rpu64-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 64
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 433.14
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T02:16:59.076312'
+        end: '2026-01-13T02:16:59.314213'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T02:16:59.314240'
+        end: '2026-01-13T02:16:59.461378'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T02:16:59.461422'
+        end: '2026-01-13T02:17:01.087065'
+        duration_seconds: 1.63
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T02:17:01.087121'
+        end: '2026-01-13T02:17:44.688696'
+        duration_seconds: 43.6
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T02:17:44.688747'
+        end: '2026-01-13T02:17:46.881124'
+        duration_seconds: 2.19
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T02:17:46.881174'
+        end: '2026-01-13T02:17:59.292914'
+        duration_seconds: 12.41
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T02:17:59.292963'
+        end: '2026-01-13T02:20:59.293145'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T02:20:59.293230'
+        end: '2026-01-13T02:20:59.652956'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T02:20:59.653003'
+        end: '2026-01-13T02:21:51.385168'
+        duration_seconds: 51.73
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T02:21:51.385218'
+        end: '2026-01-13T02:21:51.737815'
+        duration_seconds: 0.35
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T02:21:51.737865'
+        end: '2026-01-13T02:24:12.214159'
+        duration_seconds: 140.48
+        success: true
+        skipped: false
+  rpu_128:
+  - iteration: 5
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu128-iter5
+        namespace_name: benchmark-rpu128-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 128
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 489.95
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T22:24:08.192455'
+        end: '2026-01-12T22:24:08.417941'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T22:24:08.417984'
+        end: '2026-01-12T22:24:08.558917'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T22:24:08.558968'
+        end: '2026-01-12T22:24:10.194649'
+        duration_seconds: 1.64
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T22:24:10.194705'
+        end: '2026-01-12T22:24:51.247481'
+        duration_seconds: 41.05
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T22:24:51.247535'
+        end: '2026-01-12T22:24:58.819847'
+        duration_seconds: 7.57
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T22:24:58.819896'
+        end: '2026-01-12T22:25:11.575082'
+        duration_seconds: 12.76
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T22:25:11.575133'
+        end: '2026-01-12T22:28:11.575316'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T22:28:11.575402'
+        end: '2026-01-12T22:28:11.932619'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T22:28:11.932676'
+        end: '2026-01-12T22:28:56.811724'
+        duration_seconds: 44.88
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T22:28:56.811775'
+        end: '2026-01-12T22:28:57.210409'
+        duration_seconds: 0.4
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T22:28:57.210457'
+        end: '2026-01-12T22:32:18.144383'
+        duration_seconds: 200.93
+        success: true
+        skipped: false
+  - iteration: 2
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu128-iter2
+        namespace_name: benchmark-rpu128-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 128
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 407.64
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T22:46:12.898771'
+        end: '2026-01-12T22:46:13.163829'
+        duration_seconds: 0.27
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T22:46:13.163872'
+        end: '2026-01-12T22:46:13.330007'
+        duration_seconds: 0.17
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T22:46:13.330056'
+        end: '2026-01-12T22:46:14.941349'
+        duration_seconds: 1.61
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T22:46:14.941405'
+        end: '2026-01-12T22:47:01.228719'
+        duration_seconds: 46.29
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T22:47:01.228771'
+        end: '2026-01-12T22:47:03.405418'
+        duration_seconds: 2.18
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T22:47:03.405469'
+        end: '2026-01-12T22:47:16.200743'
+        duration_seconds: 12.8
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T22:47:16.200805'
+        end: '2026-01-12T22:50:16.200985'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T22:50:16.201074'
+        end: '2026-01-12T22:50:16.559393'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T22:50:16.559449'
+        end: '2026-01-12T22:50:58.398511'
+        duration_seconds: 41.84
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T22:50:58.398564'
+        end: '2026-01-12T22:50:58.763510'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T22:50:58.763561'
+        end: '2026-01-12T22:53:00.535019'
+        duration_seconds: 121.77
+        success: true
+        skipped: false
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu128-iter3
+        namespace_name: benchmark-rpu128-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 128
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 413.91
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T23:38:48.799912'
+        end: '2026-01-12T23:38:49.033649'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T23:38:49.033688'
+        end: '2026-01-12T23:38:49.184554'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T23:38:49.184606'
+        end: '2026-01-12T23:38:50.897115'
+        duration_seconds: 1.71
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T23:38:50.897188'
+        end: '2026-01-12T23:39:41.195961'
+        duration_seconds: 50.3
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T23:39:41.196017'
+        end: '2026-01-12T23:39:43.378608'
+        duration_seconds: 2.18
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T23:39:43.378657'
+        end: '2026-01-12T23:39:55.956088'
+        duration_seconds: 12.58
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T23:39:55.956139'
+        end: '2026-01-12T23:42:55.956323'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T23:42:55.956410'
+        end: '2026-01-12T23:42:56.321364'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T23:42:56.321419'
+        end: '2026-01-12T23:43:45.327589'
+        duration_seconds: 49.01
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T23:43:45.327639'
+        end: '2026-01-12T23:43:45.652177'
+        duration_seconds: 0.32
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T23:43:45.652230'
+        end: '2026-01-12T23:45:42.708291'
+        duration_seconds: 117.06
+        success: true
+        skipped: false
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu128-iter1
+        namespace_name: benchmark-rpu128-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 128
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 441.0
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T00:28:17.015991'
+        end: '2026-01-13T00:28:17.250123'
+        duration_seconds: 0.23
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T00:28:17.250162'
+        end: '2026-01-13T00:28:17.387245'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T00:28:17.387296'
+        end: '2026-01-13T00:28:18.844288'
+        duration_seconds: 1.46
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T00:28:18.844342'
+        end: '2026-01-13T00:29:18.408708'
+        duration_seconds: 59.56
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T00:29:18.408762'
+        end: '2026-01-13T00:29:20.502273'
+        duration_seconds: 2.09
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T00:29:20.502324'
+        end: '2026-01-13T00:29:33.188151'
+        duration_seconds: 12.69
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T00:29:33.188200'
+        end: '2026-01-13T00:32:33.188383'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T00:32:33.188470'
+        end: '2026-01-13T00:32:33.553260'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T00:32:33.553317'
+        end: '2026-01-13T00:33:24.209121'
+        duration_seconds: 50.66
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T00:33:24.209175'
+        end: '2026-01-13T00:33:24.521750'
+        duration_seconds: 0.31
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T00:33:24.521812'
+        end: '2026-01-13T00:35:38.010530'
+        duration_seconds: 133.49
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu128-iter4
+        namespace_name: benchmark-rpu128-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 128
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 424.47
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T01:43:25.942999'
+        end: '2026-01-13T01:43:26.162839'
+        duration_seconds: 0.22
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T01:43:26.162879'
+        end: '2026-01-13T01:43:26.330917'
+        duration_seconds: 0.17
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T01:43:26.330970'
+        end: '2026-01-13T01:43:27.866011'
+        duration_seconds: 1.54
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T01:43:27.866063'
+        end: '2026-01-13T01:44:11.511542'
+        duration_seconds: 43.65
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T01:44:11.511593'
+        end: '2026-01-13T01:44:13.708989'
+        duration_seconds: 2.2
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T01:44:13.709041'
+        end: '2026-01-13T01:44:27.192748'
+        duration_seconds: 13.48
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T01:44:27.192812'
+        end: '2026-01-13T01:47:27.192991'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T01:47:27.193079'
+        end: '2026-01-13T01:47:27.541945'
+        duration_seconds: 0.35
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T01:47:27.541996'
+        end: '2026-01-13T01:48:23.618114'
+        duration_seconds: 56.08
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T01:48:23.618163'
+        end: '2026-01-13T01:48:23.970976'
+        duration_seconds: 0.35
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T01:48:23.971027'
+        end: '2026-01-13T01:50:30.411614'
+        duration_seconds: 126.44
+        success: true
+        skipped: false
+  rpu_256:
+  - iteration: 2
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu256-iter2
+        namespace_name: benchmark-rpu256-iter2-ns
+        aws_region: us-east-1
+        base_rpu: 256
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 459.75
+      steps:
+      - step: create_namespace
+        start: '2026-01-12T22:03:15.099123'
+        end: '2026-01-12T22:03:15.505584'
+        duration_seconds: 0.41
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-12T22:03:15.505644'
+        end: '2026-01-12T22:03:15.674490'
+        duration_seconds: 0.17
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-12T22:03:15.674545'
+        end: '2026-01-12T22:03:17.319187'
+        duration_seconds: 1.64
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-12T22:03:17.319245'
+        end: '2026-01-12T22:04:10.687990'
+        duration_seconds: 53.37
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-12T22:04:10.688043'
+        end: '2026-01-12T22:04:13.946598'
+        duration_seconds: 3.26
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-12T22:04:13.946650'
+        end: '2026-01-12T22:04:26.686514'
+        duration_seconds: 12.74
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-12T22:04:26.686566'
+        end: '2026-01-12T22:07:26.686768'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-12T22:07:26.686896'
+        end: '2026-01-12T22:07:27.135424'
+        duration_seconds: 0.45
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-12T22:07:27.135483'
+        end: '2026-01-12T22:08:30.017358'
+        duration_seconds: 62.88
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-12T22:08:30.017411'
+        end: '2026-01-12T22:08:30.426571'
+        duration_seconds: 0.41
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-12T22:08:30.426621'
+        end: '2026-01-12T22:10:54.848166'
+        duration_seconds: 144.42
+        success: true
+        skipped: false
+  - iteration: 1
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu256-iter1
+        namespace_name: benchmark-rpu256-iter1-ns
+        aws_region: us-east-1
+        base_rpu: 256
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 518.33
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T00:08:45.660293'
+        end: '2026-01-13T00:08:45.877888'
+        duration_seconds: 0.22
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T00:08:45.877918'
+        end: '2026-01-13T00:08:46.031680'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T00:08:46.031733'
+        end: '2026-01-13T00:08:47.741519'
+        duration_seconds: 1.71
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T00:08:47.741573'
+        end: '2026-01-13T00:09:39.023151'
+        duration_seconds: 51.28
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T00:09:39.023208'
+        end: '2026-01-13T00:09:42.277078'
+        duration_seconds: 3.25
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T00:09:42.277132'
+        end: '2026-01-13T00:09:54.954446'
+        duration_seconds: 12.68
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T00:09:54.954499'
+        end: '2026-01-13T00:12:54.954681'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T00:12:54.954766'
+        end: '2026-01-13T00:12:55.283561'
+        duration_seconds: 0.33
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T00:12:55.283612'
+        end: '2026-01-13T00:13:50.272721'
+        duration_seconds: 54.99
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T00:13:50.272775'
+        end: '2026-01-13T00:13:50.755456'
+        duration_seconds: 0.48
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T00:13:50.755507'
+        end: '2026-01-13T00:17:23.990555'
+        duration_seconds: 213.24
+        success: true
+        skipped: false
+  - iteration: 4
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu256-iter4
+        namespace_name: benchmark-rpu256-iter4-ns
+        aws_region: us-east-1
+        base_rpu: 256
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 466.03
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T00:49:20.502243'
+        end: '2026-01-13T00:49:20.740611'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T00:49:20.740640'
+        end: '2026-01-13T00:49:20.879097'
+        duration_seconds: 0.14
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T00:49:20.879148'
+        end: '2026-01-13T00:49:22.552348'
+        duration_seconds: 1.67
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T00:49:22.552399'
+        end: '2026-01-13T00:50:13.456473'
+        duration_seconds: 50.9
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T00:50:13.456526'
+        end: '2026-01-13T00:50:15.687864'
+        duration_seconds: 2.23
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T00:50:15.687917'
+        end: '2026-01-13T00:50:28.636530'
+        duration_seconds: 12.95
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T00:50:28.636579'
+        end: '2026-01-13T00:53:28.636759'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T00:53:28.636887'
+        end: '2026-01-13T00:53:29.008710'
+        duration_seconds: 0.37
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T00:53:29.008761'
+        end: '2026-01-13T00:54:40.675342'
+        duration_seconds: 71.67
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T00:54:40.675395'
+        end: '2026-01-13T00:54:41.016885'
+        duration_seconds: 0.34
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T00:54:41.016934'
+        end: '2026-01-13T00:57:06.535200'
+        duration_seconds: 145.52
+        success: true
+        skipped: false
+  - iteration: 3
+    success: true
+    data:
+      meta:
+        workgroup_name: benchmark-rpu256-iter3
+        namespace_name: benchmark-rpu256-iter3-ns
+        aws_region: us-east-1
+        base_rpu: 256
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 433.5
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T01:33:12.253958'
+        end: '2026-01-13T01:33:12.491463'
+        duration_seconds: 0.24
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T01:33:12.491497'
+        end: '2026-01-13T01:33:12.641234'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T01:33:12.641284'
+        end: '2026-01-13T01:33:14.256462'
+        duration_seconds: 1.62
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T01:33:14.256513'
+        end: '2026-01-13T01:34:08.907608'
+        duration_seconds: 54.65
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T01:34:08.907662'
+        end: '2026-01-13T01:34:12.189323'
+        duration_seconds: 3.28
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T01:34:12.189371'
+        end: '2026-01-13T01:34:25.398041'
+        duration_seconds: 13.21
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T01:34:25.398089'
+        end: '2026-01-13T01:37:25.398272'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T01:37:25.398359'
+        end: '2026-01-13T01:37:25.762899'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T01:37:25.762954'
+        end: '2026-01-13T01:38:16.904596'
+        duration_seconds: 51.14
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T01:38:16.904650'
+        end: '2026-01-13T01:38:17.261854'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_namespace_deleted
+        start: '2026-01-13T01:38:17.261904'
+        end: '2026-01-13T01:40:25.752599'
+        duration_seconds: 128.49
+        success: true
+        skipped: false
+  - iteration: 5
+    success: false
+    data:
+      meta:
+        workgroup_name: benchmark-rpu256-iter5
+        namespace_name: benchmark-rpu256-iter5-ns
+        aws_region: us-east-1
+        base_rpu: 256
+        schema_scales:
+        - 1
+        - 10
+        - 100
+        - 1000
+        - 3000
+        - 10000
+        skip_workgroup_creation: false
+        output_dir: /home/markakis/chunkbench/experiments/10_workgroup_initialization_benchmarking/logs
+      total_elapsed_seconds: 314.98
+      steps:
+      - step: create_namespace
+        start: '2026-01-13T02:39:44.523484'
+        end: '2026-01-13T02:39:44.741654'
+        duration_seconds: 0.22
+        success: true
+        skipped: false
+      - step: wait_for_namespace_available
+        start: '2026-01-13T02:39:44.741690'
+        end: '2026-01-13T02:39:44.896354'
+        duration_seconds: 0.15
+        success: true
+        skipped: false
+      - step: create_workgroup
+        start: '2026-01-13T02:39:44.896404'
+        end: '2026-01-13T02:39:46.565569'
+        duration_seconds: 1.67
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_available
+        start: '2026-01-13T02:39:46.565621'
+        end: '2026-01-13T02:40:36.543870'
+        duration_seconds: 49.98
+        success: true
+        skipped: false
+      - step: attach_tpcds_database
+        start: '2026-01-13T02:40:36.543960'
+        end: '2026-01-13T02:40:38.745370'
+        duration_seconds: 2.2
+        success: true
+        skipped: false
+      - step: create_external_schemas
+        start: '2026-01-13T02:40:38.745421'
+        end: '2026-01-13T02:40:51.709522'
+        duration_seconds: 12.96
+        success: true
+        skipped: false
+      - step: wait_before_deletion
+        start: '2026-01-13T02:40:51.709572'
+        end: '2026-01-13T02:43:51.709753'
+        duration_seconds: 180.0
+        success: null
+        skipped: false
+      - step: delete_workgroup
+        start: '2026-01-13T02:43:51.709876'
+        end: '2026-01-13T02:43:52.067586'
+        duration_seconds: 0.36
+        success: true
+        skipped: false
+      - step: wait_for_workgroup_deleted
+        start: '2026-01-13T02:43:52.067638'
+        end: '2026-01-13T02:44:59.297773'
+        duration_seconds: 67.23
+        success: true
+        skipped: false
+      - step: delete_namespace
+        start: '2026-01-13T02:44:59.297835'
+        end: '2026-01-13T02:44:59.498876'
+        duration_seconds: 0.2
+        success: false
+        skipped: false
+benchmark_end: '2026-01-13T03:25:16.534104'
+total_elapsed_seconds: 21936.56

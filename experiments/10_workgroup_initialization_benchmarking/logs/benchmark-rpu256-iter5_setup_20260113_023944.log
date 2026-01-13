@@ -1,0 +1,11 @@
+create_namespace: OK | start=2026-01-13T02:39:44.523484 | end=2026-01-13T02:39:44.741654 | duration=0.22s
+wait_for_namespace_available: OK | start=2026-01-13T02:39:44.741690 | end=2026-01-13T02:39:44.896354 | duration=0.15s
+create_workgroup: OK | start=2026-01-13T02:39:44.896404 | end=2026-01-13T02:39:46.565569 | duration=1.67s
+wait_for_workgroup_available: OK | start=2026-01-13T02:39:46.565621 | end=2026-01-13T02:40:36.543870 | duration=49.98s
+attach_tpcds_database: OK | start=2026-01-13T02:40:36.543960 | end=2026-01-13T02:40:38.745370 | duration=2.2s
+create_external_schemas: OK | start=2026-01-13T02:40:38.745421 | end=2026-01-13T02:40:51.709522 | duration=12.96s
+wait_before_deletion: FAIL | start=2026-01-13T02:40:51.709572 | end=2026-01-13T02:43:51.709753 | duration=180.0s
+delete_workgroup: OK | start=2026-01-13T02:43:51.709876 | end=2026-01-13T02:43:52.067586 | duration=0.36s
+wait_for_workgroup_deleted: OK | start=2026-01-13T02:43:52.067638 | end=2026-01-13T02:44:59.297773 | duration=67.23s
+delete_namespace: FAIL | start=2026-01-13T02:44:59.297835 | end=2026-01-13T02:44:59.498876 | duration=0.2s
+Total elapsed: 0:05:14.975801
