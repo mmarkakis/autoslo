@@ -1,0 +1,9 @@
+run_id: '1768351145'
+workload_name: interference_light_disruptive_v2
+num_queries: 4770
+scale_factor: 1000
+schema_name: ext_tpcds1000
+blueprint_name: single_8
+query_router_name: RFixed(fixed_cluster_name='cluster_8')
+maxconns: 1000
+closed_loop: false
