@@ -75,6 +75,13 @@ class IconqModelInitConfig:
         # runtime, as opposed to the runtime itself.
     )
 
+    use_fixed_window_radius_s: Optional[float] = (
+        None # The fixed window radius in seconds for selecting neighboring queries.
+    )
+    use_fixed_window_max_neighbors_per_side: Optional[int] = (
+        None # The maximum number of neighboring queries to consider on each side when using a fixed window.
+    )
+
 
 @dataclass
 class NNModelTrainConfig:
@@ -147,6 +154,10 @@ class NNModelTrainConfig:
 
     sensitive_q_error_loss_small_val: float = (
         5.0  # The small value for the sensitive Q-error loss.
+    )
+
+    penalize_based_on_overlap: bool = (
+        False  # Whether to penalize based on overlap in the sensitive Q-error loss.
     )
 
 
@@ -627,6 +638,42 @@ class IconqModel:
 
         return list(train_idx), list(val_idx), list(test_idx)
 
+    def _extract_lower_bounds_from_batch(self, x: torch.Tensor) -> torch.Tensor:
+        # x has shape (batch_size, seq_len, num_features)
+        # Across the batch size dimension, for each element of
+        # the sequence, extract the arrival time diff and sign
+        # using IconqInteractionFeaturizer.arrival_time_diff_dim_idx
+        # and IconqInteractionFeaturizer.sign_dim_idx. Then, of
+        # the entries that have a nonzero sign, compute the
+        # maximum arrival time diff per batch element. This
+        # will be used to penalize the loss based on overlap.
+        arrival_time_diffs = x[
+            :,
+            :,
+            self._iconq_interaction_featurizer.arrival_time_diff_dim_idx,
+        ]
+        signs = x[
+            :,
+            :,
+            self._iconq_interaction_featurizer.arrival_time_sign_dim_idx,
+        ]
+        max_arrival_time_diffs = []
+        for i in range(arrival_time_diffs.shape[0]):
+            diffs = arrival_time_diffs[i]
+            sgns = signs[i]
+            nonzero_diffs = diffs[sgns != 0]
+            if len(nonzero_diffs) > 0:
+                max_arrival_time_diffs.append(
+                    torch.max(nonzero_diffs).item()
+                )
+            else:
+                max_arrival_time_diffs.append(0.001)
+        max_arrival_time_diffs_tensor = torch.tensor(
+            max_arrival_time_diffs, device=self._device
+        )
+        return max_arrival_time_diffs_tensor
+
+
     def _run_training_loop(
         self,
         train_dataloader: DataLoader,
@@ -725,10 +772,15 @@ class IconqModel:
                         train_config.var_reg_weight,
                     )
                 else:
+                    min_val: float | torch.Tensor = 0.001
+                    if train_config.penalize_based_on_overlap:
+                        min_val = self._extract_lower_bounds_from_batch(x)
+
                     batch_loss = sensitive_q_error_loss(
                         y_pred_mean,
                         y,
                         small_val=train_config.sensitive_q_error_loss_small_val,
+                        min_val=min_val,
                     )
                 batch_loss.backward()
                 nn.utils.clip_grad_norm_(
@@ -977,10 +1029,18 @@ class IconqModel:
                             )
                         )
                 elif self._loss_type == LossType.SENSITIVE_Q_ERROR:
+                    min_val: float | torch.Tensor = 0.001
+                    if train_config.penalize_based_on_overlap:
+                        min_val = self._extract_lower_bounds_from_batch(x)
+
+
+
+
                     batch_loss = sensitive_q_error_loss(
                         y_pred_mean,
                         y,
                         small_val=train_config.sensitive_q_error_loss_small_val,
+                        min_val=min_val,
                     )
 
                     for m, y_, q, t, r, le in zip(

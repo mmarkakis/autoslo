@@ -16,8 +16,8 @@ init_config:
   stage_model_init_params: null
   train_on_log_runtime: true
   use_fixed_window_max_neighbors_per_side: null
-  use_fixed_window_radius_s: null
-model_id: '1768492742'
+  use_fixed_window_radius_s: 600.0
+model_id: '1768505334'
 parent_save_dir: /home/markakis/chunkbench/data/iconq_models
 train_config_sequence:
 - batch_size: 32

@@ -61,6 +61,30 @@ class IconqInteractionFeaturizer:
         """
         return 2 * self._iconq_query_featurizer.num_dims + 5
     
+    
+    
+    @property
+    def arrival_time_diff_dim_idx(self) -> int:
+        """
+        Returns the index of the arrival time difference feature in the
+        interaction feature vector.
+
+        Returns:
+            The index of the arrival time difference feature.
+        """
+        return self.num_dims - 3
+    
+    @property
+    def arrival_time_sign_dim_idx(self) -> int:
+        """
+        Returns the index of the arrival time sign feature in the interaction
+        feature vector.
+
+        Returns:
+            The index of the arrival time sign feature.
+        """
+        return self.num_dims - 2
+    
     @property
     def rpu_dim_idx(self) -> int:
         """

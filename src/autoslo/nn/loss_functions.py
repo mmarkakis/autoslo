@@ -124,7 +124,7 @@ def mdn_negative_log_likelihood_loss(
 def sensitive_q_error_loss(
     input: torch.Tensor,  # pylint: disable=redefined-builtin
     target: torch.Tensor,
-    min_val: float = 0.001,
+    min_val: float | torch.Tensor = 0.001,
     small_val: float = 5.0,
     penalty_negative: float = 1e5,
     lambda_small: float = 0.1,
@@ -157,8 +157,11 @@ def sensitive_q_error_loss(
 
     # Penalty for negative/too small estimates. influence on loss for a negative 
     # estimate is at least `penalty_negative`.
+    if isinstance(min_val, float):
+        min_val = torch.full_like(input, fill_value=min_val)
+
     negative_mask = input < min_val
-    negative_loss = (1 - input) * penalty_negative
+    negative_loss = (1 + torch.abs(input)) * penalty_negative
 
     # Use l1_loss for small values, q_loss would explode.
     small_mask = (input < small_val) & (target < small_val)

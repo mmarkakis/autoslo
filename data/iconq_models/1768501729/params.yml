@@ -15,9 +15,7 @@ init_config:
   stage_model_id: /home/markakis/chunkbench/data/stage_models/1768492742
   stage_model_init_params: null
   train_on_log_runtime: true
-  use_fixed_window_max_neighbors_per_side: null
-  use_fixed_window_radius_s: null
-model_id: '1768492742'
+model_id: '1768501729'
 parent_save_dir: /home/markakis/chunkbench/data/iconq_models
 train_config_sequence:
 - batch_size: 32
@@ -97,7 +95,7 @@ train_config_sequence:
   num_epochs: 100
   optuna_trials: 100
   patience: 5
-  penalize_based_on_overlap: false
+  penalize_based_on_overlap: true
   run_ids:
   - '1763346358'
   - '1763315325'

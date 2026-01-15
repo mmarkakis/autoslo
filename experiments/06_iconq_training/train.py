@@ -153,6 +153,7 @@ def train_iconq_model(
     run_ids: list[str],
     use_stage_for_isolated_queries: bool,
     explicit_run_ids_per_split: dict[str, list[str]] | None = None,
+    penalize_based_on_overlap: bool = False,
 ) -> str:
     """Trains an IconqModel and returns its ID."""
     iconq_model_init_config = IconqModelInitConfig(
@@ -161,12 +162,15 @@ def train_iconq_model(
         is_bayesian=False,
         is_mdn=False,
         train_on_log_runtime=True,
+        use_fixed_window_radius_s=600.0,
+        use_fixed_window_max_neighbors_per_side=None,
     )
     nn_model_train_config = NNModelTrainConfig(
         run_ids=run_ids,
         use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         explicit_run_ids_per_split=explicit_run_ids_per_split,
         sensitive_q_error_loss_small_val=5.0,
+        penalize_based_on_overlap=penalize_based_on_overlap,
     )
     iconq_model = IconqModel(
         init_config=iconq_model_init_config,
@@ -202,6 +206,11 @@ if __name__ == "__main__":
         "--use_explicit_run_ids",
         action="store_true",
         help="If set, use explicitly provided run IDs for each data splti for the Iconq model.",
+    )
+    parser.add_argument(
+        "--penalize_based_on_overlap",
+        action="store_true",
+        help="Whether to penalize based on overlap in the sensitive Q-error loss.",
     )
     args = parser.parse_args()
     print(
@@ -323,4 +332,5 @@ if __name__ == "__main__":
         run_ids=run_ids,
         use_stage_for_isolated_queries=args.use_stage_for_isolated_queries,
         explicit_run_ids_per_split=explicit_run_ids_per_split,
+        penalize_based_on_overlap=args.penalize_based_on_overlap,
     )
