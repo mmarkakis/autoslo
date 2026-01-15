@@ -36,7 +36,7 @@ class RFixed(QueryRouter):
                 f"cluster for RPU {rpu}."
             )
 
-        self._blueprint = Blueprint.from_config(f"single_({rpu})")
+        self._blueprint = Blueprint.from_config(f"single_{rpu}")
         if fixed_cluster_name not in self._blueprint.cluster_names:
             raise ValueError(
                 f"Cluster name {fixed_cluster_name} not found in blueprint."
