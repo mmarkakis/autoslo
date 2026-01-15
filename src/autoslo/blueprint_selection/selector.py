@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import datetime
 from math import isclose
+from typing import Optional
 
 import yaml
 from tqdm.auto import tqdm
@@ -19,8 +20,6 @@ from autoslo.models.iconq_model import IconqModel
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_execution.trace import Trace
 
-from typing import Optional
-
 
 class BlueprintSelector:
 
@@ -37,6 +36,9 @@ class BlueprintSelector:
         verbose: bool = False,
         export_video: bool = False,
         video_frame_duration: float = 1.0,
+        selector_run_id: Optional[str] = None,
+        optimize_cumulative_slo_violation_time: bool = False,
+        slo_violation_amount_threshold_s: float = 0.0,
     ) -> None:
         """
         Initialize a BlueprintSelector instance.
@@ -60,6 +62,12 @@ class BlueprintSelector:
                 optimization process.
             video_frame_duration: Duration in seconds for each frame in the
                 exported video (default: 1.0).
+            selector_run_id: Optional run ID to use for the selector run. If None,
+                a new run ID will be generated based on the current timestamp.
+            optimize_cumulative_slo_violation_time: Whether to optimize for the
+                cumulative SLO violation time instead of the violation rate.
+            slo_violation_amount_threshold_s: The threshold for acceptable
+                cumulative SLO violation time, in seconds.
         """
         self._workload_name = workload_name
         workload = Chunk.load(workload_name)  # FIXME: generalize to workloads.
@@ -76,6 +84,60 @@ class BlueprintSelector:
         self._export_video = export_video
         self._video_frame_duration = video_frame_duration
         self._solve_was_invoked = False
+        self._run_id = selector_run_id or str(int(datetime.now().timestamp()))
+        self._optimize_cumulative_slo_violation_time = (
+            optimize_cumulative_slo_violation_time
+        )
+        self._slo_violation_amount_threshold_s = (    
+            slo_violation_amount_threshold_s
+        )
+
+        self.log_buffer: list[str] = []
+
+        # Setup the outputs directory.
+        self._out_dir = os.path.join(
+            pu.get_data_path(), "selector_runs", self._run_id
+        )
+        os.makedirs(self._out_dir, exist_ok=True)
+        config_out_path = os.path.join(self._out_dir, "config.yml")
+        with open(config_out_path, "w") as f:
+            d = {
+                "selector_run_id": self._run_id,
+                "workload_name": self._workload_name,
+                "slo_s": self._slo_s,
+                "slo_violation_rate_threshold": self._slo_violation_rate_threshold,
+                "iconq_model_id": self._iconq_model_id,
+                "default_cluster_name": self._default_cluster_name,
+                "init_from_trace": self._init_from_trace,
+                "use_stage_for_isolated_queries": self._use_stage_for_isolated_queries,
+                "max_iters": self._max_iters,
+                "verbose": self._verbose,
+                "export_video": self._export_video,
+                "video_frame_duration": self._video_frame_duration,
+                "optimize_cumulative_slo_violation_time": (
+                    self._optimize_cumulative_slo_violation_time
+                ),
+                "slo_violation_amount_threshold_s": (
+                    self._slo_violation_amount_threshold_s
+                ),
+            }
+            yaml.safe_dump(d, f, sort_keys=False)
+
+        if self._verbose:
+            logging.basicConfig(
+                filename=os.path.join(self._out_dir, "solve.log"),
+                filemode="w",
+                level=logging.INFO,
+                format="%(asctime)s - %(levelname)s - %(message)s",
+            )
+            logging.info(
+                f"Starting blueprint selection solve for workload "
+                f"'{self._workload_name}' with SLO {self._slo_s}s and "
+                f"SLO violation rate threshold "
+                f"{self._slo_violation_rate_threshold}."
+                f" Optimize cumulative SLO violation time: {self._optimize_cumulative_slo_violation_time}"
+                f" SLO violation amount threshold: {self._slo_violation_amount_threshold_s}s"
+            )
 
         self._recorder: GanttRecorder
         if init_from_trace:
@@ -104,29 +166,6 @@ class BlueprintSelector:
                 self._bootstrap_query_timeline_from_workload()
             )
 
-        # Setup the outputs directory.
-        self._run_id = str(int(datetime.now().timestamp()))
-        self._out_dir = os.path.join(
-            pu.get_data_path(), "selector_runs", self._run_id
-        )
-        os.makedirs(self._out_dir, exist_ok=False)
-        config_out_path = os.path.join(self._out_dir, "config.yml")
-        with open(config_out_path, "w") as f:
-            d = {
-                "workload_name": self._workload_name,
-                "slo_s": self._slo_s,
-                "slo_violation_rate_threshold": self._slo_violation_rate_threshold,
-                "iconq_model_id": self._iconq_model_id,
-                "default_cluster_name": self._default_cluster_name,
-                "init_from_trace": self._init_from_trace,
-                "use_stage_for_isolated_queries": self._use_stage_for_isolated_queries,
-                "max_iters": self._max_iters,
-                "verbose": self._verbose,
-                "export_video": self._export_video,
-                "video_frame_duration": self._video_frame_duration,
-            }
-            yaml.safe_dump(d, f, sort_keys=False)
-
     def _bootstrap_query_timeline_from_workload(
         self,
     ) -> QueryTimeline:
@@ -136,12 +175,19 @@ class BlueprintSelector:
         Returns:
             A bootstrapped QueryTimeline instance.
         """
-
+        self._maybe_log(
+            (
+                f"Bootstrapping QueryTimeline from workload "
+                f"'{self._workload_name}' "
+                f"using IconqModel '{self._iconq_model_id}'."
+            ),
+            self._verbose,
+        )
         timeline = QueryTimeline(iconq_model=self._iconq_model)
 
         # Add the queries.
         for i, query in enumerate(self._workload.queries):
-            query_id = query.query_id
+            query_id = str(query.query_id)
             start_time_s = query.start_time_s
             temp_and_q_idx = query.tpcds_temp_and_q_idx
 
@@ -164,7 +210,9 @@ class BlueprintSelector:
 
             # Get a dataset of overlapping queries.
             dataset = timeline.get_dataset(
-                use_log_runtime=self._iconq_model._trained_on_log_runtime
+                use_log_runtime=self._iconq_model._trained_on_log_runtime,
+                use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+                use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
             )
 
             predictions = self._iconq_model.predict_from_dataset(
@@ -181,10 +229,16 @@ class BlueprintSelector:
 
         return timeline
 
-    @staticmethod
-    def _maybe_log(message: str, verbose: bool):
+    def _maybe_log(
+        self, message: str, verbose: bool, dump_after: int = 0
+    ) -> None:
         if verbose:
-            logging.info(message)
+            self.log_buffer.append(message)
+
+            if len(self.log_buffer) >= dump_after:
+                for log_msg in self.log_buffer:
+                    logging.info(log_msg)
+                self.log_buffer = []
 
     def solve(
         self,
@@ -203,26 +257,13 @@ class BlueprintSelector:
             self._query_timeline, label="Start", slo_s=self._slo_s
         )
 
-        if self._verbose:
-            logging.basicConfig(
-                filename=os.path.join(self._out_dir, "solve.log"),
-                level=logging.INFO,
-                format="%(asctime)s - %(levelname)s - %(message)s",
-            )
-            logging.info(
-                f"Starting blueprint selection solve for workload "
-                f"'{self._workload_name}' with SLO {self._slo_s}s and "
-                f"SLO violation rate threshold "
-                f"{self._slo_violation_rate_threshold}."
-            )
-
         # Phase I: SLO repair
         for it in range(self._max_iters):
             self._maybe_log(
                 f"Starting SLO repair iteration {it}.", self._verbose
             )
-            eligible_cluster_names = (
-                self._eligible_cluster_names_for_next_move()
+            eligible_cluster_names = self._eligible_cluster_names_for_next_move(
+                include_inactive=True
             )
             if not self._maybe_apply_best_move_for_slo(
                 eligible_cluster_names, it, self._verbose
@@ -238,8 +279,8 @@ class BlueprintSelector:
             self._maybe_log(
                 f"Starting cost reduction iteration {it}.", self._verbose
             )
-            eligible_cluster_names = (
-                self._eligible_cluster_names_for_next_move()
+            eligible_cluster_names = self._eligible_cluster_names_for_next_move(
+                include_inactive=False
             )
             if not self._maybe_apply_best_move_for_cost(
                 eligible_cluster_names, it, self._verbose
@@ -258,6 +299,9 @@ class BlueprintSelector:
         with open(mapping_out_path, "w") as f:
             yaml.safe_dump(mapping, f, sort_keys=False)
 
+        # Drain the log buffer.
+        self._maybe_log("Done.", self._verbose, dump_after=0)
+
         return mapping
 
     def write_out_timeline_visualization(self) -> None:
@@ -270,20 +314,20 @@ class BlueprintSelector:
             slo_s=self._slo_s,
             constant_layout=True,
             violation_rate_threshold=self._slo_violation_rate_threshold,
+            violation_amount_threshold=self._slo_violation_amount_threshold_s,
+            optimize_cumulative_slo_violation_time=(
+                self._optimize_cumulative_slo_violation_time
+            ),
             workload_name=self._workload_name,
         )
 
-        out_path = os.path.join(
-            self._out_dir, "visualization.html"
-        )
+        out_path = os.path.join(self._out_dir, "visualization.html")
 
         fig.write_html(out_path, auto_play=False, include_plotlyjs="cdn")
-        
+
         # Export video if requested
         if self._export_video:
-            video_out_path = os.path.join(
-                self._out_dir, "visualization.mp4"
-            )
+            video_out_path = os.path.join(self._out_dir, "visualization.mp4")
             export_gantt_video(
                 snapshots=self._recorder.snapshots,
                 slo_s=self._slo_s,
@@ -291,28 +335,43 @@ class BlueprintSelector:
                 frame_duration=self._video_frame_duration,
                 constant_layout=True,
                 violation_rate_threshold=self._slo_violation_rate_threshold,
+                violation_amount_threshold=self._slo_violation_amount_threshold_s,
+                optimize_cumulative_slo_violation_time=(
+                    self._optimize_cumulative_slo_violation_time
+                ),
                 workload_name=self._workload_name,
             )
-        
-    def _eligible_cluster_names_for_next_move(self) -> list[str]:
+
+    def _eligible_cluster_names_for_next_move(
+        self, include_inactive: bool
+    ) -> list[str]:
         """
         Get the list of eligible cluster names for the next move. These are the
-        clusters that already have at least one query assigned to them, plus at
-        most one additional cluster at each size.
+        clusters that already have at least one query assigned to them, plus
+        optionally one inactive cluster per RPU size.
+
+        Parameters:
+            include_inactive: Whether to include inactive clusters, at most
+                one per RPU size.
 
         Returns:
             A list of eligible cluster names.
         """
         ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
-        eligible_cluster_names: list[str] = []
+        eligible_cluster_names: set[str] = set(
+            self._query_timeline.active_clusters.copy()
+        )
+        if not include_inactive:
+            return sorted(list(eligible_cluster_names))
+
         for rpu, cluster_names in ordered_cluster_names_per_rpu.items():
             if rpu > 32:
                 continue  # Limit to clusters up to 32 RPUs for practicality.
             for cluster_name in cluster_names:
-                eligible_cluster_names.append(cluster_name)
+                eligible_cluster_names.add(cluster_name)
                 if cluster_name not in self._query_timeline.active_clusters:
                     break  # Only add at most one inactive cluster per RPU size.
-        return eligible_cluster_names
+        return sorted(list(eligible_cluster_names))
 
     def _slo_ok(self) -> tuple[float, bool]:
         """
@@ -324,13 +383,28 @@ class BlueprintSelector:
             is_ok: Whether the SLO violation rate is within the acceptable
                 threshold.
         """
-        slo_violation_rate = self._query_timeline.slo_violation_rate(
-            slo_s=self._slo_s
-        )
-        return (
-            slo_violation_rate,
-            slo_violation_rate <= self._slo_violation_rate_threshold,
-        )
+        if not self._optimize_cumulative_slo_violation_time:
+            slo_violation_rate = self._query_timeline.slo_violation_rate(
+                slo_s=self._slo_s
+            )
+            return (
+                slo_violation_rate,
+                slo_violation_rate <= self._slo_violation_rate_threshold,
+            )
+        else:
+            slo_violation_s = self._query_timeline.slo_violation_amount(
+                slo_s=self._slo_s
+            )
+            return (
+                slo_violation_s,
+                slo_violation_s <= self._slo_violation_amount_threshold_s
+            )
+        
+    def _fmt_rate_or_amount(self, rate_or_amount: float) -> str:
+        if not self._optimize_cumulative_slo_violation_time:
+            return f"rate: {rate_or_amount:.4f}"
+        else:
+            return f"amount: {rate_or_amount:.2f}s"
 
     def _maybe_apply_best_move_for_slo(
         self, eligible_cluster_names: list[str], iteration: int, verbose: bool
@@ -346,14 +420,15 @@ class BlueprintSelector:
         Returns:
             Whether a move was made.
         """
-        initial_slo_violation_rate, slo_ok = self._slo_ok()
+        initial_slo_violation, slo_ok = self._slo_ok()
+
         self._maybe_log(
-            f"Current SLO violation rate: {initial_slo_violation_rate:.4f}",
+            f"Current SLO violation {self._fmt_rate_or_amount(initial_slo_violation)}",
             verbose,
         )
         if slo_ok:
             self._maybe_log(
-                f"SLO violation rate is within acceptable threshold {self._slo_violation_rate_threshold}; no SLO-improving moves needed.",
+                f"SLO violation is within acceptable threshold; no SLO-improving moves needed.",
                 verbose,
             )
             return False
@@ -366,48 +441,49 @@ class BlueprintSelector:
 
         if not candidate_moves:
             self._maybe_log(
-                "No candidate moves found to improve SLO violation rate.",
+                "No candidate moves found to improve SLO violation.",
                 verbose,
             )
             return False
 
         best_move = None
-        best_slo_violation_rate = initial_slo_violation_rate
+        best_slo_violation = initial_slo_violation
 
         for move in candidate_moves:
-            self._maybe_log(f"Evaluating move: {move}", verbose)
+            self._maybe_log(f"Evaluating move: {move.pretty_print()}", verbose)
             inverse_move, old_latencies = self._query_timeline.apply_move(
                 move,
                 verbose=verbose,
                 use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
-            new_slo_violation_rate = self._query_timeline.slo_violation_rate(
-                slo_s=self._slo_s
-            )
+            new_slo_violation, slo_ok = self._slo_ok()
             self._maybe_log(
-                f"New SLO violation rate after move: {new_slo_violation_rate:.4f}",
+                f"New SLO violation {self._fmt_rate_or_amount(new_slo_violation)} after move (SLO OK: {slo_ok})",
                 verbose,
             )
 
-            if new_slo_violation_rate < best_slo_violation_rate:
+            if new_slo_violation < best_slo_violation:
                 self._maybe_log(
-                    f"Move improved SLO violation rate from "
-                    f"{initial_slo_violation_rate:.4f} to "
-                    f"{new_slo_violation_rate:.4f}.",
+                    f"Move improved SLO violation from "
+                    f"{self._fmt_rate_or_amount(initial_slo_violation)} to "
+                    f"{self._fmt_rate_or_amount(new_slo_violation)}.",
                     verbose,
                 )
-                best_slo_violation_rate = new_slo_violation_rate
+                best_slo_violation = new_slo_violation
                 best_move = move
 
-            self._maybe_log(f"Applying inverse move: {inverse_move}", verbose)
+            self._maybe_log(
+                f"Applying inverse move: {inverse_move.pretty_print()}", verbose
+            )
             self._query_timeline.apply_move(
                 inverse_move,
                 old_latencies,
                 verbose=verbose,
                 use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
+            undo_slo_violation, _ = self._slo_ok()
             self._maybe_log(
-                f"After undoing, SLO violation rate is {self._query_timeline.slo_violation_rate(slo_s=self._slo_s):.4f}",
+                f"After undoing, SLO violation {self._fmt_rate_or_amount(undo_slo_violation)}",
                 verbose,
             )
 
@@ -422,10 +498,10 @@ class BlueprintSelector:
         )
         self._maybe_log(
             f"SLO iteration {iteration}: "
-            f"reduced SLO violation rate from "
-            f"{initial_slo_violation_rate:.4f} to "
-            f"{best_slo_violation_rate:.4f} "
-            f"by applying move {best_move}.",
+            f"reduced SLO violation from "
+            f"{self._fmt_rate_or_amount(initial_slo_violation)} to "
+            f"{self._fmt_rate_or_amount(best_slo_violation)} "
+            f"by applying move {best_move.pretty_print()}.",
             verbose,
         )
         self._recorder.snapshot(
@@ -469,7 +545,7 @@ class BlueprintSelector:
         best_cost = initial_cost
 
         for move in candidate_moves:
-            self._maybe_log(f"Evaluating move: {move}", verbose)
+            self._maybe_log(f"Evaluating move: {move.pretty_print()}", verbose)
             inverse_move, old_latencies = self._query_timeline.apply_move(
                 move,
                 verbose=verbose,
@@ -504,12 +580,18 @@ class BlueprintSelector:
                 )
                 best_cost = new_cost
                 best_move = move
-            self._maybe_log(f"Applying inverse move: {inverse_move}", verbose)
+            self._maybe_log(
+                f"Applying inverse move: {inverse_move.pretty_print()}", verbose
+            )
             self._query_timeline.apply_move(
                 inverse_move,
                 old_latencies,
                 verbose=verbose,
                 use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
+            )
+            self._maybe_log(
+                f"After undoing, total cost is {self._query_timeline.total_cost():.4f}",
+                verbose,
             )
 
         if best_move is None:
@@ -526,7 +608,7 @@ class BlueprintSelector:
         self._maybe_log(
             f"Cost iteration {iteration}: "
             f"reduced cost from {initial_cost:.4f} to {best_cost:.4f} "
-            f"by applying move {best_move}.",
+            f"by applying move {best_move.pretty_print()}.",
             verbose,
         )
         self._recorder.snapshot(
@@ -582,7 +664,7 @@ class BlueprintSelector:
             )
             self._maybe_log(
                 f"Found {len(queries)} queries in interval "
-                f"{interval}: {queries}",
+                f"{interval}: {QueryTimeline._pretty_print_queries_in_window(queries)}",
                 verbose,
             )
             for query in queries:
@@ -592,11 +674,13 @@ class BlueprintSelector:
                     moves.append(
                         QueryMove(
                             query_id=query.data["query_id"],
+                            seq_num=query.data["seq_num"],
                             from_cluster_name=origin_cluster_name,
                             to_cluster_name=target_cluster_name,
                         )
                     )
         self._maybe_log(
-            f"Generated {len(moves)} candidate moves: {moves}", verbose
+            f"Generated {len(moves)} candidate moves: {[move.pretty_print() for move in moves]}",
+            verbose,
         )
         return moves
