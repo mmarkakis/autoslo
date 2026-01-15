@@ -11,6 +11,8 @@ import plotly.io as pio
 from autoslo.blueprints.cluster import Cluster
 from autoslo.workload_execution.trace import Trace
 
+from autoslo.utils.colors import Palette
+
 
 @dataclass(frozen=True)
 class GanttSnapshot:
@@ -25,6 +27,7 @@ class GanttSnapshot:
     violation_rate: float
     cost_per_cluster: dict[str, float] = None
     total_cost: float = 0.0
+    violation_amount: float = 0.0
 
 
 class GanttRecorder:
@@ -67,6 +70,7 @@ class GanttRecorder:
         # Compute snapshot metrics
         total_queries = len(getattr(obj, "query_ids", []))
         violating_queries = 0
+        violation_amount = 0.0
         if slo_s is not None and total_queries > 0:
             for qid in obj.query_ids:
                 interval = obj.interval_for_query_id(qid)
@@ -78,6 +82,7 @@ class GanttRecorder:
                 )
                 if latency > slo_val:
                     violating_queries += 1
+                    violation_amount += latency - slo_val
             violation_rate = violating_queries / total_queries
         else:
             violation_rate = 0.0
@@ -104,6 +109,7 @@ class GanttRecorder:
                 violation_rate=violation_rate,
                 total_cost=total_cost,
                 cost_per_cluster=cost_per_cluster,
+                violation_amount=violation_amount,
             )
         )
 
@@ -158,7 +164,11 @@ def _format_hover_text(
         f"Start: {s:.3f}s<br>"
         f"End: {e:.3f}s<br>"
         f"Duration: {dur:.3f}s<br>"
-        f"SLO: {slo_s:.3f}s"
+        f"SLO: {slo_s:.3f}s<br>"
+        f"Stage on 4 RPU Cluster: {meta['stage_model_predictions_per_rpu'][4]:.3f}s<br>"
+        f"Stage on 8 RPU Cluster: {meta['stage_model_predictions_per_rpu'][8]:.3f}s<br>"
+        f"Stage on 16 RPU Cluster: {meta['stage_model_predictions_per_rpu'][16]:.3f}s<br>"
+        f"Stage on 32 RPU Cluster: {meta['stage_model_predictions_per_rpu'][32]:.3f}s<br>"
     )
 
     return msg
@@ -245,9 +255,7 @@ def _build_shapes_for_snapshot(
                     y1 = y_pos + lane_idx + 1.2
 
                 is_over_slo = rel_e > slo_rel_e
-                fill = (
-                    "rgba(255,0,0,1.0)" if is_over_slo else "rgba(0,128,0,0.6)"
-                )
+                fill = Palette.dark_red if is_over_slo else Palette.light_green
                 shapes.append(
                     dict(
                         type="rect",
@@ -257,7 +265,7 @@ def _build_shapes_for_snapshot(
                         x1=rel_e,
                         y0=y0,
                         y1=y1,
-                        line=dict(color="black", width=1),
+                        line=dict(width=0),
                         fillcolor=fill,
                         layer="above",
                     )
@@ -344,13 +352,17 @@ def render_gantt_scrubber(
     constant_layout: bool = False,
     violation_rate_threshold: Optional[float] = None,
     workload_name: Optional[str] = None,
+    violation_amount_threshold: Optional[float] = None,
+    optimize_cumulative_slo_violation_time: bool = False,
 ) -> go.Figure:
     if not snapshots:
         raise ValueError("No snapshots to render")
-    
+
     # For subtitle, require slo_s to be a single float
     if workload_name is not None and not isinstance(slo_s, float):
-        raise ValueError("Subtitle can only be generated when slo_s is a single float value, not a dict")
+        raise ValueError(
+            "Subtitle can only be generated when slo_s is a single float value, not a dict"
+        )
 
     if constant_layout:
         # Build global layout plan
@@ -413,23 +425,35 @@ def render_gantt_scrubber(
 
     # Build per-snapshot annotations
     def _ann_for_snap(snap: GanttSnapshot):
-        txt = (
-            f"<b>SLO Violation Rate:</b> {snap.violation_rate*100:.1f}% "
-            f"({snap.violating_queries}/{snap.total_queries}) • "
-            f"<b>Cost:</b> ${snap.total_cost:,.2f}"
-        )
-        color = (
-            (
-                "red"
-                if (
-                    violation_rate_threshold is not None
-                    and snap.violation_rate > violation_rate_threshold
-                )
-                else "green"
+        txt:str
+        if optimize_cumulative_slo_violation_time:
+            txt = (
+                f"<b>Cumulative SLO Violation Time:</b> {snap.violation_amount:.1f}s "
+                f"• <b>Cost:</b> ${snap.total_cost:,.2f}"
             )
-            if violation_rate_threshold is not None
-            else "black"
-        )
+        else:
+            txt = (
+                f"<b>SLO Violation Rate:</b> {snap.violation_rate*100:.1f}% "
+                f"({snap.violating_queries}/{snap.total_queries}) • "
+                f"<b>Cost:</b> ${snap.total_cost:,.2f}"
+            )
+        color = Palette.black
+        if (
+            optimize_cumulative_slo_violation_time
+            and violation_amount_threshold is not None
+        ):
+            color = (
+                Palette.dark_red
+                if (snap.violation_amount > violation_amount_threshold)
+                else Palette.light_green
+            )
+        elif violation_rate_threshold is not None:
+            color = (
+                Palette.dark_red
+                if (snap.violation_rate > violation_rate_threshold)
+                else Palette.light_green
+            )
+
         return [
             dict(
                 xref="paper",
@@ -505,7 +529,7 @@ def render_gantt_scrubber(
     if workload_name is not None and isinstance(slo_s, float):
         title_dict = dict(
             text=title,
-            subtitle={'text': f"Workload: {workload_name} | SLO: {slo_s:.2f}s"}
+            subtitle={"text": f"Workload: {workload_name} | SLO: {slo_s:.2f}s"},
         )
 
     fig = go.Figure(
@@ -607,6 +631,8 @@ def export_gantt_video(
     workload_name: Optional[str] = None,
     width: int = 1400,
     height: int = 700,
+    violation_amount_threshold: Optional[float] = None,
+    optimize_cumulative_slo_violation_time: bool = False,
 ) -> None:
     """
     Export snapshots as a video where each snapshot is a frame.
@@ -622,6 +648,8 @@ def export_gantt_video(
         workload_name: Optional workload name for subtitle
         width: Video width in pixels (default: 1400)
         height: Video height in pixels (default: 700)
+        violation_amount_threshold: Optional threshold for highlighting violation amount
+        optimize_cumulative_slo_violation_time: Whether to optimize for cumulative SLO violation time
 
     Raises:
         ValueError: If snapshots list is empty or imageio is not installed
@@ -663,6 +691,8 @@ def export_gantt_video(
                 title=title,
                 constant_layout=constant_layout,
                 violation_rate_threshold=violation_rate_threshold,
+                violation_amount_threshold=violation_amount_threshold,
+                optimize_cumulative_slo_violation_time=optimize_cumulative_slo_violation_time,
                 workload_name=workload_name,
             )
 
@@ -674,7 +704,7 @@ def export_gantt_video(
                     temp_image_path,
                     width=width,
                     height=height,
-                    engine="kaleido"
+                    engine="kaleido",
                 )
             except Exception as e:
                 raise ValueError(

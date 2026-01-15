@@ -28,19 +28,22 @@ class QueryMove:
     """
 
     query_id: str
+    seq_num: int
     from_cluster_name: str
     to_cluster_name: str
 
     def inverse(self) -> "QueryMove":
         return QueryMove(
             query_id=self.query_id,
+            seq_num=self.seq_num,
             from_cluster_name=self.to_cluster_name,
             to_cluster_name=self.from_cluster_name,
         )
 
-    def __str__(self) -> str:
+    def pretty_print(self) -> str:
         return (
-            f"{Trace.redshift_query_id_from_query_id(self.query_id)}: "
+            f"{Trace.redshift_query_id_from_query_id(self.query_id)} "
+            f"(Seq Num {self.seq_num}): "
             f"{self.from_cluster_name} -> "
             f"{self.to_cluster_name}"
         )
@@ -146,6 +149,16 @@ class QueryTimeline:
             A list of query IDs.
         """
         return list(self._query_id_to_cluster_interval.keys())
+    
+    @property
+    def num_queries(self) -> int:
+        """
+        Get the number of queries in the timeline.
+
+        Returns:
+            The number of queries.
+        """
+        return len(self._query_id_to_cluster_interval)
 
     @property
     def active_clusters(self) -> list[str]:
@@ -241,7 +254,9 @@ class QueryTimeline:
         """
 
         dataset = self.get_dataset(
-            use_log_runtime=self._iconq_model.trained_on_log_runtime
+            use_log_runtime=self._iconq_model.trained_on_log_runtime,
+            use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
         )
         return self._iconq_model.predict_from_dataset(
             dataset,
@@ -307,10 +322,23 @@ class QueryTimeline:
         start_time_s: float = -float("inf"),
         end_time_s: float = float("inf"),
         skip_neighbors: bool = False,
+        use_fixed_window_radius_s: Optional[float] = None,
+        use_fixed_window_max_neighbors_per_side: Optional[int] = None,
     ) -> dict[Interval, list[Interval]]:
         """
         For each query that overlaps with the given time window on the specified
-        cluster, yield the query and all other queries that overlap with it.
+        cluster, yield a mapping from the query Interval to a list of its
+        neighboring query Intervals.
+
+        "Neighboring" queries can be defined in two ways:
+        - If use_fixed_window_radius_s is None, neighboring queries are those
+            that overlap in time with the base query, based on the latencies
+            currently stored in the timeline.
+        - If use_fixed_window_radius_s is provided, neighboring queries are
+            those that start within the fixed time radius (in seconds) around
+            the base query's start time, regardless of whether they overlap.
+            Optionally, the number of neighbors on each side of the base query
+            can be limited, using use_fixed_window_max_neighbors_per_side.
 
         Parameters:
             cluster_name: The name of the cluster to consider.
@@ -318,22 +346,90 @@ class QueryTimeline:
             end_time_s: The end time of the window (in seconds).
             skip_neighbors: Whether to skip finding overlapping neighbors, i.e.
                 just return an empty list for each query.
-
+            use_fixed_window_radius_s: Optional fixed time radius (in seconds)
+                around the base query's start time to consider neighbors.
+            use_fixed_window_max_neighbors_per_side: Optional maximum number of
+                neighbors to include on each side of the base query when using
+                a fixed window radius.
         Returns:
-            A dictionary mapping each query Interval to its list of overlapping
-                query Intervals.
+            A dictionary mapping each query Interval to its list of neighboring
+                query Intervals. The neighboring intervals will be sorted by
+                start time.
         """
         tree = self._interval_trees[cluster_name]
-        seeds = list(tree.overlap(start_time_s, end_time_s))
 
-        return {
-            a: (
-                []
-                if skip_neighbors
-                else [b for b in tree.overlap(a.begin, a.end) if b != a]
-            )
-            for a in seeds
+        overlap_res = (
+            tree.overlap(start_time_s, end_time_s)
+            if end_time_s > start_time_s
+            else tree.at(start_time_s)
+        )
+
+        intervals: dict[Interval, list[Interval]] = {
+            x: [] for x in sorted(overlap_res, key=lambda iv: iv.begin)
         }
+
+        if skip_neighbors:
+            return intervals
+
+        if use_fixed_window_radius_s is None:
+            for a in intervals.keys():
+                intervals[a] = sorted(
+                    [b for b in tree.overlap(a.begin, a.end) if b != a],
+                    key=lambda iv: iv.begin,
+                )
+            return intervals
+
+        for a in intervals.keys():
+            neighbors_before = sorted(
+                [
+                    b
+                    for b in tree
+                    if b.begin < a.begin
+                    and b.begin >= a.begin - use_fixed_window_radius_s
+                ],
+                key=lambda iv: iv.begin,
+            )
+            neighbors_after = sorted(
+                [
+                    b
+                    for b in tree
+                    if b.begin > a.begin
+                    and b.begin <= a.begin + use_fixed_window_radius_s
+                ],
+                key=lambda iv: iv.begin,
+            )
+            if use_fixed_window_max_neighbors_per_side is not None:
+                neighbors_before = neighbors_before[
+                    -use_fixed_window_max_neighbors_per_side:
+                ]
+                neighbors_after = neighbors_after[
+                    :use_fixed_window_max_neighbors_per_side
+                ]
+            intervals[a] = neighbors_before + neighbors_after
+        return intervals
+
+    @staticmethod
+    def _pretty_print_queries_in_window(
+        query_overlap_mapping: dict[Interval, list[Interval]],
+    ) -> str:
+        result_d = {}
+        for base_iv, overlapping_ivs in query_overlap_mapping.items():
+            result_d[base_iv.data["seq_num"]] = (
+                f"Query {Trace.redshift_query_id_from_query_id(base_iv.data['query_id'])} "
+                f"(Seq Num {base_iv.data['seq_num']}) "
+                f"({base_iv.begin:.4f}s - {base_iv.end:.4f}s) overlaps with: ["
+            )
+            for neighbor_iv in overlapping_ivs:
+                result_d[base_iv.data["seq_num"]] += (
+                    f"  - Query {Trace.redshift_query_id_from_query_id(neighbor_iv.data['query_id'])} "
+                    f"(Seq Num {neighbor_iv.data['seq_num']}) "
+                    f"({neighbor_iv.begin:.4f}s - {neighbor_iv.end:.4f}s)\n"
+                )
+            result_d[base_iv.data["seq_num"]] += "]\n"
+        result = ""
+        for seq_num in sorted(result_d.keys()):
+            result += result_d[seq_num]
+        return result
 
     def get_dataset(
         self,
@@ -341,6 +437,9 @@ class QueryTimeline:
         end_time_s: float = float("inf"),
         use_log_runtime: bool = True,
         run_id: Optional[str] = None,
+        cluster_name: Optional[str] = None,
+        use_fixed_window_radius_s: Optional[float] = None,
+        use_fixed_window_max_neighbors_per_side: Optional[int] = None,
     ) -> ConcurrentQueryDataset:
         """
         Get a ConcurrentQueryDataset representing the timeline.
@@ -351,6 +450,15 @@ class QueryTimeline:
             use_log_runtime: Whether to use the log of the runtime as the
                 target variable (log1p), or the runtime itself.
             run_id: The run ID associated with this dataset, if any.
+            cluster_name: If provided, only include queries from this cluster.
+            use_fixed_window_radius_s: If provided, include neighbors within
+                this time radius (in seconds) around each query, regardless of
+                whether they overlap.
+            use_fixed_window_max_neighbors_per_side: If provided, and
+                use_fixed_window_radius_s is also provided, limit the number of
+                neighbors on each side of the query (before and after) to this
+                number.
+
 
         Returns:
             A ConcurrentQueryDataset representing the timeline.
@@ -361,18 +469,26 @@ class QueryTimeline:
         query_ids = []
         tpcds_temp_and_q_idx = []
 
-        for cluster_name in self.active_clusters:
+        included_clusters = (
+            [cluster_name] if cluster_name is not None else self.active_clusters
+        )
 
-            cluster_rpu = Cluster.from_config(cluster_name).rpu
+        for cluster_name_local in included_clusters:
 
-            query_overlap_mapping = self.queries_in_window(
-                cluster_name=cluster_name,
+            cluster_rpu = Cluster.from_config(cluster_name_local).rpu
+
+            query_neighbor_mapping = self.queries_in_window(
+                cluster_name=cluster_name_local,
                 start_time_s=start_time_s,
                 end_time_s=end_time_s,
                 skip_neighbors=False,
+                use_fixed_window_radius_s=use_fixed_window_radius_s,
+                use_fixed_window_max_neighbors_per_side=(
+                    use_fixed_window_max_neighbors_per_side
+                ),
             )
 
-            for base_iv, overlapping_ivs in query_overlap_mapping.items():
+            for base_iv, neighbor_ivs in query_neighbor_mapping.items():
 
                 interaction_featurizations: dict[
                     float,
@@ -380,10 +496,10 @@ class QueryTimeline:
                 ] = {}
 
                 # Add oneself to the interaction featurizations. This helps with
-                # queries that do not have any overlapping neighbors.
+                # queries that do not have any neighbors.
                 interaction_featurizations[base_iv.begin] = (
                     self._iconq_interaction_featurizer.featurize_from_vectors(
-                        cluster_name=cluster_name,
+                        cluster_name=cluster_name_local,
                         qa_features=base_iv.data["featurization"],
                         qa_start_time_s=base_iv.begin,
                         qa_latency_prediction=base_iv.data[
@@ -397,12 +513,12 @@ class QueryTimeline:
                     )
                 )
 
-                # Collect the interaction featurizations with overlapping nodes.
-                for neighbor_iv in overlapping_ivs:
+                # Collect the interaction featurizations with neighboring nodes.
+                for neighbor_iv in neighbor_ivs:
 
                     interaction_featurizations[neighbor_iv.begin] = (
                         self._iconq_interaction_featurizer.featurize_from_vectors(
-                            cluster_name=cluster_name,
+                            cluster_name=cluster_name_local,
                             qa_features=base_iv.data["featurization"],
                             qa_start_time_s=base_iv.begin,
                             qa_latency_prediction=base_iv.data[
@@ -469,7 +585,7 @@ class QueryTimeline:
     def apply_move(
         self,
         move: QueryMove,
-        new_latencies: Optional[dict[str, float]] = None,
+        injected_latencies: Optional[dict[str, float]] = None,
         verbose: bool = False,
         use_stage_for_isolated_queries: bool = False,
     ) -> tuple[QueryMove, dict[str, float]]:
@@ -478,7 +594,7 @@ class QueryTimeline:
 
         Parameters:
             move: The QueryMove to apply.
-            new_latencies: Optional mapping from query IDs to their new
+            injected_latencies: Optional mapping from query IDs to their new
                 latencies (in seconds) to update after the move. If not provided,
                 updated latencies will be predicted using the IconqModel.
             verbose: Whether to log verbose output.
@@ -490,64 +606,215 @@ class QueryTimeline:
             old_latencies: A mapping from query IDs to their old
                 latencies (in seconds).
         """
-        self._maybe_log(f"Applying move: {move}", verbose)
+        # Bookkeeping for return values.
+        inverse_move = move.inverse()
+        old_latencies = {}
+
+        self._maybe_log(f"Applying move: {move.pretty_print()}", verbose)
         # Move to the new cluster and update the latency to be the defualt from
         # Stage.
         self._move_to_cluster(
             new_cluster_name=move.to_cluster_name, query_id=move.query_id
         )
-        self.update_latency(
-            query_id=move.query_id,
-            latency_s=self._query_id_to_cluster_interval[move.query_id][1].data[
-                "stage_model_predictions_per_rpu"
-            ][
-                Cluster.from_config(move.to_cluster_name).rpu
-            ],
+
+        # Maybe we have injected latencies to use directly.
+        if injected_latencies is not None:
+            log_message = f"Updated latencies after move (injected): \n"
+
+            for q_id, new_latency_s in injected_latencies.items():
+                old_latency_s = self.update_latency(
+                    query_id=q_id,
+                    latency_s=new_latency_s,
+                )
+                log_message += (
+                    f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                    f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                    f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+                )
+            self._maybe_log(log_message, verbose)
+            return inverse_move, old_latencies
+
+        self._maybe_log(
+            "No injected latencies provided, predicting updated latencies using IconqModel.",
+            verbose,
         )
 
-        if new_latencies is None:
-            interval = self.interval_for_query_id(query_id=move.query_id)
+        stage_pred_on_new_cluster = self._query_id_to_cluster_interval[
+            move.query_id
+        ][1].data["stage_model_predictions_per_rpu"][
+            Cluster.from_config(move.to_cluster_name).rpu
+        ]
+
+        old_latencies[move.query_id] = self.update_latency(
+            query_id=move.query_id,
+            latency_s=stage_pred_on_new_cluster,
+        )
+        self._maybe_log(
+            (
+                f"Immediately after move, we updated latency of moved query "
+                f"{move.query_id} (Seq Num {move.seq_num}) from "
+                f"{old_latencies[move.query_id]:.3f}s to "
+                f"{stage_pred_on_new_cluster:.3f}s"
+            ),
+            verbose,
+        )
+
+        predicted_latencies = {}
+
+        # First update latencies on the new cluster for the moved query.
+        interval = self.interval_for_query_id(query_id=move.query_id)
+        self._maybe_log(
+            f"Predicting latencies for interval ({interval.begin}, {interval.end}) on cluster {move.to_cluster_name} after move.",
+            verbose,
+        )
+        log_message = f"Updated latencies after move: \n"
+
+
+        # Do the queries active before the incoming one.
+        dataset = self.get_dataset(
+            start_time_s=interval.begin,
+            end_time_s=interval.begin,
+            use_log_runtime=self._iconq_model._trained_on_log_runtime,
+            cluster_name=move.to_cluster_name,
+            use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
+        )
+        predictions = self._iconq_model.predict_from_dataset(
+            dataset=dataset,
+            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
+        )
+        self._maybe_log(
+            f"Predictions: {self._pretty_print_predictions(predictions)}",
+            verbose,
+        )
+        for q_id, prediction in predictions.items():
+            if q_id not in old_latencies:
+                predicted_latency_s = prediction.overall_mean_s()
+
+                old_latency_s = self.update_latency(
+                    query_id=q_id,
+                    latency_s=predicted_latency_s,
+                    only_update_if_increased=True # Can only make past queries slower
+                )
+                new_latency_s = max(old_latency_s, predicted_latency_s)
+                log_message += (
+                    f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                    f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                    f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+                )
+            
+                old_latencies[q_id] = old_latency_s
+
+        # Do the queries active after the incoming one. For ease, we just
+        # do all the overlapping ones again and then don't update the ones we
+        # already did.
+        dataset = self.get_dataset(
+            start_time_s=interval.begin,
+            end_time_s=interval.end,
+            use_log_runtime=self._iconq_model._trained_on_log_runtime,
+            cluster_name=move.to_cluster_name,
+            use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
+        )
+        predictions = self._iconq_model.predict_from_dataset(
+            dataset=dataset,
+            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
+        )
+        self._maybe_log(
+            f"Predictions: {self._pretty_print_predictions(predictions)}",
+            verbose,
+        )
+        for q_id, prediction in predictions.items():
+            if q_id not in old_latencies:
+                predicted_latency_s = prediction.overall_mean_s()
+
+                old_latency_s = self.update_latency(
+                    query_id=q_id,
+                    latency_s=predicted_latency_s,
+                    only_update_if_increased=False, # These can go either way
+                )
+                new_latency_s = predicted_latency_s
+                log_message += (
+                    f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                    f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                    f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+                )
+                old_latencies[q_id] = old_latency_s
+
+        # Now update latencies on the old cluster for any affected queries.
+        original_end_time = interval.begin + old_latencies[move.query_id]
+        self._maybe_log(
+            f"Predicting latencies for interval ({interval.begin}, {original_end_time}) on cluster {move.from_cluster_name} after move.",
+            verbose,
+        )
+        dataset = self.get_dataset(
+            start_time_s=interval.begin,
+            end_time_s=original_end_time,
+            use_log_runtime=self._iconq_model._trained_on_log_runtime,
+            cluster_name=move.from_cluster_name,
+            use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
+        )
+        if not dataset.query_ids or len(dataset.query_ids) == 0:
             self._maybe_log(
-                f"Predicting latencies for interval {interval} after move.",
+                f"No relevant queries on cluster {move.from_cluster_name} after move.",
                 verbose,
             )
-            dataset = self.get_dataset(
-                start_time_s=interval.begin,
-                end_time_s=interval.end,
-                use_log_runtime=self._iconq_model._trained_on_log_runtime,
-            )
+        else:
             predictions = self._iconq_model.predict_from_dataset(
                 dataset=dataset,
                 use_stage_for_isolated_queries=use_stage_for_isolated_queries,
             )
-            self._maybe_log(f"Predictions: {predictions}", verbose)
-
-            new_latencies = {
-                q_id: prediction.overall_mean_s()
-                for q_id, prediction in predictions.items()
-            }
-
-        inverse_move = move.inverse()
-        old_latencies = {}
-
-        for q_id, new_latency_s in new_latencies.items():
-            old_latency_s = self.update_latency(
-                query_id=q_id,
-                latency_s=new_latency_s,
-            )
             self._maybe_log(
-                f"Updated latency for query {Trace.redshift_query_id_from_query_id(q_id)}"
-                f"from {old_latency_s:.4f}s to {new_latency_s:.4f}s",
+                f"Predictions: {self._pretty_print_predictions(predictions)}",
                 verbose,
             )
-            old_latencies[q_id] = old_latency_s
+            for q_id, prediction in predictions.items():
 
+                if q_id not in old_latencies:
+                    predicted_latency_s = prediction.overall_mean_s()
+
+                    old_latency_s = self.update_latency(
+                        query_id=q_id,
+                        latency_s=predicted_latency_s,
+                        only_update_if_increased=False, # These can go either way
+                    )
+                    new_latency_s = predicted_latency_s
+                    log_message += (
+                        f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                        f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                        f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+                    )
+                    old_latencies[q_id] = old_latency_s
+           
+        self._maybe_log(log_message, verbose)
         return inverse_move, old_latencies
+
+    def _pretty_print_predictions(
+        self, predictions: dict[str, ModelPrediction]
+    ) -> str:
+        result_d = {}
+
+        for query_id, prediction in predictions.items():
+            seq_num = self._query_id_to_cluster_interval[query_id][1].data[
+                "seq_num"
+            ]
+            result_d[seq_num] = (
+                f"Query {Trace.redshift_query_id_from_query_id(query_id)} "
+                f"(Seq Num {seq_num}): "
+                f"{prediction.overall_mean_s():.4f}s, "
+            )
+
+        result = ""
+        for seq_num in sorted(result_d.keys()):
+            result += result_d[seq_num]
+        return result
 
     def update_latency(
         self,
         query_id: str,
         latency_s: float,
+        only_update_if_increased: bool = False,
     ) -> float:
         """
         Update the latency of a query in the timeline.
@@ -555,6 +822,8 @@ class QueryTimeline:
         Parameters:
             query_id: The ID of the query to update.
             latency_s: The new latency of the query (in seconds).
+            only_update_if_increased: If True, only update the latency if the
+                new latency is greater than the old latency.
 
         Returns:
             The old latency of the query (in seconds).
@@ -571,6 +840,10 @@ class QueryTimeline:
             query_id
         ]
         old_latency_s = old_interval.end - old_interval.begin
+
+        if only_update_if_increased and latency_s <= old_latency_s:
+            return old_latency_s
+
         new_interval = Interval(
             begin=old_interval.begin,
             end=old_interval.begin + latency_s,
@@ -644,6 +917,35 @@ class QueryTimeline:
             return 0.0
 
         return violating_queries / total_queries
+    
+    def slo_violation_amount(
+            self, slo_s: float | dict[str, float],) -> float:
+        """
+        Calculate the cumulative SLO violation amount for the timeline.
+
+        Parameters:
+            slo_s: The SLO threshold (in seconds), or a mapping from query ids
+                to SLO thresholds.
+
+        Returns:
+            The cumulative SLO violation amount in seconds.
+        """
+        total_violation_amount = 0.0
+
+        for query_id, (
+            _,
+            interval,
+        ) in self._query_id_to_cluster_interval.items():
+            latency = interval.end - interval.begin
+            if isinstance(slo_s, dict):
+                slo_for_query = slo_s[query_id]
+            else:
+                slo_for_query = slo_s
+            violation_amount = latency - slo_for_query
+            if violation_amount > 0:
+                total_violation_amount += violation_amount
+
+        return total_violation_amount
 
     def find_intervals_by_slo_adherence(
         self,
