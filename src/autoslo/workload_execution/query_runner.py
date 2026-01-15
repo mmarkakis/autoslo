@@ -35,6 +35,12 @@ class QueryRunner:
                 "benchmarking_workloads",
                 f"{self.workload_name}.parquet",
             )
+        elif self.workload_name.startswith("interference_"):
+            self.workload_path = os.path.join(
+                pu.get_data_path(),
+                "interference_workloads",
+                f"{self.workload_name}.parquet",
+            )
         else:
             self.workload_path = os.path.join(
                 pu.get_data_path(),
@@ -86,7 +92,6 @@ class QueryRunner:
         self.query_router_name = args.query_router_name
         self.query_router = QueryRouter.from_name(
             args.query_router_name,
-            blueprint=self.blueprint,
         )
         self.closed_loop = args.closed_loop
 

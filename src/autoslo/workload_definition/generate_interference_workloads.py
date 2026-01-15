@@ -156,6 +156,7 @@ def synthesize_workload(
 #
 LIGHT_COMPLIANT_TEMPLATE_IDS = [42,52,55,98]
 LIGHT_DISRUPTIVE_TEMPLATE_IDS = [41,8,61]
+LIGHT_DISRUPTIVE_TEMPLATE_IDS_V2 = [21, 32]
 HEAVY_COMPLIANT_TEMPLATE_IDS = [47,67]
 HEAVY_DISRUPTIVE_TEMPLATE_IDS = [64,72,78]
 
@@ -164,7 +165,7 @@ HEAVY_DISRUPTIVE_TEMPLATE_IDS = [64,72,78]
 # starting at the 10 minute mark.
 TEN_MINUTES_S = 10 * 60.0
 synthesize_workload(
-    workload_name="light_compliant",
+    workload_name="interference_light_compliant",
     regular_workload_duration_s=3 * TEN_MINUTES_S,
     regular_workload_template_ids=LIGHT_COMPLIANT_TEMPLATE_IDS,
     regular_workload_num_queries_per_template=3,
@@ -179,7 +180,7 @@ synthesize_workload(
 )
 
 synthesize_workload(
-    workload_name="light_disruptive",
+    workload_name="interference_light_disruptive",
     regular_workload_duration_s=3 * TEN_MINUTES_S,
     regular_workload_template_ids=LIGHT_COMPLIANT_TEMPLATE_IDS,
     regular_workload_num_queries_per_template=3,
@@ -194,7 +195,7 @@ synthesize_workload(
 )
 
 synthesize_workload(
-    workload_name="heavy_compliant",
+    workload_name="interference_heavy_compliant",
     regular_workload_duration_s=3 * TEN_MINUTES_S,
     regular_workload_template_ids=LIGHT_COMPLIANT_TEMPLATE_IDS,
     regular_workload_num_queries_per_template=3,
@@ -209,7 +210,7 @@ synthesize_workload(
 )
 
 synthesize_workload(
-    workload_name="heavy_disruptive",
+    workload_name="interference_heavy_disruptive",
     regular_workload_duration_s=3 * TEN_MINUTES_S,
     regular_workload_template_ids=LIGHT_COMPLIANT_TEMPLATE_IDS,
     regular_workload_num_queries_per_template=3,
@@ -221,4 +222,19 @@ synthesize_workload(
     interference_workload_num_queries_per_template=3,
     interference_workload_mean_interarrival_s=90.0,
     interference_workload_stddev_interarrival_s=30.0,
+)
+
+synthesize_workload(
+    workload_name="interference_light_disruptive_v2",
+    regular_workload_duration_s=3 * TEN_MINUTES_S,
+    regular_workload_template_ids=LIGHT_COMPLIANT_TEMPLATE_IDS,
+    regular_workload_num_queries_per_template=3,
+    regular_workload_mean_interarrival_s=0.5,
+    regular_workload_stddev_interarrival_s=0.25,
+    interference_workload_relative_start_time_s=TEN_MINUTES_S,
+    interference_workload_duration_s=TEN_MINUTES_S,
+    interference_workload_template_ids=LIGHT_DISRUPTIVE_TEMPLATE_IDS_V2,
+    interference_workload_num_queries_per_template=3,
+    interference_workload_mean_interarrival_s=0.5,
+    interference_workload_stddev_interarrival_s=0.25,
 )
