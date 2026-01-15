@@ -15,6 +15,8 @@ from autoslo.models.iconq_model_trainer import iconq_model_trainer
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
 
+from datetime import datetime
+
 
 def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
     """Finds all relevant run IDs for training IconQ models."""
@@ -164,7 +166,7 @@ def train_iconq_model(
         run_ids=run_ids,
         use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         explicit_run_ids_per_split=explicit_run_ids_per_split,
-        sensitive_q_error_loss_small_val=120.0
+        sensitive_q_error_loss_small_val=5.0,
     )
     iconq_model = IconqModel(
         init_config=iconq_model_init_config,
@@ -180,6 +182,11 @@ def train_iconq_model(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Trains an IconqModel step-by-step, caching progress."
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Whether to force re-training even if cached progress exists.",
     )
     parser.add_argument(
         "--only_non_overlapping_queries",
@@ -211,8 +218,23 @@ if __name__ == "__main__":
     cached_progress = {}
 
     if os.path.exists(progress_cache_path):
-        with open(progress_cache_path, "r") as f:
-            cached_progress = yaml.safe_load(f)
+        if args.force:
+            ts_for_old_filename = str(int(datetime.now().timestamp()))
+            print(
+                f"Forcing re-training. Moving old cached progress to progress_cache_{ts_for_old_filename}.yml"
+            )
+            os.rename(
+                progress_cache_path,
+                os.path.join(
+                    pu.AUTOSLO_ROOT,
+                    "experiments",
+                    "06_iconq_training",
+                    f"progress_cache_{ts_for_old_filename}.yml",
+                ),
+            )
+        else:
+            with open(progress_cache_path, "r") as f:
+                cached_progress = yaml.safe_load(f)
 
     print("Step 1: Finding run IDs...")
     if "run_ids" not in cached_progress:
@@ -240,11 +262,16 @@ if __name__ == "__main__":
         print("\tUsing cached featurizer ID.")
         featurizer_id = cached_progress["featurizer_id"]
 
+    train_val_run_ids = (
+        cached_progress["train_val_test_assignments"]["train"]
+        + cached_progress["train_val_test_assignments"]["val"]
+    )
+
     print("Step 3: Training CacheModel...")
     if "cache_model_id" not in cached_progress:
         print("\tCacheModel not cached. Training...")
         cache_model_id = train_cache_model(
-            run_ids,
+            train_val_run_ids if args.use_explicit_run_ids else run_ids,
             only_non_overlapping_queries=args.only_non_overlapping_queries,
         )
         cached_progress["cache_model_id"] = cache_model_id
@@ -259,7 +286,7 @@ if __name__ == "__main__":
         print("\tXGBoostModel not cached. Training...")
         xgboost_model_id = train_xgboost_model(
             iconq_query_featurizer_id=featurizer_id,
-            run_ids=run_ids,
+            run_ids=train_val_run_ids if args.use_explicit_run_ids else run_ids,
             only_non_overlapping_queries=args.only_non_overlapping_queries,
         )
         cached_progress["xgboost_model_id"] = xgboost_model_id
