@@ -34,7 +34,8 @@ def iconq_model_trainer(  # pylint: disable=arguments-differ,too-many-locals
         query_timeline = QueryTimeline(iconq_model=iconq_model)
         query_timeline.initialize_from_trace(trace)
         dataset = query_timeline.get_dataset(
-            use_log_runtime=iconq_model.trained_on_log_runtime
+            use_log_runtime=iconq_model.trained_on_log_runtime, 
+            run_id = run_id
         )
         datasets.append(dataset)
     overall_dataset = ConcurrentQueryDataset.concatenate(datasets)

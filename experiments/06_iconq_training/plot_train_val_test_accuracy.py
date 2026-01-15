@@ -1,0 +1,305 @@
+import argparse
+import os
+import pickle
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from torch.utils.data import Subset
+from tqdm.auto import tqdm
+
+import autoslo.utils.paths as pu
+from autoslo.blueprint_selection.query_timeline import QueryTimeline
+from autoslo.models.iconq_model import IconqModel
+from autoslo.models.model_prediction import ModelPrediction
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.utils.colors import Palette
+from autoslo.workload_execution.trace import Trace
+
+
+def plot_true_predicted(
+    ax: plt.Axes,
+    title: str,
+    true_y: pd.Series,
+    predicted_y: dict[str, ModelPrediction],
+):
+    color_if_alone = Palette.dark_green
+    color_if_overlapped = Palette.dark_blue
+
+    points_x = []
+    points_y = []
+    colors = []
+    for query_id, true_latency in true_y.items():
+        predicted_latency = predicted_y[query_id]  # type: ignore
+        points_x.append(true_latency)
+        points_y.append(predicted_latency.overall_mean_s())
+        if (
+            predicted_latency.metadata
+            and predicted_latency.metadata.get(
+                "num_other_concurrent_queries", 0
+            )
+            > 0
+        ):
+            colors.append(color_if_overlapped)
+        else:
+            colors.append(color_if_alone)
+
+    ax.scatter(points_x, points_y, c=colors, alpha=0.6)
+    ax.set_xlabel("True Latency (s)")
+    ax.set_ylabel("Predicted Latency (s)")
+    ax.set_title(title)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.plot(
+        [0, max(points_x)], [0, max(points_x)], color="red", linestyle="--"
+    )  # Diagonal line
+
+
+def plot_qerror(
+    ax: plt.Axes,
+    title: str,
+    true_y: pd.Series,
+    predicted_y: dict[str, ModelPrediction],
+):
+    qerrors = []
+    for query_id, true_latency in true_y.items():
+        predicted_latency = predicted_y[query_id]  # type: ignore
+        pred_mean = predicted_latency.overall_mean_s()
+        if true_latency == 0 and pred_mean == 0:
+            qerror = 1.0
+        elif true_latency == 0 or pred_mean == 0:
+            qerror = float("inf")
+        else:
+            qerror = max(true_latency / pred_mean, pred_mean / true_latency)
+        qerrors.append(qerror)
+
+    # Plot a CDF of the Q-Errors using a lineplot
+    cdf = pd.Series(qerrors).value_counts().sort_index().cumsum()
+    cdf = cdf / cdf.iloc[-1]  # type: ignore
+    ax.plot(cdf.index, cdf.values, color=Palette.dark_blue)  # type: ignore
+
+    # At the bottom right of the plot, report the p50, p90 and p95 Q-Errors
+    p50 = pd.Series(qerrors).quantile(0.5)
+    p90 = pd.Series(qerrors).quantile(0.9)
+    p95 = pd.Series(qerrors).quantile(0.95)
+    ax.text(
+        0.6,
+        0.2,
+        f"p50: {p50:.2f}\np90: {p90:.2f}\np95: {p95:.2f}",
+        transform=ax.transAxes,
+    )
+
+    ax.set_xlabel("Q-Error")
+    ax.set_ylabel("Frequency")
+    ax.set_title(title)
+
+
+def plot_qerror_single_barchart(
+    ax: plt.Axes,
+    title: str,
+    split_true_y: dict[str, pd.Series],
+    split_predicted_y: dict[str, dict[str, ModelPrediction]],
+):
+
+    # Plot a grouped bar chart of p50, p90 and p95 Q-Errors for each split
+    metrics = {"p50": 0.5, "p90": 0.9, "p95": 0.95}
+    x = np.arange(len(metrics))  # the label locations
+    width = 0.25  # the width of the bars
+
+    fontsize = 20
+
+    colors = {
+        "train": Palette.light_green,
+        "val": Palette.light_blue,
+        "test": Palette.light_red,
+    }
+
+    for split_idx, split in enumerate(["train", "val", "test"]):
+        qerrors = []
+        true_y = split_true_y[split]
+        predicted_y = split_predicted_y[split]
+        for query_id, true_latency in true_y.items():
+            predicted_latency = predicted_y[query_id]  # type: ignore
+            pred_mean = predicted_latency.overall_mean_s()
+            if true_latency == 0 and pred_mean == 0:
+                qerror = 1.0
+            elif true_latency == 0 or pred_mean == 0:
+                qerror = float("inf")
+            else:
+                qerror = max(true_latency / pred_mean, pred_mean / true_latency)
+            qerrors.append(qerror)
+
+        p50 = pd.Series(qerrors).quantile(metrics["p50"])
+        p90 = pd.Series(qerrors).quantile(metrics["p90"])
+        p95 = pd.Series(qerrors).quantile(metrics["p95"])
+
+        ax.bar(
+            x + split_idx * width,
+            [p50, p90, p95],
+            width,
+            label=split.title(),
+            color=colors[split],
+        )
+
+        # Add a text label above each bar displaying its height
+        for metric_idx, metric in enumerate(metrics.keys()):
+            height = [p50, p90, p95][metric_idx]
+            ax.text(
+                x[metric_idx] + split_idx * width,
+                height + 0.05,
+                f"{height:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=fontsize
+            )
+
+
+    ax.set_xticks(x + width)
+    ax.set_ylim(bottom=1, top=ax.get_ylim()[1] * 1.1)
+    ax.set_xticklabels(metrics.keys(), fontsize=fontsize)
+    ax.set_yticklabels(ax.get_yticks(), fontsize=fontsize)
+    ax.set_ylabel("Q-Error", fontsize=fontsize)
+    ax.set_title(title)
+    ax.legend(fontsize=fontsize)
+
+
+def main(iconq_model_id: str, hide_plot_title: bool):
+    model = IconqModel.load(
+        model_id=iconq_model_id,
+    )
+    use_stage_for_isolated_queries = model._train_config_sequence[
+        -1
+    ].use_stage_for_isolated_queries
+
+    trained_on_log_runtime = model.trained_on_log_runtime
+
+    model_dir = os.path.join(
+        pu.get_data_path(),
+        "iconq_models",
+        iconq_model_id,
+    )
+
+    overall_dataset_path = os.path.join(model_dir, "dataset.pkl")
+    dataset = ConcurrentQueryDataset.load_from(overall_dataset_path)
+    split_datasets = {}
+    for split in ["train", "val", "test"]:
+        with open(
+            os.path.join(model_dir, f"{split}_indices.pkl"),
+            "rb",
+        ) as f:
+            indices = pickle.load(f)
+        split_datasets[split] = Subset(dataset=dataset, indices=indices)
+
+    fig, axs = plt.subplots(1, 3, figsize=(12, 6))
+    qerror_fig, qerror_axs = plt.subplots(1, 3, figsize=(12, 6))
+
+    split_true_y = {}
+    split_predicted_y = {}
+
+    for split_idx, split in enumerate(["train", "val", "test"]):
+        split_dataset = split_datasets[split]
+        print(f"Plotting for Split: {split}")
+
+        true_y_d = {}
+        for i in range(len(split_dataset)):
+            _, _, y, query_id, _, _ = split_dataset[i]
+            true_y_d[query_id] = (
+                y.item() if not trained_on_log_runtime else np.expm1(y.item())
+            )
+        split_true_y[split] = pd.Series(true_y_d)
+
+        split_predicted_y[split] = model.predict_from_dataset(
+            dataset=split_dataset,
+            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
+        )
+
+        title = split.title() + " Set"
+
+        plot_true_predicted(
+            axs[split_idx], title, split_true_y[split], split_predicted_y[split]
+        )
+        plot_qerror(
+            qerror_axs[split_idx],
+            title,
+            split_true_y[split],
+            split_predicted_y[split],
+        )
+
+    # Post-process true vs predicted figure
+    suptitle = f"IconQ Model {iconq_model_id} Predictions vs True Latencies"
+    if use_stage_for_isolated_queries:
+        suptitle += " (Stage Fallback)"
+    fig.suptitle(
+        suptitle,
+        fontsize=16,
+    )
+
+    fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    fig.savefig(
+        os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_pred_vs_true.svg",
+        )
+    )
+    plt.close(fig)
+
+    # Post-process Q-Error figure
+    suptitle = f"IconQ Model {iconq_model_id} Q-Error CDFs"
+    if use_stage_for_isolated_queries:
+        suptitle += " (Stage Fallback)"
+    qerror_fig.suptitle(
+        suptitle,
+        fontsize=16,
+    )
+    qerror_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    qerror_fig.savefig(
+        os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_qerror.svg",
+        )
+    )
+    plt.close(qerror_fig)
+
+    # Plot and post-process Q-Error barchart figure
+    qerror_barchart_fig, qerror_barchart_ax = plt.subplots(1, 1, figsize=(10, 6))
+    title = "Q-Error Summary Across Splits"
+    if use_stage_for_isolated_queries:
+        title += " (Stage Fallback)"
+    title += f" (Model {iconq_model_id})"
+    plot_qerror_single_barchart(
+        qerror_barchart_ax,
+        title if not hide_plot_title else "",
+        split_true_y,
+        split_predicted_y,
+    )
+    qerror_barchart_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    qerror_barchart_fig.savefig(
+        os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_qerror_barchart.svg",
+        )
+    )
+    plt.close(qerror_barchart_fig)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description=(
+            "Plot true vs predicted query latencies for each split of an IconQ model."
+        )
+    )
+    parser.add_argument(
+        "--iconq_model_id",
+        type=str,
+        required=True,
+        help="The IconQ model ID to use for predictions.",
+    )
+    parser.add_argument(
+        "--hide_plot_title",
+        action="store_true",
+        help="Whether to hide the plot title.",
+    )
+
+    args = parser.parse_args()
+
+    main(args.iconq_model_id, args.hide_plot_title)

@@ -36,6 +36,8 @@ from autoslo.nn.runtime_net import RuntimeNet
 
 from autoslo.blueprints.cluster import Cluster
 
+import pickle
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,7 +110,7 @@ class NNModelTrainConfig:
         "random"  # The type of split to use for the validation set.
     )
 
-    learning_rate: float = 1e-3  # The learning rate for the optimizer.
+    learning_rate: float = 5e-3  # The learning rate for the optimizer.
     learning_rate_gamma: float = 0.9  # The learning rate decay factor.
     weight_decay: float = 2e-5  # The weight decay for the optimizer.
     var_reg_weight: float = (
@@ -133,6 +135,18 @@ class NNModelTrainConfig:
 
     mdn_mix_softmax_temperature: float = (
         1.0  # The softmax temperature for the mixture weights.
+    )
+
+    use_stage_for_isolated_queries: bool = (
+        False  # Whether to use the stage model for isolated queries during training.
+    )
+
+    explicit_run_ids_per_split: Optional[dict[str, list[str]]] = (
+        None  # Explicitly specify run IDs per split (train/val/test).
+    )
+
+    sensitive_q_error_loss_small_val: float = (
+        5.0  # The small value for the sensitive Q-error loss.
     )
 
 
@@ -320,6 +334,7 @@ class IconqModel:
                 _,
                 query_ids,
                 tpcds_temp_and_q_idxs,
+                run_ids,
             ) in dataloader:
                 x, x_len, pinch_points = (
                     x.to(self._device),
@@ -341,7 +356,10 @@ class IconqModel:
                 for i, query_id in enumerate(query_ids):
                     num_other_concurrent_queries = x_len[i].item() - 1
                     pred_meta = {
-                        "num_other_concurrent_queries": num_other_concurrent_queries
+                        "num_other_concurrent_queries": num_other_concurrent_queries,
+                        "run_id": run_ids[i],
+                        "tpcds_temp_and_q_idx": tpcds_temp_and_q_idxs[i],
+                        "query_id": query_id,
                     }
                     if use_stage_for_isolated_queries and (
                         num_other_concurrent_queries == 0
@@ -501,8 +519,6 @@ class IconqModel:
                 split is False.
         """
 
-        if save_dataset:
-            dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
         if not split:
             dataloader = DataLoader(
                 dataset,
@@ -513,11 +529,54 @@ class IconqModel:
             return dataloader, None
 
         assert train_config is not None  # For linter
-        train_idxs, val_idxs, test_idxs = self._get_data_splits(
-            len(dataset), train_config
-        )
-        train_dataset = Subset(dataset, train_idxs)
-        val_dataset = Subset(dataset, val_idxs)
+        if train_config.explicit_run_ids_per_split is None:
+            train_idxs, val_idxs, test_idxs = self._get_data_splits(
+                len(dataset), train_config
+            )
+            train_dataset = Subset(dataset, train_idxs)
+            val_dataset = Subset(dataset, val_idxs)
+            test_dataset = Subset(dataset, test_idxs)
+        else:
+            explicit_run_ids_per_split = train_config.explicit_run_ids_per_split
+            train_run_ids = explicit_run_ids_per_split.get("train", [])
+            val_run_ids = explicit_run_ids_per_split.get("val", [])
+            test_run_ids = explicit_run_ids_per_split.get("test", [])
+
+            train_indices = [
+                i
+                for i in range(len(dataset))
+                if dataset.run_ids[i] in train_run_ids
+            ]
+            val_indices = [
+                i
+                for i in range(len(dataset))
+                if dataset.run_ids[i] in val_run_ids
+            ]
+            test_indices = [
+                i
+                for i in range(len(dataset))
+                if dataset.run_ids[i] in test_run_ids
+            ]
+
+            train_dataset = Subset(dataset, train_indices)
+            val_dataset = Subset(dataset, val_indices)
+            test_dataset = Subset(dataset, test_indices)
+
+        if save_dataset:
+            dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
+            with open(
+                os.path.join(self._save_dir, "train_indices.pkl"), "wb"
+            ) as f:
+                pickle.dump(train_indices, f)
+            with open(
+                os.path.join(self._save_dir, "val_indices.pkl"), "wb"
+            ) as f:
+                pickle.dump(val_indices, f)
+            with open(
+                os.path.join(self._save_dir, "test_indices.pkl"), "wb"
+            ) as f:
+                pickle.dump(test_indices, f)
+
         train_generator = torch.Generator()
         train_generator.manual_seed(
             train_config.training_dataloader_shuffle_seed
@@ -613,7 +672,22 @@ class IconqModel:
             print(s)
             logger.info(s)
 
-            for x, x_len, pinch_points, y, _ in tqdm(train_dataloader):
+            for x, x_len, pinch_points, y, _, _, _ in tqdm(train_dataloader):
+
+                if train_config.use_stage_for_isolated_queries:
+                    # Identify isolated queries in the batch and ignore them,
+                    # since we will use the stage model for them.
+                    non_isolated_indices = [
+                        i for i in range(len(x_len)) if x_len[i].item() > 1
+                    ]
+                    if not non_isolated_indices:
+                        # All queries are isolated, skip this batch.
+                        continue
+                    x = x[non_isolated_indices]
+                    x_len = x_len[non_isolated_indices]
+                    pinch_points = pinch_points[non_isolated_indices]
+                    y = y[non_isolated_indices]
+
                 x, x_len, pinch_points, y = (
                     x.to(self._device),
                     x_len.to(self._device),
@@ -628,6 +702,12 @@ class IconqModel:
                     pinch_points,
                     train_config.mdn_mix_softmax_temperature,
                 )
+
+                if self._trained_on_log_runtime:
+                    y = torch.expm1(y)
+                    y_pred_mean = torch.expm1(y_pred_mean)
+                    y_pred_logvar = torch.expm1(y_pred_logvar)
+
                 batch_loss: torch.Tensor
                 if self._loss_type == LossType.MDN_NLL:
                     batch_loss = mdn_negative_log_likelihood_loss(
@@ -645,7 +725,11 @@ class IconqModel:
                         train_config.var_reg_weight,
                     )
                 else:
-                    batch_loss = sensitive_q_error_loss(y_pred_mean, y)
+                    batch_loss = sensitive_q_error_loss(
+                        y_pred_mean,
+                        y,
+                        small_val=train_config.sensitive_q_error_loss_small_val,
+                    )
                 batch_loss.backward()
                 nn.utils.clip_grad_norm_(
                     self._nn.parameters(), train_config.grad_clip_max_norm
@@ -664,7 +748,7 @@ class IconqModel:
                 train_config.var_reg_weight,
                 self._save_dir,
                 epoch,
-                train_config.mdn_mix_softmax_temperature,
+                train_config,
             )
             update_plots(
                 self._save_dir,
@@ -691,15 +775,15 @@ class IconqModel:
                 f"""p90 q error: {errors["p90_q_error"]}\n"""
                 f"""\tp95 abs error: {errors["p95_abs_error"]}, """
                 f"""p95 q error: {errors["p95_q_error"]}"""
-                f"""\n----\n"""
-                f"""\tFraction of queries with true latency under their predicted p50: """
-                f"""{errors["fraction_under_p50"]:.4f} (ideal: 0.5000)\n"""
-                f"""\tFraction of queries with true latency under their predicted p90: """
-                f"""{errors["fraction_under_p90"]:.4f} (ideal: 0.9000)\n"""
-                f"""\tFraction of queries with true latency under their predicted p95: """
-                f"""{errors["fraction_under_p95"]:.4f} (ideal: 0.9500)\n"""
-                f"""\tFraction of queries with true latency under their predicted p99: """
-                f"""{errors["fraction_under_p99"]:.4f} (ideal: 0.9900)"""
+                # f"""\n----\n"""
+                # f"""\tFraction of queries with true latency under their predicted p50: """
+                # f"""{errors["fraction_under_p50"]:.4f} (ideal: 0.5000)\n"""
+                # f"""\tFraction of queries with true latency under their predicted p90: """
+                # f"""{errors["fraction_under_p90"]:.4f} (ideal: 0.9000)\n"""
+                # f"""\tFraction of queries with true latency under their predicted p95: """
+                # f"""{errors["fraction_under_p95"]:.4f} (ideal: 0.9500)\n"""
+                # f"""\tFraction of queries with true latency under their predicted p99: """
+                # f"""{errors["fraction_under_p99"]:.4f} (ideal: 0.9900)"""
             )
 
             print(s)
@@ -767,7 +851,7 @@ class IconqModel:
         var_reg_weight: float = 0.0,
         training_dir: Optional[str] = None,
         epoch: Optional[int] = None,
-        mdn_mix_softmax_temperature: float = 1.0,
+        train_config: Optional[NNModelTrainConfig] = None,
     ) -> tuple[float, dict[str, float]]:
         """
         Evaluates the model on the validation set.
@@ -776,12 +860,11 @@ class IconqModel:
             val_dataloader: The DataLoader for the validation set.
             var_reg_weight: The weight for the variance regularization term for the negative
                 log likelihood loss.
+            training_dir: The directory where the training artifacts are saved.
             training_dir: The directory for the model training. If given, will save the validation
                 predictions to a CSV file.
             epoch: The epoch number. If given and training_dir is given, will include the epoch
                 number in the filename of the validation predictions CSV file.
-            mdn_mix_softmax_temperature: The temperature for the softmax in the MDN mixture
-                coefficients.
 
         Returns:
             mean_val_batch_loss: The mean batch loss on the validation set.
@@ -794,7 +877,15 @@ class IconqModel:
         all_pred_v_true = []
         self._nn.eval()
         with torch.no_grad():
-            for x, x_len, pinch_points, y, query_id in val_dataloader:
+            for (
+                x,
+                x_len,
+                pinch_points,
+                y,
+                query_id,
+                tpcds_temp_and_q_idxs,
+                run_ids,
+            ) in val_dataloader:
                 x, x_len, pinch_points, y = (
                     x.to(self._device),
                     x_len.to(self._device),
@@ -802,8 +893,16 @@ class IconqModel:
                     y.to(self._device),
                 )
                 y_pred_mean, y_pred_logvar, y_pred_mix = self._nn(
-                    x, x_len, pinch_points, mdn_mix_softmax_temperature
+                    x,
+                    x_len,
+                    pinch_points,
+                    train_config.mdn_mix_softmax_temperature,
                 )
+
+                if self._trained_on_log_runtime:
+                    y = torch.expm1(y)
+                    y_pred_mean = torch.expm1(y_pred_mean)
+                    y_pred_logvar = torch.expm1(y_pred_logvar)
 
                 batch_loss: torch.Tensor
                 if self._loss_type == LossType.MDN_NLL:
@@ -814,18 +913,18 @@ class IconqModel:
                         y_pred_mix,
                         var_reg_weight,
                     )
-                    if self._trained_on_log_runtime:
-                        y = torch.expm1(y)
-                        y_pred_mean = torch.expm1(y_pred_mean)
-                        y_pred_logvar = torch.expm1(y_pred_logvar)
 
-                    for m, l, x, y_, q in zip(
+                    for m, l, x, y_, q, t, r, le in zip(
                         y_pred_mean.detach().numpy(),
                         y_pred_logvar.detach().numpy(),
                         y_pred_mix.detach().numpy(),
                         y.numpy(),
                         query_id,
+                        tpcds_temp_and_q_idxs,
+                        run_ids,
+                        x_len.detach().numpy(),
                     ):
+                        num_other_concurrent_queries = le - 1
 
                         all_pred_v_true.append(
                             (
@@ -833,53 +932,80 @@ class IconqModel:
                                     mean_s=m,
                                     std_dev_s=[np.exp(li / 2) for li in l],
                                     mix_coeffs=x,
+                                    metadata={
+                                        "num_other_concurrent_queries": num_other_concurrent_queries,
+                                        "run_id": r,
+                                        "tpcds_temp_and_q_idx": t,
+                                        "query_id": q,
+                                    },
                                 ),
                                 y_,
                                 q,
+                                t,
                             )
                         )
                 elif self._loss_type == LossType.NLL:
                     batch_loss = negative_log_likelihood_loss(
                         y_pred_mean, y, y_pred_logvar, var_reg_weight
                     )
-                    if self._trained_on_log_runtime:
-                        y = torch.expm1(y)
-                        y_pred_mean = torch.expm1(y_pred_mean)
-                        y_pred_logvar = torch.expm1(y_pred_logvar)
 
-                    for m, l, y_, q in zip(
+                    for m, l, y_, q, t, r, le in zip(
                         y_pred_mean.detach().numpy(),
                         y_pred_logvar.detach().numpy(),
                         y.numpy(),
                         query_id,
+                        tpcds_temp_and_q_idxs,
+                        run_ids,
+                        x_len.detach().numpy(),
                     ):
+                        num_other_concurrent_queries = le - 1
                         all_pred_v_true.append(
                             (
                                 ModelPrediction(
                                     mean_s=m,
                                     std_dev_s=[np.exp(li / 2) for li in l],
+                                    metadata={
+                                        "num_other_concurrent_queries": num_other_concurrent_queries,
+                                        "run_id": r,
+                                        "tpcds_temp_and_q_idx": t,
+                                        "query_id": q,
+                                    },
                                 ),
                                 y_,
                                 q,
+                                t,
                             )
                         )
                 elif self._loss_type == LossType.SENSITIVE_Q_ERROR:
-                    batch_loss = sensitive_q_error_loss(y_pred_mean, y)
+                    batch_loss = sensitive_q_error_loss(
+                        y_pred_mean,
+                        y,
+                        small_val=train_config.sensitive_q_error_loss_small_val,
+                    )
 
-                    if self._trained_on_log_runtime:
-                        y = torch.expm1(y)
-                        y_pred_mean = torch.expm1(y_pred_mean)
-
-                    for m, y_, q in zip(
-                        y_pred_mean.detach().numpy(), y.numpy(), query_id
+                    for m, y_, q, t, r, le in zip(
+                        y_pred_mean.detach().numpy(),
+                        y.numpy(),
+                        query_id,
+                        tpcds_temp_and_q_idxs,
+                        run_ids,
+                        x_len.detach().numpy(),
                     ):
+                        num_other_concurrent_queries = le - 1
                         all_pred_v_true.append(
                             (
                                 ModelPrediction(
                                     mean_s=m,
+                                    metadata={
+                                        "num_other_concurrent_queries": num_other_concurrent_queries,
+                                        "run_id": r,
+                                        "tpcds_temp_and_q_idx": t,
+                                        "query_id": q,
+                                    },
                                 ),
                                 y_,
                                 q,
+                                t,
                             )
                         )
                 total_val_batch_loss += batch_loss.item()
@@ -889,11 +1015,11 @@ class IconqModel:
 
         abs_error = [
             abs(pred.overall_mean_s() - true)
-            for pred, true, _ in all_pred_v_true
+            for pred, true, _, _ in all_pred_v_true
         ]
         q_error = [
             max(pred.overall_mean_s() / true, true / pred.overall_mean_s())
-            for pred, true, _ in all_pred_v_true
+            for pred, true, _, _ in all_pred_v_true
         ]
 
         errors["mean_abs_error"] = np.mean(abs_error)
@@ -904,7 +1030,7 @@ class IconqModel:
 
         percentiles_at_true_latencies = [
             pred.percentile_at_latency(true)
-            for pred, true, _ in all_pred_v_true
+            for pred, true, _, _ in all_pred_v_true
         ]
         for p in [50, 90, 95, 99]:
             errors[f"fraction_under_p{p}"] = cast(
@@ -916,13 +1042,23 @@ class IconqModel:
         if training_dir is not None:
             val_df = pd.DataFrame()
             val_df["query_id"] = [
-                query_id for _, _, query_id in all_pred_v_true
+                query_id for _, _, query_id, _ in all_pred_v_true
             ]
-            val_df["y"] = [true for _, true, _ in all_pred_v_true]
-            val_df["y_pred"] = [pred for pred, _, _ in all_pred_v_true]
+            val_df["num_other_concurrent_queries"] = [
+                pred.metadata["num_other_concurrent_queries"]
+                for pred, _, _, _ in all_pred_v_true
+            ]
+            val_df["y"] = [true for _, true, _, _ in all_pred_v_true]
+            val_df["y_pred"] = [pred for pred, _, _, _ in all_pred_v_true]
+            val_df["tpcds_temp_and_q_idx"] = [
+                t for _, _, _, t in all_pred_v_true
+            ]
             val_df["abs_error"] = abs_error
             val_df["q_error"] = q_error
             val_df["percentile_at_true_latency"] = percentiles_at_true_latencies
+            val_df["run_id"] = [
+                pred.metadata["run_id"] for pred, _, _, _ in all_pred_v_true
+            ]
             val_df.sort_values("y", inplace=True, ascending=False)
             suffix = f"_{epoch}" if epoch is not None else ""
             val_df.to_csv(

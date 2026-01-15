@@ -16,7 +16,7 @@ from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
 
 
-def find_run_ids() -> list[str]:
+def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
     """Finds all relevant run IDs for training IconQ models."""
 
     df = pu.RunLocator.get_runs_df()
@@ -26,10 +26,44 @@ def find_run_ids() -> list[str]:
 
     run_ids = []
 
+    val_index_combinations = [
+        (0, 0, 0),
+        (1, 1, 1),
+        (2, 2, 2),
+        (3, 3, 3),
+        (0, 1, 2),
+        (1, 2, 3),
+        (2, 3, 0),
+        (3, 0, 1),
+        (0, 2, 1),
+        (1, 3, 2),
+        (2, 0, 3),
+        (3, 1, 0),
+    ]
+    test_idx_combinations = [
+        (0, 1, 1),
+        (1, 2, 2),
+        (2, 3, 3),
+        (3, 0, 0),
+        (0, 2, 3),
+        (1, 3, 0),
+        (2, 0, 1),
+        (3, 1, 2),
+        (0, 3, 2),
+        (1, 0, 3),
+        (2, 1, 0),
+        (3, 2, 1),
+    ]
+    train_val_test_assignments: dict[str, list[str]] = {
+        "train": [],
+        "val": [],
+        "test": [],
+    }
+
     # Most recent chunk runs.
-    for pct_heavy in pct_heavy_options:
-        for mean_interarrival in mean_interarrival_options:
-            for rpu in rpus:
+    for i, pct_heavy in enumerate(pct_heavy_options):
+        for j, mean_interarrival in enumerate(mean_interarrival_options):
+            for k, rpu in enumerate(rpus):
                 this_workload_run_ids = pu.RunLocator.get_run_ids(
                     schema_name="ext_tpcds1000",
                     workload_name="{}pctheavy_{}meaninterarrival".format(
@@ -39,13 +73,25 @@ def find_run_ids() -> list[str]:
                 )
                 if len(this_workload_run_ids) > 0:
                     run_ids.append(max(this_workload_run_ids))
+                    if (i, j, k) in val_index_combinations:
+                        train_val_test_assignments["val"].append(
+                            max(this_workload_run_ids)
+                        )
+                    elif (i, j, k) in test_idx_combinations:
+                        train_val_test_assignments["test"].append(
+                            max(this_workload_run_ids)
+                        )
+                    else:
+                        train_val_test_assignments["train"].append(
+                            max(this_workload_run_ids)
+                        )
 
     # Benchmarking workload runs.
-    benchmark_runs = df[
-        df["workload_name"] == "benchmarking_workload_99_3_3_shuffled_42"
-    ]
-    run_ids.extend(benchmark_runs["run_id"].to_list())
-    return run_ids
+    # benchmark_runs = df[
+    #     df["workload_name"] == "benchmarking_workload_99_3_3_shuffled_42"
+    # ]
+    # run_ids.extend(benchmark_runs["run_id"].to_list())
+    return run_ids, train_val_test_assignments
 
 
 def set_up_featurizer(run_ids: list[str]) -> str:
@@ -100,7 +146,11 @@ def initialize_stage_model(
 
 
 def train_iconq_model(
-    iconq_query_featurizer_id: str, stage_model_id: str, run_ids: list[str]
+    iconq_query_featurizer_id: str,
+    stage_model_id: str,
+    run_ids: list[str],
+    use_stage_for_isolated_queries: bool,
+    explicit_run_ids_per_split: dict[str, list[str]] | None = None,
 ) -> str:
     """Trains an IconqModel and returns its ID."""
     iconq_model_init_config = IconqModelInitConfig(
@@ -112,6 +162,9 @@ def train_iconq_model(
     )
     nn_model_train_config = NNModelTrainConfig(
         run_ids=run_ids,
+        use_stage_for_isolated_queries=use_stage_for_isolated_queries,
+        explicit_run_ids_per_split=explicit_run_ids_per_split,
+        sensitive_q_error_loss_small_val=120.0
     )
     iconq_model = IconqModel(
         init_config=iconq_model_init_config,
@@ -131,10 +184,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--only_non_overlapping_queries",
         action="store_true",
-        help="Whether to only train on queries that do not overlap with any other queries in the trace.",
+        help="Whether to only train the cache and XGBoost models on queries that do not overlap with any other queries in the trace.",
+    )
+    parser.add_argument(
+        "--use_stage_for_isolated_queries",
+        action="store_true",
+        help="Whether to use the StageModel to generate predictions for isolated queries when training the IconQ model.",
+    )
+    parser.add_argument(
+        "--use_explicit_run_ids",
+        action="store_true",
+        help="If set, use explicitly provided run IDs for each data splti for the Iconq model.",
     )
     args = parser.parse_args()
-    print(f"Value of only_non_overlapping_queries: {args.only_non_overlapping_queries}")
+    print(
+        f"Value of only_non_overlapping_queries: {args.only_non_overlapping_queries}"
+    )
 
     progress_cache_path = os.path.join(
         pu.AUTOSLO_ROOT,
@@ -152,8 +217,11 @@ if __name__ == "__main__":
     print("Step 1: Finding run IDs...")
     if "run_ids" not in cached_progress:
         print("\tRun IDs not cached. Computing...")
-        run_ids = find_run_ids()
+        run_ids, train_val_test_assignments = find_run_ids()
         cached_progress["run_ids"] = run_ids
+        cached_progress["train_val_test_assignments"] = (
+            train_val_test_assignments
+        )
         with open(progress_cache_path, "w") as f:
             yaml.safe_dump(cached_progress, f)
     else:
@@ -217,16 +285,15 @@ if __name__ == "__main__":
         stage_model_id = cached_progress["stage_model_id"]
 
     print("Step 6: Training IconqModel...")
-    if "iconq_model_id" not in cached_progress:
-        print("\tIconqModel not cached. Training...")
-        iconq_model_id = train_iconq_model(
-            iconq_query_featurizer_id=featurizer_id,
-            stage_model_id=stage_model_id,
-            run_ids=run_ids,
-        )
-        cached_progress["iconq_model_id"] = iconq_model_id
-        with open(progress_cache_path, "w") as f:
-            yaml.safe_dump(cached_progress, f)
-    else:
-        print("\tUsing cached IconqModel ID.")
-        iconq_model_id = cached_progress["iconq_model_id"]
+    explicit_run_ids_per_split = None
+    if args.use_explicit_run_ids:
+        explicit_run_ids_per_split = cached_progress[
+            "train_val_test_assignments"
+        ]
+    iconq_model_id = train_iconq_model(
+        iconq_query_featurizer_id=featurizer_id,
+        stage_model_id=stage_model_id,
+        run_ids=run_ids,
+        use_stage_for_isolated_queries=args.use_stage_for_isolated_queries,
+        explicit_run_ids_per_split=explicit_run_ids_per_split,
+    )

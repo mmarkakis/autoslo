@@ -106,6 +106,7 @@ train_config_sequence:
   test_split_phases: null
   test_split_type: random
   training_dataloader_shuffle_seed: 42
+  use_stage_for_isolated_queries: false
   val_frac: 0.1
   val_split_type: random
   var_reg_weight: 0.01

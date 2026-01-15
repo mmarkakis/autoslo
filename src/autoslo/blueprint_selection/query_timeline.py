@@ -340,6 +340,7 @@ class QueryTimeline:
         start_time_s: float = -float("inf"),
         end_time_s: float = float("inf"),
         use_log_runtime: bool = True,
+        run_id: Optional[str] = None,
     ) -> ConcurrentQueryDataset:
         """
         Get a ConcurrentQueryDataset representing the timeline.
@@ -349,6 +350,7 @@ class QueryTimeline:
             end_time_s: The end time of the window (in seconds).
             use_log_runtime: Whether to use the log of the runtime as the
                 target variable (log1p), or the runtime itself.
+            run_id: The run ID associated with this dataset, if any.
 
         Returns:
             A ConcurrentQueryDataset representing the timeline.
@@ -442,12 +444,19 @@ class QueryTimeline:
         pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
         y_tensorized = torch.tensor(y, dtype=torch.float32)
 
+        # Intialize the run ids.
+        if run_id is not None:
+            run_ids = [run_id for _ in range(len(query_ids))]
+        else:
+            run_ids = ["unknown" for _ in range(len(query_ids))]
+
         dataset = ConcurrentQueryDataset(
             x=x_tensorized,
             pinch_points=pinch_points_tensorized,
             y=y_tensorized,
             query_ids=query_ids,
             tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
+            run_ids=run_ids,
         )
 
         return dataset
@@ -482,8 +491,18 @@ class QueryTimeline:
                 latencies (in seconds).
         """
         self._maybe_log(f"Applying move: {move}", verbose)
+        # Move to the new cluster and update the latency to be the defualt from
+        # Stage.
         self._move_to_cluster(
             new_cluster_name=move.to_cluster_name, query_id=move.query_id
+        )
+        self.update_latency(
+            query_id=move.query_id,
+            latency_s=self._query_id_to_cluster_interval[move.query_id][1].data[
+                "stage_model_predictions_per_rpu"
+            ][
+                Cluster.from_config(move.to_cluster_name).rpu
+            ],
         )
 
         if new_latencies is None:
