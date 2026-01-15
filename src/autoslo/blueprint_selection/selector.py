@@ -10,6 +10,7 @@ import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.query_timeline import QueryMove, QueryTimeline
 from autoslo.blueprint_selection.query_timeline_visualizer import (
     GanttRecorder,
+    export_gantt_video,
     render_gantt_scrubber,
 )
 from autoslo.blueprints.blueprint import Blueprint
@@ -34,6 +35,8 @@ class BlueprintSelector:
         use_stage_for_isolated_queries: bool = False,
         max_iters: int = 20,
         verbose: bool = False,
+        export_video: bool = False,
+        video_frame_duration: float = 1.0,
     ) -> None:
         """
         Initialize a BlueprintSelector instance.
@@ -53,6 +56,10 @@ class BlueprintSelector:
             max_iters: The maximum number of iterations for the optimization
                 process.
             verbose: Whether to log verbose output.
+            export_video: Whether to export a video of the timeline
+                optimization process.
+            video_frame_duration: Duration in seconds for each frame in the
+                exported video (default: 1.0).
         """
         self._workload_name = workload_name
         workload = Chunk.load(workload_name)  # FIXME: generalize to workloads.
@@ -66,6 +73,8 @@ class BlueprintSelector:
         self._use_stage_for_isolated_queries = use_stage_for_isolated_queries
         self._max_iters = max_iters
         self._verbose = verbose
+        self._export_video = export_video
+        self._video_frame_duration = video_frame_duration
         self._solve_was_invoked = False
 
         self._recorder: GanttRecorder
@@ -113,6 +122,8 @@ class BlueprintSelector:
                 "use_stage_for_isolated_queries": self._use_stage_for_isolated_queries,
                 "max_iters": self._max_iters,
                 "verbose": self._verbose,
+                "export_video": self._export_video,
+                "video_frame_duration": self._video_frame_duration,
             }
             yaml.safe_dump(d, f, sort_keys=False)
 
@@ -252,6 +263,7 @@ class BlueprintSelector:
     def write_out_timeline_visualization(self) -> None:
         """
         Write out an HTML visualization of the timeline.
+        Optionally also exports a video if export_video flag is set.
         """
         fig = render_gantt_scrubber(
             self._recorder.snapshots,
@@ -265,8 +277,23 @@ class BlueprintSelector:
             self._out_dir, "visualization.html"
         )
 
-        fig.write_html(out_path, auto_play=False)
-
+        fig.write_html(out_path, auto_play=False, include_plotlyjs="cdn")
+        
+        # Export video if requested
+        if self._export_video:
+            video_out_path = os.path.join(
+                self._out_dir, "visualization.mp4"
+            )
+            export_gantt_video(
+                snapshots=self._recorder.snapshots,
+                slo_s=self._slo_s,
+                output_path=video_out_path,
+                frame_duration=self._video_frame_duration,
+                constant_layout=True,
+                violation_rate_threshold=self._slo_violation_rate_threshold,
+                workload_name=self._workload_name,
+            )
+        
     def _eligible_cluster_names_for_next_move(self) -> list[str]:
         """
         Get the list of eligible cluster names for the next move. These are the

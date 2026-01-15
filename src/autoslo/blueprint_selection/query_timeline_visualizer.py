@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
+from pathlib import Path
+import tempfile
 
 import plotly.graph_objects as go
+import plotly.io as pio
 
 from autoslo.blueprints.cluster import Cluster
 from autoslo.workload_execution.trace import Trace
@@ -591,3 +594,122 @@ def render_gantt_scrubber(
         ],
     )
     return fig
+
+
+def export_gantt_video(
+    snapshots: list[GanttSnapshot],
+    slo_s: float | dict[str, float],
+    output_path: str | Path,
+    frame_duration: float = 1.0,
+    title: str = "Cluster Query Assignments Over Time",
+    constant_layout: bool = False,
+    violation_rate_threshold: Optional[float] = None,
+    workload_name: Optional[str] = None,
+    width: int = 1400,
+    height: int = 700,
+) -> None:
+    """
+    Export snapshots as a video where each snapshot is a frame.
+
+    Args:
+        snapshots: List of GanttSnapshot objects
+        slo_s: SLO threshold(s) in seconds
+        output_path: Path to save the video file (e.g., "output.mp4")
+        frame_duration: Duration each frame is displayed in seconds (default: 1.0)
+        title: Title for the Gantt chart
+        constant_layout: Whether to use constant layout across snapshots
+        violation_rate_threshold: Optional threshold for highlighting violation rate
+        workload_name: Optional workload name for subtitle
+        width: Video width in pixels (default: 1400)
+        height: Video height in pixels (default: 700)
+
+    Raises:
+        ValueError: If snapshots list is empty or imageio is not installed
+    """
+    try:
+        import imageio
+    except ImportError:
+        raise ValueError(
+            "imageio is required for video export. "
+            "Install it with: pip install imageio imageio-ffmpeg"
+        )
+
+    # Check if kaleido is available
+    try:
+        import kaleido
+    except ImportError:
+        raise ValueError(
+            "kaleido is required for video export to render plots as images. "
+            "Install it with: pip install kaleido"
+        )
+
+    if not snapshots:
+        raise ValueError("No snapshots to render for video export")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Calculate FPS from frame duration
+    fps = 1.0 / frame_duration if frame_duration > 0 else 1.0
+
+    # Render each snapshot as a static image
+    frames = []
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for i, snap in enumerate(snapshots):
+            # Build a minimal figure for this snapshot using the same logic as render_gantt_scrubber
+            fig = render_gantt_scrubber(
+                snapshots=[snap],
+                slo_s=slo_s,
+                title=title,
+                constant_layout=constant_layout,
+                violation_rate_threshold=violation_rate_threshold,
+                workload_name=workload_name,
+            )
+
+            # Convert to static image using plotly.io which handles kaleido properly
+            temp_image_path = str(Path(temp_dir) / f"frame_{i:04d}.png")
+            try:
+                pio.write_image(
+                    fig,
+                    temp_image_path,
+                    width=width,
+                    height=height,
+                    engine="kaleido"
+                )
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to render snapshot '{snap.label}' to image. "
+                    f"Error: {e}. "
+                    f"Make sure kaleido is properly installed: pip install --force-reinstall kaleido"
+                )
+
+            # Read the image back
+            try:
+                img = imageio.imread(temp_image_path)
+                frames.append(img)
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to read rendered image for snapshot '{snap.label}'. Error: {e}"
+                )
+
+    # Write frames to video file
+    try:
+        imageio.mimsave(
+            str(output_path),
+            frames,
+            fps=fps,
+            codec="libx264",
+            pixelformat="yuv420p",
+        )
+    except Exception as e:
+        raise ValueError(
+            f"Failed to write video file. Error: {e}. "
+            f"Ensure ffmpeg is installed and imageio-ffmpeg is available."
+        )
+
+    print(f"Video exported successfully to {output_path}")
+    print(f"  Snapshots: {len(snapshots)}")
+    print(f"  Frame duration: {frame_duration}s")
+    print(f"  Total duration: {len(snapshots) * frame_duration:.1f}s")
+    print(f"  FPS: {fps:.2f}")
+    print(f"  Resolution: {width}x{height}")
