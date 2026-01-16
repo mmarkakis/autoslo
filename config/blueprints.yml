@@ -35,3 +35,7 @@ multi_4_4b_8:
   - cluster_4
   - cluster_4b
   - cluster_8
+multi_16_8:
+  cluster_names:
+  - cluster_16
+  - cluster_8
