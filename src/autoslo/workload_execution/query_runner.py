@@ -165,7 +165,7 @@ class QueryRunner:
             f"Run parameters saved to {os.path.join(run_dir, 'run_params.yml')}"
         )
 
-        return run_id
+        return run_id, run_dir
 
     def _run_query_sync(
         self, run_id: str, query_id: str, query_text: str, cluster_name: str
@@ -250,7 +250,7 @@ class QueryRunner:
         Returns:
             The ID of the run.
         """
-        run_id = self._setup_run_directory()
+        run_id, run_dir = self._setup_run_directory()
         print(f"Run started with ID {run_id}.")
 
         async_reference_ts = self._async_ts()
@@ -259,11 +259,14 @@ class QueryRunner:
         tasks = []
         self._pbar = tqdm(total=len(self.workload_df), desc="Queries", unit="q")
 
+        route_info = []
+
         for _, row in self.workload_df.iterrows():
             query_id = row["query_id"]
             query_text = row["query_text"]
             rel_start_time_s = row["rel_start_time_s"]
 
+            route_start_timestamp = self._async_ts()
             cluster_name = self.query_router.route_query(
                 query_text=query_text,
                 workload_name=self.workload_name,
@@ -271,6 +274,15 @@ class QueryRunner:
                 tpcds_temp_and_q_idx=(
                     f"{row['query_template']:03d}_{row['query_num_within_template']:03d}"
                 ),
+            )
+            route_end_timestamp = self._async_ts()
+            route_info.append(
+                {
+                    "query_seq_num": query_id,
+                    "route_start_timestamp": route_start_timestamp,
+                    "route_end_timestamp": route_end_timestamp,
+                    "cluster_name": cluster_name,
+                }
             )
             if cluster_name not in self.conn_pools:
                 print(
@@ -304,6 +316,28 @@ class QueryRunner:
         await asyncio.gather(*tasks)
         self._pbar.close()
         logging.info(f"Run finished at {self._ts()}.")
+
+        # Save query routing timings.
+        route_info_df = pd.DataFrame(route_info)
+        route_info_df["run_id"] = run_id
+        route_info_df["query_router_name"] = self.query_router_name
+        route_info_df["routing_time_s"] = (
+            route_info_df["route_end_timestamp"]
+            - route_info_df["route_start_timestamp"]
+        )
+        column_order = [
+            "run_id",
+            "query_router_name",
+            "query_seq_num",
+            "cluster_name",
+            "route_start_timestamp",
+            "route_end_timestamp",
+            "routing_time_s",
+        ]
+        route_info_df = route_info_df[column_order]
+        route_info_df.to_parquet(
+            os.path.join(run_dir, "query_routing_timings.parquet"), index=False
+        )
 
         return run_id
 
