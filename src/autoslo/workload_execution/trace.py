@@ -348,6 +348,8 @@ class Trace:
             self.cost_of_cluster(cluster_name)
             for cluster_name in self.seen_clusters
         ]
+    
+   
 
     @property
     def seen_clusters(self) -> list[str]:
@@ -424,6 +426,8 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
+    
+     
 
     @staticmethod
     def extract_temp_and_q_idxs(query_text: str) -> "TPCDSTempAndQIdx":
@@ -618,6 +622,25 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
+    
+    @property
+    def routing_decisions(self) ->pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the routing decisions (cluster names) of each query.
+
+        The order of the query IDs in the Series matches the order of the query
+        IDs provided by the `query_ids` property.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id", drop=False)["query_id"].apply(
+                lambda x: Trace.cluster_name_from_query_id(x)
+            )
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
+        
 
     def query_plans(self) -> dict[str, Any]:
         """
