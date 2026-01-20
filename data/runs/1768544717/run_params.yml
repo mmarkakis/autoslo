@@ -1,0 +1,9 @@
+run_id: '1768544717'
+workload_name: tpcds_99templates_25pctheavy_30meaninterarrivals
+num_queries: 119
+scale_factor: 1000
+schema_name: ext_tpcds1000
+blueprint_name: multi_16_8
+query_router_name: RModelBased(selector_run_id='1768511676', iconq_query_featurizer_id='1768492722')
+maxconns: 150
+closed_loop: false
