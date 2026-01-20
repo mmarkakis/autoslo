@@ -149,7 +149,7 @@ class QueryTimeline:
             A list of query IDs.
         """
         return list(self._query_id_to_cluster_interval.keys())
-    
+
     @property
     def num_queries(self) -> int:
         """
@@ -669,7 +669,6 @@ class QueryTimeline:
         )
         log_message = f"Updated latencies after move: \n"
 
-
         # Do the queries active before the incoming one.
         dataset = self.get_dataset(
             start_time_s=interval.begin,
@@ -694,7 +693,7 @@ class QueryTimeline:
                 old_latency_s = self.update_latency(
                     query_id=q_id,
                     latency_s=predicted_latency_s,
-                    only_update_if_increased=True # Can only make past queries slower
+                    only_update_if_increased=True,  # Can only make past queries slower
                 )
                 new_latency_s = max(old_latency_s, predicted_latency_s)
                 log_message += (
@@ -702,7 +701,7 @@ class QueryTimeline:
                     f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
                     f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
                 )
-            
+
                 old_latencies[q_id] = old_latency_s
 
         # Do the queries active after the incoming one. For ease, we just
@@ -731,7 +730,7 @@ class QueryTimeline:
                 old_latency_s = self.update_latency(
                     query_id=q_id,
                     latency_s=predicted_latency_s,
-                    only_update_if_increased=False, # These can go either way
+                    only_update_if_increased=False,  # These can go either way
                 )
                 new_latency_s = predicted_latency_s
                 log_message += (
@@ -777,7 +776,7 @@ class QueryTimeline:
                     old_latency_s = self.update_latency(
                         query_id=q_id,
                         latency_s=predicted_latency_s,
-                        only_update_if_increased=False, # These can go either way
+                        only_update_if_increased=False,  # These can go either way
                     )
                     new_latency_s = predicted_latency_s
                     log_message += (
@@ -786,7 +785,7 @@ class QueryTimeline:
                         f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
                     )
                     old_latencies[q_id] = old_latency_s
-           
+
         self._maybe_log(log_message, verbose)
         return inverse_move, old_latencies
 
@@ -917,9 +916,11 @@ class QueryTimeline:
             return 0.0
 
         return violating_queries / total_queries
-    
+
     def slo_violation_amount(
-            self, slo_s: float | dict[str, float],) -> float:
+        self,
+        slo_s: float | dict[str, float],
+    ) -> float:
         """
         Calculate the cumulative SLO violation amount for the timeline.
 
@@ -952,11 +953,12 @@ class QueryTimeline:
         slo_s: float | dict[str, float],
         look_for_slo_violations: bool = True,
         weigh_by_distance: bool = True,
+        k: int = 5,
     ) -> list[tuple[str, Interval]]:
         """
-        Compare each query latency to its SLO. For each cluster, return the
-        interval(s) with the maximum total distance from the SLO, either in the
-        violation or the slack direction.
+        Compare each query latency to its SLO. Across clusters, return the top
+        k cluster-interval pairs with the maximum total distance from the SLO,
+        either in the violation or the slack direction.
 
         Parameters:
             slo_s: The SLO threshold (in seconds), or a mapping from query ids
@@ -966,12 +968,14 @@ class QueryTimeline:
                 intervals with maximum SLO slack (latency < SLO).
             weigh_by_distance: Whether to weigh queries by their distance from
                 the SLO (violation or slack), or just count them equally.
+            k: The maximum number of top intervals to return.
 
         Returns:
-            A list of pairs of cluster name and Interval.
+            A list of pairs of cluster name and Interval, in decreasing order
+            of total distance from the SLO.
         """
 
-        result: list[tuple[str, Interval]] = []
+        result: list[tuple[float, str, Interval]] = []
 
         for cluster_name in self.active_clusters:
             tree = self._interval_trees[cluster_name]
@@ -995,35 +999,29 @@ class QueryTimeline:
 
             events.sort()
 
-            current_score = 0
-            max_score = 0
-            max_intervals: list[Interval] = []
-            interval_start: Optional[float] = None
+            score_to_interval: dict[float, Interval] = {}
+            previous_score = 0.0
+            previous_time = None
 
             for time, change in events:
-                current_score += change
-
-                if current_score > max_score:
-                    max_score = current_score
-                    max_intervals = []
-                    interval_start = time
-                elif (current_score == max_score) and (max_score > 0):
-                    interval_start = time
-                elif interval_start is not None:
-                    max_intervals.append(
-                        Interval(begin=interval_start, end=time)
+                if previous_time is not None:
+                    score_to_interval[previous_score] = Interval(
+                        begin=previous_time, end=time
                     )
-                    interval_start = None
+                previous_score += change
+                previous_time = time
 
-            assert max_score > 0 or len(max_intervals) == 0
-            for iv in max_intervals:
-                result.append((cluster_name, iv))
+            sorted_scores = sorted(score_to_interval.keys(), reverse=True)
+            for score in sorted_scores[:k]:
+                result.append((score, cluster_name, score_to_interval[score]))
 
-        return result
+        result.sort(key=lambda x: x[0], reverse=True)
 
-    def total_cost(
-        self,
-    ) -> float:
+        return [
+            (cluster_name, interval) for _, cluster_name, interval in result[:k]
+        ]
+
+    def total_cost(self) -> float:
         """
         Calculate the total dollar cost of the timeline, considering billing
         thresholds and granularities.
