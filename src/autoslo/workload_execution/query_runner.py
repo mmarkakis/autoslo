@@ -264,7 +264,14 @@ class QueryRunner:
             query_text = row["query_text"]
             rel_start_time_s = row["rel_start_time_s"]
 
-            cluster_name = self.query_router.route_query(query_text=query_text)
+            cluster_name = self.query_router.route_query(
+                query_text=query_text,
+                workload_name=self.workload_name,
+                seq_num=query_id,
+                tpcds_temp_and_q_idx=(
+                    f"{row['query_template']:03d}_{row['query_num_within_template']:03d}"
+                ),
+            )
             if cluster_name not in self.conn_pools:
                 print(
                     f"QueryRouter returned unknown cluster name "

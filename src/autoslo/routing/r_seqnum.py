@@ -63,6 +63,16 @@ class RSeqNum(QueryRouter):
         Get the name of the RSeqNum instance.
         """
         return f"RSeqNum(selector_run_id={repr(self._selector_run_id)})"
+    
+    @property
+    def workload_name(self) -> str:
+        """
+        Get the workload name associated with this RSeqNum router.
+
+        Returns:
+            The workload name.
+        """
+        return self._workload_name
 
     @property
     def blueprint(self) -> Blueprint:
