@@ -233,15 +233,20 @@ class QueryRunner:
         scheduled_time = async_reference_ts + rel_start_time_s
         delay = scheduled_time - now
         logging.info(
-            f"Query {query_id} scheduled to start at t={scheduled_time:.2f}s (in {delay:.2f}s)"
+            f"Query {query_id} scheduled to start at t={scheduled_time:.2f}s "
+            f"(in {delay:.2f}s)"
         )
         if delay > 0:
             await asyncio.sleep(delay)
-        fn = partial(
-            self._run_query_sync, run_id, query_id, query_text, cluster_name
-        )
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, fn)
+        self.query_router.on_query_start(query_id, cluster_name)
+        try:
+            fn = partial(
+                self._run_query_sync, run_id, query_id, query_text, cluster_name
+            )
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, fn)
+        finally:
+            self.query_router.on_query_finish(query_id, cluster_name)
 
     async def run(self) -> str:
         """
