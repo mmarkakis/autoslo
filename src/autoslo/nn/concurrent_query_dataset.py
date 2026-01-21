@@ -13,6 +13,30 @@ from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
 
+@dataclass
+class QueryInfo:
+    """
+    Lightweight container for query information needed for dataset construction.
+
+    Attributes:
+        query_id: The unique identifier for the query.
+        tpcds_temp_and_q_idx: The TPC-DS template and query index.
+        start_time_s: The start time of the query (in seconds, relative to some reference).
+        latency_s: The actual or estimated latency of the query (in seconds).
+        cluster_name: The name of the cluster where the query executes.
+        query_featurization: Optional pre-computed query features.
+        stage_latency_prediction: Optional stage model latency prediction for this query.
+    """
+
+    query_id: str
+    tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx
+    start_time_s: float
+    latency_s: float
+    cluster_name: str
+    query_featurization: IconqQueryFeaturizer.IconqQueryFeaturization
+    stage_latency_prediction: float
+
+
 class ConcurrentQueryDataset(Dataset):
     """
     A PyTorch Dataset for concurrent query data.
@@ -213,4 +237,119 @@ class ConcurrentQueryDataset(Dataset):
             query_ids=data["query_ids"],
             tpcds_temp_and_q_idx=data["tpcds_temp_and_q_idx"],
             run_ids=data["run_ids"],
+        )
+
+    @staticmethod
+    def build_from_query_groups(
+        iconq_interaction_featurizer: IconqInteractionFeaturizer,
+        base_queries: list[QueryInfo],
+        query_neighbors: dict[str, list[QueryInfo]],
+        use_log_runtime: bool = True,
+        run_id: Optional[str] = None,
+    ) -> "ConcurrentQueryDataset":
+        """
+        Build a dataset from base queries and their pre-computed neighbors.
+
+        This method constructs interaction features between a base query and its neighbors,
+        all assumed to be on the same cluster.
+
+        Parameters:
+            base_queries: List of QueryInfo objects for which to build dataset rows.
+            query_neighbors: Dict mapping query_id to list of neighboring QueryInfo objects.
+                Each query in base_queries should have an entry in this dict.
+            use_log_runtime: Whether to use log(runtime) as the target variable.
+            run_id: Optional run ID to associate with all queries.
+
+        Returns:
+            A ConcurrentQueryDataset ready for training or inference.
+        """
+
+        # If empty, return empty dataset
+        if not base_queries or len(base_queries) == 0:
+            return ConcurrentQueryDataset(
+                x=[],
+                pinch_points=torch.tensor([], dtype=torch.int8),
+                y=torch.tensor([], dtype=torch.float32),
+                query_ids=[],
+                tpcds_temp_and_q_idx=[],
+                run_ids=[],
+            )
+
+        # Build dataset components
+        x = []
+        y = []
+        pinch_points = []
+        query_ids_out = []
+        tpcds_temp_and_q_idx_out = []
+        run_ids_out = []
+
+        for base_query in base_queries:
+            neighbors = query_neighbors.get(base_query.query_id, [])
+
+            # Build interaction features
+            interaction_featurizations: dict[float, list[float]] = {}
+
+            # Add self-interaction (helps with isolated queries)
+            interaction_featurizations[base_query.start_time_s] = (
+                iconq_interaction_featurizer.featurize_from_vectors(
+                    cluster_name=base_query.cluster_name,
+                    qa_features=base_query.query_featurization,
+                    qa_start_time_s=base_query.start_time_s,
+                    qa_latency_prediction=base_query.stage_latency_prediction,
+                    qb_features=base_query.query_featurization,
+                    qb_start_time_s=base_query.start_time_s,
+                    qb_latency_prediction=base_query.stage_latency_prediction,
+                )
+            )
+
+            # Add neighbor interactions, sorted by start time
+            for neighbor in sorted(neighbors, key=lambda q: q.start_time_s):
+                interaction_featurizations[neighbor.start_time_s] = (
+                    iconq_interaction_featurizer.featurize_from_vectors(
+                        cluster_name=base_query.cluster_name,
+                        qa_features=base_query.query_featurization,
+                        qa_start_time_s=base_query.start_time_s,
+                        qa_latency_prediction=base_query.stage_latency_prediction,
+                        qb_features=neighbor.query_featurization,
+                        qb_start_time_s=neighbor.start_time_s,
+                        qb_latency_prediction=neighbor.stage_latency_prediction,
+                    )
+                )
+
+            # Sort interactions by start time to create the sequence
+            neighbor_sort_order = sorted(interaction_featurizations.keys())
+
+            # Add to dataset
+            x.append(
+                torch.stack(
+                    [
+                        torch.tensor(
+                            interaction_featurizations[start_time],
+                            dtype=torch.float32,
+                        )
+                        for start_time in neighbor_sort_order
+                    ]
+                )
+            )
+            latency = base_query.latency_s
+            y.append(latency if not use_log_runtime else np.log1p(latency))
+            pinch_points.append(
+                neighbor_sort_order.index(base_query.start_time_s)
+            )
+            query_ids_out.append(base_query.query_id)
+            tpcds_temp_and_q_idx_out.append(base_query.tpcds_temp_and_q_idx)
+            run_ids_out.append(run_id if run_id is not None else "unknown")
+
+        # Convert to tensors
+        x_tensorized = x
+        pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
+        y_tensorized = torch.tensor(y, dtype=torch.float32)
+
+        return ConcurrentQueryDataset(
+            x=x_tensorized,
+            pinch_points=pinch_points_tensorized,
+            y=y_tensorized,
+            query_ids=query_ids_out,
+            tpcds_temp_and_q_idx=tpcds_temp_and_q_idx_out,
+            run_ids=run_ids_out,
         )

@@ -428,6 +428,34 @@ class QueryTimeline:
             result += result_d[seq_num]
         return result
 
+    @staticmethod
+    def _query_info_from_interval(
+        cluster_name: str,
+        interval: Interval,
+    ) -> QueryInfo:
+        """
+        Create a QueryInfo instance from the given cluster name and Interval.
+
+        Parameters:
+            cluster_name: The name of the cluster where the query executes.
+            interval: The Interval representing the query.
+
+        Returns:
+            A QueryInfo instance.
+        """
+
+        return QueryInfo(
+            query_id=interval.data["query_id"],
+            tpcds_temp_and_q_idx=interval.data["tpcds_temp_and_q_idx"],
+            start_time_s=interval.begin,
+            latency_s=interval.end - interval.begin,
+            cluster_name=cluster_name,
+            query_featurization=interval.data["featurization"],
+            stage_latency_prediction=interval.data[
+                "stage_model_predictions_per_rpu"
+            ][Cluster.rpu_for_cluster_name(cluster_name)],
+        )
+
     def get_dataset(
         self,
         start_time_s: float = -float("inf"),
@@ -460,19 +488,15 @@ class QueryTimeline:
         Returns:
             A ConcurrentQueryDataset representing the timeline.
         """
-        x = []
-        y = []
-        pinch_points = []
-        query_ids = []
-        tpcds_temp_and_q_idx = []
+        # For each cluster, build the dataset
+        base_queries = []
+        query_neighbors: dict[str, list[QueryInfo]] = {}
 
         included_clusters = (
             [cluster_name] if cluster_name is not None else self.active_clusters
         )
 
         for cluster_name_local in included_clusters:
-
-            cluster_rpu = Cluster.from_config(cluster_name_local).rpu
 
             query_neighbor_mapping = self.queries_in_window(
                 cluster_name=cluster_name_local,
@@ -486,93 +510,27 @@ class QueryTimeline:
             )
 
             for base_iv, neighbor_ivs in query_neighbor_mapping.items():
+                base_query = self._query_info_from_interval(
+                    cluster_name=cluster_name_local,
+                    interval=base_iv,
+                )
+                base_queries.append(base_query)
 
-                interaction_featurizations: dict[
-                    float,
-                    IconqInteractionFeaturizer.IconqInteractionFeaturization,
-                ] = {}
-
-                # Add oneself to the interaction featurizations. This helps with
-                # queries that do not have any neighbors.
-                interaction_featurizations[base_iv.begin] = (
-                    self._iconq_interaction_featurizer.featurize_from_vectors(
+                query_neighbors[base_query.query_id] = [
+                    self._query_info_from_interval(
                         cluster_name=cluster_name_local,
-                        qa_features=base_iv.data["featurization"],
-                        qa_start_time_s=base_iv.begin,
-                        qa_latency_prediction=base_iv.data[
-                            "stage_model_predictions_per_rpu"
-                        ][cluster_rpu],
-                        qb_features=base_iv.data["featurization"],
-                        qb_start_time_s=base_iv.begin,
-                        qb_latency_prediction=base_iv.data[
-                            "stage_model_predictions_per_rpu"
-                        ][cluster_rpu],
+                        interval=neighbor_iv,
                     )
-                )
+                    for neighbor_iv in neighbor_ivs
+                ]
 
-                # Collect the interaction featurizations with neighboring nodes.
-                for neighbor_iv in neighbor_ivs:
-
-                    interaction_featurizations[neighbor_iv.begin] = (
-                        self._iconq_interaction_featurizer.featurize_from_vectors(
-                            cluster_name=cluster_name_local,
-                            qa_features=base_iv.data["featurization"],
-                            qa_start_time_s=base_iv.begin,
-                            qa_latency_prediction=base_iv.data[
-                                "stage_model_predictions_per_rpu"
-                            ][cluster_rpu],
-                            qb_features=neighbor_iv.data["featurization"],
-                            qb_start_time_s=neighbor_iv.begin,
-                            qb_latency_prediction=neighbor_iv.data[
-                                "stage_model_predictions_per_rpu"
-                            ][cluster_rpu],
-                        )
-                    )
-                neighbor_sort_order = sorted(interaction_featurizations.keys())
-
-                # Update the tensors.
-                x.append(
-                    torch.stack(
-                        [
-                            torch.tensor(
-                                interaction_featurizations[
-                                    neighbor_start_time_s
-                                ],
-                                dtype=torch.float32,
-                            )
-                            for neighbor_start_time_s in neighbor_sort_order
-                        ]
-                    )
-                )
-                latency = base_iv.end - base_iv.begin
-                y.append(latency if not use_log_runtime else np.log1p(latency))
-                pinch_points.append(neighbor_sort_order.index(base_iv.begin))
-                query_ids.append(base_iv.data["query_id"])
-                tpcds_temp_and_q_idx.append(
-                    base_iv.data["tpcds_temp_and_q_idx"]
-                )
-
-        # Transform lists into tensors.
-        x_tensorized = x
-        pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
-        y_tensorized = torch.tensor(y, dtype=torch.float32)
-
-        # Intialize the run ids.
-        if run_id is not None:
-            run_ids = [run_id for _ in range(len(query_ids))]
-        else:
-            run_ids = ["unknown" for _ in range(len(query_ids))]
-
-        dataset = ConcurrentQueryDataset(
-            x=x_tensorized,
-            pinch_points=pinch_points_tensorized,
-            y=y_tensorized,
-            query_ids=query_ids,
-            tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
-            run_ids=run_ids,
+        return ConcurrentQueryDataset.build_from_query_groups(
+            iconq_interaction_featurizer=self._iconq_interaction_featurizer,
+            base_queries=base_queries,
+            query_neighbors=query_neighbors,
+            use_log_runtime=use_log_runtime,
+            run_id=run_id,
         )
-
-        return dataset
 
     @staticmethod
     def _maybe_log(message: str, verbose: bool):
