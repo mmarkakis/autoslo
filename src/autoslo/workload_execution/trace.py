@@ -430,12 +430,15 @@ class Trace:
      
 
     @staticmethod
-    def extract_temp_and_q_idxs(query_text: str) -> "TPCDSTempAndQIdx":
+    def extract_temp_and_q_idxs(query_text: str,
+                                has_prepended_run_information: bool = True) -> "TPCDSTempAndQIdx":
         """
         Extract the TPC-DS template and query index from the given query text.
 
         Parameters:
             query_text: The text of the query.
+            has_prepended_run_information: Whether the query text has prepended
+                run information.  
 
         Returns:
             A tuple containing the template number and the query index.
@@ -445,7 +448,8 @@ class Trace:
                 template and query index following the required format.
         """
         try:
-            return query_text.split("\\n")[1][-11:-4].strip()
+            idx = 1 if has_prepended_run_information else 0
+            return query_text.split("\\n")[idx][-11:-4].strip()
 
         except Exception as e:
             raise ValueError(

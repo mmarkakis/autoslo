@@ -22,19 +22,20 @@ class QueryInfo:
         query_id: The unique identifier for the query.
         tpcds_temp_and_q_idx: The TPC-DS template and query index.
         start_time_s: The start time of the query (in seconds, relative to some reference).
-        latency_s: The actual or estimated latency of the query (in seconds).
         cluster_name: The name of the cluster where the query executes.
         query_featurization: Optional pre-computed query features.
         stage_latency_prediction: Optional stage model latency prediction for this query.
+        latency_s: The actual or estimated latency of the query (in seconds).
     """
 
     query_id: str
     tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx
     start_time_s: float
-    latency_s: float
     cluster_name: str
     query_featurization: IconqQueryFeaturizer.IconqQueryFeaturization
     stage_latency_prediction: float
+    latency_s: Optional[float] = None
+
 
 
 class ConcurrentQueryDataset(Dataset):
@@ -251,12 +252,13 @@ class ConcurrentQueryDataset(Dataset):
         Build a dataset from base queries and their pre-computed neighbors.
 
         This method constructs interaction features between a base query and its neighbors,
-        all assumed to be on the same cluster.
+        all assumed to be on the same cluster. 
 
         Parameters:
             base_queries: List of QueryInfo objects for which to build dataset rows.
             query_neighbors: Dict mapping query_id to list of neighboring QueryInfo objects.
-                Each query in base_queries should have an entry in this dict.
+                Each query in base_queries should have an entry in this dict. If
+                the neighbors include the base query itself, it will be ignored.
             use_log_runtime: Whether to use log(runtime) as the target variable.
             run_id: Optional run ID to associate with all queries.
 
@@ -304,6 +306,8 @@ class ConcurrentQueryDataset(Dataset):
 
             # Add neighbor interactions, sorted by start time
             for neighbor in sorted(neighbors, key=lambda q: q.start_time_s):
+                if neighbor.query_id == base_query.query_id:
+                    continue  # Skip self-interaction; already added
                 interaction_featurizations[neighbor.start_time_s] = (
                     iconq_interaction_featurizer.featurize_from_vectors(
                         cluster_name=base_query.cluster_name,
@@ -331,8 +335,11 @@ class ConcurrentQueryDataset(Dataset):
                     ]
                 )
             )
-            latency = base_query.latency_s
-            y.append(latency if not use_log_runtime else np.log1p(latency))
+            if base_query.latency_s is not None:
+                latency = base_query.latency_s
+                y.append(latency if not use_log_runtime else np.log1p(latency))
+            else:
+                y.append(0.0)  # Placeholder if latency is not available
             pinch_points.append(
                 neighbor_sort_order.index(base_query.start_time_s)
             )

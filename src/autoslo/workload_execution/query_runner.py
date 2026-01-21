@@ -12,8 +12,8 @@ from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprints.blueprint import Blueprint
-from autoslo.blueprints.cluster import Cluster
 from autoslo.routing.query_router import QueryRouter
+from autoslo.workload_execution.trace import Trace
 
 
 class QueryRunner:
@@ -238,7 +238,17 @@ class QueryRunner:
         )
         if delay > 0:
             await asyncio.sleep(delay)
-        self.query_router.on_query_start(query_id, cluster_name)
+        tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(
+            query_text,
+            has_prepended_run_information=False,
+        )
+        now = self._async_ts()
+        self.query_router.on_query_start(
+            query_id=query_id,
+            cluster_name=cluster_name,
+            tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
+            start_time_s=now,
+        )
         try:
             fn = partial(
                 self._run_query_sync, run_id, query_id, query_text, cluster_name
@@ -246,7 +256,10 @@ class QueryRunner:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, fn)
         finally:
-            self.query_router.on_query_finish(query_id, cluster_name)
+            self.query_router.on_query_finish(
+                query_id=query_id,
+                cluster_name=cluster_name,
+            )
 
     async def run(self) -> str:
         """
