@@ -46,7 +46,6 @@ class GanttRecorder:
         Expects:
           - obj.active_clusters: Iterable[str]
           - obj._interval_trees[cluster_name] yields intervals with .begin, .end, .data["query_id"]
-          - Cluster.from_config(cluster_name).rpu exists (or adjust below)
         """
         intervals_by_cluster: dict[
             str, list[tuple[float, float, dict[str, Any]]]
@@ -61,7 +60,6 @@ class GanttRecorder:
             intervals = sorted((iv.begin, iv.end, dict(iv.data)) for iv in tree)
             intervals_by_cluster[cluster_name] = intervals
 
-            rpu = Cluster.from_config(cluster_name).rpu
             cluster_label_by_name[cluster_name] = f"{cluster_name}"
 
         if label is None:
@@ -230,7 +228,9 @@ def _build_shapes_for_snapshot(
     else:
         # Sort clusters by RPU ascending so fewer RPU appear lower
         present = [c for c, ints in snap.intervals_by_cluster.items() if ints]
-        cluster_iter = sorted(present, key=lambda c: Cluster.from_config(c).rpu)
+        cluster_iter = sorted(
+            present, key=lambda c: Cluster.rpu_for_cluster_name(c)
+        )
 
     for cluster_name in cluster_iter:
         intervals = snap.intervals_by_cluster.get(cluster_name, [])
@@ -378,7 +378,7 @@ def render_gantt_scrubber(
 
         # Sort by RPU ascending (fewest RPU at bottom)
         cluster_order = sorted(
-            cluster_order, key=lambda c: Cluster.from_config(c).rpu
+            cluster_order, key=lambda c: Cluster.rpu_for_cluster_name(c)
         )
 
         max_lanes_by_cluster: dict[str, int] = {c: 0 for c in cluster_order}
@@ -425,7 +425,7 @@ def render_gantt_scrubber(
 
     # Build per-snapshot annotations
     def _ann_for_snap(snap: GanttSnapshot):
-        txt:str
+        txt: str
         if optimize_cumulative_slo_violation_time:
             txt = (
                 f"<b>Cumulative SLO Violation Time:</b> {snap.violation_amount:.1f}s "
@@ -495,7 +495,7 @@ def render_gantt_scrubber(
             viol_rate = (viol / q_count) if q_count > 0 else 0.0
             hover = (
                 f"Cluster: {cluster_name}<br>"
-                f"RPU: {Cluster.from_config(cluster_name).rpu}<br>"
+                f"RPU: {Cluster.rpu_for_cluster_name(cluster_name)}<br>"
                 f"Queries: {q_count}<br>"
                 f"SLO Viol.: {viol_rate*100:.1f}% ({viol}/{q_count})<br>"
                 f"Cost: ${snap.cost_per_cluster.get(cluster_name, 0.0):,.2f}"

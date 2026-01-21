@@ -111,7 +111,7 @@ class CacheModel:
         """
         predictions: dict[str, Optional[ModelPrediction]] = {}
 
-        cluster_rpu = Cluster.from_config(cluster_name).rpu
+        cluster_rpu = Cluster.rpu_for_cluster_name(cluster_name)
         cache_for_rpu = self._cache.get(cluster_rpu, {})
 
         for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
@@ -197,7 +197,7 @@ class CacheModel:
                 cluster_name = trace.cluster_name_from_query_id(
                     query_id  # type: ignore
                 )
-                cluster_rpu = Cluster.from_config(cluster_name).rpu
+                cluster_rpu = Cluster.rpu_for_cluster_name(cluster_name)
                 template_id = Trace.extract_temp(temp_and_q_idx)
                 query_within_template_id = Trace.extract_q_idx(temp_and_q_idx)
 

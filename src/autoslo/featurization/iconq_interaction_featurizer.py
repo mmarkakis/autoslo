@@ -207,6 +207,6 @@ class IconqInteractionFeaturizer:
             + [
                 abs(qb_start_time_s - qa_start_time_s),
                 float(qa_start_time_s < qb_start_time_s),
-                Cluster.from_config(cluster_name).rpu,
+                Cluster.rpu_for_cluster_name(cluster_name),
             ]
         )

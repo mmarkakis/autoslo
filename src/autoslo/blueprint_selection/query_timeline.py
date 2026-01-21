@@ -642,7 +642,7 @@ class QueryTimeline:
         stage_pred_on_new_cluster = self._query_id_to_cluster_interval[
             move.query_id
         ][1].data["stage_model_predictions_per_rpu"][
-            Cluster.from_config(move.to_cluster_name).rpu
+            Cluster.rpu_for_cluster_name(move.to_cluster_name)
         ]
 
         old_latencies[move.query_id] = self.update_latency(

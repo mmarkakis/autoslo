@@ -116,6 +116,27 @@ class Cluster:
             d[rpu].append(cluster_name)
 
         return {rpu: sorted(cluster_names) for rpu, cluster_names in d.items()}
+    
+    @classmethod
+    def rpu_for_cluster_name(cls, cluster_name: str) -> int:
+        """
+        Retrieve the RPU size for a given cluster name.
+
+        Parameters:
+            cluster_name: The name of the cluster.
+
+        Returns:
+            The RPU size of the specified cluster.
+
+        Raises:
+            KeyError: If the cluster_name is not found in the configuration.
+        """
+        all_cluster_configs = cls.all_cluster_configs()
+        if cluster_name not in all_cluster_configs:
+            raise KeyError(
+                f"Cluster name '{cluster_name}' not found in config."
+            )
+        return all_cluster_configs[cluster_name]["rpu"]
 
     @staticmethod
     def from_config(cluster_name: str) -> "Cluster":

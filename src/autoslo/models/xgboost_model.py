@@ -138,7 +138,7 @@ class XGBoostModel:
                 where each element is in seconds.
         """
         predictions: dict[str, ModelPrediction] = {}
-        cluster_rpu = Cluster.from_config(cluster_name).rpu
+        cluster_rpu = Cluster.rpu_for_cluster_name(cluster_name)
 
         for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
             featurization = self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(

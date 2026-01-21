@@ -142,7 +142,7 @@ class BlueprintSelector:
         self._recorder: GanttRecorder
         if init_from_trace:
             workload_name = workload.name
-            rpu = Cluster.from_config(cluster_name=cluster_name).rpu
+            rpu = Cluster.rpu_for_cluster_name(cluster_name)
             blueprint_name = Blueprint.one_cluster_with(rpu).name
             schema_name = "ext"  # FIXME: make more robust
             run_ids = pu.RunLocator.get_run_ids(
