@@ -1,8 +1,15 @@
+from dataclasses import dataclass
+from typing import Optional
+
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
+from autoslo.featurization.iconq_interaction_featurizer import (
+    IconqInteractionFeaturizer,
+)
+from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_execution.trace import Trace
 
 
@@ -10,7 +17,7 @@ class ConcurrentQueryDataset(Dataset):
     """
     A PyTorch Dataset for concurrent query data.
 
-    Each item in the dataset is a tuple of the form 
+    Each item in the dataset is a tuple of the form
     (x, pinch_point, y, query_ids), where:
         - x is a list of the the input tensor, of shape (seq_len, input_size).
             The list length is batch_size.
@@ -27,7 +34,7 @@ class ConcurrentQueryDataset(Dataset):
         y: torch.Tensor,
         query_ids: list[str],
         tpcds_temp_and_q_idx: list[Trace.TPCDSTempAndQIdx],
-        run_ids: list[str]
+        run_ids: list[str],
     ):
         self.x = x
         self.pinch_points = pinch_points
@@ -45,7 +52,7 @@ class ConcurrentQueryDataset(Dataset):
         torch.Tensor,
         str,
         Trace.TPCDSTempAndQIdx,
-        str
+        str,
     ]:
         return (
             self.x[idx],
@@ -94,9 +101,24 @@ class ConcurrentQueryDataset(Dataset):
 
     @staticmethod
     def collate_and_pad(
-        batch: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, str, Trace.TPCDSTempAndQIdx, str]],
+        batch: list[
+            tuple[
+                torch.Tensor,
+                torch.Tensor,
+                torch.Tensor,
+                str,
+                Trace.TPCDSTempAndQIdx,
+                str,
+            ]
+        ],
     ) -> tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[str], list[Trace.TPCDSTempAndQIdx], list[str]
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        list[str],
+        list[Trace.TPCDSTempAndQIdx],
+        list[str],
     ]:
         """
         Custom collation function for DataLoader of ConcurrentQueryDataset.
@@ -120,7 +142,9 @@ class ConcurrentQueryDataset(Dataset):
                 of shape (batch_size,).
             run_ids: The list of run IDs, of shape (batch_size,).
         """
-        (x, pinch_points, y, query_ids, tpcds_temp_and_q_idx, run_ids) = zip(*batch)
+        (x, pinch_points, y, query_ids, tpcds_temp_and_q_idx, run_ids) = zip(
+            *batch
+        )
         x_len = [len(i) for i in x]
         sort_idx = torch.tensor(
             np.argsort(x_len)[::-1].copy(), dtype=torch.long
@@ -141,8 +165,16 @@ class ConcurrentQueryDataset(Dataset):
 
         # Pad sequences to the maximum length per batch
         padded_x_out = pad_sequence(x_out, batch_first=True, padding_value=0)
-        return (padded_x_out, x_len_out, pinch_points_out, y_out, query_ids_out, tpcds_temp_and_q_idx_out, run_ids_out)
-    
+        return (
+            padded_x_out,
+            x_len_out,
+            pinch_points_out,
+            y_out,
+            query_ids_out,
+            tpcds_temp_and_q_idx_out,
+            run_ids_out,
+        )
+
     def save_to(self, path: str) -> None:
         """
         Saves the dataset to disk at the specified path.

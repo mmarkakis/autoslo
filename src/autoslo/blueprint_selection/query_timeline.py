@@ -1,22 +1,19 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from math import isclose
 from typing import Optional
 
 import matplotlib.pyplot as plt
-import numpy as np
-import torch
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
 from matplotlib.patches import Rectangle
 
 from autoslo.blueprints.cluster import Cluster
-from autoslo.featurization.iconq_interaction_featurizer import (
-    IconqInteractionFeaturizer,
-)
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.nn.concurrent_query_dataset import (
+    ConcurrentQueryDataset,
+    QueryInfo,
+)
 from autoslo.utils.billing import Billing
 from autoslo.workload_execution.trace import Trace
 
@@ -659,8 +656,6 @@ class QueryTimeline:
             verbose,
         )
 
-        predicted_latencies = {}
-
         # First update latencies on the new cluster for the moved query.
         interval = self.interval_for_query_id(query_id=move.query_id)
         self._maybe_log(
@@ -1179,7 +1174,8 @@ class QueryTimeline:
             # Label the cluster on the y axis
             y_ticks.append(y_pos + (len(lanes) - 1) / 2)
             y_labels.append(
-                f"{cluster_name} (RPU {Cluster.from_config(cluster_name).rpu})"
+                f"{cluster_name} "
+                f"(RPU {Cluster.rpu_for_cluster_name(cluster_name)})"
             )
             y_pos += len(lanes) + 1  # add space between clusters
 
