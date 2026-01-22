@@ -96,10 +96,14 @@ def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
     return run_ids, train_val_test_assignments
 
 
-def set_up_featurizer(run_ids: list[str]) -> str:
+def set_up_featurizer(run_ids: list[str], from_sys_query_explain: bool) -> str:
     """Sets up the IconQ query featurizer and returns its ID."""
 
-    featurizer = IconqQueryFeaturizer(schema_name="tpcds1000", run_ids=run_ids)
+    featurizer = IconqQueryFeaturizer(
+        schema_name="tpcds1000",
+        run_ids=run_ids,
+        from_sys_query_explain=from_sys_query_explain,
+    )
     return featurizer.save()
 
 
@@ -162,7 +166,7 @@ def train_iconq_model(
         is_bayesian=False,
         is_mdn=False,
         train_on_log_runtime=True,
-        use_fixed_window_radius_s=600.0,
+        use_fixed_window_radius_s=None,
         use_fixed_window_max_neighbors_per_side=None,
     )
     nn_model_train_config = NNModelTrainConfig(
@@ -171,6 +175,7 @@ def train_iconq_model(
         explicit_run_ids_per_split=explicit_run_ids_per_split,
         sensitive_q_error_loss_small_val=5.0,
         penalize_based_on_overlap=penalize_based_on_overlap,
+        learning_rate=1e-3
     )
     iconq_model = IconqModel(
         init_config=iconq_model_init_config,
@@ -211,6 +216,11 @@ if __name__ == "__main__":
         "--penalize_based_on_overlap",
         action="store_true",
         help="Whether to penalize based on overlap in the sensitive Q-error loss.",
+    )
+    parser.add_argument(
+        "--from_sys_query_explain",
+        action="store_true",
+        help="Whether to derive features from sys_query_explain table.",
     )
     args = parser.parse_args()
     print(
@@ -263,7 +273,7 @@ if __name__ == "__main__":
     if "featurizer_id" not in cached_progress:
         print("\tFeaturizer not cached. Computing...")
         run_ids = cached_progress["run_ids"]
-        featurizer_id = set_up_featurizer(run_ids)
+        featurizer_id = set_up_featurizer(run_ids, args.from_sys_query_explain)
         cached_progress["featurizer_id"] = featurizer_id
         with open(progress_cache_path, "w") as f:
             yaml.safe_dump(cached_progress, f)

@@ -67,6 +67,8 @@ class CacheModel:
         self._mean_runtime_s_for_rpu: dict[int, float] = defaultdict(float)
         self._std_runtime_s_for_rpu: dict[int, float] = defaultdict(float)
 
+        self._only_non_overlapping_queries = False
+
     def predict(
         self, query_texts: dict[str, str], cluster_name: str
     ) -> dict[str, Optional[ModelPrediction]]:
@@ -179,6 +181,8 @@ class CacheModel:
             self._overall_std_runtime_s = 0.0
             self._run_ids = []
 
+        self._only_non_overlapping_queries = only_non_overlapping_queries
+
         for run_id in run_ids:
             trace = Trace(run_id)
             latencies = trace.latencies_s
@@ -190,7 +194,7 @@ class CacheModel:
             ):
                 if (
                     only_non_overlapping_queries
-                    and not query_is_non_overlapping[query_id] # type: ignore
+                    and not query_is_non_overlapping[query_id]  # type: ignore
                 ):
                     continue
 
@@ -274,6 +278,7 @@ class CacheModel:
                 {
                     "enable_template_cache": self._enable_template_cache,
                     "best_effort": self._best_effort,
+                    "only_non_overlapping_queries": self._only_non_overlapping_queries,
                     "run_ids": self._run_ids,
                     "mean_runtime_s_for_rpu": dict(
                         self._mean_runtime_s_for_rpu

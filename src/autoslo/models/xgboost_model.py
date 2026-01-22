@@ -95,6 +95,8 @@ class XGBoostModel:
         )
         self._random_seed = random_seed
 
+        self._only_non_overlapping_queries = False
+
     def predict(
         self, query_texts: dict[str, str], cluster_name: str
     ) -> dict[str, ModelPrediction]:
@@ -189,6 +191,8 @@ class XGBoostModel:
         )
         os.makedirs(self._save_dir, exist_ok=True)
 
+        self._only_non_overlapping_queries = only_non_overlapping_queries
+
         # Save the XGBoostModel parameters.
         params_path = os.path.join(self._save_dir, "params.yml")
         with open(params_path, "w") as f:
@@ -204,6 +208,9 @@ class XGBoostModel:
                     "eval_metric": self._eval_metric,
                     "early_stopping_rounds": self._early_stopping_rounds,
                     "random_seed": self._random_seed,
+                    "only_non_overlapping_queries": (
+                        self._only_non_overlapping_queries
+                    ),
                 },
                 f,
             )
