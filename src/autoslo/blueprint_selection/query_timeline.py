@@ -563,7 +563,7 @@ class QueryTimeline:
         """
         # Bookkeeping for return values.
         inverse_move = move.inverse()
-        old_latencies = {}
+        old_latencies: dict[str, float] = {}
 
         self._maybe_log(f"Applying move: {move.pretty_print()}", verbose)
         # Move to the new cluster and update the latency to be the defualt from
