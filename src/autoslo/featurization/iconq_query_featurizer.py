@@ -1,12 +1,14 @@
 """
-The code in this file was derived from code written by Ziniu Wu for IconqSched.
+Some code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
 import os
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Optional, TypeAlias, cast
 
 import numpy as np
+import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
@@ -42,6 +44,7 @@ class IconqQueryFeaturizer:
                 IconqQueryFeaturization,
             ]
         ] = None,
+        from_sys_query_explain: bool = False,
     ) -> None:
         """
         Initializes the IconqQueryFeaturizer.
@@ -64,6 +67,9 @@ class IconqQueryFeaturizer:
             precomputed_top_tables: If provided, the top N tables to use.
             precomputed_featurization_cache: If provided, a cache mapping
                 TPC-DS template and query indices to their featurizations.
+            from_sys_query_explain: Whether the featurizer should operate based
+                on sys_query_explain data (newer version), instead of parsed
+                query plans (older version).
         """
         self._schema_name = schema_name
         self._run_ids = run_ids
@@ -76,6 +82,7 @@ class IconqQueryFeaturizer:
         self._use_true_card = use_true_card
         self._use_table_selectivity = use_table_selectivity
         self._use_log = use_log
+        self._from_sys_query_explain = from_sys_query_explain
 
         self._featurization_cache: dict[
             Trace.TPCDSTempAndQIdx,
@@ -85,15 +92,8 @@ class IconqQueryFeaturizer:
         if precomputed_top_operators is not None:
             self._top_operators = precomputed_top_operators
         else:
-            query_plans = {}
-            print("Loading query plans...")
-            for run_id in tqdm(run_ids):
-                trace = Trace(run_id)
-                plans = trace.query_plans()
-                query_plans.update(plans)
-
             print("Finding top operators...")
-            self._top_operators = self._find_top_operators(query_plans)
+            self._top_operators = self._find_top_operators(run_ids)
 
         if precomputed_top_tables is not None:
             self._top_tables = precomputed_top_tables
@@ -106,23 +106,38 @@ class IconqQueryFeaturizer:
             self._featurization_cache = precomputed_featurization_cache
         else:
             print("Featurizing queries...")
+
+            feat_func = (
+                self.featurize_plan
+                if not self._from_sys_query_explain
+                else self.featurize_plan_from_sys_query_explain_rows
+            )
+
             for run_id in tqdm(run_ids):
                 trace = Trace(run_id)
-
                 tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
-                plans = trace.query_plans()
+                was_aborted = trace.was_aborted()
 
-                for (
-                    query_id,
-                    tpcds_temp_and_q_idx,
-                ) in tpcds_temp_and_q_idxs.items():
+                info = (
+                    trace.query_plans()
+                    if not self._from_sys_query_explain
+                    else trace.sys_query_explain_rows_per_query()
+                )
+
+                for query_id, aborted in was_aborted.items():
+                    if aborted:
+                        # Ignore aborted queries for accurate featurization.
+                        continue
+
                     query_id = cast(str, query_id)
+                    tpcds_temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+
                     if tpcds_temp_and_q_idx in self._featurization_cache:
                         continue
-                    if (query_id not in plans) or (plans[query_id] is None):
+                    if (query_id not in info) or (info[query_id] is None):
                         self._featurization_cache[tpcds_temp_and_q_idx] = []
                         continue
-                    featurization = self.featurize_plan(plans[query_id])
+                    featurization = feat_func(info[query_id])  # type: ignore
                     self._featurization_cache[tpcds_temp_and_q_idx] = (
                         featurization
                     )
@@ -168,22 +183,54 @@ class IconqQueryFeaturizer:
         """
         return self._run_ids
 
-    def _find_top_operators(self, query_plans: dict) -> list[str]:
+    def _find_top_operators(self, run_ids: list[str]) -> list[str]:
         """
-        Finds the top M operators across the given query plans.
+        Finds the top M operators across the given runs. Based on the setting
+        of self._from_sys_query_explain, either uses parsed query plans, or
+        sys_query_explain data.
 
         Parameters:
-            query_plans: A dictionary mapping query IDs to their query plans.
+            run_ids: The run IDs to use to find the top M operators.
 
         Returns:
             The top M operator names.
         """
-
         # Find all of the operators across queries and their counts.
-        all_operators: dict[str, int] = {}
-        for plan in tqdm(query_plans.values()):
-            if plan is not None:
-                IconqQueryFeaturizer._dfs_count_operators(plan, all_operators)
+        all_operators: dict[str, int] = defaultdict(int)
+
+        if self._from_sys_query_explain:
+            print("`from_sys_query_explain` is True; using sys_query_explain.")
+            for run_id in tqdm(run_ids):
+                trace = Trace(run_id)
+                sys_query_explain_rows_per_query = (
+                    trace.sys_query_explain_rows_per_query()
+                )
+                was_aborted = trace.was_aborted()
+                for query_id, aborted in was_aborted.items():
+                    if aborted:
+                        # Ignore aborted queries for accurate operator counts.
+                        continue
+                    query_id = cast(str, query_id)  # Make mypy happy
+                    sub_df = sys_query_explain_rows_per_query[query_id]
+                    for node in sub_df["plan_node"].values:
+                        operator_name = (
+                            self._process_one_sys_query_explain_plan_node(node)[
+                                0
+                            ]
+                        )
+                        all_operators[operator_name] += 1
+        else:
+            print("`from_sys_query_explain` is False; using query plans.")
+            query_plans = {}
+            for run_id in tqdm(run_ids):
+                trace = Trace(run_id)
+                plans = trace.query_plans()
+                query_plans.update(plans)
+            for plan in tqdm(query_plans.values()):
+                if plan is not None:
+                    IconqQueryFeaturizer._dfs_count_operators(
+                        plan, all_operators
+                    )
         op_names = list(all_operators.keys())
         op_counts = list(all_operators.values())
         total_ops = sum(op_counts)
@@ -420,6 +467,24 @@ class IconqQueryFeaturizer:
             query_plan,
             features,
         )
+
+        # Transform cardinality features, if needed.
+        features = self._transform_card_if_needed(features)
+        return features
+
+    def _transform_card_if_needed(
+        self, features: IconqQueryFeaturization
+    ) -> IconqQueryFeaturization:
+        """
+        Transforms the cardinality features in the given feature vector, if
+        needed.
+
+        Parameters:
+            features: The feature vector to transform.
+
+        Returns:
+            The transformed feature vector.
+        """
 
         # For each feature representing an operator cardinality, either
         # take the log or convert to MB.
@@ -681,7 +746,6 @@ class IconqQueryFeaturizer:
 
         return dot_product / (norm_a * norm_b)
 
-
     def table_access_pattern_coverage_from_tpcds_temp_and_q_idxs(
         self,
         tpcds_temp_and_q_idx_a: Trace.TPCDSTempAndQIdx,
@@ -734,10 +798,139 @@ class IconqQueryFeaturizer:
         table_features_a = featurization_a[2 * self._m :]
         table_features_b = featurization_b[2 * self._m :]
 
-        numerator = sum([min(a, b) for a, b in zip(table_features_a, table_features_b)])
+        numerator = sum(
+            [min(a, b) for a, b in zip(table_features_a, table_features_b)]
+        )
         denominator = sum(table_features_b)
 
         if denominator == 0:
             return 1.0
 
         return numerator / denominator
+
+    def nonzero_feature_for_table_from_tpcds_temp_and_q_idx(
+        self, tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx, table_name: str
+    ) -> bool:
+        """
+        Answers whether the featurization for the given query has a non-zero
+        value in the feature corresponding to the given table. Useful for
+        sanity checking.
+        """
+
+        featurization = self.featurize_from_tpcds_temp_and_q_idx(
+            tpcds_temp_and_q_idx
+        )
+        return self.nonzero_feature_for_table(featurization, table_name)
+
+    def nonzero_feature_for_table(
+        self, featurization: IconqQueryFeaturization, table_name: str
+    ) -> bool:
+        """
+        Answers whether the featurization for the given query has a non-zero
+        value in the feature corresponding to the given table. Useful for
+        sanity checking.
+        """
+
+        if table_name not in self.top_table_names:
+            raise ValueError(f"Table {table_name} is not in the top tables.")
+        table_idx = self.top_table_names.index(table_name)
+        feature_idx = 2 * self._m + table_idx
+        return featurization[feature_idx] > 0.0
+
+    def _process_one_sys_query_explain_plan_node(
+        self, plan_node: str
+    ) -> tuple[str, Optional[str], float, float]:
+        """
+        Processes one plan node from sys_query_explain.
+
+        Parameters:
+            plan_node: The plan node string.
+
+        Returns:
+            operator_name: The name of the operator.
+            base_table_name: The name of the base table, if any.
+            cardinality: The estimated cardinality of the operator.
+            width: The estimated width of the operator.
+        """
+
+        # -> XN Seq Scan ext_tpcds1000.date_dim d2 (cost=0.00..1095.73 rows=30 width=4)
+        operator_name = (
+            plan_node.strip().lstrip("->").strip().split("(")[0].strip()
+        )
+        base_table_name = None
+        if "Seq Scan" in operator_name:
+            base_table_name = (
+                operator_name.split("Seq Scan")[-1]
+                .strip()
+                .split()[0]
+                .split(".")[-1]
+                .strip()
+            )
+        if "Scan" in operator_name:
+            operator_name = operator_name.split("Scan")[0] + "Scan"
+
+        cardinality = plan_node.split("rows=")[1].split(" ")[0].strip()
+        width = plan_node.split("width=")[1].split(")")[0].strip()
+
+        return operator_name, base_table_name, float(cardinality), float(width)
+
+    def featurize_plan_from_sys_query_explain_rows(
+        self,
+        sys_query_explain_sub_df: pd.DataFrame,
+        child_queries_to_ignore: Optional[set[int]] = None,
+    ) -> IconqQueryFeaturization:
+        """
+        Converts the given sys_query_explain rows into a vectorized representation.
+
+        Parameters:
+            sys_query_explain_sub_df: The sys_query_explain rows to convert.
+
+        Returns:
+            The vectorized representation of the query plan.
+
+        Raises:
+            ValueError: If the rows don't all correspond to the same query.
+        """
+        if len(sys_query_explain_sub_df["query_id"].unique()) != 1:
+            raise ValueError(
+                "The provided sys_query_explain rows do not all correspond to "
+                "the same query."
+            )
+
+        features = [0.0] * self.num_dims
+
+        if child_queries_to_ignore is None:
+            child_queries_to_ignore = set()
+
+        for _, row in sys_query_explain_sub_df.iterrows():
+            child_query_id = row["child_query_sequence"]
+            if child_query_id in child_queries_to_ignore:
+                continue
+            plan_node: str = row["plan_node"]
+            operator_name, base_table_name, cardinality, width = (
+                self._process_one_sys_query_explain_plan_node(plan_node)
+            )
+
+            if self._use_size:
+                cardinality = float(cardinality) * max(1.0, float(width))
+
+            # Update operator-related features.
+            if operator_name in self._top_operators:
+                idx = self._top_operators.index(operator_name)
+                # Update operator-related features.
+                features_idx_count = idx * 2
+                features_idx_card = idx * 2 + 1
+                features[features_idx_count] += 1
+                features[features_idx_card] += float(cardinality)
+
+            # Update table-related features.
+            if (base_table_name is not None) and (
+                base_table_name in self.top_table_names
+            ):
+                table_idx = self.top_table_names.index(base_table_name)
+                feature_idx = 2 * self._m + table_idx
+                features[feature_idx] += float(cardinality)
+
+        # Transform cardinality features, if needed.
+        features = self._transform_card_if_needed(features)
+        return features

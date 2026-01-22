@@ -34,6 +34,7 @@ class Trace:
             "result_cache_hit",
             "query_type",
             "query_text",
+            "error_message",
         ],
         "sys_query_detail": [
             "query_id",
@@ -45,6 +46,7 @@ class Trace:
             "query_id",
             "plan_node_id",
             "plan_node",
+            "child_query_sequence",
         ],
     }
 
@@ -82,6 +84,9 @@ class Trace:
         """
         self._run_id = run_id
         self._uuid = uuid.uuid4()
+
+        # For caching.
+        self._query_ids: list[str] = []
 
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
@@ -155,7 +160,7 @@ class Trace:
 
         Returns:
             The Redshift query ID as a string.
-        """ 
+        """
         return query_id.rsplit("_", maxsplit=1)[-1].split("#", maxsplit=1)[0]
 
     @staticmethod
@@ -348,8 +353,6 @@ class Trace:
             self.cost_of_cluster(cluster_name)
             for cluster_name in self.seen_clusters
         ]
-    
-   
 
     @property
     def seen_clusters(self) -> list[str]:
@@ -404,12 +407,12 @@ class Trace:
         Returns:
             A pandas Series containing the query IDs.
         """
-        all_query_ids = []
-        for df in self._dfs["sys_query_history"].values():
-            all_query_ids.extend(list(df["query_id"].unique()))
+        if len(self._query_ids) == 0:
+            for df in self._dfs["sys_query_history"].values():
+                self._query_ids.extend(list(df["query_id"].unique()))
 
-        return all_query_ids
-    
+        return self._query_ids
+
     @property
     def seq_nums(self) -> pd.Series:
         """
@@ -426,19 +429,18 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
-    
-     
 
     @staticmethod
-    def extract_temp_and_q_idxs(query_text: str,
-                                has_prepended_run_information: bool = True) -> "TPCDSTempAndQIdx":
+    def extract_temp_and_q_idxs(
+        query_text: str, has_prepended_run_information: bool = True
+    ) -> "TPCDSTempAndQIdx":
         """
         Extract the TPC-DS template and query index from the given query text.
 
         Parameters:
             query_text: The text of the query.
             has_prepended_run_information: Whether the query text has prepended
-                run information.  
+                run information.
 
         Returns:
             A tuple containing the template number and the query index.
@@ -573,8 +575,6 @@ class Trace:
                     active_queries.remove(query_id)
 
         return pd.Series(non_overlapping_dict).reindex(self.query_ids)
-        
-            
 
     def mbytes_scanned(self) -> pd.Series:
         """
@@ -626,9 +626,9 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
-    
+
     @property
-    def routing_decisions(self) ->pd.Series:
+    def routing_decisions(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
         the routing decisions (cluster names) of each query.
@@ -644,12 +644,16 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
-        
 
-    def query_plans(self) -> dict[str, Any]:
+    def query_plans(self, ignore_caching: bool = False) -> dict[str, Any]:
         """
         Parse the query plans for each query in the trace and return a
         dictionary mapping the query IDs to their parsed plans.
+
+        Parameters:
+            ignore_caching: If True, ignore any cached parsed plans and
+                re-parse all query plans. Also don't dump the parsed plans to
+                cache after parsing.
         """
 
         d = {}
@@ -668,9 +672,10 @@ class Trace:
             pu.get_data_path(), "parsed_query_plans", f"{schema_name}.pkl"
         )
         parsed_plans: dict[Trace.TPCDSTempAndQIdx, Any] = {}
-        if os.path.exists(parsed_plans_path):
-            with open(parsed_plans_path, "rb") as f:
-                parsed_plans = pickle.load(f)
+        if not ignore_caching:
+            if os.path.exists(parsed_plans_path):
+                with open(parsed_plans_path, "rb") as f:
+                    parsed_plans = pickle.load(f)
 
         # Determine any queries still to be parsed and exit early if none.
         query_ids_to_parse_per_cluster: dict[
@@ -720,10 +725,11 @@ class Trace:
                 parsed_plans[temp_and_q_idx] = verbose_plan_dict
 
         # Cache the parsed plans for future use.
-        with open(parsed_plans_path, "wb") as f:
-            pickle.dump(parsed_plans, f)
-        with open(parsed_plans_path.replace(".pkl", ".yml"), "w") as f:
-            yaml.dump(parsed_plans, f, sort_keys=False)
+        if not ignore_caching:
+            with open(parsed_plans_path, "wb") as f:
+                pickle.dump(parsed_plans, f)
+            with open(parsed_plans_path.replace(".pkl", ".yml"), "w") as f:
+                yaml.dump(parsed_plans, f, sort_keys=False)
 
         return d
 
@@ -754,6 +760,17 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
+
+    def error_messages(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the error messages associated with each query.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["error_message"]
+            series.append(s)
+        return pd.concat(series).reindex(self.query_ids).str.strip()
 
     def query_type(self) -> pd.Series:
         """
@@ -889,3 +906,44 @@ class Trace:
             name: all_cluster_names_to_rpu[name] for name in bp_cluster_names
         }
         return bp_cluster_names_to_rpu
+
+    def sys_query_explain_rows_per_query(self) -> dict[str, pd.DataFrame]:
+        """
+        Return a dictionary mapping query IDs to their corresponding rows in
+        SYS_QUERY_EXPLAIN. Ignore any rows corresponding to preempted child 
+        queries as indicated by the error messages.
+        """
+        d: dict[str, pd.DataFrame] = {}
+        error_messages = self.error_messages()
+
+        for df in self._dfs["sys_query_explain"].values():
+
+            for query_id, query_df in df.groupby("query_id"):
+                query_id = cast(str, query_id)  # Make mypy happy
+                if query_id not in self.query_ids:
+                    continue
+
+                # If the error message specifies a preempted child query, skip
+                # the rows for that child query.
+                error_message = error_messages[query_id].strip()
+                if (
+                    len(error_message) > 0
+                    and ("child_sequence:" in error_message)
+                    and ("user's request" not in error_message)
+                ):
+                    problematic_child = int(
+                        error_message.split("child_sequence:")[-1][0]
+                    )
+                    query_df = query_df[
+                        query_df["child_query_sequence"] != problematic_child
+                    ]
+
+                # Sort by child query sequence and plan node ID.
+                d[query_id] = (
+                    query_df.sort_values(
+                        ["child_query_sequence", "plan_node_id"]
+                    )
+                    .reset_index(drop=True)
+                    .copy()
+                )
+        return d
