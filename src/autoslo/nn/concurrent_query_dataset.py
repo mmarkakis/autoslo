@@ -35,21 +35,23 @@ class QueryInfo:
     query_featurization: IconqQueryFeaturizer.IconqQueryFeaturization
     stage_latency_prediction: float
     latency_s: Optional[float] = None
-
+    latency_is_lower_bound: Optional[bool] = None
 
 
 class ConcurrentQueryDataset(Dataset):
     """
     A PyTorch Dataset for concurrent query data.
 
-    Each item in the dataset is a tuple of the form
-    (x, pinch_point, y, query_ids), where:
+    Each item in the dataset is a tuple, where:
         - x is a list of the the input tensor, of shape (seq_len, input_size).
             The list length is batch_size.
         - pinch_point is the pinch points tensor, of shape (1,).
         - y is the target tensor, of shape (1,).
         - query_ids is the list of query IDs.
         - tpcds_temp_and_q_idx is the TPC-DS template and query index.
+        - run_ids is the run ID associated with the query.
+        - y_is_lower_bound is a tensor indicating if the target is a lower
+            bound, of shape (1,).
     """
 
     def __init__(
@@ -60,6 +62,7 @@ class ConcurrentQueryDataset(Dataset):
         query_ids: list[str],
         tpcds_temp_and_q_idx: list[Trace.TPCDSTempAndQIdx],
         run_ids: list[str],
+        y_is_lower_bound: torch.Tensor,
     ):
         self.x = x
         self.pinch_points = pinch_points
@@ -67,6 +70,7 @@ class ConcurrentQueryDataset(Dataset):
         self.query_ids = query_ids
         self.tpcds_temp_and_q_idx = tpcds_temp_and_q_idx
         self.run_ids = run_ids
+        self.y_is_lower_bound = y_is_lower_bound
 
     def __len__(self) -> int:
         return len(self.y)
@@ -78,6 +82,7 @@ class ConcurrentQueryDataset(Dataset):
         str,
         Trace.TPCDSTempAndQIdx,
         str,
+        torch.Tensor,
     ]:
         return (
             self.x[idx],
@@ -86,6 +91,7 @@ class ConcurrentQueryDataset(Dataset):
             self.query_ids[idx],
             self.tpcds_temp_and_q_idx[idx],
             self.run_ids[idx],
+            self.y_is_lower_bound[idx],
         )
 
     @staticmethod
@@ -114,6 +120,9 @@ class ConcurrentQueryDataset(Dataset):
         new_run_ids = []
         for dataset in datasets:
             new_run_ids.extend(dataset.run_ids)
+        new_y_is_lower_bound = torch.cat(
+            [dataset.y_is_lower_bound for dataset in datasets], dim=0
+        )
 
         return ConcurrentQueryDataset(
             x=new_x,
@@ -122,6 +131,7 @@ class ConcurrentQueryDataset(Dataset):
             query_ids=new_query_ids,
             tpcds_temp_and_q_idx=new_tpcds_temp_and_q_idx,
             run_ids=new_run_ids,
+            y_is_lower_bound=new_y_is_lower_bound,
         )
 
     @staticmethod
@@ -134,6 +144,7 @@ class ConcurrentQueryDataset(Dataset):
                 str,
                 Trace.TPCDSTempAndQIdx,
                 str,
+                torch.Tensor,
             ]
         ],
     ) -> tuple[
@@ -144,6 +155,7 @@ class ConcurrentQueryDataset(Dataset):
         list[str],
         list[Trace.TPCDSTempAndQIdx],
         list[str],
+        torch.Tensor,
     ]:
         """
         Custom collation function for DataLoader of ConcurrentQueryDataset.
@@ -151,8 +163,7 @@ class ConcurrentQueryDataset(Dataset):
 
         Parameters:
             batch: The batch of data to collate. Each element in the batch is a
-                tuple produced by ConcurrentQueryDataset, so its elements are
-                (x, pinch_point, y, query_id, tpcds_temp_and_q_idx).
+                tuple produced by ConcurrentQueryDataset.
 
         Returns:
             x: The input tensor (for the model), of shape
@@ -166,10 +177,18 @@ class ConcurrentQueryDataset(Dataset):
             tpcds_temp_and_q_idx: The list of TPC-DS template and query indices,
                 of shape (batch_size,).
             run_ids: The list of run IDs, of shape (batch_size,).
+            y_is_lower_bound: The tensor indicating if the target is a lower
+                bound, of shape (batch_size,).
         """
-        (x, pinch_points, y, query_ids, tpcds_temp_and_q_idx, run_ids) = zip(
-            *batch
-        )
+        (
+            x,
+            pinch_points,
+            y,
+            query_ids,
+            tpcds_temp_and_q_idx,
+            run_ids,
+            y_is_lower_bound,
+        ) = zip(*batch)
         x_len = [len(i) for i in x]
         sort_idx = torch.tensor(
             np.argsort(x_len)[::-1].copy(), dtype=torch.long
@@ -187,6 +206,9 @@ class ConcurrentQueryDataset(Dataset):
             tpcds_temp_and_q_idx[i] for i in sort_idx
         ]
         run_ids_out: list[str] = [run_ids[i] for i in sort_idx]
+        y_is_lower_bound_out = torch.tensor(
+            y_is_lower_bound, dtype=torch.bool
+        )[sort_idx]
 
         # Pad sequences to the maximum length per batch
         padded_x_out = pad_sequence(x_out, batch_first=True, padding_value=0)
@@ -198,6 +220,7 @@ class ConcurrentQueryDataset(Dataset):
             query_ids_out,
             tpcds_temp_and_q_idx_out,
             run_ids_out,
+            y_is_lower_bound_out,
         )
 
     def save_to(self, path: str) -> None:
@@ -215,6 +238,7 @@ class ConcurrentQueryDataset(Dataset):
                 "query_ids": self.query_ids,
                 "tpcds_temp_and_q_idx": self.tpcds_temp_and_q_idx,
                 "run_ids": self.run_ids,
+                "y_is_lower_bound": self.y_is_lower_bound,
             },
             path,
         )
@@ -238,6 +262,7 @@ class ConcurrentQueryDataset(Dataset):
             query_ids=data["query_ids"],
             tpcds_temp_and_q_idx=data["tpcds_temp_and_q_idx"],
             run_ids=data["run_ids"],
+            y_is_lower_bound=data["y_is_lower_bound"],
         )
 
     @staticmethod
@@ -252,7 +277,7 @@ class ConcurrentQueryDataset(Dataset):
         Build a dataset from base queries and their pre-computed neighbors.
 
         This method constructs interaction features between a base query and its neighbors,
-        all assumed to be on the same cluster. 
+        all assumed to be on the same cluster.
 
         Parameters:
             base_queries: List of QueryInfo objects for which to build dataset rows.
@@ -275,6 +300,7 @@ class ConcurrentQueryDataset(Dataset):
                 query_ids=[],
                 tpcds_temp_and_q_idx=[],
                 run_ids=[],
+                y_is_lower_bound=torch.tensor([], dtype=torch.bool),
             )
 
         # Build dataset components
@@ -284,7 +310,7 @@ class ConcurrentQueryDataset(Dataset):
         query_ids_out = []
         tpcds_temp_and_q_idx_out = []
         run_ids_out = []
-
+        y_is_lower_bound_out = []
         for base_query in base_queries:
             neighbors = query_neighbors.get(base_query.query_id, [])
 
@@ -346,11 +372,19 @@ class ConcurrentQueryDataset(Dataset):
             query_ids_out.append(base_query.query_id)
             tpcds_temp_and_q_idx_out.append(base_query.tpcds_temp_and_q_idx)
             run_ids_out.append(run_id if run_id is not None else "unknown")
+            y_is_lower_bound_out.append(
+                base_query.latency_is_lower_bound
+                if (base_query.latency_is_lower_bound is not None)
+                else False
+            )
 
         # Convert to tensors
         x_tensorized = x
         pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
         y_tensorized = torch.tensor(y, dtype=torch.float32)
+        y_is_lower_bound_tensorized = torch.tensor(
+            y_is_lower_bound_out, dtype=torch.bool
+        )
 
         return ConcurrentQueryDataset(
             x=x_tensorized,
@@ -359,4 +393,5 @@ class ConcurrentQueryDataset(Dataset):
             query_ids=query_ids_out,
             tpcds_temp_and_q_idx=tpcds_temp_and_q_idx_out,
             run_ids=run_ids_out,
+            y_is_lower_bound=y_is_lower_bound_tensorized,
         )

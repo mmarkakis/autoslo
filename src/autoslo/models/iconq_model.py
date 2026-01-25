@@ -76,10 +76,10 @@ class IconqModelInitConfig:
     )
 
     use_fixed_window_radius_s: Optional[float] = (
-        None # The fixed window radius in seconds for selecting neighboring queries.
+        None  # The fixed window radius in seconds for selecting neighboring queries.
     )
     use_fixed_window_max_neighbors_per_side: Optional[int] = (
-        None # The maximum number of neighboring queries to consider on each side when using a fixed window.
+        None  # The maximum number of neighboring queries to consider on each side when using a fixed window.
     )
 
 
@@ -158,6 +158,10 @@ class NNModelTrainConfig:
 
     penalize_based_on_overlap: bool = (
         False  # Whether to penalize based on overlap in the sensitive Q-error loss.
+    )
+
+    sensitive_q_error_loss_version: int = (
+        1  # The version of the sensitive Q-error loss to use.
     )
 
 
@@ -346,6 +350,7 @@ class IconqModel:
                 query_ids,
                 tpcds_temp_and_q_idxs,
                 run_ids,
+                true_y_is_lower_bound,
             ) in dataloader:
                 x, x_len, pinch_points = (
                     x.to(self._device),
@@ -371,6 +376,7 @@ class IconqModel:
                         "run_id": run_ids[i],
                         "tpcds_temp_and_q_idx": tpcds_temp_and_q_idxs[i],
                         "query_id": query_id,
+                        "target_is_lower_bound": true_y_is_lower_bound[i],
                     }
                     if use_stage_for_isolated_queries and (
                         num_other_concurrent_queries == 0
@@ -382,11 +388,17 @@ class IconqModel:
                             int(rpu)
                         ][0]
 
-                        predictions[query_id] = (
+                        pred = (
                             self.stage_model.predict_from_tpcds_temp_and_q_idx(
                                 {query_id: tpcds_temp_and_q_idxs[i]},
                                 cluster_name=cluster_name,
                             )[query_id]
+                        )
+                        predictions[query_id] = ModelPrediction(
+                            mean_s=pred.mean_s,
+                            std_dev_s=pred.std_dev_s,
+                            mix_coeffs=pred.mix_coeffs,
+                            metadata=pred_meta,
                         )
                     elif self._nn_args["is_mdn"]:
                         predictions[query_id] = ModelPrediction(
@@ -663,16 +675,13 @@ class IconqModel:
             sgns = signs[i]
             nonzero_diffs = diffs[sgns != 0]
             if len(nonzero_diffs) > 0:
-                max_arrival_time_diffs.append(
-                    torch.max(nonzero_diffs).item()
-                )
+                max_arrival_time_diffs.append(torch.max(nonzero_diffs).item())
             else:
                 max_arrival_time_diffs.append(0.001)
         max_arrival_time_diffs_tensor = torch.tensor(
             max_arrival_time_diffs, device=self._device
         )
         return max_arrival_time_diffs_tensor
-
 
     def _run_training_loop(
         self,
@@ -719,7 +728,9 @@ class IconqModel:
             print(s)
             logger.info(s)
 
-            for x, x_len, pinch_points, y, _, _, _ in tqdm(train_dataloader):
+            for x, x_len, pinch_points, y, _, _, _, y_is_lower_bound in tqdm(
+                train_dataloader
+            ):
 
                 if train_config.use_stage_for_isolated_queries:
                     # Identify isolated queries in the batch and ignore them,
@@ -734,12 +745,14 @@ class IconqModel:
                     x_len = x_len[non_isolated_indices]
                     pinch_points = pinch_points[non_isolated_indices]
                     y = y[non_isolated_indices]
+                    y_is_lower_bound = y_is_lower_bound[non_isolated_indices]
 
-                x, x_len, pinch_points, y = (
+                x, x_len, pinch_points, y, y_is_lower_bound = (
                     x.to(self._device),
                     x_len.to(self._device),
                     pinch_points.to(self._device),
                     y.to(self._device),
+                    y_is_lower_bound.to(self._device),
                 )
 
                 optimizer.zero_grad()
@@ -777,10 +790,12 @@ class IconqModel:
                         min_val = self._extract_lower_bounds_from_batch(x)
 
                     batch_loss = sensitive_q_error_loss(
-                        y_pred_mean,
-                        y,
+                        input=y_pred_mean,
+                        target=y,
+                        target_is_lower_bound=y_is_lower_bound,
                         small_val=train_config.sensitive_q_error_loss_small_val,
                         min_val=min_val,
+                        sensitive_q_error_loss_version=train_config.sensitive_q_error_loss_version,
                     )
                 batch_loss.backward()
                 nn.utils.clip_grad_norm_(
@@ -796,11 +811,18 @@ class IconqModel:
                 total_train_batch_loss / total_train_batches
             )
             val_loss_trajectory[epoch], errors = self._validate(
-                val_dataloader,
-                train_config.var_reg_weight,
-                self._save_dir,
-                epoch,
-                train_config,
+                val_dataloader=val_dataloader,
+                var_reg_weight=train_config.var_reg_weight,
+                training_dir=self._save_dir,
+                epoch=epoch,
+                train_config=train_config,
+            )
+            _, train_errors = self._validate(
+                val_dataloader=train_dataloader,
+                var_reg_weight=train_config.var_reg_weight,
+                training_dir=None,
+                epoch=None,
+                train_config=train_config,
             )
             update_plots(
                 self._save_dir,
@@ -818,25 +840,22 @@ class IconqModel:
                 f"""Mean train batch loss: {train_loss_trajectory[epoch]}, """
                 f"""Mean val batch loss: {val_loss_trajectory[epoch]}, """
                 f"""Learning rate: {lr_trajectory[epoch]}\n"""
-                f"""On the validation set:\n"""
-                f"""\tMean abs error: {errors["mean_abs_error"]}, """
-                f"""Mean q error: {errors["mean_q_error"]}\n"""
-                f"""\tp50 abs error: {errors["p50_abs_error"]}, """
-                f"""p50 q error: {errors["p50_q_error"]}\n"""
-                f"""\tp90 abs error: {errors["p90_abs_error"]}, """
-                f"""p90 q error: {errors["p90_q_error"]}\n"""
-                f"""\tp95 abs error: {errors["p95_abs_error"]}, """
-                f"""p95 q error: {errors["p95_q_error"]}"""
-                # f"""\n----\n"""
-                # f"""\tFraction of queries with true latency under their predicted p50: """
-                # f"""{errors["fraction_under_p50"]:.4f} (ideal: 0.5000)\n"""
-                # f"""\tFraction of queries with true latency under their predicted p90: """
-                # f"""{errors["fraction_under_p90"]:.4f} (ideal: 0.9000)\n"""
-                # f"""\tFraction of queries with true latency under their predicted p95: """
-                # f"""{errors["fraction_under_p95"]:.4f} (ideal: 0.9500)\n"""
-                # f"""\tFraction of queries with true latency under their predicted p99: """
-                # f"""{errors["fraction_under_p99"]:.4f} (ideal: 0.9900)"""
             )
+            for set_name, errs in zip(
+                ["training", "Validation"], [train_errors, errors]
+            ):
+                for suffix in ["normal", "aborted"]:
+                    s += (
+                        f"""On the {set_name} set, {suffix} queries:\n"""
+                        f"""\tMean abs error: {errs[f"mean_abs_error_{suffix}"]}, """
+                        f"""Mean q error: {errs[f"mean_q_error_{suffix}"]}\n"""
+                        f"""\tp50 abs error: {errs[f"p50_abs_error_{suffix}"]}, """
+                        f"""p50 q error: {errs[f"p50_q_error_{suffix}"]}\n"""
+                        f"""\tp90 abs error: {errs[f"p90_abs_error_{suffix}"]}, """
+                        f"""p90 q error: {errs[f"p90_q_error_{suffix}"]}\n"""
+                        f"""\tp95 abs error: {errs[f"p95_abs_error_{suffix}"]}, """
+                        f"""p95 q error: {errs[f"p95_q_error_{suffix}"]}\n"""
+                    )
 
             print(s)
             logger.info(s)
@@ -900,10 +919,10 @@ class IconqModel:
     def _validate(
         self,
         val_dataloader: DataLoader,
+        train_config: NNModelTrainConfig,
         var_reg_weight: float = 0.0,
         training_dir: Optional[str] = None,
         epoch: Optional[int] = None,
-        train_config: Optional[NNModelTrainConfig] = None,
     ) -> tuple[float, dict[str, float]]:
         """
         Evaluates the model on the validation set.
@@ -937,12 +956,14 @@ class IconqModel:
                 query_id,
                 tpcds_temp_and_q_idxs,
                 run_ids,
+                y_is_lower_bound,
             ) in val_dataloader:
-                x, x_len, pinch_points, y = (
+                x, x_len, pinch_points, y, y_is_lower_bound = (
                     x.to(self._device),
                     x_len.to(self._device),
                     pinch_points.to(self._device),
                     y.to(self._device),
+                    y_is_lower_bound.to(self._device),
                 )
                 y_pred_mean, y_pred_logvar, y_pred_mix = self._nn(
                     x,
@@ -1033,23 +1054,25 @@ class IconqModel:
                     if train_config.penalize_based_on_overlap:
                         min_val = self._extract_lower_bounds_from_batch(x)
 
-
-
-
                     batch_loss = sensitive_q_error_loss(
-                        y_pred_mean,
-                        y,
+                        input=y_pred_mean,
+                        target=y,
+                        target_is_lower_bound=y_is_lower_bound,
                         small_val=train_config.sensitive_q_error_loss_small_val,
                         min_val=min_val,
+                        sensitive_q_error_loss_version=train_config.sensitive_q_error_loss_version,
+                        return_mean=False,
                     )
 
-                    for m, y_, q, t, r, le in zip(
+                    for m, y_, q, t, r, le, yislb, loss in zip(
                         y_pred_mean.detach().numpy(),
                         y.numpy(),
                         query_id,
                         tpcds_temp_and_q_idxs,
                         run_ids,
                         x_len.detach().numpy(),
+                        y_is_lower_bound.numpy(),
+                        batch_loss.detach().numpy(),
                     ):
                         num_other_concurrent_queries = le - 1
                         all_pred_v_true.append(
@@ -1061,6 +1084,8 @@ class IconqModel:
                                         "run_id": r,
                                         "tpcds_temp_and_q_idx": t,
                                         "query_id": q,
+                                        "target_is_lower_bound": yislb,
+                                        "loss": loss,
                                     },
                                 ),
                                 y_,
@@ -1068,9 +1093,12 @@ class IconqModel:
                                 t,
                             )
                         )
+                    batch_loss = batch_loss.mean()
                 total_val_batch_loss += batch_loss.item()
 
         mean_val_batch_loss = total_val_batch_loss / total_val_batches
+
+        # Calculate error metrics
         errors: dict[str, float] = {}
 
         abs_error = [
@@ -1081,22 +1109,35 @@ class IconqModel:
             max(pred.overall_mean_s() / true, true / pred.overall_mean_s())
             for pred, true, _, _ in all_pred_v_true
         ]
-
-        errors["mean_abs_error"] = np.mean(abs_error)
-        errors["mean_q_error"] = np.mean(q_error)
-        for p in [50, 90, 95]:
-            errors[f"p{p}_abs_error"] = np.percentile(abs_error, p)
-            errors[f"p{p}_q_error"] = np.percentile(q_error, p)
-
-        percentiles_at_true_latencies = [
-            pred.percentile_at_latency(true)
-            for pred, true, _, _ in all_pred_v_true
+        was_aborted = [
+            pred.metadata.get("target_is_lower_bound", False)
+            for pred, _, _, _ in all_pred_v_true
         ]
-        for p in [50, 90, 95, 99]:
-            errors[f"fraction_under_p{p}"] = cast(
-                float,
-                np.mean(np.array(percentiles_at_true_latencies) <= (p / 100.0)),
-            )
+
+        for aborted in [True, False]:
+            suffix = "aborted" if aborted else "normal"
+            filtered_abs_error = [
+                abs_err
+                for abs_err, was_ab in zip(abs_error, was_aborted)
+                if was_ab == aborted
+            ]
+            filtered_q_error = [
+                q_err
+                for q_err, was_ab in zip(q_error, was_aborted)
+                if was_ab == aborted
+            ]
+            if not filtered_abs_error:
+                continue
+
+            errors[f"mean_abs_error_{suffix}"] = np.mean(filtered_abs_error)
+            errors[f"mean_q_error_{suffix}"] = np.mean(filtered_q_error)
+            for p in [50, 90, 95]:
+                errors[f"p{p}_abs_error_{suffix}"] = np.percentile(
+                    filtered_abs_error, p
+                )
+                errors[f"p{p}_q_error_{suffix}"] = np.percentile(
+                    filtered_q_error, p
+                )
 
         # Print out a dataframe of predictions
         if training_dir is not None:
@@ -1110,15 +1151,23 @@ class IconqModel:
             ]
             val_df["y"] = [true for _, true, _, _ in all_pred_v_true]
             val_df["y_pred"] = [pred for pred, _, _, _ in all_pred_v_true]
+            val_df["target_is_lower_bound"] = [
+                pred.metadata["target_is_lower_bound"]
+                for pred, _, _, _ in all_pred_v_true
+            ]
             val_df["tpcds_temp_and_q_idx"] = [
                 t for _, _, _, t in all_pred_v_true
             ]
             val_df["abs_error"] = abs_error
             val_df["q_error"] = q_error
-            val_df["percentile_at_true_latency"] = percentiles_at_true_latencies
             val_df["run_id"] = [
                 pred.metadata["run_id"] for pred, _, _, _ in all_pred_v_true
             ]
+            if "loss" in all_pred_v_true[0][0].metadata:
+                val_df["individual_loss"] = [
+                    pred.metadata["loss"] for pred, _, _, _ in all_pred_v_true
+                ]
+
             val_df.sort_values("y", inplace=True, ascending=False)
             suffix = f"_{epoch}" if epoch is not None else ""
             val_df.to_csv(

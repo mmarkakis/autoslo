@@ -68,9 +68,7 @@ def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
             for k, rpu in enumerate(rpus):
                 this_workload_run_ids = pu.RunLocator.get_run_ids(
                     schema_name="ext_tpcds1000",
-                    workload_name="{}pctheavy_{}meaninterarrival".format(
-                        pct_heavy, mean_interarrival
-                    ),
+                    workload_name=f"tpcds_99templates_{pct_heavy:02d}pctheavy_{mean_interarrival}meaninterarrivals",
                     blueprint_name=f"single_{rpu}",
                 )
                 if len(this_workload_run_ids) > 0:
@@ -158,6 +156,7 @@ def train_iconq_model(
     use_stage_for_isolated_queries: bool,
     explicit_run_ids_per_split: dict[str, list[str]] | None = None,
     penalize_based_on_overlap: bool = False,
+    sensitive_q_error_loss_version: int = 1,
 ) -> str:
     """Trains an IconqModel and returns its ID."""
     iconq_model_init_config = IconqModelInitConfig(
@@ -175,7 +174,8 @@ def train_iconq_model(
         explicit_run_ids_per_split=explicit_run_ids_per_split,
         sensitive_q_error_loss_small_val=5.0,
         penalize_based_on_overlap=penalize_based_on_overlap,
-        learning_rate=1e-3
+        learning_rate=1e-3,
+        sensitive_q_error_loss_version=sensitive_q_error_loss_version,
     )
     iconq_model = IconqModel(
         init_config=iconq_model_init_config,
@@ -221,6 +221,12 @@ if __name__ == "__main__":
         "--from_sys_query_explain",
         action="store_true",
         help="Whether to derive features from sys_query_explain table.",
+    )
+    parser.add_argument(
+        "--sensitive_q_error_loss_version",
+        type=int,
+        default=1,
+        help="The version of the sensitive Q-error loss to use (1 or 2).",
     )
     args = parser.parse_args()
     print(
@@ -343,4 +349,5 @@ if __name__ == "__main__":
         use_stage_for_isolated_queries=args.use_stage_for_isolated_queries,
         explicit_run_ids_per_split=explicit_run_ids_per_split,
         penalize_based_on_overlap=args.penalize_based_on_overlap,
+        sensitive_q_error_loss_version=args.sensitive_q_error_loss_version,
     )

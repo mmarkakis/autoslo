@@ -1,6 +1,7 @@
 import argparse
 import os
 import pickle
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -99,6 +100,7 @@ def plot_qerror_single_barchart(
     title: str,
     split_true_y: dict[str, pd.Series],
     split_predicted_y: dict[str, dict[str, ModelPrediction]],
+    include_censored: Optional[bool] = None,
 ):
 
     # Plot a grouped bar chart of p50, p90 and p95 Q-Errors for each split
@@ -121,6 +123,16 @@ def plot_qerror_single_barchart(
         for query_id, true_latency in true_y.items():
             predicted_latency = predicted_y[query_id]  # type: ignore
             pred_mean = predicted_latency.overall_mean_s()
+
+            is_censored = predicted_latency.metadata.get(
+                "target_is_lower_bound", False
+            )
+
+            if (include_censored is not None) and (
+                is_censored != include_censored
+            ):
+                continue
+
             if true_latency == 0 and pred_mean == 0:
                 qerror = 1.0
             elif true_latency == 0 or pred_mean == 0:
@@ -150,15 +162,71 @@ def plot_qerror_single_barchart(
                 f"{height:.2f}",
                 ha="center",
                 va="bottom",
-                fontsize=fontsize
+                fontsize=fontsize,
             )
-
 
     ax.set_xticks(x + width)
     ax.set_ylim(bottom=1, top=ax.get_ylim()[1] * 1.1)
     ax.set_xticklabels(metrics.keys(), fontsize=fontsize)
     ax.set_yticklabels(ax.get_yticks(), fontsize=fontsize)
     ax.set_ylabel("Q-Error", fontsize=fontsize)
+    ax.set_title(title)
+    ax.legend(fontsize=fontsize)
+
+
+def plot_over_under_for_censored(
+    ax: plt.Axes,
+    title: str,
+    split_true_y: dict[str, pd.Series],
+    split_predicted_y: dict[str, dict[str, ModelPrediction]],
+):
+
+    # Plot a dashed vertical line at x=1.0
+    ax.axvline(x=1.0, color=Palette.gray, linestyle="--")
+    fontsize = 20
+
+    colors = {
+        "train": Palette.light_green,
+        "val": Palette.light_blue,
+        "test": Palette.light_red,
+    }
+
+    # Plot one line per split. The y axis should be a cdf, and the x axis should
+    # be the relative value of predicted / true latency for censored points only.
+    for split in ["train", "val", "test"]:
+        relative_errors = []
+        true_y = split_true_y[split]
+        predicted_y = split_predicted_y[split]
+        for query_id, true_latency in true_y.items():
+            predicted_latency = predicted_y[query_id]  # type: ignore
+            pred_mean = predicted_latency.overall_mean_s()
+
+            is_censored = predicted_latency.metadata.get(
+                "target_is_lower_bound", False
+            )
+
+            if not is_censored:
+                continue
+
+            if true_latency == 0 and pred_mean == 0:
+                relative_error = 1.0
+            elif true_latency == 0:
+                relative_error = float("inf")
+            else:
+                relative_error = pred_mean / true_latency
+                print(
+                    f"Split: {split}, Query_id: {query_id}, Predicted: {pred_mean}, True: {true_latency}, Relative Error: {relative_error}"
+                )
+
+            relative_errors.append(relative_error)
+
+        # Plot a CDF of the relative errors using a lineplot
+        cdf = pd.Series(relative_errors).value_counts().sort_index().cumsum()
+        cdf = cdf / cdf.iloc[-1]  # type: ignore
+        ax.plot(cdf.index, cdf.values, label=split.title(), color=colors[split])  # type: ignore
+
+    ax.set_xlabel("Predicted / True Latency", fontsize=fontsize)
+    ax.set_ylabel("Frequency", fontsize=fontsize)
     ax.set_title(title)
     ax.legend(fontsize=fontsize)
 
@@ -202,7 +270,7 @@ def main(iconq_model_id: str, hide_plot_title: bool):
 
         true_y_d = {}
         for i in range(len(split_dataset)):
-            _, _, y, query_id, _, _ = split_dataset[i]
+            _, _, y, query_id, _, _, _ = split_dataset[i]
             true_y_d[query_id] = (
                 y.item() if not trained_on_log_runtime else np.expm1(y.item())
             )
@@ -224,6 +292,25 @@ def main(iconq_model_id: str, hide_plot_title: bool):
             split_true_y[split],
             split_predicted_y[split],
         )
+
+    # Save out the true and predicted series in text files
+    for split in ["train", "val", "test"]:
+        true_y_path = os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_{split}_true_y.csv",
+        )
+        predicted_y_path = os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_{split}_predicted_y.csv",
+        )
+        split_true_y[split].to_csv(true_y_path, header=["true_latency_s"])
+        pd.Series(
+            {
+                query_id: pred.overall_mean_s()
+                for query_id, pred in split_predicted_y[split].items()
+            }
+        ).to_csv(predicted_y_path, header=["predicted_latency_s"])
+    print(f"Saved true and predicted latencies to {model_dir}")
 
     # Post-process true vs predicted figure
     suptitle = f"IconQ Model {iconq_model_id} Predictions vs True Latencies"
@@ -261,7 +348,9 @@ def main(iconq_model_id: str, hide_plot_title: bool):
     plt.close(qerror_fig)
 
     # Plot and post-process Q-Error barchart figure
-    qerror_barchart_fig, qerror_barchart_ax = plt.subplots(1, 1, figsize=(10, 6))
+    qerror_barchart_fig, qerror_barchart_ax = plt.subplots(
+        1, 1, figsize=(10, 6)
+    )
     title = "Q-Error Summary Across Splits"
     if use_stage_for_isolated_queries:
         title += " (Stage Fallback)"
@@ -271,6 +360,7 @@ def main(iconq_model_id: str, hide_plot_title: bool):
         title if not hide_plot_title else "",
         split_true_y,
         split_predicted_y,
+        include_censored=None,
     )
     qerror_barchart_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     qerror_barchart_fig.savefig(
@@ -280,6 +370,65 @@ def main(iconq_model_id: str, hide_plot_title: bool):
         )
     )
     plt.close(qerror_barchart_fig)
+
+    # Plot multi-panel Q-error barchart figure
+    qerror_multi_barchart_fig, qerror_multi_barchart_axs = plt.subplots(
+        1, 3, figsize=(27, 6), sharey=True
+    )
+    title = "Q-Error Summary Across Splits"
+    if use_stage_for_isolated_queries:
+        title += " (Stage Fallback)"
+    title += f" (Model {iconq_model_id})"
+    plot_qerror_single_barchart(
+        qerror_multi_barchart_axs[0],
+        title if not hide_plot_title else "",
+        split_true_y,
+        split_predicted_y,
+        include_censored=None,
+    )
+    plot_qerror_single_barchart(
+        qerror_multi_barchart_axs[1],
+        title if not hide_plot_title else "",
+        split_true_y,
+        split_predicted_y,
+        include_censored=False,
+    )
+    plot_qerror_single_barchart(
+        qerror_multi_barchart_axs[2],
+        title if not hide_plot_title else "",
+        split_true_y,
+        split_predicted_y,
+        include_censored=True,
+    )
+    qerror_multi_barchart_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    qerror_multi_barchart_fig.savefig(
+        os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_qerror_multi_barchart.svg",
+        )
+    )
+    plt.close(qerror_multi_barchart_fig)
+
+    # Plot over/under estimation for censored points
+    over_under_fig, over_under_ax = plt.subplots(1, 1, figsize=(10, 6))
+    title = "Over/Under Estimation for Censored Points"
+    if use_stage_for_isolated_queries:
+        title += " (Stage Fallback)"
+    title += f" (Model {iconq_model_id})"
+    plot_over_under_for_censored(
+        over_under_ax,
+        title if not hide_plot_title else "",
+        split_true_y,
+        split_predicted_y,
+    )
+    over_under_fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    over_under_fig.savefig(
+        os.path.join(
+            model_dir,
+            f"iconq_model_{iconq_model_id}_over_under_censored.svg",
+        )
+    )
+    plt.close(over_under_fig)
 
 
 if __name__ == "__main__":

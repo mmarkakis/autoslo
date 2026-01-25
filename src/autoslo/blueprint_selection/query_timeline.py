@@ -89,6 +89,7 @@ class QueryTimeline:
         end_times = trace.completion_times()
         query_ids = trace.query_ids
         seq_nums = trace.seq_nums
+        was_aborted = trace.was_aborted()
 
         reference_timestamp = min(
             start_times[query_id].timestamp() for query_id in query_ids
@@ -125,6 +126,7 @@ class QueryTimeline:
                         )
                         for rpu, cluster_names in ordered_cluster_names_per_rpu.items()
                     },
+                    "was_aborted": was_aborted[query_id],
                 },
             )
 
@@ -268,6 +270,7 @@ class QueryTimeline:
         query_id: str,
         seq_num: int,
         tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        was_aborted: bool = False,
     ) -> None:
         """
         Add a query to the timeline.
@@ -279,6 +282,8 @@ class QueryTimeline:
             query_id: The ID of the query.
             seq_num: The sequence number of the query.
             tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
+            was_aborted: Whether the query was aborted (i.e., its latency is a 
+                lower bound).
         """
 
         ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
@@ -304,6 +309,7 @@ class QueryTimeline:
                     )
                     for rpu, cluster_names in ordered_cluster_names_per_rpu.items()
                 },
+                "was_aborted": was_aborted,
             },
         )
 
@@ -454,6 +460,7 @@ class QueryTimeline:
             stage_latency_prediction=interval.data[
                 "stage_model_predictions_per_rpu"
             ][Cluster.rpu_for_cluster_name(cluster_name)],
+            latency_is_lower_bound=interval.data.get("was_aborted", False)
         )
 
     def get_dataset(
