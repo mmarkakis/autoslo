@@ -259,7 +259,6 @@ class QueryTimeline:
         )
         return self._iconq_model.predict_from_dataset(
             dataset,
-            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         )
 
     def add_query(
@@ -282,7 +281,7 @@ class QueryTimeline:
             query_id: The ID of the query.
             seq_num: The sequence number of the query.
             tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
-            was_aborted: Whether the query was aborted (i.e., its latency is a 
+            was_aborted: Whether the query was aborted (i.e., its latency is a
                 lower bound).
         """
 
@@ -460,7 +459,7 @@ class QueryTimeline:
             stage_latency_prediction=interval.data[
                 "stage_model_predictions_per_rpu"
             ][Cluster.rpu_for_cluster_name(cluster_name)],
-            latency_is_lower_bound=interval.data.get("was_aborted", False)
+            latency_is_lower_bound=interval.data.get("was_aborted", False),
         )
 
     def get_dataset(
@@ -479,8 +478,8 @@ class QueryTimeline:
         Parameters:
             start_time_s: The start time of the window (in seconds).
             end_time_s: The end time of the window (in seconds).
-            use_log_runtime: Whether to use the log of the runtime as the
-                target variable (log1p), or the runtime itself.
+            use_log_runtime: Whether to use the natural log of the runtime as
+                the target variable, or the runtime itself.
             run_id: The run ID associated with this dataset, if any.
             cluster_name: If provided, only include queries from this cluster.
             use_fixed_window_radius_s: If provided, include neighbors within
@@ -640,7 +639,6 @@ class QueryTimeline:
         )
         predictions = self._iconq_model.predict_from_dataset(
             dataset=dataset,
-            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         )
         self._maybe_log(
             f"Predictions: {self._pretty_print_predictions(predictions)}",
@@ -677,7 +675,6 @@ class QueryTimeline:
         )
         predictions = self._iconq_model.predict_from_dataset(
             dataset=dataset,
-            use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         )
         self._maybe_log(
             f"Predictions: {self._pretty_print_predictions(predictions)}",
@@ -722,7 +719,6 @@ class QueryTimeline:
         else:
             predictions = self._iconq_model.predict_from_dataset(
                 dataset=dataset,
-                use_stage_for_isolated_queries=use_stage_for_isolated_queries,
             )
             self._maybe_log(
                 f"Predictions: {self._pretty_print_predictions(predictions)}",
