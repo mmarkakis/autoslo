@@ -193,7 +193,6 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
         """
         # Apply batch normalization. BatchNorm1d expects an input shape of
         # (batch_size, num_features, seq_len), so we permute the input tensor.
-        logger.info(f"Input shape: {x.shape}")
 
         x = x.permute(0, 2, 1)
         x_norm = self._bn(x)
