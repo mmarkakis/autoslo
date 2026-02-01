@@ -2,6 +2,7 @@ from enum import Enum
 from math import pi
 
 import pandas as pd
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -164,6 +165,8 @@ def sensitive_q_error_loss(
         1: sensitive_q_error_loss_v1,
         2: sensitive_q_error_loss_v2,
         3: sensitive_q_error_loss_v3,
+        4: sensitive_q_error_loss_v4,
+        5: sensitive_q_error_loss_v5,
         10: sensitive_q_error_loss_v10,
     }
 
@@ -319,21 +322,21 @@ def sensitive_q_error_loss_v3(
     regime_1_loss = torch.where(
         is_lb,
         torch.zeros_like(input),
-        torch.abs(torch.log1p(input) - torch.log1p(target)),
+        torch.abs(torch.log(input) - torch.log(target)),
     )
 
     # Regime 2: Prediction (input) is between min_val and target. Apply Q-error
     # penalty.
     regime_2_mask = (input < target) & (input >= min_val)
-    regime_2_loss = torch.abs(torch.log1p(target) - torch.log1p(input))
+    regime_2_loss = torch.abs(torch.log(target) - torch.log(input))
 
     # Regime 3: Prediction (input) is below min_val. Apply a linearly increasing
     # penalty, which passes through the following two points:
-    #  (min_val, torch.abs(torch.log1p(min_val) - torch.log1p(target)))
-    #  (0, torch.abs(torch.log1p(2*target) - torch.log1p(target)))
+    #  (min_val, torch.abs(torch.log(min_val) - torch.log(target)))
+    #  (0, torch.abs(torch.log(2*target) - torch.log(target)))
     regime_3_mask = input < min_val
-    error_at_min_val = torch.abs(torch.log1p(target) - torch.log1p(min_val))
-    error_at_2_target = torch.abs(torch.log1p(2 * target) - torch.log1p(target))
+    error_at_min_val = torch.abs(torch.log(target) - torch.log(min_val))
+    error_at_2_target = torch.abs(torch.log(2 * target) - torch.log(target))
     regime_3_slope = (error_at_min_val - error_at_2_target) / (min_val)
     regime_3_loss = regime_3_slope * input + error_at_2_target
 
@@ -351,6 +354,76 @@ def sensitive_q_error_loss_v3(
         return loss.mean().requires_grad_(True)
     else:
         return loss.requires_grad_(True)
+
+
+def sensitive_q_error_loss_v4(
+    input: torch.Tensor,  # pylint: disable=redefined-builtin
+    target: torch.Tensor,
+    target_is_lower_bound: torch.Tensor,
+    return_mean: bool = True,
+    **kwargs,  # To ignore unused parameters.
+) -> torch.Tensor:
+
+    input = input.flatten()
+    target = target.flatten()
+    is_lb = target_is_lower_bound.flatten()
+
+    # Regime 1: Prediction (input) is larger than the target and the target is a
+    # lower bound.
+    regime_1_mask = (input >= target) & is_lb
+    regime_1_loss = torch.zeros_like(input)
+
+    # Regime 2: Prediction (input) is larger than an exact target, or smaller
+    # than the target (regardless of whether it's a lower bound or exact).
+    # Apply Q-error penalty.
+    regime_2_loss = torch.abs(torch.log(target) - torch.log(input))
+
+    loss = torch.where(
+        regime_1_mask,
+        regime_1_loss,
+        regime_2_loss,
+    )
+
+    if return_mean:
+        return loss.mean().requires_grad_(True)
+    else:
+        return loss.requires_grad_(True)
+
+def sensitive_q_error_loss_v5(
+    input: torch.Tensor,  # pylint: disable=redefined-builtin
+    target: torch.Tensor,
+    target_is_lower_bound: torch.Tensor,
+    return_mean: bool = True,
+    **kwargs,  # To ignore unused parameters.
+) -> torch.Tensor:
+
+    input = input.flatten()
+    target = target.flatten()
+    is_lb = target_is_lower_bound.flatten()
+
+    # Regime 1: Prediction (input) is larger than the target and the target is a
+    # lower bound.
+    regime_1_mask = (input >= target) & is_lb
+    regime_1_loss = torch.zeros_like(input)
+
+    # Regime 2: Prediction (input) is larger than an exact target, or smaller
+    # than the target (regardless of whether it's a lower bound or exact).
+    # Apply Q-error penalty with Huber loss.
+    r = torch.log(input) - torch.log(target)
+    beta = np.log(1.5)
+    regime_2_loss = F.smooth_l1_loss(r, torch.zeros_like(r), beta=beta)
+
+    loss = torch.where(
+        regime_1_mask,
+        regime_1_loss,
+        regime_2_loss,
+    )
+
+    if return_mean:
+        return loss.mean().requires_grad_(True)
+    else:
+        return loss.requires_grad_(True)
+
 
 
 def sensitive_q_error_loss_v10(
