@@ -1,9 +1,0 @@
-run_id: '1763494875'
-workload_name: benchmarking_workload_1_1_5
-num_queries: 5
-scale_factor: 1000
-schema_name: ext_tpcds1000
-blueprint_name: single_8
-query_router_name: RFixed(fixed_cluster_name='cluster_8')
-maxconns: 1000
-closed_loop: false

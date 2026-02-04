@@ -1,0 +1,9 @@
+run_id: '1770171686'
+workload_name: tpcds_99templates_25pctheavy_10meaninterarrivals
+num_queries: 347
+scale_factor: 1000
+schema_name: ext_tpcds1000
+blueprint_name: multi_32_4_4b_8_8b
+query_router_name: RSeqNum(selector_run_id='1770058836')
+maxconns: 400
+closed_loop: false
