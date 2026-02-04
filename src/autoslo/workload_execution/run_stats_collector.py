@@ -80,7 +80,7 @@ class RunStatsCollector:
 
             # Determine if we should collect stats for this run.
             should_collect = (self.force) or not any(
-                fname.endswith(".parquet") for fname in os.listdir(run_path)
+                (fname.startswith('sys') and fname.endswith(".parquet")) for fname in os.listdir(run_path)
             )
             if not should_collect:
                 print(f"Stats already exist for run {run_id}, skipping.")

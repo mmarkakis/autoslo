@@ -52,10 +52,10 @@ async def run_using_selector(base_args: argparse.Namespace):
    
     base_args.closed_loop = False  # Open-loop
 
+    # Start by running just the example workload a couple of times
+    # to get the workgroups to resume.
+    example_workload_name = "benchmarking_workload_1_1_5"
     for cluster in router.blueprint.clusters:
-        # Start by running just the example workload a couple of times
-        # to get the workgroups to resume.
-        example_workload_name = "benchmarking_workload_1_1_5"
         example_args = argparse.Namespace(
             **vars(base_args), workload_name=example_workload_name, 
             blueprint_name=Blueprint(clusters=[cluster]).name,
@@ -67,8 +67,15 @@ async def run_using_selector(base_args: argparse.Namespace):
         run_id = await QueryRunner(example_args).run()
         run_ids.append(run_id)
 
-        print(f"{datetime.now()} Sleeping for 30 seconds...")
-        await asyncio.sleep(30)
+    print(f"{datetime.now()} Sleeping for 30 seconds...")
+    await asyncio.sleep(30)
+
+    for cluster in router.blueprint.clusters:
+        example_args = argparse.Namespace(
+            **vars(base_args), workload_name=example_workload_name, 
+            blueprint_name=Blueprint(clusters=[cluster]).name,
+            query_router_name=RFixed(cluster.name).name
+        )
         print(
             f"{datetime.now()} Running example workload {example_workload_name} again on cluster {cluster.name}..."
         )
@@ -92,8 +99,8 @@ async def run_using_selector(base_args: argparse.Namespace):
     run_id = await QueryRunner(base_args).run()
     run_ids.append(run_id)
 
-    print(f"{datetime.now()} Sleeping for 10 minutes...")
-    await asyncio.sleep(10 * 60)
+    print(f"{datetime.now()} Sleeping for 5 minutes...")
+    await asyncio.sleep(5 * 60)
 
     # Now get the statistics out as well.
     print(f"{datetime.now()} Collecting stats for all runs...")

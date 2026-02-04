@@ -1,6 +1,6 @@
 single_4:
   cluster_names:
-  - cluster_4
+  - cluster_4b
 single_8:
   cluster_names:
   - cluster_8
@@ -39,3 +39,27 @@ multi_16_8:
   cluster_names:
   - cluster_16
   - cluster_8
+multi_32_4_8:
+  cluster_names:
+  - cluster_32
+  - cluster_4
+  - cluster_8
+multi_32_4_4b_8:
+  cluster_names:
+  - cluster_32
+  - cluster_4
+  - cluster_4b
+  - cluster_8
+multi_4_4b_8_8b:
+  cluster_names:
+  - cluster_4
+  - cluster_4b
+  - cluster_8
+  - cluster_8b
+multi_32_4_4b_8_8b:
+  cluster_names:
+  - cluster_32
+  - cluster_4
+  - cluster_4b
+  - cluster_8
+  - cluster_8b
