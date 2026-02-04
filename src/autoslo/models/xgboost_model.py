@@ -33,6 +33,7 @@ class XGBoostModel:
         random_seed: int = 42,
         iconq_query_featurizer_id: Optional[str] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
+        ignore_cluster_size: bool = False,
     ):
         """
         Initializes the XGBoostModel.
@@ -56,6 +57,9 @@ class XGBoostModel:
                 for the IconqQueryFeaturizer, if iconq_query_featurizer_id is
                 not provided. Must include a key for each required parameter of
                 the constructor of IconqQueryFeaturizer.
+            ignore_cluster_size: Whether to ignore the cluster size when
+                featurizing queries. If True, the cluster size feature will be
+                zeroed out for all queries.
         Raises:
             ValueError: If neither iconq_query_featurizer_id nor
                 iconq_query_featurizer_init_params is provided.
@@ -96,6 +100,7 @@ class XGBoostModel:
         self._random_seed = random_seed
 
         self._only_non_overlapping_queries = False
+        self._ignore_cluster_size = ignore_cluster_size
 
     def predict(
         self, query_texts: dict[str, str], cluster_name: str
@@ -140,7 +145,11 @@ class XGBoostModel:
                 where each element is in seconds.
         """
         predictions: dict[str, ModelPrediction] = {}
-        cluster_rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        cluster_rpu = (
+            0
+            if self._ignore_cluster_size
+            else Cluster.rpu_for_cluster_name(cluster_name)
+        )
 
         for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
             featurization = self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
@@ -156,7 +165,7 @@ class XGBoostModel:
             featurization_array = np.array(featurization).reshape(1, -1)
             raw_prediction = self._model.predict(featurization_array)[0]
             if self._train_on_log_runtime:
-                raw_prediction = np.expm1(raw_prediction)
+                raw_prediction = np.exp(raw_prediction)
             predictions[query_id] = ModelPrediction(mean_s=[raw_prediction])
 
         return predictions
@@ -211,6 +220,7 @@ class XGBoostModel:
                     "only_non_overlapping_queries": (
                         self._only_non_overlapping_queries
                     ),
+                    "ignore_cluster_size": self._ignore_cluster_size,
                 },
                 f,
             )
@@ -235,10 +245,13 @@ class XGBoostModel:
                 latency = latencies[query_id]
                 if featurization is None or len(featurization) == 0:
                     continue
-                rpu = Cluster.from_config(
-                    trace.cluster_name_from_query_id(query_id)
-                ).rpu
-                featurization.append(rpu)
+                cluster_name = trace.cluster_name_from_query_id(query_id)
+                cluster_rpu = (
+                    0
+                    if self._ignore_cluster_size
+                    else Cluster.rpu_for_cluster_name(cluster_name)
+                )
+                featurization.append(cluster_rpu)
                 new_items.append(
                     {
                         "query_id": query_id,
@@ -252,7 +265,7 @@ class XGBoostModel:
         featurization_df = pd.DataFrame(l)
         label_column_name = "runtime_s"
         if self._train_on_log_runtime:
-            featurization_df["log_runtime_s"] = np.log1p(
+            featurization_df["log_runtime_s"] = np.log(
                 featurization_df["runtime_s"]
             )
             label_column_name = "log_runtime_s"
@@ -366,6 +379,7 @@ class XGBoostModel:
             eval_metric=params["eval_metric"],
             early_stopping_rounds=params["early_stopping_rounds"],
             random_seed=params["random_seed"],
+            ignore_cluster_size=params.get("ignore_cluster_size", False),
         )
 
         # Load the model.

@@ -34,6 +34,7 @@ class CacheModel:
         self,
         enable_template_cache: bool = False,
         best_effort: bool = False,
+        ignore_cluster_size: bool = False,
     ) -> None:
         """
         Initializes the CacheModel.
@@ -47,6 +48,8 @@ class CacheModel:
                 misses. If enabled, cache misses will return the overall mean
                 and standard deviation of all cached runtimes on a cluster of
                 the same size.
+            ignore_cluster_size: Whether to ignore the cluster RPU associated
+                with each query, both in training and at inference time.
         """
         # key: cluster RPU
         # value: dictionary where
@@ -68,6 +71,7 @@ class CacheModel:
         self._std_runtime_s_for_rpu: dict[int, float] = defaultdict(float)
 
         self._only_non_overlapping_queries = False
+        self._ignore_cluster_size = ignore_cluster_size
 
     def predict(
         self, query_texts: dict[str, str], cluster_name: str
@@ -113,7 +117,11 @@ class CacheModel:
         """
         predictions: dict[str, Optional[ModelPrediction]] = {}
 
-        cluster_rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        cluster_rpu = (
+            0
+            if self._ignore_cluster_size
+            else Cluster.rpu_for_cluster_name(cluster_name)
+        )
         cache_for_rpu = self._cache.get(cluster_rpu, {})
 
         for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
@@ -201,7 +209,11 @@ class CacheModel:
                 cluster_name = trace.cluster_name_from_query_id(
                     query_id  # type: ignore
                 )
-                cluster_rpu = Cluster.rpu_for_cluster_name(cluster_name)
+                cluster_rpu = (
+                    0
+                    if self._ignore_cluster_size
+                    else Cluster.rpu_for_cluster_name(cluster_name)
+                )
                 template_id = Trace.extract_temp(temp_and_q_idx)
                 query_within_template_id = Trace.extract_q_idx(temp_and_q_idx)
 
@@ -278,6 +290,7 @@ class CacheModel:
                 {
                     "enable_template_cache": self._enable_template_cache,
                     "best_effort": self._best_effort,
+                    "ignore_cluster_size": self._ignore_cluster_size,
                     "only_non_overlapping_queries": self._only_non_overlapping_queries,
                     "run_ids": self._run_ids,
                     "mean_runtime_s_for_rpu": dict(
@@ -332,6 +345,7 @@ class CacheModel:
         model = CacheModel(
             enable_template_cache=params["enable_template_cache"],
             best_effort=params["best_effort"],
+            ignore_cluster_size=params.get("ignore_cluster_size", False),
         )
         model._run_ids = params["run_ids"]
         model._mean_runtime_s_for_rpu = params["mean_runtime_s_for_rpu"]

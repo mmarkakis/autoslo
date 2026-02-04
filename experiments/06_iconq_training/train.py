@@ -1,5 +1,6 @@
 import argparse
 import os
+from datetime import datetime
 
 import yaml
 
@@ -14,8 +15,6 @@ from autoslo.models.iconq_model import (
 from autoslo.models.iconq_model_trainer import iconq_model_trainer
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
-
-from datetime import datetime
 
 
 def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
@@ -106,11 +105,17 @@ def set_up_featurizer(run_ids: list[str], from_sys_query_explain: bool) -> str:
 
 
 def train_cache_model(
-    run_ids: list[str], only_non_overlapping_queries: bool
+    run_ids: list[str],
+    only_non_overlapping_queries: bool,
+    ignore_cluster_size: bool = False,
 ) -> str:
     """Trains a CacheModel and returns its ID."""
 
-    cache_model = CacheModel(enable_template_cache=False, best_effort=False)
+    cache_model = CacheModel(
+        enable_template_cache=False,
+        best_effort=False,
+        ignore_cluster_size=ignore_cluster_size,
+    )
     cache_model.train(
         run_ids=run_ids,
         from_scratch=True,
@@ -124,12 +129,14 @@ def train_xgboost_model(
     iconq_query_featurizer_id: str,
     run_ids: list[str],
     only_non_overlapping_queries: bool,
+    ignore_cluster_size: bool = False,
 ) -> str:
     """Trains an XGBoostModel and returns its ID."""
     xgboost_model = XGBoostModel(
         train_on_log_runtime=True,
         n_estimators=100,
         iconq_query_featurizer_id=iconq_query_featurizer_id,
+        ignore_cluster_size=ignore_cluster_size,
     )
     xgboost_model.train(
         run_ids=run_ids,
@@ -157,6 +164,7 @@ def train_iconq_model(
     explicit_run_ids_per_split: dict[str, list[str]] | None = None,
     penalize_based_on_overlap: bool = False,
     sensitive_q_error_loss_version: int = 1,
+    ignore_cluster_size: bool = False,
 ) -> str:
     """Trains an IconqModel and returns its ID."""
     iconq_model_init_config = IconqModelInitConfig(
@@ -167,6 +175,7 @@ def train_iconq_model(
         train_on_log_runtime=True,
         use_fixed_window_radius_s=None,
         use_fixed_window_max_neighbors_per_side=None,
+        ignore_cluster_size=ignore_cluster_size,
     )
     nn_model_train_config = NNModelTrainConfig(
         run_ids=run_ids,
@@ -227,6 +236,11 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="The version of the sensitive Q-error loss to use (1 or 2).",
+    )
+    parser.add_argument(
+        "--ignore_cluster_size",
+        action="store_true",
+        help="Whether to ignore the cluster size when training models.",
     )
     args = parser.parse_args()
     print(
@@ -298,6 +312,7 @@ if __name__ == "__main__":
         cache_model_id = train_cache_model(
             train_val_run_ids if args.use_explicit_run_ids else run_ids,
             only_non_overlapping_queries=args.only_non_overlapping_queries,
+            ignore_cluster_size=args.ignore_cluster_size,
         )
         cached_progress["cache_model_id"] = cache_model_id
         with open(progress_cache_path, "w") as f:
@@ -313,6 +328,7 @@ if __name__ == "__main__":
             iconq_query_featurizer_id=featurizer_id,
             run_ids=train_val_run_ids if args.use_explicit_run_ids else run_ids,
             only_non_overlapping_queries=args.only_non_overlapping_queries,
+            ignore_cluster_size=args.ignore_cluster_size,
         )
         cached_progress["xgboost_model_id"] = xgboost_model_id
         with open(progress_cache_path, "w") as f:
@@ -350,4 +366,5 @@ if __name__ == "__main__":
         explicit_run_ids_per_split=explicit_run_ids_per_split,
         penalize_based_on_overlap=args.penalize_based_on_overlap,
         sensitive_q_error_loss_version=args.sensitive_q_error_loss_version,
+        ignore_cluster_size=args.ignore_cluster_size,
     )

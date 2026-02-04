@@ -18,6 +18,7 @@ class IconqInteractionFeaturizer:
         self,
         iconq_query_featurizer_id: Optional[str] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
+        ignore_cluster_size: bool = False,
     ):
         """
         Initializes the IconqInteractionFeaturizer.
@@ -31,6 +32,9 @@ class IconqInteractionFeaturizer:
                 for the IconqQueryFeaturizer, if iconq_query_featurizer_id is
                 not provided. Must include a key for each required parameter of
                 the constructor of IconqQueryFeaturizer.
+            ignore_cluster_size: Whether to ignore the cluster size when
+                featurizing queries. If True, the cluster size feature will be 
+                zeroed out for all queries.
         """
         if iconq_query_featurizer_id is None:
             if iconq_query_featurizer_init_params is None:
@@ -49,6 +53,7 @@ class IconqInteractionFeaturizer:
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
                 iconq_query_featurizer_id
             )
+        self._ignore_cluster_size = ignore_cluster_size
 
     @property
     def num_dims(self) -> int:
@@ -94,6 +99,16 @@ class IconqInteractionFeaturizer:
             The index of the RPU feature.
         """
         return self.num_dims - 1
+    
+    @property
+    def ignore_cluster_size(self) -> bool:
+        """
+        Returns whether the cluster size is ignored when featurizing queries.
+
+        Returns:
+            True if the cluster size is ignored, False otherwise.
+        """
+        return self._ignore_cluster_size
 
     def featurize(
         self,
@@ -199,6 +214,9 @@ class IconqInteractionFeaturizer:
             qb_start_time_s: The second query start time (Unix timestamp).
             qb_latency_prediction: The latency prediction of the second query.
         """
+        rpu = 0.0
+        if not self.ignore_cluster_size:
+            rpu = Cluster.rpu_for_cluster_name(cluster_name)
         return (
             qa_features
             + [qa_latency_prediction]
@@ -207,6 +225,6 @@ class IconqInteractionFeaturizer:
             + [
                 abs(qb_start_time_s - qa_start_time_s),
                 float(qa_start_time_s < qb_start_time_s),
-                Cluster.rpu_for_cluster_name(cluster_name),
+                rpu,
             ]
         )

@@ -206,9 +206,9 @@ class ConcurrentQueryDataset(Dataset):
             tpcds_temp_and_q_idx[i] for i in sort_idx
         ]
         run_ids_out: list[str] = [run_ids[i] for i in sort_idx]
-        y_is_lower_bound_out = torch.tensor(
-            y_is_lower_bound, dtype=torch.bool
-        )[sort_idx]
+        y_is_lower_bound_out = torch.tensor(y_is_lower_bound, dtype=torch.bool)[
+            sort_idx
+        ]
 
         # Pad sequences to the maximum length per batch
         padded_x_out = pad_sequence(x_out, batch_first=True, padding_value=0)
@@ -363,7 +363,12 @@ class ConcurrentQueryDataset(Dataset):
             )
             if base_query.latency_s is not None:
                 latency = base_query.latency_s
-                y.append(latency if not use_log_runtime else np.log1p(latency))
+                floored_latency = max(latency, 0.001)
+                y.append(
+                    floored_latency
+                    if not use_log_runtime
+                    else np.log(floored_latency)
+                )
             else:
                 y.append(0.0)  # Placeholder if latency is not available
             pinch_points.append(
@@ -380,7 +385,7 @@ class ConcurrentQueryDataset(Dataset):
 
         # Convert to tensors
         x_tensorized = x
-        pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int8)
+        pinch_points_tensorized = torch.tensor(pinch_points, dtype=torch.int16)
         y_tensorized = torch.tensor(y, dtype=torch.float32)
         y_is_lower_bound_tensorized = torch.tensor(
             y_is_lower_bound_out, dtype=torch.bool
