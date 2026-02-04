@@ -17,26 +17,9 @@ class RFixed(QueryRouter):
                 will be routed.
             *args: Additional positional arguments, as needed.
             **kwargs: Additional keyword arguments, as needed.
-
-        Raises:
-            ValueError: If the fixed_cluster_name is not the first-ordered
-                cluster for its RPUs, or if the cluster is not found in the
-                corresponding blueprint.
         """
-        # Assert that the cluster name is the first-ordered cluster for its RPUs.
-        # not strictly necessary but simplifies the naming of the blueprint.
         cluster = Cluster.from_config(cluster_name=fixed_cluster_name)
-        rpu = cluster.rpu
-        if (
-            Cluster.ordered_cluster_names_per_rpu()[rpu][0]
-            != fixed_cluster_name
-        ):
-            raise ValueError(
-                f"Cluster name {fixed_cluster_name} is not the first-ordered "
-                f"cluster for RPU {rpu}."
-            )
-
-        self._blueprint = Blueprint.from_config(f"single_{rpu}")
+        self._blueprint = Blueprint(clusters=[cluster])
         if fixed_cluster_name not in self._blueprint.cluster_names:
             raise ValueError(
                 f"Cluster name {fixed_cluster_name} not found in blueprint."
