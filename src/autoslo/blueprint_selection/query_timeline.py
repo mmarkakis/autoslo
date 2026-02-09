@@ -54,12 +54,15 @@ class QueryTimeline:
     def __init__(
         self,
         iconq_model: IconqModel,
+        slo_s: float | dict[str, float],
     ) -> None:
         """
         Initializes the QueryTimeline.
 
         Parameters:
             iconq_model: The IconqModel to use for predictions.
+            slo_s: The SLO(s) in seconds, either as a single float for all
+                queries or a dictionary mapping query IDs to SLOs.
 
         """
         self._iconq_model = iconq_model
@@ -72,6 +75,7 @@ class QueryTimeline:
             IntervalTree
         )
         self._query_id_to_cluster_interval: dict[str, tuple[str, Interval]] = {}
+        self._slo_s = slo_s
 
     def initialize_from_trace(
         self,
@@ -199,6 +203,19 @@ class QueryTimeline:
                 interval,
             ) in self._query_id_to_cluster_interval.items()
         }
+
+    def cluster_name_for_query_id(self, query_id: str) -> str:
+        """
+        Get the cluster name for a given query ID.
+
+        Parameters:
+            query_id: The ID of the query.
+
+        Returns:
+            The cluster name corresponding to the query ID.
+        """
+        cluster_name, _ = self._query_id_to_cluster_interval[query_id]
+        return cluster_name
 
     def interval_for_query_id(self, query_id: str) -> Interval:
         """
@@ -548,7 +565,6 @@ class QueryTimeline:
         move: QueryMove,
         injected_latencies: Optional[dict[str, float]] = None,
         verbose: bool = False,
-        use_stage_for_isolated_queries: bool = False,
     ) -> tuple[QueryMove, dict[str, float]]:
         """
         Apply a query move, and return appropriate information to invert it.
@@ -559,8 +575,6 @@ class QueryTimeline:
                 latencies (in seconds) to update after the move. If not provided,
                 updated latencies will be predicted using the IconqModel.
             verbose: Whether to log verbose output.
-            use_stage_for_isolated_queries: Whether to use the StageModel for
-                isolated queries when predicting latencies.
 
         Returns:
             inverse_move: The inverse of the applied move.
@@ -571,11 +585,18 @@ class QueryTimeline:
         inverse_move = move.inverse()
         old_latencies: dict[str, float] = {}
 
+        # Move to the new cluster.
         self._maybe_log(f"Applying move: {move.pretty_print()}", verbose)
-        # Move to the new cluster and update the latency to be the defualt from
-        # Stage.
-        self._move_to_cluster(
-            new_cluster_name=move.to_cluster_name, query_id=move.query_id
+        old_cluster_name, interval = self._query_id_to_cluster_interval[
+            move.query_id
+        ]
+        self._interval_trees[old_cluster_name].remove(interval)
+        if len(self._interval_trees[old_cluster_name]) == 0:
+            del self._interval_trees[old_cluster_name]
+        self._interval_trees[move.to_cluster_name].add(interval)
+        self._query_id_to_cluster_interval[move.query_id] = (
+            move.to_cluster_name,
+            interval,
         )
 
         # Maybe we have injected latencies to use directly.
@@ -626,7 +647,6 @@ class QueryTimeline:
             f"Predicting latencies for interval ({interval.begin}, {interval.end}) on cluster {move.to_cluster_name} after move.",
             verbose,
         )
-        log_message = f"Updated latencies after move: \n"
 
         # Do the queries active before the incoming one.
         dataset = self.get_dataset(
@@ -644,23 +664,27 @@ class QueryTimeline:
             f"Predictions: {self._pretty_print_predictions(predictions)}",
             verbose,
         )
+        log_message = (
+            f"Updated latencies on new cluster for preceding queries: \n"
+        )
         for q_id, prediction in predictions.items():
-            if q_id not in old_latencies:
-                predicted_latency_s = prediction.overall_mean_s()
 
-                old_latency_s = self.update_latency(
-                    query_id=q_id,
-                    latency_s=predicted_latency_s,
-                    only_update_if_increased=True,  # Can only make past queries slower
-                )
-                new_latency_s = max(old_latency_s, predicted_latency_s)
-                log_message += (
-                    f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
-                    f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
-                    f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
-                )
+            predicted_latency_s = prediction.overall_mean_s()
 
+            old_latency_s = self.update_latency(
+                query_id=q_id,
+                latency_s=predicted_latency_s,
+                only_update_if_increased=True,  # Can only make past queries slower
+            )
+            new_latency_s = max(old_latency_s, predicted_latency_s)
+            log_message += (
+                f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+            )
+            if q_id != move.query_id:
                 old_latencies[q_id] = old_latency_s
+        self._maybe_log(log_message, verbose)
 
         # Do the queries active after the incoming one. For ease, we just
         # do all the overlapping ones again and then don't update the ones we
@@ -680,6 +704,9 @@ class QueryTimeline:
             f"Predictions: {self._pretty_print_predictions(predictions)}",
             verbose,
         )
+        log_message = (
+            f"Updated latencies on new cluster for following queries: \n"
+        )
         for q_id, prediction in predictions.items():
             if q_id not in old_latencies:
                 predicted_latency_s = prediction.overall_mean_s()
@@ -696,6 +723,7 @@ class QueryTimeline:
                     f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
                 )
                 old_latencies[q_id] = old_latency_s
+        self._maybe_log(log_message, verbose)
 
         # Now update latencies on the old cluster for any affected queries.
         original_end_time = interval.begin + old_latencies[move.query_id]
@@ -711,6 +739,7 @@ class QueryTimeline:
             use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
             use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
         )
+        log_message = f"Updated latencies on old cluster: \n"
         if not dataset.query_ids or len(dataset.query_ids) == 0:
             self._maybe_log(
                 f"No relevant queries on cluster {move.from_cluster_name} after move.",
@@ -744,6 +773,283 @@ class QueryTimeline:
 
         self._maybe_log(log_message, verbose)
         return inverse_move, old_latencies
+
+    def earliest_time_reachable_by_overlap(
+        self, cluster_name: str, time_s: float
+    ) -> float:
+        """
+        Given a cluster name and a time, find the earliest time that can be
+        reached by following overlapping queries backwards in time.
+
+        Parameters:
+            cluster_name: The name of the cluster to consider.
+            time_s: The starting time (in seconds).
+
+        Returns:
+            The earliest time (in seconds) reachable by following overlapping
+            queries backwards.
+        """
+
+        tree = self._interval_trees[cluster_name]
+        visited_intervals = set()
+        to_visit = list(tree.at(time_s))
+        earliest_time = time_s
+
+        while to_visit:
+            current_interval = to_visit.pop()
+            if current_interval in visited_intervals:
+                continue
+            visited_intervals.add(current_interval)
+            if current_interval.begin < earliest_time:
+                earliest_time = current_interval.begin
+            overlapping_intervals = tree.overlap(
+                current_interval.begin, current_interval.end
+            )
+            for interval in overlapping_intervals:
+                if interval not in visited_intervals:
+                    to_visit.append(interval)
+
+        return earliest_time
+
+    def latest_time_reachable_by_overlap(
+        self, cluster_name: str, time_s: float
+    ) -> float:
+        """
+        Given a cluster name and a time, find the latest time that can be
+        reached by following overlapping queries forwards in time.
+
+        Parameters:
+            cluster_name: The name of the cluster to consider.
+            time_s: The starting time (in seconds).
+
+        Returns:
+            The latest time (in seconds) reachable by following overlapping
+            queries forwards.
+        """
+
+        tree = self._interval_trees[cluster_name]
+        visited_intervals = set()
+        to_visit = list(tree.at(time_s))
+        latest_time = time_s
+
+        while to_visit:
+            current_interval = to_visit.pop()
+            if current_interval in visited_intervals:
+                continue
+            visited_intervals.add(current_interval)
+            if current_interval.end > latest_time:
+                latest_time = current_interval.end
+            overlapping_intervals = tree.overlap(
+                current_interval.begin, current_interval.end
+            )
+            for interval in overlapping_intervals:
+                if interval not in visited_intervals:
+                    to_visit.append(interval)
+
+        return latest_time
+
+    def apply_move_v2(
+        self,
+        move: QueryMove,
+        verbose: bool = False,
+    ) -> None:
+        """
+        Apply a query move, and update the timeline appropriately.
+
+        Parameters:
+            move: The QueryMove to apply.
+            verbose: Whether to log verbose output.
+
+        """
+        # Remove from old cluster.
+        self._maybe_log(f"Applying move: {move.pretty_print()}", verbose)
+        old_cluster_name, interval = self._query_id_to_cluster_interval[
+            move.query_id
+        ]
+        self._interval_trees[old_cluster_name].remove(interval)
+        if len(self._interval_trees[old_cluster_name]) == 0:
+            del self._interval_trees[old_cluster_name]
+
+        # Add to new cluster, and update latency to Stage latency as baseline.
+        self._interval_trees[move.to_cluster_name].add(interval)
+        self._query_id_to_cluster_interval[move.query_id] = (
+            move.to_cluster_name,
+            interval,
+        )
+        stage_pred_on_new_cluster = self._query_id_to_cluster_interval[
+            move.query_id
+        ][1].data["stage_model_predictions_per_rpu"][
+            Cluster.rpu_for_cluster_name(move.to_cluster_name)
+        ]
+        original_latency = self.update_latency(
+            query_id=move.query_id,
+            latency_s=stage_pred_on_new_cluster,
+        )
+        self._maybe_log(
+            (
+                f"Immediately after move, we updated latency of moved query "
+                f"{move.query_id} (Seq Num {move.seq_num}) to "
+                f"{stage_pred_on_new_cluster:.3f}s"
+            ),
+            verbose,
+        )
+
+        # First update latencies on the new cluster for the moved query.
+        interval = self.interval_for_query_id(query_id=move.query_id)
+        self._maybe_log(
+            f"Predicting latencies for interval ({interval.begin}, {interval.end}) on cluster {move.to_cluster_name} after move.",
+            verbose,
+        )
+
+        # Do the queries active before the incoming one.
+        earliest_reachable_time = self.earliest_time_reachable_by_overlap(
+            cluster_name=move.to_cluster_name,
+            time_s=interval.begin,
+        )
+        dataset = self.get_dataset(
+            start_time_s=earliest_reachable_time,
+            end_time_s=interval.begin,
+            use_log_runtime=self._iconq_model._trained_on_log_runtime,
+            cluster_name=move.to_cluster_name,
+            use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
+        )
+        predictions = self._iconq_model.predict_from_dataset(
+            dataset=dataset,
+        )
+        self._maybe_log(
+            f"Predictions: {self._pretty_print_predictions(predictions)}",
+            verbose,
+        )
+        log_message = (
+            f"Updated latencies on new cluster for preceding queries: \n"
+        )
+        for q_id, prediction in predictions.items():
+
+            predicted_latency_s = prediction.overall_mean_s()
+
+            old_latency_s = self.update_latency(
+                query_id=q_id,
+                latency_s=predicted_latency_s,
+                only_update_if_increased=True,  # Can only make past queries slower
+            )
+            new_latency_s = max(old_latency_s, predicted_latency_s)
+            log_message += (
+                f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+            )
+        self._maybe_log(log_message, verbose)
+
+        # Do the queries active after the incoming one. For ease, we just
+        # do all the overlapping ones again and then don't update the ones we
+        # already did.
+        latest_reachable_time = self.latest_time_reachable_by_overlap(
+            cluster_name=move.to_cluster_name,
+            time_s=interval.end,
+        )
+        while True:
+            dataset = self.get_dataset(
+                start_time_s=interval.begin,
+                end_time_s=latest_reachable_time,
+                use_log_runtime=self._iconq_model._trained_on_log_runtime,
+                cluster_name=move.to_cluster_name,
+                use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+                use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
+            )
+            predictions = self._iconq_model.predict_from_dataset(
+                dataset=dataset,
+            )
+            self._maybe_log(
+                f"Predictions: {self._pretty_print_predictions(predictions)}",
+                verbose,
+            )
+            log_message = (
+                f"Updated latencies on new cluster for following queries: \n"
+            )
+            for q_id, prediction in predictions.items():
+                predicted_latency_s = prediction.overall_mean_s()
+
+                old_latency_s = self.update_latency(
+                    query_id=q_id,
+                    latency_s=predicted_latency_s,
+                    only_update_if_increased=False,  # These can go either way
+                )
+                new_latency_s = predicted_latency_s
+                log_message += (
+                    f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                    f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                    f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+                )
+            self._maybe_log(log_message, verbose)
+
+            latest_reachable_time_new = self.latest_time_reachable_by_overlap(
+                cluster_name=move.to_cluster_name,
+                time_s=latest_reachable_time,
+            )
+            if latest_reachable_time_new == latest_reachable_time:
+                break
+            else:
+                latest_reachable_time = latest_reachable_time_new
+
+        # Now update latencies on the old cluster for any affected queries.
+        original_end_time = interval.begin + original_latency
+        earliest_reachable_time_old_cluster = (
+            self.earliest_time_reachable_by_overlap(
+                cluster_name=move.from_cluster_name,
+                time_s=interval.begin,
+            )
+        )
+        latest_reachable_time_old_cluster = (
+            self.latest_time_reachable_by_overlap(
+                cluster_name=move.from_cluster_name,
+                time_s=original_end_time,
+            )
+        )
+
+        self._maybe_log(
+            f"Predicting latencies for interval ({earliest_reachable_time_old_cluster}, {latest_reachable_time_old_cluster}) on cluster {move.from_cluster_name} after move.",
+            verbose,
+        )
+        dataset = self.get_dataset(
+            start_time_s=earliest_reachable_time_old_cluster,
+            end_time_s=latest_reachable_time_old_cluster,
+            use_log_runtime=self._iconq_model._trained_on_log_runtime,
+            cluster_name=move.from_cluster_name,
+            use_fixed_window_radius_s=self._iconq_model._init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=self._iconq_model._init_config.use_fixed_window_max_neighbors_per_side,
+        )
+        log_message = f"Updated latencies on old cluster: \n"
+        if not dataset.query_ids or len(dataset.query_ids) == 0:
+            self._maybe_log(
+                f"No relevant queries on cluster {move.from_cluster_name} after move.",
+                verbose,
+            )
+        else:
+            predictions = self._iconq_model.predict_from_dataset(
+                dataset=dataset,
+            )
+            self._maybe_log(
+                f"Predictions: {self._pretty_print_predictions(predictions)}",
+                verbose,
+            )
+            for q_id, prediction in predictions.items():
+
+                predicted_latency_s = prediction.overall_mean_s()
+
+                old_latency_s = self.update_latency(
+                    query_id=q_id,
+                    latency_s=predicted_latency_s,
+                    only_update_if_increased=False,  # These can go either way
+                )
+                new_latency_s = predicted_latency_s
+                log_message += (
+                    f"Query {Trace.redshift_query_id_from_query_id(q_id)}"
+                    f" (Seq Num {self._query_id_to_cluster_interval[q_id][1].data['seq_num']}): "
+                    f"{old_latency_s:.4f}s -> {new_latency_s:.4f}s, "
+                )
+
+        self._maybe_log(log_message, verbose)
 
     def _pretty_print_predictions(
         self, predictions: dict[str, ModelPrediction]
@@ -814,40 +1120,11 @@ class QueryTimeline:
 
         return old_latency_s
 
-    def _move_to_cluster(
-        self,
-        new_cluster_name: str,
-        query_id: str,
-    ) -> None:
-        """
-        Move a query to a different cluster.
-
-        Parameters:
-            new_cluster_name: The name of the new cluster.
-            query_id: The ID of the query to move.
-        """
-        old_cluster_name, interval = self._query_id_to_cluster_interval[
-            query_id
-        ]
-        self._interval_trees[old_cluster_name].remove(interval)
-        if len(self._interval_trees[old_cluster_name]) == 0:
-            del self._interval_trees[old_cluster_name]
-        self._interval_trees[new_cluster_name].add(interval)
-        self._query_id_to_cluster_interval[query_id] = (
-            new_cluster_name,
-            interval,
-        )
-
     def slo_violation_rate(
         self,
-        slo_s: float | dict[str, float],
     ) -> float:
         """
         Calculate the SLO violation rate for the timeline.
-
-        Parameters:
-            slo_s: The SLO threshold (in seconds), or a mapping from query ids
-                to SLO thresholds.
 
         Returns:
             The SLO violation rate as a float between 0 and 1.
@@ -861,28 +1138,23 @@ class QueryTimeline:
         ) in self._query_id_to_cluster_interval.items():
             total_queries += 1
             latency = interval.end - interval.begin
-            if isinstance(slo_s, dict):
-                slo_for_query = slo_s[query_id]
+            if isinstance(self._slo_s, dict):
+                slo_for_query = self._slo_s[query_id]
             else:
-                slo_for_query = slo_s
+                slo_for_query = self._slo_s
             if latency > slo_for_query:
                 violating_queries += 1
 
         if total_queries == 0:
             return 0.0
 
-        return violating_queries / total_queries
+        return float(violating_queries / total_queries)
 
     def slo_violation_amount(
         self,
-        slo_s: float | dict[str, float],
     ) -> float:
         """
         Calculate the cumulative SLO violation amount for the timeline.
-
-        Parameters:
-            slo_s: The SLO threshold (in seconds), or a mapping from query ids
-                to SLO thresholds.
 
         Returns:
             The cumulative SLO violation amount in seconds.
@@ -894,19 +1166,18 @@ class QueryTimeline:
             interval,
         ) in self._query_id_to_cluster_interval.items():
             latency = interval.end - interval.begin
-            if isinstance(slo_s, dict):
-                slo_for_query = slo_s[query_id]
+            if isinstance(self._slo_s, dict):
+                slo_for_query = self._slo_s[query_id]
             else:
-                slo_for_query = slo_s
+                slo_for_query = self._slo_s
             violation_amount = latency - slo_for_query
             if violation_amount > 0:
                 total_violation_amount += violation_amount
 
-        return total_violation_amount
+        return float(total_violation_amount)
 
     def find_intervals_by_slo_adherence(
         self,
-        slo_s: float | dict[str, float],
         look_for_slo_violations: bool = True,
         weigh_by_distance: bool = True,
         k: int = 5,
@@ -917,8 +1188,6 @@ class QueryTimeline:
         either in the violation or the slack direction.
 
         Parameters:
-            slo_s: The SLO threshold (in seconds), or a mapping from query ids
-                to SLO thresholds.
             look_for_slo_violations: Whether to look for intervals with maximum
                 SLO violations (latency > SLO). If False, will look for
                 intervals with maximum SLO slack (latency < SLO).
@@ -939,10 +1208,10 @@ class QueryTimeline:
 
             for iv in tree:
                 latency = iv.end - iv.begin
-                if isinstance(slo_s, dict):
-                    slo_for_query = slo_s[iv.data["query_id"]]
+                if isinstance(self._slo_s, dict):
+                    slo_for_query = self._slo_s[iv.data["query_id"]]
                 else:
-                    slo_for_query = slo_s
+                    slo_for_query = self._slo_s
                 violation_amount = latency - slo_for_query
 
                 is_violation = violation_amount > 0
@@ -989,7 +1258,7 @@ class QueryTimeline:
         total_cost = 0.0
         for cluster_name in self.active_clusters:
             total_cost += self.cost_for_cluster(cluster_name)
-        return total_cost
+        return float(total_cost)
 
     def cost_per_cluster(
         self,
@@ -1027,11 +1296,10 @@ class QueryTimeline:
         cluster_billed_s = Billing.billed_s(query_intervals=query_intervals)
         cost_per_second = Cluster.from_config(cluster_name).cost_per_second
         cluster_cost = cluster_billed_s * cost_per_second
-        return cluster_cost
+        return float(cluster_cost)
 
     def draw_gantt_chart(
         self,
-        slo_s: float | dict[str, float],
         path: Optional[str] = None,
     ) -> None:
 
@@ -1085,7 +1353,9 @@ class QueryTimeline:
                     rel_e = e - min_time
 
                     slo_rel_e = rel_s + (
-                        slo_s if isinstance(slo_s, float) else slo_s[query_id]
+                        self._slo_s
+                        if isinstance(self._slo_s, float)
+                        else self._slo_s[query_id]
                     )
                     if rel_e > slo_rel_e:
                         # Plot violation part in red.
@@ -1152,3 +1422,33 @@ class QueryTimeline:
             plt.savefig(path, bbox_inches="tight", dpi=300)
         else:
             plt.show()
+
+    def slo_deviation_for_query_id(
+        self,
+        query_id: str,
+    ) -> float:
+        """
+        Get the SLO deviation for a specific query.
+
+        Parameters:
+            query_id: The ID of the query.
+
+        Returns:
+            The SLO deviation (latency - SLO) in seconds.
+
+        Raises:
+            ValueError: If the query ID does not exist in the timeline.
+        """
+
+        cluster_name, interval = self._query_id_to_cluster_interval.get(
+            query_id, (None, None)
+        )
+        if cluster_name is None or interval is None:
+            raise ValueError(f"Query ID {query_id} does not exist in timeline.")
+        latency = interval.end - interval.begin
+        if isinstance(self._slo_s, dict):
+            slo_for_query = self._slo_s[query_id]
+        else:
+            slo_for_query = self._slo_s
+        violation_amount = latency - slo_for_query
+        return violation_amount

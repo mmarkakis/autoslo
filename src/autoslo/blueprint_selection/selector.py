@@ -23,6 +23,9 @@ from autoslo.workload_execution.trace import Trace
 
 class BlueprintSelector:
 
+    COST_TOLERANCE_DOLLARS = 1e-3
+    SLO_TOLERANCE_S = 1e-3
+
     def __init__(
         self,
         workload_name: str,
@@ -88,7 +91,7 @@ class BlueprintSelector:
         self._optimize_cumulative_slo_violation_time = (
             optimize_cumulative_slo_violation_time
         )
-        self._slo_violation_amount_threshold_s = (    
+        self._slo_violation_amount_threshold_s = (
             slo_violation_amount_threshold_s
         )
 
@@ -124,11 +127,14 @@ class BlueprintSelector:
             yaml.safe_dump(d, f, sort_keys=False)
 
         if self._verbose:
+            log_filename = os.path.join(self._out_dir, "solve.log")
+            print(f"Configuring log at {log_filename}")
             logging.basicConfig(
-                filename=os.path.join(self._out_dir, "solve.log"),
+                filename=log_filename,
                 filemode="w",
                 level=logging.INFO,
                 format="%(asctime)s - %(levelname)s - %(message)s",
+                force=True,
             )
             logging.info(
                 f"Starting blueprint selection solve for workload "
@@ -158,6 +164,7 @@ class BlueprintSelector:
 
             self._query_timeline = QueryTimeline(
                 iconq_model=self._iconq_model,
+                slo_s=self._slo_s,
             )
             self._query_timeline.initialize_from_trace(trace=trace)
 
@@ -183,7 +190,9 @@ class BlueprintSelector:
             ),
             self._verbose,
         )
-        timeline = QueryTimeline(iconq_model=self._iconq_model)
+        timeline = QueryTimeline(
+            iconq_model=self._iconq_model, slo_s=self._slo_s
+        )
 
         # Add the queries.
         for i, query in enumerate(self._workload.queries):
@@ -206,7 +215,14 @@ class BlueprintSelector:
             )
 
         # Bootstrap the latencies via iterative prediction.
-        for i in tqdm(range(100), desc="Bootstrapping latencies"):
+        i = 0
+
+        # Start a tqdm bar.
+        bar = tqdm(
+            total=100, desc="Bootstrapping latencies", disable=not self._verbose
+        )
+
+        while i < 100:
 
             # Get a dataset of overlapping queries.
             dataset = timeline.get_dataset(
@@ -220,12 +236,22 @@ class BlueprintSelector:
             )
             num_updated = 0
             for query_id, prediction in predictions.items():
-                updated = timeline.update_latency(
+                new_latency = prediction.overall_mean_s()
+                old_latency = timeline.update_latency(
                     query_id=query_id,
-                    latency_s=prediction.overall_mean_s(),
+                    latency_s=new_latency,
+                    only_update_if_increased=True,
                 )
-                if updated:
+                if self._time_is_lower(old_latency, new_latency):
                     num_updated += 1
+            bar.update(1)
+            i += 1
+            if num_updated == 0:
+                break
+
+        print(
+            f"Bootstrapping converged after {i} iterations.",
+        )
 
         return timeline
 
@@ -266,7 +292,9 @@ class BlueprintSelector:
                 include_inactive=True
             )
             if not self._maybe_apply_best_move_for_slo(
-                eligible_cluster_names, it, self._verbose
+                eligible_cluster_names,
+                it,
+                self._verbose,
             ):
                 self._maybe_log(
                     f"No more SLO-improving moves found in iteration {it}; ending SLO repair phase.",
@@ -280,10 +308,12 @@ class BlueprintSelector:
                 f"Starting cost reduction iteration {it}.", self._verbose
             )
             eligible_cluster_names = self._eligible_cluster_names_for_next_move(
-                include_inactive=False
+                include_inactive=True
             )
             if not self._maybe_apply_best_move_for_cost(
-                eligible_cluster_names, it, self._verbose
+                eligible_cluster_names,
+                it,
+                self._verbose,
             ):
                 self._maybe_log(
                     f"No more cost-reducing moves found in iteration {it}; ending cost reduction phase.",
@@ -301,6 +331,413 @@ class BlueprintSelector:
 
         # Drain the log buffer.
         self._maybe_log("Done.", self._verbose, dump_after=0)
+
+        return mapping
+
+    def _cost_is_lower(self, cost_a: float, cost_b: float) -> bool:
+        return cost_a < (cost_b - self.COST_TOLERANCE_DOLLARS)
+
+    def _time_is_lower(self, time_a: float, time_b: float) -> bool:
+        return time_a < (time_b - self.SLO_TOLERANCE_S)
+
+    def _cost_is_equal(self, cost_a: float, cost_b: float) -> bool:
+        return isclose(cost_a, cost_b, abs_tol=self.COST_TOLERANCE_DOLLARS)
+
+    def _time_is_equal(self, time_a: float, time_b: float) -> bool:
+        return isclose(time_a, time_b, abs_tol=self.SLO_TOLERANCE_S)
+
+    def solve_v2(self) -> dict[int, str]:
+        """
+        An alternative solve method.
+        """
+
+        self._recorder = GanttRecorder()
+        self._recorder.snapshot(
+            self._query_timeline, label="Start", slo_s=self._slo_s
+        )
+
+        #### PHASE 1: SLO OPTIMIZATION ####
+
+        # Initialize data structures.
+        sorted_deviations = []
+        last_version_checked = {}
+
+        for query_id in self._query_timeline.query_ids:
+            version = 0
+            dev = self._query_timeline.slo_deviation_for_query_id(query_id)
+            sorted_deviations.append((dev, query_id, version))
+            last_version_checked[query_id] = -1
+
+        sorted_deviations.sort(reverse=True)
+        query_id_to_sorted_pos = {
+            query_id: i for i, (_, query_id, _) in enumerate(sorted_deviations)
+        }
+        self._maybe_log(
+            f"Initial sorted deviations: {sorted_deviations}", self._verbose
+        )
+
+        # Perform optimization.
+        applied_at_least_one_move = True
+        next_ver_to_use = 1
+        iteration = 0
+        while applied_at_least_one_move:
+            eligible_cluster_names = self._eligible_cluster_names_for_next_move(
+                include_inactive=True
+            )
+            self._maybe_log(
+                f"Starting SLO iteration {iteration} with eligible clusters: {eligible_cluster_names}",
+                self._verbose,
+            )
+
+            applied_at_least_one_move = False
+            for i in range(len(sorted_deviations)):
+                dev, query_id, ver = sorted_deviations[i]
+                self._maybe_log(
+                    f"At index {i}: processing query ID {query_id} with deviation {dev:.4f} (version {ver})",
+                    self._verbose,
+                )
+                if dev <= 0:
+                    self._maybe_log(
+                        f"Query ID {query_id} has non-positive deviation {dev:.4f}; skipping the rest.",
+                        self._verbose,
+                    )
+                    break
+
+                if ver == last_version_checked[query_id]:
+                    self._maybe_log(
+                        f"Query ID {query_id} has already been checked for version {ver}; skipping.",
+                        self._verbose,
+                    )
+                    continue
+
+                initial_overall_dev = (
+                    self._query_timeline.slo_violation_amount()
+                )
+                initial_overall_cost = self._query_timeline.total_cost()
+                best_overall_dev = initial_overall_dev
+                cost_at_best_dev = initial_overall_cost
+                best_move = None
+
+                self._maybe_log(
+                    f"Initial overall SLO deviation: {initial_overall_dev:.4f}",
+                    self._verbose,
+                )
+
+                # Try moving the query to other clusters.
+                for cluster_name in eligible_cluster_names:
+                    current_cluster_name = (
+                        self._query_timeline.cluster_name_for_query_id(query_id)
+                    )
+                    if cluster_name == current_cluster_name:
+                        continue
+
+                    query_interval = self._query_timeline.interval_for_query_id(
+                        query_id
+                    )
+
+                    move = QueryMove(
+                        query_id=query_id,
+                        seq_num=query_interval.data["seq_num"],
+                        from_cluster_name=current_cluster_name,
+                        to_cluster_name=cluster_name,
+                    )
+                    self._maybe_log(
+                        f"Evaluating move: {move.pretty_print()}",
+                        self._verbose,
+                    )
+                    inverse_move, old_latencies = (
+                        self._query_timeline.apply_move(
+                            move,
+                            verbose=self._verbose,
+                        )
+                    )
+                    new_overall_dev = (
+                        self._query_timeline.slo_violation_amount()
+                    )
+                    new_overall_cost = self._query_timeline.total_cost()
+
+                    self._maybe_log(
+                        f"New SLO deviation {new_overall_dev:.4f} and cost {new_overall_cost:.4f}",
+                        self._verbose,
+                    )
+
+                    if (
+                        self._time_is_lower(new_overall_dev, best_overall_dev)
+                    ) or (
+                        self._time_is_equal(new_overall_dev, best_overall_dev)
+                        and self._cost_is_lower(
+                            new_overall_cost, cost_at_best_dev
+                        )
+                    ):
+                        best_overall_dev = new_overall_dev
+                        cost_at_best_dev = new_overall_cost
+                        best_move = move
+
+                    self._maybe_log(
+                        f"Applying inverse move: {inverse_move.pretty_print()}",
+                        self._verbose,
+                    )
+                    self._query_timeline.apply_move(
+                        inverse_move,
+                        old_latencies,
+                        verbose=self._verbose,
+                    )
+
+                # Check the case where no move worked. If so, mark as checked.
+                if best_move is None:
+                    self._maybe_log(
+                        f"No improving move found for query ID {query_id}; marking as checked for version {ver}.",
+                        self._verbose,
+                    )
+                    last_version_checked[query_id] = ver
+                    continue
+
+                # Process the best move.
+                self._maybe_log(
+                    f"Applying best move for query ID {query_id}: {best_move.pretty_print()} "
+                    f"reducing overall SLO deviation from "
+                    f"{initial_overall_dev:.4f} to {best_overall_dev:.4f} and cost from "
+                    f"{initial_overall_cost:.4f} to {cost_at_best_dev:.4f}.",
+                    self._verbose,
+                )
+                inverse_move, old_latencies = self._query_timeline.apply_move(
+                    best_move,
+                    verbose=self._verbose,
+                )
+                self._maybe_log(
+                    f"Applying refreshed latencies for overlapping queries: {sorted(list(old_latencies.keys()))}",
+                    self._verbose,
+                )
+                for query_id in old_latencies.keys():
+                    query_interval = self._query_timeline.interval_for_query_id(
+                        query_id
+                    )
+                    pos = query_id_to_sorted_pos[query_id]
+                    sorted_deviations[pos] = (
+                        self._query_timeline.slo_deviation_for_query_id(
+                            query_id
+                        ),
+                        query_id,
+                        next_ver_to_use,
+                    )
+                next_ver_to_use += 1
+                applied_at_least_one_move = True
+
+                # Re-sort the deviations.
+                sorted_deviations.sort(reverse=True)
+                query_id_to_sorted_pos = {
+                    query_id: i
+                    for i, (_, query_id, _) in enumerate(sorted_deviations)
+                }
+
+                # Take snapshot.
+                self._recorder.snapshot(
+                    self._query_timeline,
+                    label=f"SLO iter {iteration}",
+                    slo_s=self._slo_s,
+                )
+                iteration += 1
+
+        #### PHASE 2: COST OPTIMIZATION ####
+        eligible_cluster_names = self._eligible_cluster_names_for_next_move(
+            include_inactive=True
+        )
+        iteration = 0
+
+        # Initialize data structures.
+        sorted_deviations = []
+        last_version_checked = {}
+
+        for query_id in self._query_timeline.query_ids:
+            version = 0
+            dev = self._query_timeline.slo_deviation_for_query_id(query_id)
+            sorted_deviations.append((dev, query_id, version))
+            last_version_checked[query_id] = -1
+
+        sorted_deviations.sort(reverse=False)
+        query_id_to_sorted_pos = {
+            query_id: i for i, (_, query_id, _) in enumerate(sorted_deviations)
+        }
+        self._maybe_log(
+            f"Initial sorted deviations: {sorted_deviations}", self._verbose
+        )
+
+        # Perform optimization.
+        applied_at_least_one_move = True
+        next_ver_to_use = 1
+        while applied_at_least_one_move:
+
+            self._maybe_log(
+                f"Starting cost iteration {iteration} with eligible clusters: {eligible_cluster_names}",
+                self._verbose,
+            )
+
+            applied_at_least_one_move = False
+            for i in range(len(sorted_deviations)):
+                dev, query_id, ver = sorted_deviations[i]
+                self._maybe_log(
+                    f"At index {i}: processing query ID {query_id} with deviation {dev:.4f} (version {ver})",
+                    self._verbose,
+                )
+
+                if ver == last_version_checked[query_id]:
+                    self._maybe_log(
+                        f"Query ID {query_id} has already been checked for version {ver}; skipping.",
+                        self._verbose,
+                    )
+                    continue
+
+                initial_overall_dev = (
+                    self._query_timeline.slo_violation_amount()
+                )
+                initial_overall_cost = self._query_timeline.total_cost()
+                best_overall_cost = initial_overall_cost
+                slo_dev_at_best_cost = initial_overall_dev
+                best_move = None
+
+                self._maybe_log(
+                    f"Initial overall SLO deviation: {initial_overall_dev:.4f} and cost: {initial_overall_cost:.4f}",
+                    self._verbose,
+                )
+
+                # Try moving the query to other clusters.
+                for cluster_name in eligible_cluster_names:
+                    current_cluster_name = (
+                        self._query_timeline.cluster_name_for_query_id(query_id)
+                    )
+                    if cluster_name == current_cluster_name:
+                        continue
+
+                    query_interval = self._query_timeline.interval_for_query_id(
+                        query_id
+                    )
+
+                    move = QueryMove(
+                        query_id=query_id,
+                        seq_num=query_interval.data["seq_num"],
+                        from_cluster_name=current_cluster_name,
+                        to_cluster_name=cluster_name,
+                    )
+                    self._maybe_log(
+                        f"Evaluating move: {move.pretty_print()}",
+                        self._verbose,
+                    )
+                    inverse_move, old_latencies = (
+                        self._query_timeline.apply_move(
+                            move,
+                            verbose=self._verbose,
+                        )
+                    )
+                    new_overall_dev = (
+                        self._query_timeline.slo_violation_amount()
+                    )
+                    new_overall_cost = self._query_timeline.total_cost()
+                    self._maybe_log(
+                        f"After move, SLO deviation {new_overall_dev:.4f} and cost {new_overall_cost:.4f}",
+                        self._verbose,
+                    )
+
+                    if (
+                        self._time_is_lower(
+                            new_overall_dev,
+                            self._slo_violation_amount_threshold_s,
+                        )
+                    ) and self._cost_is_lower(
+                        new_overall_cost, best_overall_cost
+                    ):
+                        best_overall_cost = new_overall_cost
+                        slo_dev_at_best_cost = new_overall_dev
+                        best_move = move
+
+                    self._maybe_log(
+                        f"Applying inverse move: {inverse_move.pretty_print()}",
+                        self._verbose,
+                    )
+                    self._query_timeline.apply_move(
+                        inverse_move,
+                        old_latencies,
+                        verbose=self._verbose,
+                    )
+
+                # Check the case where no move worked. If so, mark as checked.
+                if best_move is None:
+                    self._maybe_log(
+                        f"No improving move found for query ID {query_id}; marking as checked for version {ver}.",
+                        self._verbose,
+                    )
+                    last_version_checked[query_id] = ver
+                    continue
+
+                # Process the best move.
+                self._maybe_log(
+                    f"Applying best move for query ID {query_id}: {best_move.pretty_print()} "
+                    f"changing overall SLO deviation from "
+                    f"{initial_overall_dev:.4f} to {slo_dev_at_best_cost:.4f} and "
+                    f" cost from {initial_overall_cost:.4f} to {best_overall_cost:.4f}.",
+                    self._verbose,
+                )
+                inverse_move, old_latencies = self._query_timeline.apply_move(
+                    best_move,
+                    verbose=self._verbose,
+                )
+                self._maybe_log(
+                    f"Applying refreshed latencies for overlapping queries: {sorted(list(old_latencies.keys()))}",
+                    self._verbose,
+                )
+                for query_id in old_latencies.keys():
+                    query_interval = self._query_timeline.interval_for_query_id(
+                        query_id
+                    )
+                    pos = query_id_to_sorted_pos[query_id]
+                    sorted_deviations[pos] = (
+                        self._query_timeline.slo_deviation_for_query_id(
+                            query_id
+                        ),
+                        query_id,
+                        next_ver_to_use,
+                    )
+                next_ver_to_use += 1
+                applied_at_least_one_move = True
+
+                # Re-sort the deviations.
+                sorted_deviations.sort(reverse=False)
+                query_id_to_sorted_pos = {
+                    query_id: i
+                    for i, (_, query_id, _) in enumerate(sorted_deviations)
+                }
+
+                # Take snapshot.
+                self._recorder.snapshot(
+                    self._query_timeline,
+                    label=f"Cost iter {iteration}",
+                    slo_s=self._slo_s,
+                )
+                iteration += 1
+
+        self.write_out_timeline_visualization()
+
+        mapping = self._query_timeline.seq_num_to_cluster_name()
+
+        mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
+        with open(mapping_out_path, "w") as f:
+            yaml.safe_dump(mapping, f, sort_keys=False)
+
+        # Drain the log buffer.
+        self._maybe_log("Done.", self._verbose, dump_after=0)
+
+        # Also write out a small yaml of the final SLO violation and cost.
+        final_stats_out_path = os.path.join(self._out_dir, "final_stats.yml")
+        with open(final_stats_out_path, "w") as f:
+            d = {
+                "final_slo_violation_amount": (
+                    self._query_timeline.slo_violation_amount()
+                ),
+                "final_slo_violation_rate": (
+                    self._query_timeline.slo_violation_rate()
+                ),
+                "final_total_cost": self._query_timeline.total_cost(),
+            }
+            yaml.safe_dump(d, f, sort_keys=False)
 
         return mapping
 
@@ -384,22 +821,18 @@ class BlueprintSelector:
                 threshold.
         """
         if not self._optimize_cumulative_slo_violation_time:
-            slo_violation_rate = self._query_timeline.slo_violation_rate(
-                slo_s=self._slo_s
-            )
+            slo_violation_rate = self._query_timeline.slo_violation_rate()
             return (
                 slo_violation_rate,
                 slo_violation_rate <= self._slo_violation_rate_threshold,
             )
         else:
-            slo_violation_s = self._query_timeline.slo_violation_amount(
-                slo_s=self._slo_s
-            )
+            slo_violation_s = self._query_timeline.slo_violation_amount()
             return (
                 slo_violation_s,
-                slo_violation_s <= self._slo_violation_amount_threshold_s
+                slo_violation_s <= self._slo_violation_amount_threshold_s,
             )
-        
+
     def _fmt_rate_or_amount(self, rate_or_amount: float) -> str:
         if not self._optimize_cumulative_slo_violation_time:
             return f"rate: {rate_or_amount:.4f}"
@@ -407,7 +840,10 @@ class BlueprintSelector:
             return f"amount: {rate_or_amount:.2f}s"
 
     def _maybe_apply_best_move_for_slo(
-        self, eligible_cluster_names: list[str], iteration: int, verbose: bool
+        self,
+        eligible_cluster_names: list[str],
+        iteration: int,
+        verbose: bool,
     ) -> bool:
         """
         Find and apply the best move to reduce the SLO violation rate.
@@ -454,7 +890,6 @@ class BlueprintSelector:
             inverse_move, old_latencies = self._query_timeline.apply_move(
                 move,
                 verbose=verbose,
-                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             new_slo_violation, slo_ok = self._slo_ok()
             self._maybe_log(
@@ -479,7 +914,6 @@ class BlueprintSelector:
                 inverse_move,
                 old_latencies,
                 verbose=verbose,
-                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             undo_slo_violation, _ = self._slo_ok()
             self._maybe_log(
@@ -494,7 +928,6 @@ class BlueprintSelector:
         self._query_timeline.apply_move(
             best_move,
             verbose=verbose,
-            use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
         )
         self._maybe_log(
             f"SLO iteration {iteration}: "
@@ -536,6 +969,7 @@ class BlueprintSelector:
         candidate_moves = self._candidate_moves(
             eligible_cluster_names=eligible_cluster_names,
             look_for_slo_violations=False,
+            verbose=verbose,
         )
         if not candidate_moves:
             self._maybe_log("No candidate moves found to reduce cost.", verbose)
@@ -549,7 +983,6 @@ class BlueprintSelector:
             inverse_move, old_latencies = self._query_timeline.apply_move(
                 move,
                 verbose=verbose,
-                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             _, slo_ok = self._slo_ok()
             new_cost = self._query_timeline.total_cost()
@@ -564,9 +997,10 @@ class BlueprintSelector:
                 f"New number of active clusters after move: {new_num_active_clusters} (from {initial_num_active_clusters})",
                 verbose,
             )
+            abs_tol = 1e-3
 
             if (slo_ok) and (
-                (new_cost < best_cost)
+                (new_cost < (best_cost - abs_tol))
                 or (
                     isclose(new_cost, best_cost, abs_tol=1e-3)
                     and new_num_active_clusters < initial_num_active_clusters
@@ -587,7 +1021,6 @@ class BlueprintSelector:
                 inverse_move,
                 old_latencies,
                 verbose=verbose,
-                use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
             )
             self._maybe_log(
                 f"After undoing, total cost is {self._query_timeline.total_cost():.4f}",
@@ -603,7 +1036,6 @@ class BlueprintSelector:
         self._query_timeline.apply_move(
             best_move,
             verbose=verbose,
-            use_stage_for_isolated_queries=self._use_stage_for_isolated_queries,
         )
         self._maybe_log(
             f"Cost iteration {iteration}: "
@@ -639,7 +1071,7 @@ class BlueprintSelector:
         """
 
         intervals = self._query_timeline.find_intervals_by_slo_adherence(
-            slo_s=self._slo_s, look_for_slo_violations=look_for_slo_violations
+            look_for_slo_violations=look_for_slo_violations
         )
         self._maybe_log(
             f"Using SLO {self._slo_s} and `look_for_slo_violations` = "
