@@ -10,12 +10,10 @@ from autoslo.blueprints.blueprint import Blueprint
 from autoslo.blueprints.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
-from autoslo.nn.concurrent_query_dataset import (
-    ConcurrentQueryDataset,
-    QueryInfo,
-)
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.routing.query_router import QueryRouter
 from autoslo.utils.billing import Billing
+from autoslo.workload_definition.query import Query
 
 
 @dataclass
@@ -65,9 +63,9 @@ class RIconq(QueryRouter):
                 for cluster_name in eligible_cluster_names
             ]
         )
-        # From cluster name to a mapping from query ID to QueryInfo for
+        # From cluster name to a mapping from query ID to Query for
         # running queries.
-        self._running_queries: dict[str, dict[str, QueryInfo]] = {
+        self._running_queries: dict[str, dict[str, Query]] = {
             cluster_name: {} for cluster_name in eligible_cluster_names
         }
         self._running_queries_lock = threading.Lock()
@@ -131,13 +129,13 @@ class RIconq(QueryRouter):
                     {query_id: tpcds_temp_and_q_idx}, cluster_name
                 )[query_id]
             )
-            base_query = QueryInfo(
+            base_query = Query(
                 query_id=query_id,
                 tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
                 start_time_s=start_time_s,
                 cluster_name=cluster_name,
-                query_featurization=featurization,
-                stage_latency_prediction=stage_prediction.overall_mean_s(),
+                featurization=featurization,
+                stage_latency_prediction_s=stage_prediction.overall_mean_s(),
             )
             with self._running_queries_lock:
                 running_queries = list(
@@ -156,7 +154,6 @@ class RIconq(QueryRouter):
             )
             predictions = self._iconq_model.predict_from_dataset(
                 dataset,
-                use_stage_for_isolated_queries=use_stage_for_isolated_queries,
             )
 
             # Add the routing scenario.
@@ -258,13 +255,13 @@ class RIconq(QueryRouter):
                 {query_id: tpcds_temp_and_q_idx}, cluster_name
             )[query_id]
         )
-        query_info = QueryInfo(
+        query_info = Query(
             query_id=query_id,
             tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
             start_time_s=start_time_s,
             cluster_name=cluster_name,
-            query_featurization=featurization,
-            stage_latency_prediction=stage_prediction.overall_mean_s(),
+            featurization=featurization,
+            stage_latency_prediction_s=stage_prediction.overall_mean_s(),
         )
         with self._running_queries_lock:
             self._running_queries[cluster_name][query_id] = query_info

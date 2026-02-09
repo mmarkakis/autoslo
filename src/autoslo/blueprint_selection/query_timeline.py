@@ -10,11 +10,9 @@ from matplotlib.patches import Rectangle
 from autoslo.blueprints.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
-from autoslo.nn.concurrent_query_dataset import (
-    ConcurrentQueryDataset,
-    QueryInfo,
-)
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
+from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.trace import Trace
 
 
@@ -451,29 +449,29 @@ class QueryTimeline:
         return result
 
     @staticmethod
-    def _query_info_from_interval(
+    def _query_from_interval(
         cluster_name: str,
         interval: Interval,
-    ) -> QueryInfo:
+    ) -> Query:
         """
-        Create a QueryInfo instance from the given cluster name and Interval.
+        Create a Query instance from the given cluster name and Interval.
 
         Parameters:
             cluster_name: The name of the cluster where the query executes.
             interval: The Interval representing the query.
 
         Returns:
-            A QueryInfo instance.
+            A Query instance.
         """
 
-        return QueryInfo(
+        return Query(
             query_id=interval.data["query_id"],
             tpcds_temp_and_q_idx=interval.data["tpcds_temp_and_q_idx"],
             start_time_s=interval.begin,
             latency_s=interval.end - interval.begin,
             cluster_name=cluster_name,
-            query_featurization=interval.data["featurization"],
-            stage_latency_prediction=interval.data[
+            featurization=interval.data["featurization"],
+            stage_latency_prediction_s=interval.data[
                 "stage_model_predictions_per_rpu"
             ][Cluster.rpu_for_cluster_name(cluster_name)],
             latency_is_lower_bound=interval.data.get("was_aborted", False),
@@ -513,7 +511,7 @@ class QueryTimeline:
         """
         # For each cluster, build the dataset
         base_queries = []
-        query_neighbors: dict[str, list[QueryInfo]] = {}
+        query_neighbors: dict[str, list[Query]] = {}
 
         included_clusters = (
             [cluster_name] if cluster_name is not None else self.active_clusters
@@ -533,14 +531,14 @@ class QueryTimeline:
             )
 
             for base_iv, neighbor_ivs in query_neighbor_mapping.items():
-                base_query = self._query_info_from_interval(
+                base_query = self._query_from_interval(
                     cluster_name=cluster_name_local,
                     interval=base_iv,
                 )
                 base_queries.append(base_query)
 
                 query_neighbors[base_query.query_id] = [
-                    self._query_info_from_interval(
+                    self._query_from_interval(
                         cluster_name=cluster_name_local,
                         interval=neighbor_iv,
                     )

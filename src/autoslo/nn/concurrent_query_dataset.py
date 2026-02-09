@@ -9,33 +9,8 @@ from torch.utils.data import Dataset
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
-from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.trace import Trace
-
-
-@dataclass
-class QueryInfo:
-    """
-    Lightweight container for query information needed for dataset construction.
-
-    Attributes:
-        query_id: The unique identifier for the query.
-        tpcds_temp_and_q_idx: The TPC-DS template and query index.
-        start_time_s: The start time of the query (in seconds, relative to some reference).
-        cluster_name: The name of the cluster where the query executes.
-        query_featurization: Optional pre-computed query features.
-        stage_latency_prediction: Optional stage model latency prediction for this query.
-        latency_s: The actual or estimated latency of the query (in seconds).
-    """
-
-    query_id: str
-    tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx
-    start_time_s: float
-    cluster_name: str
-    query_featurization: IconqQueryFeaturizer.IconqQueryFeaturization
-    stage_latency_prediction: float
-    latency_s: Optional[float] = None
-    latency_is_lower_bound: Optional[bool] = None
 
 
 class ConcurrentQueryDataset(Dataset):
@@ -268,8 +243,8 @@ class ConcurrentQueryDataset(Dataset):
     @staticmethod
     def build_from_query_groups(
         iconq_interaction_featurizer: IconqInteractionFeaturizer,
-        base_queries: list[QueryInfo],
-        query_neighbors: dict[str, list[QueryInfo]],
+        base_queries: list[Query],
+        query_neighbors: dict[str, list[Query]],
         use_log_runtime: bool = True,
         run_id: Optional[str] = None,
     ) -> "ConcurrentQueryDataset":
@@ -280,8 +255,8 @@ class ConcurrentQueryDataset(Dataset):
         all assumed to be on the same cluster.
 
         Parameters:
-            base_queries: List of QueryInfo objects for which to build dataset rows.
-            query_neighbors: Dict mapping query_id to list of neighboring QueryInfo objects.
+            base_queries: List of Query objects for which to build dataset rows.
+            query_neighbors: Dict mapping query_id to list of neighboring queries.
                 Each query in base_queries should have an entry in this dict. If
                 the neighbors include the base query itself, it will be ignored.
             use_log_runtime: Whether to use log(runtime) as the target variable.
@@ -321,12 +296,12 @@ class ConcurrentQueryDataset(Dataset):
             interaction_featurizations[base_query.start_time_s] = (
                 iconq_interaction_featurizer.featurize_from_vectors(
                     cluster_name=base_query.cluster_name,
-                    qa_features=base_query.query_featurization,
+                    qa_features=base_query.featurization,
                     qa_start_time_s=base_query.start_time_s,
-                    qa_latency_prediction=base_query.stage_latency_prediction,
-                    qb_features=base_query.query_featurization,
+                    qa_latency_prediction=base_query.stage_latency_prediction_s,
+                    qb_features=base_query.featurization,
                     qb_start_time_s=base_query.start_time_s,
-                    qb_latency_prediction=base_query.stage_latency_prediction,
+                    qb_latency_prediction=base_query.stage_latency_prediction_s,
                 )
             )
 
@@ -337,12 +312,12 @@ class ConcurrentQueryDataset(Dataset):
                 interaction_featurizations[neighbor.start_time_s] = (
                     iconq_interaction_featurizer.featurize_from_vectors(
                         cluster_name=base_query.cluster_name,
-                        qa_features=base_query.query_featurization,
+                        qa_features=base_query.featurization,
                         qa_start_time_s=base_query.start_time_s,
-                        qa_latency_prediction=base_query.stage_latency_prediction,
-                        qb_features=neighbor.query_featurization,
+                        qa_latency_prediction=base_query.stage_latency_prediction_s,
+                        qb_features=neighbor.featurization,
                         qb_start_time_s=neighbor.start_time_s,
-                        qb_latency_prediction=neighbor.stage_latency_prediction,
+                        qb_latency_prediction=neighbor.stage_latency_prediction_s,
                     )
                 )
 
