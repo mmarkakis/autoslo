@@ -132,6 +132,19 @@ class Blueprint:
             rpu=int(cluster_rpu), name=f"cluster_{int(cluster_rpu)}"
         )
         return Blueprint(clusters=[cluster])
+    
+    @staticmethod
+    def maximal() -> "Blueprint":
+        """
+        Create a Blueprint instance with all clusters of sizes up to 32 RPU.
+
+        Returns:
+            A Blueprint instance with the specified configuration.
+        """
+        clusters = []
+        for cluster in Cluster.all_cluster_names():
+            clusters.append(Cluster.from_config(cluster))
+        return Blueprint(clusters=clusters)
 
     @property
     def name(self) -> str:

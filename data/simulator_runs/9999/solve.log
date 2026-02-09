@@ -1,0 +1,2 @@
+2026-02-09 18:05:32,139 - INFO - Starting simulator run for workload 'tpcds_99templates_00pctheavy_30meaninterarrivals' with model '1769376434' and blueprint 'multi_128_16_16b_256_32_32b_4_4b_512_64_8_8b'
+2026-02-09 18:05:32,139 - INFO - Optimize based on SLO violation amount: Truewith thresholds: slo_violation_rate_threshold = 0.0, slo_violation_amount_threshold_s = 30.0, slo_s = 180.0

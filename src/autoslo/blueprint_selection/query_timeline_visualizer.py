@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Optional
-from pathlib import Path
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Optional
 
 import plotly.graph_objects as go
 import plotly.io as pio
+from intervaltree import Interval
 
 from autoslo.blueprints.cluster import Cluster
-from autoslo.workload_execution.trace import Trace
-
+from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
+from autoslo.workload_definition.query import Query
+from autoslo.workload_execution.trace import Trace
 
 
 @dataclass(frozen=True)
@@ -111,10 +113,93 @@ class GanttRecorder:
             )
         )
 
+    def snapshot_v2(
+        self,
+        cost_per_second_per_cluster: dict[str, float],
+        completed_queries_per_cluster: dict[str, list[Query]],
+        active_queries_per_cluster: dict[str, list[Query]],
+        label: str,
+        slo_s: float,
+    ) -> None:
+        """
+        Capture state to later draw the gantt chart.
+        """
+        intervals_by_cluster: dict[
+            str, list[tuple[float, float, dict[str, Any]]]
+        ] = {}
+
+        total_queries = 0
+        violating_queries = 0
+        violation_amount = 0.0
+
+        for (
+            cluster_name,
+            completed_queries,
+        ) in completed_queries_per_cluster.items():
+            intervals = []
+            for q in completed_queries:
+                total_queries += 1
+                ref_interval = q.as_interval()
+                intervals.append(
+                    (ref_interval.begin, ref_interval.end, ref_interval.data)
+                )
+                violating_queries += q.violates_slo(slo_s)
+                violation_amount += q.slo_violation_amount_s(slo_s)
+
+            intervals.sort()
+            intervals_by_cluster[cluster_name] = intervals
+
+        for cluster_name, active_queries in active_queries_per_cluster.items():
+            intervals = []
+            for q in active_queries:
+                total_queries += 1
+                ref_interval = q.as_interval()
+                intervals.append(
+                    (ref_interval.begin, ref_interval.end, ref_interval.data)
+                )
+                violating_queries += q.violates_slo(slo_s)
+                violation_amount += q.slo_violation_amount_s(slo_s)
+
+            intervals.sort()
+            intervals_by_cluster.setdefault(cluster_name, []).extend(intervals)
+
+        cost_per_cluster: dict[str, float] = {}
+        total_cost = 0.0
+        for cluster_name in intervals_by_cluster.keys():
+            cost = cost_per_second_per_cluster[cluster_name] * Billing.billed_s(
+                [
+                    Interval(iv[0], iv[1])
+                    for iv in intervals_by_cluster[cluster_name]
+                ]
+            )
+            cost_per_cluster[cluster_name] = cost
+            total_cost += cost
+
+        violation_rate = (
+            (violating_queries / total_queries) if total_queries > 0 else 0.0
+        )
+
+        self.snapshots.append(
+            GanttSnapshot(
+                label=label,
+                intervals_by_cluster=intervals_by_cluster,
+                cluster_label_by_name={
+                    cluster_name: cluster_name
+                    for cluster_name in completed_queries_per_cluster.keys()
+                },
+                total_queries=total_queries,
+                violating_queries=violating_queries,
+                violation_rate=violation_rate,
+                total_cost=total_cost,
+                cost_per_cluster=cost_per_cluster,
+                violation_amount=violation_amount,
+            )
+        )
+
 
 def _pack_into_lanes(
     sorted_intervals: list[tuple[float, float, dict[str, Any]]],
-):
+) -> list[list[tuple[float, float, dict[str, Any]]]]:
     """
     Faster lane packing than your O(n^2) version:
     since intervals are sorted by start time, we only need to compare to the
@@ -124,6 +209,7 @@ def _pack_into_lanes(
     lane_last_end: list[float] = []
 
     for s, e, meta in sorted_intervals:
+
         placed = False
         for i, last_end in enumerate(lane_last_end):
             if s >= last_end:
@@ -157,17 +243,23 @@ def _format_hover_text(
     msg = (
         f"Cluster: {cluster_name}<br>"
         f"Query ID: {pure_qid}<br>"
-        f"Workload Seq Num: {meta['seq_num']}<br>"
         f"TPC-DS Temp and Q Idx: {meta['tpcds_temp_and_q_idx']}<br>"
         f"Start: {s:.3f}s<br>"
         f"End: {e:.3f}s<br>"
         f"Duration: {dur:.3f}s<br>"
         f"SLO: {slo_s:.3f}s<br>"
-        f"Stage on 4 RPU Cluster: {meta['stage_model_predictions_per_rpu'][4]:.3f}s<br>"
-        f"Stage on 8 RPU Cluster: {meta['stage_model_predictions_per_rpu'][8]:.3f}s<br>"
-        f"Stage on 16 RPU Cluster: {meta['stage_model_predictions_per_rpu'][16]:.3f}s<br>"
-        f"Stage on 32 RPU Cluster: {meta['stage_model_predictions_per_rpu'][32]:.3f}s<br>"
     )
+    if "stage_model_predictions_per_rpu" in meta:
+        msg += (
+            f"Stage on 4 RPU Cluster: {meta['stage_model_predictions_per_rpu'][4]:.3f}s<br>"
+            f"Stage on 8 RPU Cluster: {meta['stage_model_predictions_per_rpu'][8]:.3f}s<br>"
+            f"Stage on 16 RPU Cluster: {meta['stage_model_predictions_per_rpu'][16]:.3f}s<br>"
+            f"Stage on 32 RPU Cluster: {meta['stage_model_predictions_per_rpu'][32]:.3f}s<br>"
+        )
+    elif "stage_latency_prediction_s" in meta:
+        msg += (
+            f"Stage Prediction: {meta['stage_latency_prediction_s']:.3f}s<br>"
+        )
 
     return msg
 
@@ -195,7 +287,9 @@ def _build_shapes_for_snapshot(
                 shapes=[],
                 y_ticks=layout_plan["y_ticks"],
                 y_labels=layout_plan["y_labels"],
-                x_max=1,
+                y_label_centers=layout_plan["y_label_centers"],
+                cluster_names=layout_plan["cluster_order"],
+                x_max=layout_plan["x_max"],
                 y_max=layout_plan["y_max"],
                 hover_traces=[],
             )
@@ -203,6 +297,8 @@ def _build_shapes_for_snapshot(
             shapes=[],
             y_ticks=[],
             y_labels=[],
+            y_label_centers=[],
+            cluster_names=[],
             x_max=1,
             y_max=1,
             hover_traces=[],
@@ -328,7 +424,7 @@ def _build_shapes_for_snapshot(
             y_labels=lbls,
             y_label_centers=label_centers,
             cluster_names=c_names,
-            x_max=(max_time - min_time + 1),
+            x_max=layout_plan["x_max"],
             y_max=layout_plan["y_max"],
             hover_traces=hover_traces,
         )
@@ -339,7 +435,7 @@ def _build_shapes_for_snapshot(
             y_labels=y_labels,
             y_label_centers=y_label_centers,
             cluster_names=cluster_names,
-            x_max=(max_time - min_time + 1),
+            x_max=layout_plan["x_max"],
             y_max=y_pos,
             hover_traces=hover_traces,
         )
@@ -394,6 +490,7 @@ def render_gantt_scrubber(
         # Compute fixed y-axis ticks/labels and base offsets
         y_ticks: list[float] = []
         y_labels: list[str] = []
+        y_label_centers: list[float] = []
         base_offset_by_cluster: dict[str, int] = {}
         y_pos = 0
         for c in cluster_order:
@@ -403,15 +500,33 @@ def render_gantt_scrubber(
             base_offset_by_cluster[c] = y_pos
             y_ticks.append(y_pos + (ml - 1) / 2)
             y_labels.append(label_by_name.get(c, c))
+            y_label_centers.append(y_pos + (ml / 2))
             y_pos += ml + 1
+
+        # Also compute a fixed width for the x axis based on the global max time
+        # across all snapshots, so that the scrubber doesn't resize as you move
+        # through snapshots of different durations.
+        max_time = max(
+            max(
+                (
+                    interval[1]
+                    for intervals in snap.intervals_by_cluster.values()
+                    for interval in intervals
+                ),
+                default=0,
+            )
+            for snap in snapshots
+        )
 
         layout_plan = dict(
             cluster_order=cluster_order,
             max_lanes_by_cluster=max_lanes_by_cluster,
             base_offset_by_cluster=base_offset_by_cluster,
+            y_label_centers=y_label_centers,
             y_ticks=y_ticks,
             y_labels=y_labels,
             y_max=y_pos,
+            x_max=max_time,
         )
 
         specs = [
@@ -476,6 +591,7 @@ def render_gantt_scrubber(
         spec: dict[str, Any], snap: GanttSnapshot
     ) -> list[go.Scatter]:
         traces: list[go.Scatter] = []
+
         for y, label, cluster_name in zip(
             spec["y_label_centers"], spec["y_labels"], spec["cluster_names"]
         ):

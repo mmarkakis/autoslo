@@ -1,24 +1,24 @@
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import yaml
-
-import autoslo.utils.paths as pu
-from autoslo.blueprints.cluster import Cluster
-from autoslo.models.iconq_model import IconqModel
-from autoslo.workload_definition.chunk import Chunk
-from autoslo.workload_definition.query import Query
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-
 from intervaltree import Interval  # type: ignore[import]
 
-from autoslo.utils.billing import Billing
-
-from math import isclose
-
+import autoslo.utils.paths as pu
+from autoslo.blueprint_selection.query_timeline_visualizer import (
+    GanttRecorder,
+    export_gantt_video,
+    render_gantt_scrubber,
+)
 from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster import Cluster
+from autoslo.models.iconq_model import IconqModel
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.utils.billing import Billing
+from autoslo.workload_definition.chunk import Chunk
+from autoslo.workload_definition.query import Query
 
 
 class WorkloadRoutingSimulator:
@@ -69,6 +69,7 @@ class WorkloadRoutingSimulator:
         self._export_video = export_video
         self._video_frame_duration = video_frame_duration
         self._simulator_run_id = simulator_run_id
+        self._recorder = GanttRecorder()
 
         workload = Chunk.load(workload_name)  # FIXME: generalize to workloads.
         self._workload = workload
@@ -132,6 +133,17 @@ class WorkloadRoutingSimulator:
             )
 
         # Set up bookkeeping etc.
+        self._cost_per_second_per_cluster: dict[str, float] = {}
+        self._active_queries_per_cluster: dict[str, list[Query]] = {}
+        self._completed_queries_per_cluster: dict[str, list[Query]] = {}
+
+        for cluster_name in self._blueprint.cluster_names:
+            cluster = Cluster.from_config(cluster_name)
+            self._cost_per_second_per_cluster[cluster_name] = (
+                cluster.cost_per_second
+            )
+            self._active_queries_per_cluster[cluster_name] = []
+            self._completed_queries_per_cluster[cluster_name] = []
 
     def first_pass(self) -> None:
         """
@@ -139,27 +151,62 @@ class WorkloadRoutingSimulator:
         and minimizing SLO violations.
         """
 
-        active_queries_per_cluster: dict[Cluster, list[Query]] = {
-            Cluster.from_config(cluster_name): []
-            for cluster_name in self._blueprint.cluster_names
-        }
+        self._recorder.snapshot_v2(
+            self._cost_per_second_per_cluster,
+            self._completed_queries_per_cluster,
+            self._active_queries_per_cluster,
+            label="Start",
+            slo_s=self._slo_s,
+        )
 
         for i, query in enumerate(self._workload.queries):
+
+            self._cleanup_completed_queries_up_to(query.start_time_s)
+
             # Add query to the right cluster.
             (
-                selected_cluster,
+                selected_cluster_name,
                 updated_query,
                 latencies_on_best_cluster_s,
             ) = self._find_best_cluster_for_query(
                 query,
-                active_queries_per_cluster,
             )
-            active_queries_per_cluster[selected_cluster].append(updated_query)
+            self._active_queries_per_cluster[selected_cluster_name].append(
+                updated_query
+            )
 
             # Go through the active queries on the best cluster and update their
             # latencies based on the prediction results.
-            for q in active_queries_per_cluster[selected_cluster]:
+            for q in self._active_queries_per_cluster[selected_cluster_name]:
                 q.latency_s = latencies_on_best_cluster_s[q.query_id]
+
+            self._recorder.snapshot_v2(
+                self._cost_per_second_per_cluster,
+                self._completed_queries_per_cluster,
+                self._active_queries_per_cluster,
+                label=f"First pass iter {i}",
+                slo_s=self._slo_s,
+            )
+
+        self.write_out_visualization()
+
+    def _cleanup_completed_queries_up_to(self, current_time_s: float) -> None:
+        """
+        Move queries that have completed by current_time_s from active to
+        completed.
+
+        Parameters:
+            current_time_s: The current time in seconds since the start of the
+                workload.
+        """
+        for cluster, active_queries in self._active_queries_per_cluster.items():
+            still_active_queries = []
+            for query in active_queries:
+                if query.start_time_s + query.latency_s <= current_time_s:
+                    self._completed_queries_per_cluster[cluster].append(query)
+                else:
+                    still_active_queries.append(query)
+            self._active_queries_per_cluster[cluster] = still_active_queries
 
     def _slo_cmp_with_tolerance(self, a: float, b: float) -> int:
         """
@@ -180,16 +227,13 @@ class WorkloadRoutingSimulator:
     def _find_best_cluster_for_query(
         self,
         query: Query,
-        active_queries_per_cluster: dict[Cluster, list[Query]],
-    ) -> tuple[Cluster, Query, dict[str, float]]:
+    ) -> tuple[str, Query, dict[str, float]]:
         """
         Finds the best cluster to route the query to, based on the projected
         latency and SLO violation amount.
 
         Parameters:
             query: The query to route.
-            active_queries_per_cluster: A dictionary mapping clusters to their
-                currently active queries.
 
         Returns:
             best_cluster: The cluster that was chosen as the best for routing
@@ -201,7 +245,7 @@ class WorkloadRoutingSimulator:
         """
 
         # Best bookkeeping.
-        best_cluster = None
+        best_cluster_name = None
         marginal_slo_violation_on_best_cluster = float("inf")
         marginal_cost_on_best_cluster = float("inf")
         stage_latency_prediction_on_best_cluster_s = float("inf")
@@ -211,12 +255,15 @@ class WorkloadRoutingSimulator:
             query.tpcds_temp_and_q_idx
         )
 
-        for cluster, active_queries in active_queries_per_cluster.items():
+        for (
+            cluster_name,
+            active_queries,
+        ) in self._active_queries_per_cluster.items():
 
-            query.cluster_name = cluster.name
+            query.cluster_name = cluster_name
             query.stage_latency_prediction_s = (
                 self._iconq_model.stage_model.predict_from_tpcds_temp_and_q_idx(
-                    {query.query_id: query.tpcds_temp_and_q_idx}, cluster.name
+                    {query.query_id: query.tpcds_temp_and_q_idx}, cluster_name
                 )[query.query_id].overall_mean_s()
             )
 
@@ -230,9 +277,9 @@ class WorkloadRoutingSimulator:
                 for q in active_queries
             ]
             before_slo_violation = sum(individual_before_slo_violations)
-            before_cost = cluster.cost_per_second * Billing.billed_s(
-                [q.as_interval() for q in active_queries]
-            )
+            before_cost = self._cost_per_second_per_cluster[
+                cluster_name
+            ] * Billing.billed_s([q.as_interval() for q in active_queries])
             # TODO: account for the minimum duration properly in case there was
             # active time right before the current active set?
 
@@ -261,7 +308,9 @@ class WorkloadRoutingSimulator:
             after_slo_violation = sum(individual_after_slo_violations)
             marginal_slo_violation = after_slo_violation - before_slo_violation
 
-            after_cost = cluster.cost_per_second * Billing.billed_s(
+            after_cost = self._cost_per_second_per_cluster[
+                cluster_name
+            ] * Billing.billed_s(
                 [
                     Interval(q.start_time_s, q.start_time_s + latency_s)
                     for q, latency_s in zip(active_w_current, latencies)
@@ -273,7 +322,7 @@ class WorkloadRoutingSimulator:
 
             # Compare and update best if needed.
             if (
-                (best_cluster is None)
+                (best_cluster_name is None)
                 or (
                     self._slo_cmp_with_tolerance(
                         marginal_slo_violation,
@@ -292,7 +341,7 @@ class WorkloadRoutingSimulator:
                     and (marginal_cost < marginal_cost_on_best_cluster)
                 )
             ):
-                best_cluster = cluster
+                best_cluster_name = cluster_name
                 marginal_slo_violation_on_best_cluster = marginal_slo_violation
                 marginal_cost_on_best_cluster = marginal_cost
                 stage_latency_prediction_on_best_cluster_s = (
@@ -303,15 +352,53 @@ class WorkloadRoutingSimulator:
                     for q, latency_s in zip(active_w_current, latencies)
                 }
 
-        assert best_cluster is not None
+        assert best_cluster_name is not None
 
         # Update the query's cluster and stage latency prediction to reflect the
         # best cluster choice.
-        query.cluster_name = best_cluster.name
+        query.cluster_name = best_cluster_name
         query.stage_latency_prediction_s = (
             stage_latency_prediction_on_best_cluster_s
         )
         query.latency_s = latencies_on_best_cluster_s[query.query_id]
         query.latency_is_lower_bound = False
 
-        return (best_cluster, query, latencies_on_best_cluster_s)
+        return (best_cluster_name, query, latencies_on_best_cluster_s)
+
+    def write_out_visualization(self) -> None:
+        """
+        Write out an HTML visualization of the query assignment.
+        Optionally also exports a video if export_video flag is set.
+        """
+        fig = render_gantt_scrubber(
+            self._recorder.snapshots,
+            slo_s=self._slo_s,
+            constant_layout=True,
+            violation_rate_threshold=self._slo_violation_rate_threshold,
+            violation_amount_threshold=self._slo_violation_amount_threshold_s,
+            optimize_cumulative_slo_violation_time=(
+                self._optimize_based_on_slo_violation_amount
+            ),
+            workload_name=self._workload_name,
+        )
+
+        out_path = os.path.join(self._out_dir, "visualization.html")
+
+        fig.write_html(out_path, auto_play=False, include_plotlyjs="cdn")
+
+        # Export video if requested
+        if self._export_video:
+            video_out_path = os.path.join(self._out_dir, "visualization.mp4")
+            export_gantt_video(
+                snapshots=self._recorder.snapshots,
+                slo_s=self._slo_s,
+                output_path=video_out_path,
+                frame_duration=self._video_frame_duration,
+                constant_layout=True,
+                violation_rate_threshold=self._slo_violation_rate_threshold,
+                violation_amount_threshold=self._slo_violation_amount_threshold_s,
+                optimize_cumulative_slo_violation_time=(
+                    self._optimize_based_on_slo_violation_amount
+                ),
+                workload_name=self._workload_name,
+            )
