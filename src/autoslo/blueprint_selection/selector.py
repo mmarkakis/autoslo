@@ -749,7 +749,6 @@ class BlueprintSelector:
         fig = render_gantt_scrubber(
             self._recorder.snapshots,
             slo_s=self._slo_s,
-            constant_layout=True,
             violation_rate_threshold=self._slo_violation_rate_threshold,
             violation_amount_threshold=self._slo_violation_amount_threshold_s,
             optimize_cumulative_slo_violation_time=(

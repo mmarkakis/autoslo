@@ -7,7 +7,7 @@ import yaml
 from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.query_timeline_visualizer import (
+from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     GanttRecorder,
     export_gantt_video,
     render_gantt_scrubber,
@@ -122,7 +122,7 @@ class WorkloadRoutingSimulator:
             )
             logging.info(
                 f"Optimize based on SLO violation amount: "
-                f"{self._optimize_based_on_slo_violation_amount}"
+                f"{self._optimize_based_on_slo_violation_amount} "
                 f"with thresholds: "
                 f"slo_violation_rate_threshold = "
                 f"{self._slo_violation_rate_threshold}, "
@@ -136,6 +136,9 @@ class WorkloadRoutingSimulator:
         self._cost_per_second_per_cluster: dict[str, float] = {}
         self._active_queries_per_cluster: dict[str, list[Query]] = {}
         self._completed_queries_per_cluster: dict[str, list[Query]] = {}
+        self._most_recent_billing_window_start_time_per_cluster_s: dict[
+            str, Optional[float]
+        ] = {}
 
         for cluster_name in self._blueprint.cluster_names:
             cluster = Cluster.from_config(cluster_name)
@@ -144,6 +147,13 @@ class WorkloadRoutingSimulator:
             )
             self._active_queries_per_cluster[cluster_name] = []
             self._completed_queries_per_cluster[cluster_name] = []
+            self._most_recent_billing_window_start_time_per_cluster_s[
+                cluster_name
+            ] = None
+
+    def _log_if_verbose(self, message: str) -> None:
+        if self._verbose:
+            logging.info(message)
 
     def first_pass(self) -> None:
         """
@@ -151,17 +161,22 @@ class WorkloadRoutingSimulator:
         and minimizing SLO violations.
         """
 
-        self._recorder.snapshot_v2(
+        self._recorder.snapshot(
             self._cost_per_second_per_cluster,
             self._completed_queries_per_cluster,
             self._active_queries_per_cluster,
-            label="Start",
+            label="Start (t = 0.0s)",
             slo_s=self._slo_s,
         )
 
         for i, query in enumerate(self._workload.queries):
 
             self._cleanup_completed_queries_up_to(query.start_time_s)
+
+            self._log_if_verbose(
+                f"({query.start_time_s:.3f}) Routing query {query.query_id} "
+                f"with template and idx {query.tpcds_temp_and_q_idx}."
+            )
 
             # Add query to the right cluster.
             (
@@ -171,42 +186,130 @@ class WorkloadRoutingSimulator:
             ) = self._find_best_cluster_for_query(
                 query,
             )
+            self_latency_s = latencies_on_best_cluster_s[query.query_id]
+            self._log_if_verbose(
+                f"({query.start_time_s:.3f}) Routing query {query.query_id} "
+                f"to cluster "
+                f"{selected_cluster_name}. Predicted latency is "
+                f"{self_latency_s:.2f}s (ends at "
+                f"{query.start_time_s + self_latency_s:.2f}s). "
+            )
             self._active_queries_per_cluster[selected_cluster_name].append(
                 updated_query
             )
 
             # Go through the active queries on the best cluster and update their
             # latencies based on the prediction results.
+            if len(self._active_queries_per_cluster[selected_cluster_name]) > 1:
+                self._log_if_verbose(
+                    f"Updating predicted latencies for active queries on "
+                    f"cluster {selected_cluster_name}."
+                )
             for q in self._active_queries_per_cluster[selected_cluster_name]:
-                q.latency_s = latencies_on_best_cluster_s[q.query_id]
+                if q.query_id == query.query_id:
+                    continue
+                old_latency_s = q.latency_s
+                predicted_latency_s = latencies_on_best_cluster_s[q.query_id]
+                updated_latency_s = max(old_latency_s, predicted_latency_s)
+                self._log_if_verbose(
+                    f"\tQuery {q.query_id}: Old: {old_latency_s:.2f}s, "
+                    f"Pred: {predicted_latency_s:.2f}s, "
+                    f"New: {updated_latency_s:.2f}s (ends at "
+                    f"{q.start_time_s + updated_latency_s:.2f}s)"
+                )
+                q.latency_s = updated_latency_s
 
-            self._recorder.snapshot_v2(
+            # If we are the start of a new billing window on the cluster, set
+            # the billing window start time.
+            if (
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    selected_cluster_name
+                ]
+                is None
+            ):
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    selected_cluster_name
+                ] = query.start_time_s
+
+            self._recorder.snapshot(
                 self._cost_per_second_per_cluster,
                 self._completed_queries_per_cluster,
                 self._active_queries_per_cluster,
-                label=f"First pass iter {i}",
+                label=f"First pass iter {i} (t = {query.start_time_s:.3f}s)",
                 slo_s=self._slo_s,
             )
 
-        self.write_out_visualization()
+        workload_end_time_s = max(
+            q.start_time_s + q.latency_s
+            for cluster_name in self._blueprint.cluster_names
+            for q in self._completed_queries_per_cluster[cluster_name]
+        )
 
-    def _cleanup_completed_queries_up_to(self, current_time_s: float) -> None:
+        self._cleanup_completed_queries_up_to()
+
+        self._recorder.snapshot(
+            self._cost_per_second_per_cluster,
+            self._completed_queries_per_cluster,
+            self._active_queries_per_cluster,
+            label=f"Final (t = {workload_end_time_s:.3f}s)",
+            slo_s=self._slo_s,
+        )
+
+        self.write_out_visualization()
+        self.write_out_billing_interval_analysis()
+
+    def _cleanup_completed_queries_up_to(
+        self, current_time_s: Optional[float] = None
+    ) -> None:
         """
         Move queries that have completed by current_time_s from active to
         completed.
 
         Parameters:
             current_time_s: The current time in seconds since the start of the
-                workload.
+                workload. If None, all active queries are considered completed.
         """
+        ended_with_times: list[tuple[Query, float]] = []
         for cluster, active_queries in self._active_queries_per_cluster.items():
             still_active_queries = []
             for query in active_queries:
-                if query.start_time_s + query.latency_s <= current_time_s:
+                end_time_s = query.start_time_s + query.latency_s
+                if (current_time_s is None) or (end_time_s <= current_time_s):
                     self._completed_queries_per_cluster[cluster].append(query)
+                    ended_with_times.append((query, end_time_s))
                 else:
                     still_active_queries.append(query)
             self._active_queries_per_cluster[cluster] = still_active_queries
+
+            if (
+                (current_time_s is not None) and 
+                (len(still_active_queries) == 0)
+                and (
+                    self._most_recent_billing_window_start_time_per_cluster_s[
+                        cluster
+                    ]
+                    is not None
+                )
+                and (
+                    self._most_recent_billing_window_start_time_per_cluster_s[
+                        cluster
+                    ]
+                    + Billing.REDSHIFT_BILLING_THRESHOLD_S
+                    < current_time_s
+                )
+            ):
+                # If there are no more active queries on the cluster and the
+                # billing window has passed, reset the billing window start time.
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    cluster
+                ] = None
+
+        for query, end_time_s in ended_with_times:
+            self._log_if_verbose(
+                f"({end_time_s:.3f}) Query {query.query_id} completed on "
+                f"cluster {query.cluster_name} with latency "
+                f"{query.latency_s:.2f}s."
+            )
 
     def _slo_cmp_with_tolerance(self, a: float, b: float) -> int:
         """
@@ -277,11 +380,23 @@ class WorkloadRoutingSimulator:
                 for q in active_queries
             ]
             before_slo_violation = sum(individual_before_slo_violations)
+            before_billed_intervals = [q.as_interval() for q in active_queries]
+            if (
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    cluster_name
+                ]
+                is not None
+            ):
+                ongoing_billing_interval = Interval(
+                    self._most_recent_billing_window_start_time_per_cluster_s[
+                        cluster_name
+                    ],
+                    query.start_time_s,
+                )
+                before_billed_intervals.append(ongoing_billing_interval)
             before_cost = self._cost_per_second_per_cluster[
                 cluster_name
-            ] * Billing.billed_s([q.as_interval() for q in active_queries])
-            # TODO: account for the minimum duration properly in case there was
-            # active time right before the current active set?
+            ] * Billing.billed_s(before_billed_intervals)
 
             # After routing:
             active_w_current = active_queries + [query]
@@ -307,17 +422,27 @@ class WorkloadRoutingSimulator:
             ]
             after_slo_violation = sum(individual_after_slo_violations)
             marginal_slo_violation = after_slo_violation - before_slo_violation
-
+            after_billed_intervals = [
+                Interval(q.start_time_s, q.start_time_s + latency_s)
+                for q, latency_s in zip(active_w_current, latencies)
+            ]
+            if (
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    cluster_name
+                ]
+                is not None
+            ):
+                after_billed_intervals.append(
+                    Interval(
+                        self._most_recent_billing_window_start_time_per_cluster_s[
+                            cluster_name
+                        ],
+                        query.start_time_s,
+                    )
+                )
             after_cost = self._cost_per_second_per_cluster[
                 cluster_name
-            ] * Billing.billed_s(
-                [
-                    Interval(q.start_time_s, q.start_time_s + latency_s)
-                    for q, latency_s in zip(active_w_current, latencies)
-                ]
-            )
-            # TODO: account for the minimum duration properly in case there was
-            # active time right before the current active set?
+            ] * Billing.billed_s(after_billed_intervals)
             marginal_cost = after_cost - before_cost
 
             # Compare and update best if needed.
@@ -352,6 +477,12 @@ class WorkloadRoutingSimulator:
                     for q, latency_s in zip(active_w_current, latencies)
                 }
 
+            self._log_if_verbose(
+                f"\tCluster {cluster_name}: Marginal SLO violation: "
+                f"{marginal_slo_violation:.4f}, Marginal cost: "
+                f"{marginal_cost:.4f}"
+            )
+
         assert best_cluster_name is not None
 
         # Update the query's cluster and stage latency prediction to reflect the
@@ -373,7 +504,6 @@ class WorkloadRoutingSimulator:
         fig = render_gantt_scrubber(
             self._recorder.snapshots,
             slo_s=self._slo_s,
-            constant_layout=True,
             violation_rate_threshold=self._slo_violation_rate_threshold,
             violation_amount_threshold=self._slo_violation_amount_threshold_s,
             optimize_cumulative_slo_violation_time=(
@@ -402,3 +532,42 @@ class WorkloadRoutingSimulator:
                 ),
                 workload_name=self._workload_name,
             )
+
+    def write_out_billing_interval_analysis(self) -> None:
+        """
+        Write out a yaml file analyzing the billing intervals per cluster.
+        """
+
+        d = {}
+
+        for cluster_name in self._blueprint.cluster_names:
+            completed_queries = self._completed_queries_per_cluster[
+                cluster_name
+            ]
+            if len(completed_queries) == 0:
+                continue
+
+            billed_intervals = Billing.billed_intervals(
+                [q.as_interval() for q in completed_queries],
+            )
+            total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
+            cost_per_second = self._cost_per_second_per_cluster[cluster_name]
+            d[cluster_name] = {
+                "num_completed_queries": len(completed_queries),
+                "num_billed_intervals": len(billed_intervals),
+                "total_billed_time_s": float(total_duration_s),
+                "cluster_cost_per_second": cost_per_second,
+                "total_billed_cost": float(total_duration_s * cost_per_second),
+                "billed_intervals": [
+                    {
+                        "begin_s": float(iv.begin),
+                        "end_s": float(iv.end),
+                        "query_ids": sorted(list(iv.data["query_ids"])),
+                    }
+                    for iv in billed_intervals
+                ],
+            }
+
+        out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
+        with open(out_path, "w") as f:
+            yaml.safe_dump(d, f, sort_keys=False)

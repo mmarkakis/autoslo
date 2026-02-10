@@ -33,7 +33,7 @@ def main(args):
             selector.solve_v2()
 
     else:
-        blueprint = Blueprint.maximal()
+        blueprint = Blueprint.maximal(max_rpu=32)
 
         simulator = WorkloadRoutingSimulator(
             workload_name=args.workload_name,
