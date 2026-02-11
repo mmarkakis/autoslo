@@ -29,3 +29,6 @@ docs/reference/
 docs/index.md
 docs/assets/
 
+uis/classifier/node_modules/
+.classifier-ui-meta/
+
