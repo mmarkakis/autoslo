@@ -1,5 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
+from autoslo.workload_definition.query import Query
 
 
 @dataclass
@@ -30,22 +31,17 @@ class WindowedTemplateDetector:
 
     def __init__(
         self,
-        arrival_times_s: list[float] | np.ndarray,
+        queries: list[Query],
         num_permutations: int = 100,
         min_idle_ratio: float = 0.9,
         max_p_value=0.05,
         min_samples=10,
         permutations_seed=0,
     ):
-        if type(arrival_times_s) == list:
-            self._arrival_times_s = np.asarray(arrival_times_s, dtype=float)
-        elif type(arrival_times_s) == np.ndarray:
-            self._arrival_times_s = arrival_times_s
-        else:
-            raise ValueError(
-                "arrival_times_s must be a list or np.ndarray, "
-                f"but got {type(arrival_times_s)}"
-            )
+        self._queries = queries
+        self._arrival_times_s = np.array(
+            [query.arrival_time.timestamp() for query in queries]
+        )
 
         self._arrival_times_s.sort()
         self._n = len(self._arrival_times_s)
@@ -130,7 +126,7 @@ class WindowedTemplateDetector:
                 candidates_with_okay_idle_ratio.append(candidate)
         return candidates_with_okay_idle_ratio
 
-    def create_candidate(self, arrival_times_s, period_s):
+    def create_candidate(self, arrival_times_s: np.ndarray, period_s):
         folded_arrival_times_s = np.sort(np.mod(arrival_times_s, period_s))
         gaps = np.diff(
             np.r_[folded_arrival_times_s, folded_arrival_times_s[0] + period_s]

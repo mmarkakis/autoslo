@@ -32,6 +32,8 @@ class ArrivalProcess:
         start_time: datetime,
         end_time: datetime,
         seed: int = 42,
+        active_window_start: datetime | None = None,
+        active_window_end: datetime | None = None,
         *args,
         **kwargs,
     ) -> list[QueryArrival]:
@@ -62,17 +64,27 @@ class PoissonProcess(ArrivalProcess):
         current_time = start_time
         arrivals = []
         np.random.seed(seed)
-        while current_time < end_time:
-            inter_arrival_time = np.random.exponential(1 / self.rate)
-            current_time += timedelta(seconds=inter_arrival_time)
 
-            if current_time < end_time:
-                template_id = str(np.random.choice(self.template_list))
-                arrivals.append(
-                    QueryArrival(
-                        template_id=template_id, arrival_time=current_time
-                    )
-                )
+        samples_needed = int(
+            (end_time - start_time).total_seconds() * self.rate * 1.5
+        )
+
+        template_ids = np.random.choice(self.template_list, size=samples_needed)
+        inter_arrival_times = np.random.exponential(
+            1 / self.rate, size=samples_needed
+        )
+
+        current_time = start_time
+        for template_id, inter_arrival_time in zip(
+            template_ids, inter_arrival_times
+        ):
+            current_time += timedelta(seconds=inter_arrival_time)
+            if current_time >= end_time:
+                break
+            arrivals.append(
+                QueryArrival(template_id=template_id, arrival_time=current_time)
+            )
+
         return arrivals
 
 
@@ -106,22 +118,31 @@ class SinusoidalPoissonProcess(ArrivalProcess):
             current += timedelta(minutes=1)
         mid_minute_idx = len(minute_starts) // 2
 
+        samples_needed = int(
+            (end_time - start_time).total_seconds() * self.max_rate * 1.5
+        )
+        template_ids = np.random.choice(self.template_list, size=samples_needed)
+
         # Have the number of arrivals in each segment vary sinusoidally between 0 and max_rate,
         # with 0 at the start and end of the interval, and max_rate at the midpoint.
         # Within each segment, generate arrivals according to a Poisson process with an appropriate rate.
         arrivals = []
         np.random.seed(seed)
+        template_idx = 0
         for i, minute_start in enumerate(minute_starts):
             factor = abs(i - mid_minute_idx) / mid_minute_idx
             segment_rate = np.sin((1 - factor) * (np.pi / 2)) * self.max_rate
             num_arrivals = np.random.poisson(segment_rate * 60)  # per minute
-            for _ in range(num_arrivals):
-                inter_arrival_time = np.random.exponential(1 / segment_rate)
+            inter_arrival_times = np.random.exponential(
+                1 / segment_rate, size=num_arrivals
+            )
+            for inter_arrival_time in inter_arrival_times:
                 arrival_time = minute_start + timedelta(
                     seconds=inter_arrival_time
                 )
                 if start_time <= arrival_time < end_time:
-                    template_id = str(np.random.choice(self.template_list))
+                    template_id = template_ids[template_idx]
+                    template_idx += 1
                     arrivals.append(
                         QueryArrival(
                             template_id=template_id, arrival_time=arrival_time
