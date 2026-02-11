@@ -3,6 +3,7 @@ Some code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
 import os
+import pickle
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Optional, TypeAlias, cast
@@ -576,7 +577,7 @@ class IconqQueryFeaturizer:
                     features,
                 )
 
-    def save(self) -> str:
+    def save(self, timestamp:Optional[str] = None) -> str:
         """
         Saves the IconqQueryFeaturizer.
 
@@ -586,13 +587,14 @@ class IconqQueryFeaturizer:
                 with the current timestamp.
         """
         # Create directory.
-        timestamp = str(int(datetime.now().timestamp()))
+        if timestamp is None:
+            timestamp = str(int(datetime.now().timestamp()))
         save_dir = os.path.join(
             pu.get_data_path(),
             "iconq_query_featurizations",
             timestamp,
         )
-        os.makedirs(save_dir, exist_ok=False)
+        os.makedirs(save_dir, exist_ok=(timestamp is not None)) 
 
         # Save featurizer parameters.
         param_path = os.path.join(save_dir, "params.yml")
@@ -629,6 +631,12 @@ class IconqQueryFeaturizer:
                 )
             yaml.safe_dump(l, f, sort_keys=False)
 
+        # Also save it as a pickle for easier loading.
+        pickle_path = os.path.join(save_dir, "featurizations.pkl")
+        with open(pickle_path, "wb") as f:
+            print('here')
+            pickle.dump(self._featurization_cache, f)
+
         return timestamp
 
     @staticmethod
@@ -652,12 +660,23 @@ class IconqQueryFeaturizer:
             params = yaml.safe_load(f)
 
         # Load featurization cache.
-        cache_path = os.path.join(load_dir, "featurizations.yml")
-        with open(cache_path, "r") as f:
-            l = yaml.safe_load(f)
-        precomputed_featurization_cache = {
-            item["tpcds_temp_and_q_idx"]: item["featurization"] for item in l
-        }
+        cache_path = os.path.join(load_dir, "featurizations.pkl")
+        # Temp fix: if pickle file doesn't exist, try loading from yaml file
+        # and immediately dump to pickle for future use.
+        if not os.path.exists(cache_path):
+            print(
+                f"Pickle file not found at {cache_path}, trying to load from yaml file."
+            )
+            yaml_cache_path = os.path.join(load_dir, "featurizations.yml")
+            with open(yaml_cache_path, "r") as f:
+                l = yaml.safe_load(f)
+            precomputed_featurization_cache = {
+                item["tpcds_temp_and_q_idx"]: item["featurization"]
+                for item in l
+            }
+        else:
+            with open(cache_path, "rb") as f:
+                precomputed_featurization_cache = pickle.load(f)
 
         featurizer = IconqQueryFeaturizer(
             schema_name=params["schema_name"],
@@ -672,6 +691,9 @@ class IconqQueryFeaturizer:
             precomputed_top_tables=params["top_tables"],
             precomputed_featurization_cache=precomputed_featurization_cache,
         )
+
+        if not os.path.exists(cache_path):
+            featurizer.save(timestamp)  # Save to pickle for future use.
 
         return featurizer
 

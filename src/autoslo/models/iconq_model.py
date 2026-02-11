@@ -5,7 +5,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
 
-import networkx as nx
 import numpy as np
 import pandas as pd
 import torch
