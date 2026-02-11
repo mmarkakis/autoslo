@@ -1,3 +1,4 @@
+from datetime import datetime
 import numpy as np
 
 from autoslo.workload_definition.query import Query
@@ -5,11 +6,11 @@ from autoslo.workload_definition.query import Query
 
 class AdHocTemplateDetector:
 
-    def __init__(self, queries_per_template: dict[str, list[Query]]):
+    def __init__(self, queries_per_template: dict[int, list[Query]]):
 
         self._queries_per_template = queries_per_template
 
-    def detect(self) -> dict[str, dict]:
+    def detect(self) -> dict[int, dict]:
         """
         We want to classify between normal and ad hoc templates.
         A normal template appears often, on many unique days, and has a stable
@@ -33,24 +34,27 @@ class AdHocTemplateDetector:
         )
         total_num_days = len(
             set(
-                query.arrival_time.date()
+                datetime.fromtimestamp(query.start_time_s).date()
                 for queries in self._queries_per_template.values()
                 for query in queries
             )
         )
 
-        template_data: dict[str, dict] = {}
+        template_data: dict[int, dict] = {}
 
         for template_id, queries in self._queries_per_template.items():
             # Sort the queries by arrival time to make the subsequent analysis easier.
-            queries.sort(key=lambda x: x.arrival_time)
+            queries.sort(key=lambda x: x.start_time_s)
 
             # Look at number of queries.
             num_queries = len(queries)
             fraction_of_total = num_queries / total_num_queries
 
             # Look at number of unique days.
-            unique_days = set(query.arrival_time.date() for query in queries)
+            unique_days = set(
+                datetime.fromtimestamp(query.start_time_s).date()
+                for query in queries
+            )
             num_unique_days = len(unique_days)
             fraction_of_total_days = num_unique_days / total_num_days
 
@@ -89,6 +93,9 @@ class AdHocTemplateDetector:
                 "has_weekend_seasonality": has_weekend_seasonality,
                 "has_weekly_seasonality": has_weekly_seasonality,
             }
+
+        # Sort the templates by template ID for consistency.
+        template_data = dict(sorted(template_data.items(), key=lambda x: x[0]))
 
         return template_data
 

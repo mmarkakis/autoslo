@@ -1,8 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import datetime
 
-import numpy as np
 import rich
 
 from autoslo.forecasting.adhoc_template_detector import AdHocTemplateDetector
@@ -16,16 +13,19 @@ class ArrivalClassifier:
 
     def __init__(self, queries: list[Query]):
         self._queries = queries
-        self._queries.sort(key=lambda x: x.arrival_time)
-        self._reference_time = self._queries[0].arrival_time
+        self._queries.sort(key=lambda x: x.start_time_s)
+        self._reference_time = self._queries[0].start_time_s
 
-        self._queries_per_template: dict[str, list[Query]] = defaultdict(list)
+        self._queries_per_template: dict[int, list[Query]] = defaultdict(list)
         for query in self._queries:
-            self._queries_per_template[query.template_id].append(query)
-        self._template_classification: dict[str, str] = {
+            template_id = Query.template_id(query.tpcds_temp_and_q_idx)
+            self._queries_per_template[template_id].append(query)
+        self._template_classification: dict[int, str] = {
             template_id: "unclassified"
             for template_id in self._queries_per_template.keys()
         }
+        # Store detailed detection results for each template
+        self._template_details: dict[int, dict] = {}
 
     def _determine_windowed_templates(self) -> None:
 
@@ -39,6 +39,9 @@ class ArrivalClassifier:
                 queries=self._queries_per_template[template_id]
             )
             result = detector.detect()
+            
+            # Store detailed results
+            self._template_details[template_id] = result
 
             if result["is_windowed"]:
                 self._template_classification[template_id] = "windowed"
@@ -54,13 +57,19 @@ class ArrivalClassifier:
         results = detector.detect()
 
         for template, result in results.items():
+            # Store or update detailed results
+            if template in self._template_details:
+                self._template_details[template].update(result)
+            else:
+                self._template_details[template] = result
+            
             if result["is_normal"]:
                 self._template_classification[template] = "normal"
             else:
                 self._template_classification[template] = "ad-hoc"
 
     def _print_classification_summary(self) -> None:
-        classification_counts = defaultdict(int)
+        classification_counts: dict[str, int] = defaultdict(int)
         for classification in self._template_classification.values():
             classification_counts[classification] += 1
 
@@ -72,7 +81,8 @@ class ArrivalClassifier:
         total_templates = len(self._template_classification)
         total_queries = len(self._queries)
         rich.print(
-            f"{'Classification':<15} {'# Templates':<15} {'% Templates':<15} {'# Queries':<15} {'% Queries':<15}"
+            f"{'Classification':<15} {'# Templates':<15} {'% Templates':<15} "
+            f"{'# Queries':<15} {'% Queries':<15}"
         )
         for classification, count in classification_counts.items():
             templates_in_class = [
@@ -81,16 +91,19 @@ class ArrivalClassifier:
                 if cls == classification
             ]
             num_templates_in_class = len(templates_in_class)
-            fraction_templates_in_class = num_templates_in_class / total_templates
+            fraction_templates_in_class = (
+                num_templates_in_class / total_templates
+            )
             num_queries_in_class = sum(
                 len(self._queries_per_template[template_id])
                 for template_id in templates_in_class
             )
             fraction_queries_in_class = num_queries_in_class / total_queries
             rich.print(
-                f"{classification:<15} {num_templates_in_class:<15} {fraction_templates_in_class:<15.2%} {num_queries_in_class:<15} {fraction_queries_in_class:<15.2%}"
+                f"{classification:<15} {num_templates_in_class:<15} "
+                f"{fraction_templates_in_class:<15.2%} "
+                f"{num_queries_in_class:<15} {fraction_queries_in_class:<15.2%}"
             )
-        
 
     def classify_arrivals(self) -> None:
 

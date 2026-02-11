@@ -1,14 +1,17 @@
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional, TypeAlias
 
 from intervaltree import Interval  # type: ignore[import]
 
-QueryFeaturization = list[float]
 
 
-@dataclass
 class Query:
-    """Class representing a single query in the workload."""
+    QueryFeaturization: TypeAlias = list[float]
+    TPCDSTempAndQIdx: TypeAlias = str
 
+
+    """Class representing a single query in the workload."""
     query_id: str
     start_time_s: float
     tpcds_temp_and_q_idx: str
@@ -20,6 +23,34 @@ class Query:
 
     latency_s: float = -1
     latency_is_lower_bound: bool = False
+
+
+    def __init__(
+        self,
+        query_id: str,
+        start_time_s: float,
+        tpcds_temp_and_q_idx: str,
+        featurization: Optional[QueryFeaturization] = None,
+        cluster_name: str = "",
+        stage_latency_prediction_s: float = -1,
+        latency_s: float = -1,
+        latency_is_lower_bound: bool = False,
+    ):
+        self.query_id = query_id
+        self.start_time_s = start_time_s
+        self.tpcds_temp_and_q_idx = tpcds_temp_and_q_idx
+        self.featurization = featurization if featurization is not None else []
+        self.cluster_name = cluster_name
+        self.stage_latency_prediction_s = stage_latency_prediction_s
+        self.latency_s = latency_s
+        self.latency_is_lower_bound = latency_is_lower_bound
+
+    @property
+    def arrival_time(self) -> datetime:
+        """
+        Returns the arrival time of the query as a datetime object.
+        """
+        return datetime.fromtimestamp(self.start_time_s)
 
     @property
     def state(self) -> str:
@@ -80,3 +111,31 @@ class Query:
     def slo_slack_amount_s(self, slo_s: float) -> float:
         """Returns the amount of SLO slack in seconds."""
         return max(0.0, -self.slo_deviation_amount_s(slo_s))
+
+    @staticmethod
+    def template_id(temp_and_q_idx: TPCDSTempAndQIdx) -> int:
+        """
+        Extract the TPC-DS template number from the given template and query
+        index string.
+
+        Parameters:
+            temp_and_q_idx: The TPC-DS template and query index string.
+
+        Returns:
+            The template number as an integer.
+        """
+        return int(str(temp_and_q_idx).split("_")[0])
+
+    @staticmethod
+    def idx_in_template(temp_and_q_idx: TPCDSTempAndQIdx) -> int:
+        """
+        Extract the TPC-DS query index from the given template and query index
+        string.
+
+        Parameters:
+            temp_and_q_idx: The TPC-DS template and query index string.
+
+        Returns:
+            The query index as an integer.
+        """
+        return int(str(temp_and_q_idx).split("_")[1])
