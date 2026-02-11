@@ -1,0 +1,133 @@
+cluster_4:
+  num_completed_queries: 34
+  num_billed_intervals: 27
+  total_billed_time_s: 1769.0
+  cluster_cost_per_second: 0.0004166666666666667
+  total_billed_cost: 0.737083375453949
+  billed_intervals:
+  - begin_s: 0.0
+    end_s: 60.0
+    query_ids:
+    - 0
+  - begin_s: 148.4316500246894
+    end_s: 208.4316500246894
+    query_ids:
+    - 1
+  - begin_s: 350.53865742063465
+    end_s: 410.53865742063465
+    query_ids:
+    - 2
+  - begin_s: 442.37019426453753
+    end_s: 502.37019426453753
+    query_ids:
+    - 3
+  - begin_s: 594.9237968796954
+    end_s: 703.9237670898438
+    query_ids:
+    - 4
+    - 5
+  - begin_s: 821.7431674557305
+    end_s: 911.7431674557305
+    query_ids:
+    - 7
+    - 8
+  - begin_s: 940.2199548877949
+    end_s: 1000.2199548877949
+    query_ids:
+    - 9
+  - begin_s: 1042.7183299001983
+    end_s: 1102.7183299001983
+    query_ids:
+    - 10
+  - begin_s: 1139.529952866325
+    end_s: 1199.529952866325
+    query_ids:
+    - 11
+    - 12
+  - begin_s: 1282.315795260369
+    end_s: 1342.315795260369
+    query_ids:
+    - 13
+  - begin_s: 1406.3152319708865
+    end_s: 1482.3152319708865
+    query_ids:
+    - 14
+    - 15
+  - begin_s: 1490.7724585867668
+    end_s: 1550.7724585867668
+    query_ids:
+    - 16
+  - begin_s: 1630.2174967504545
+    end_s: 1690.2174967504545
+    query_ids:
+    - 17
+  - begin_s: 1727.1125599254756
+    end_s: 1787.1125599254756
+    query_ids:
+    - 18
+  - begin_s: 1882.039927608258
+    end_s: 1942.039927608258
+    query_ids:
+    - 19
+  - begin_s: 2055.3048351838593
+    end_s: 2166.304931640625
+    query_ids:
+    - 20
+    - 21
+  - begin_s: 2270.7944563580995
+    end_s: 2330.7944563580995
+    query_ids:
+    - 22
+  - begin_s: 2386.4738490632794
+    end_s: 2449.4738490632794
+    query_ids:
+    - 23
+  - begin_s: 2566.685822936801
+    end_s: 2626.685822936801
+    query_ids:
+    - 24
+  - begin_s: 2677.653791441214
+    end_s: 2737.653791441214
+    query_ids:
+    - 25
+  - begin_s: 2739.7203311275152
+    end_s: 2799.7203311275152
+    query_ids:
+    - 26
+  - begin_s: 2948.393973812006
+    end_s: 3008.393973812006
+    query_ids:
+    - 27
+  - begin_s: 3037.297760715587
+    end_s: 3097.297760715587
+    query_ids:
+    - 28
+    - 29
+  - begin_s: 3242.8374558951855
+    end_s: 3302.8374558951855
+    query_ids:
+    - 30
+  - begin_s: 3413.8327281389265
+    end_s: 3473.8327281389265
+    query_ids:
+    - 31
+    - 32
+  - begin_s: 3490.231030070835
+    end_s: 3550.231030070835
+    query_ids:
+    - 33
+  - begin_s: 3584.9923107049135
+    end_s: 3644.9923107049135
+    query_ids:
+    - 34
+cluster_4b:
+  num_completed_queries: 1
+  num_billed_intervals: 1
+  total_billed_time_s: 60.0
+  cluster_cost_per_second: 0.0004166666666666667
+  total_billed_cost: 0.025
+  billed_intervals:
+  - begin_s: 697.691475174455
+    end_s: 757.691475174455
+    query_ids:
+    - 6

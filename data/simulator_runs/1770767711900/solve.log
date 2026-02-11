@@ -1,0 +1,715 @@
+2026-02-10 18:55:11,901 - INFO - Starting simulator run for workload 'tpcds_99templates_25pctheavy_60meaninterarrivals' with model '1769376434' and blueprint 'multi_16_16b_32_32b_4_4b_8_8b'
+2026-02-10 18:55:11,901 - INFO - Optimize based on SLO violation amount: True with thresholds: slo_violation_rate_threshold = 0.05, slo_violation_amount_threshold_s = 30.0, slo_s = 180.0
+2026-02-10 18:55:11,910 - INFO - (0.000) Routing query 0 with template and idx 019_003.
+2026-02-10 18:55:11,911 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,912 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,912 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,913 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,914 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,914 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,915 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,916 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(0.0, 60.0, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,916 - INFO - Routing query 0 to cluster cluster_4. Predicted latency is 24.98s (ends at 24.98s). 
+2026-02-10 18:55:11,916 - INFO - (24.977) Query 0 completed on cluster cluster_4 with latency 24.98s.
+2026-02-10 18:55:11,916 - INFO - (74.216) Routing query 1 with template and idx 090_003.
+2026-02-10 18:55:11,916 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,917 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,918 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,918 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,919 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,920 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,920 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,921 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(74.2158250123447, 134.21582501234468, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,921 - INFO - Routing query 1 to cluster cluster_4. Predicted latency is 24.33s (ends at 98.55s). 
+2026-02-10 18:55:11,921 - INFO - (98.545) Query 1 completed on cluster cluster_4 with latency 24.33s.
+2026-02-10 18:55:11,921 - INFO - (175.269) Routing query 2 with template and idx 030_003.
+2026-02-10 18:55:11,922 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,922 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,923 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,924 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,924 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,925 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,926 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,926 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,926 - INFO - Routing query 2 to cluster cluster_4. Predicted latency is 31.07s (ends at 206.33s). 
+2026-02-10 18:55:11,926 - INFO - (206.334) Query 2 completed on cluster cluster_4 with latency 31.07s.
+2026-02-10 18:55:11,926 - INFO - (221.185) Routing query 3 with template and idx 038_001.
+2026-02-10 18:55:11,927 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(221.18509713226877, 281.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,928 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(221.18509713226877, 281.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,928 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(221.18509713226877, 281.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,929 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(221.18509713226877, 281.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,930 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0379 (Billed intervals before: [Interval(175.26932871031732, 235.26932871031732, {'query_ids': {'unknown'}})], after: [Interval(175.26932871031732, 326.2693287103173, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,930 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0438 (Billed intervals before: [], after: [Interval(221.18509713226877, 326.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,931 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(221.18509713226877, 281.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,932 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(221.18509713226877, 281.18509713226877, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,932 - INFO - Routing query 3 to cluster cluster_4. Predicted latency is 105.93s (ends at 327.12s). 
+2026-02-10 18:55:11,932 - INFO - (297.462) Routing query 4 with template and idx 028_001.
+2026-02-10 18:55:11,932 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,933 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,934 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,934 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,938 - INFO - 	Cluster cluster_4: Marginal SLO violation: 2.4852, Marginal cost: 0.0638 (Billed intervals before: [Interval(175.26932871031732, 326.2693287103173, {'query_ids': {'unknown', 3}})], after: [Interval(175.26932871031732, 479.26935, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,940 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,942 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,944 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,944 - INFO - Routing query 4 to cluster cluster_4b. Predicted latency is 53.99s (ends at 351.45s). 
+2026-02-10 18:55:11,945 - INFO - (305.714) Routing query 5 with template and idx 050_003.
+2026-02-10 18:55:11,945 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(305.7143634644567, 365.7143634644567, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,946 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(305.7143634644567, 365.7143634644567, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,947 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(305.7143634644567, 365.7143634644567, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,948 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(305.7143634644567, 365.7143634644567, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,952 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0646 (Billed intervals before: [Interval(175.26932871031732, 326.2693287103173, {'query_ids': {'unknown', 3}})], after: [Interval(175.26932871031732, 481.26935, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,955 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0163 (Billed intervals before: [Interval(297.4618984398477, 357.4618984398477, {'query_ids': {'unknown', 4}})], after: [Interval(297.4618984398477, 396.46188, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,956 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(305.7143634644567, 365.7143634644567, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,957 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(305.7143634644567, 365.7143634644567, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,957 - INFO - Routing query 5 to cluster cluster_4b. Predicted latency is 91.03s (ends at 396.75s). 
+2026-02-10 18:55:11,957 - INFO - Updating predicted latencies for active queries on cluster cluster_4b.
+2026-02-10 18:55:11,957 - INFO - 	Query 4: Old: 53.99s, Pred: 35.90s, New: 53.99s (ends at 351.45s)
+2026-02-10 18:55:11,957 - INFO - (327.117) Query 3 completed on cluster cluster_4 with latency 105.93s.
+2026-02-10 18:55:11,957 - INFO - (348.846) Routing query 6 with template and idx 055_002.
+2026-02-10 18:55:11,958 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,959 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,960 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,961 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,963 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,967 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0246 (Billed intervals before: [Interval(297.4618984398477, 396.46188, {'query_ids': {'unknown', 4, 5}})], after: [Interval(297.4618984398477, 455.46188, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,968 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,969 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(348.8457375872275, 408.8457375872275, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,969 - INFO - Routing query 6 to cluster cluster_4b. Predicted latency is 107.49s (ends at 456.34s). 
+2026-02-10 18:55:11,969 - INFO - Updating predicted latencies for active queries on cluster cluster_4b.
+2026-02-10 18:55:11,969 - INFO - 	Query 4: Old: 53.99s, Pred: 3.02s, New: 53.99s (ends at 351.45s)
+2026-02-10 18:55:11,969 - INFO - 	Query 5: Old: 91.03s, Pred: 138.29s, New: 138.29s (ends at 444.00s)
+2026-02-10 18:55:11,969 - INFO - (351.450) Query 4 completed on cluster cluster_4b with latency 53.99s.
+2026-02-10 18:55:11,969 - INFO - (410.872) Routing query 7 with template and idx 005_001.
+2026-02-10 18:55:11,970 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,971 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,972 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,973 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,974 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,979 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 125.2965, Marginal cost: 0.0825 (Billed intervals before: [Interval(297.4618984398477, 455.46188, {'query_ids': {'unknown', 5, 6}})], after: [Interval(297.4618984398477, 653.4619, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,980 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,981 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,981 - INFO - Routing query 7 to cluster cluster_4. Predicted latency is 19.08s (ends at 429.95s). 
+2026-02-10 18:55:11,981 - INFO - (428.129) Routing query 8 with template and idx 027_001.
+2026-02-10 18:55:11,982 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(428.12913814146157, 488.12913814146157, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,983 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(428.12913814146157, 488.12913814146157, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,983 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(428.12913814146157, 488.12913814146157, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,984 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(428.12913814146157, 488.12913814146157, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,986 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0367 (Billed intervals before: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown', 7}})], after: [Interval(410.87158372786524, 558.8716, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,989 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0333 (Billed intervals before: [Interval(297.4618984398477, 455.46188, {'query_ids': {'unknown', 5, 6}})], after: [Interval(297.4618984398477, 535.4619, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,990 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(428.12913814146157, 488.12913814146157, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,990 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(428.12913814146157, 488.12913814146157, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,990 - INFO - Routing query 8 to cluster cluster_4b. Predicted latency is 107.49s (ends at 535.62s). 
+2026-02-10 18:55:11,990 - INFO - Updating predicted latencies for active queries on cluster cluster_4b.
+2026-02-10 18:55:11,990 - INFO - 	Query 5: Old: 138.29s, Pred: 91.31s, New: 138.29s (ends at 444.00s)
+2026-02-10 18:55:11,990 - INFO - 	Query 6: Old: 107.49s, Pred: 163.28s, New: 163.28s (ends at 512.13s)
+2026-02-10 18:55:11,991 - INFO - (429.954) Query 7 completed on cluster cluster_4 with latency 19.08s.
+2026-02-10 18:55:11,991 - INFO - (444.002) Query 5 completed on cluster cluster_4b with latency 138.29s.
+2026-02-10 18:55:11,991 - INFO - (470.110) Routing query 9 with template and idx 070_003.
+2026-02-10 18:55:11,991 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(470.10997744389744, 530.1099774438974, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,992 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(470.10997744389744, 530.1099774438974, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,993 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(470.10997744389744, 530.1099774438974, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,993 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(470.10997744389744, 530.1099774438974, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,994 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0079 (Billed intervals before: [Interval(410.87158372786524, 470.87158372786524, {'query_ids': {'unknown'}})], after: [Interval(410.87158372786524, 489.87158372786524, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,996 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0229 (Billed intervals before: [Interval(297.4618984398477, 535.4619, {'query_ids': {8, 'unknown', 6}})], after: [Interval(297.4618984398477, 590.4619, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,997 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(470.10997744389744, 530.1099774438974, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,998 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(470.10997744389744, 530.1099774438974, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,998 - INFO - Routing query 9 to cluster cluster_4. Predicted latency is 20.51s (ends at 490.62s). 
+2026-02-10 18:55:11,998 - INFO - (490.619) Query 9 completed on cluster cluster_4 with latency 20.51s.
+2026-02-10 18:55:11,998 - INFO - (512.129) Query 6 completed on cluster cluster_4b with latency 163.28s.
+2026-02-10 18:55:11,998 - INFO - (521.359) Routing query 10 with template and idx 010_003.
+2026-02-10 18:55:11,999 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:11,999 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,000 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,001 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,001 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,003 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0387 (Billed intervals before: [Interval(297.4618984398477, 535.4619, {'query_ids': {8, 'unknown'}})], after: [Interval(297.4618984398477, 628.4619, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,004 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,005 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,005 - INFO - Routing query 10 to cluster cluster_4. Predicted latency is 6.66s (ends at 528.02s). 
+2026-02-10 18:55:12,005 - INFO - (528.016) Query 10 completed on cluster cluster_4 with latency 6.66s.
+2026-02-10 18:55:12,005 - INFO - (535.620) Query 8 completed on cluster cluster_4b with latency 107.49s.
+2026-02-10 18:55:12,005 - INFO - (569.765) Routing query 11 with template and idx 004_002.
+2026-02-10 18:55:12,006 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(569.7649764331625, 629.7649764331625, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,006 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(569.7649764331625, 629.7649764331625, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,007 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(569.7649764331625, 629.7649764331625, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,007 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(569.7649764331625, 629.7649764331625, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,009 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0329 (Billed intervals before: [Interval(521.3591649500992, 581.3591649500992, {'query_ids': {'unknown'}})], after: [Interval(521.3591649500992, 660.3592, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,011 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0379 (Billed intervals before: [], after: [Interval(569.7649764331625, 660.76495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,013 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0608 (Billed intervals before: [], after: [Interval(569.7649764331625, 642.76495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,016 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0608 (Billed intervals before: [], after: [Interval(569.7649764331625, 642.76495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,016 - INFO - Routing query 11 to cluster cluster_4. Predicted latency is 91.33s (ends at 661.10s). 
+2026-02-10 18:55:12,016 - INFO - (595.002) Routing query 12 with template and idx 062_002.
+2026-02-10 18:55:12,017 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,018 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,018 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,019 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,022 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0425 (Billed intervals before: [Interval(521.3591649500992, 660.3592, {'query_ids': {'unknown', 11}})], after: [Interval(521.3591649500992, 762.3592, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,023 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,024 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,025 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,025 - INFO - Routing query 12 to cluster cluster_4b. Predicted latency is 8.25s (ends at 603.25s). 
+2026-02-10 18:55:12,025 - INFO - (603.250) Query 12 completed on cluster cluster_4b with latency 8.25s.
+2026-02-10 18:55:12,025 - INFO - (641.158) Routing query 13 with template and idx 052_002.
+2026-02-10 18:55:12,026 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(641.1578976301845, 701.1578976301845, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,027 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(641.1578976301845, 701.1578976301845, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,027 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(641.1578976301845, 701.1578976301845, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,028 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(641.1578976301845, 701.1578976301845, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,030 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0462 (Billed intervals before: [Interval(521.3591649500992, 660.3592, {'query_ids': {'unknown', 11}})], after: [Interval(521.3591649500992, 771.3592, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,031 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})], after: [Interval(595.00186917541, 655.00186917541, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,031 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(641.1578976301845, 701.1578976301845, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,032 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(641.1578976301845, 701.1578976301845, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,032 - INFO - Routing query 13 to cluster cluster_4b. Predicted latency is 1.36s (ends at 642.51s). 
+2026-02-10 18:55:12,032 - INFO - (661.096) Query 11 completed on cluster cluster_4 with latency 91.33s.
+2026-02-10 18:55:12,032 - INFO - (642.515) Query 13 completed on cluster cluster_4b with latency 1.36s.
+2026-02-10 18:55:12,032 - INFO - (703.158) Routing query 14 with template and idx 018_003.
+2026-02-10 18:55:12,033 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,033 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,034 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,035 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,035 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,036 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,037 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,037 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,037 - INFO - Routing query 14 to cluster cluster_4. Predicted latency is 19.35s (ends at 722.51s). 
+2026-02-10 18:55:12,038 - INFO - (722.510) Query 14 completed on cluster cluster_4 with latency 19.35s.
+2026-02-10 18:55:12,038 - INFO - (732.885) Routing query 15 with template and idx 061_002.
+2026-02-10 18:55:12,038 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,039 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,040 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,040 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,041 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,041 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,042 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,043 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(732.8850556994901, 792.8850556994901, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,043 - INFO - Routing query 15 to cluster cluster_4. Predicted latency is 16.80s (ends at 749.68s). 
+2026-02-10 18:55:12,043 - INFO - (745.386) Routing query 16 with template and idx 070_001.
+2026-02-10 18:55:12,044 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,044 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,045 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,046 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,048 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown', 15}})], after: [Interval(703.1576159854433, 763.1576159854433, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,049 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,049 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,050 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(745.3862292933834, 805.3862292933834, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,050 - INFO - Routing query 16 to cluster cluster_4. Predicted latency is 16.80s (ends at 762.19s). 
+2026-02-10 18:55:12,050 - INFO - Updating predicted latencies for active queries on cluster cluster_4.
+2026-02-10 18:55:12,050 - INFO - 	Query 15: Old: 16.80s, Pred: 3.85s, New: 16.80s (ends at 749.68s)
+2026-02-10 18:55:12,050 - INFO - (749.684) Query 15 completed on cluster cluster_4 with latency 16.80s.
+2026-02-10 18:55:12,050 - INFO - (762.185) Query 16 completed on cluster cluster_4 with latency 16.80s.
+2026-02-10 18:55:12,050 - INFO - (815.109) Routing query 17 with template and idx 074_001.
+2026-02-10 18:55:12,051 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,052 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,052 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,053 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,055 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,057 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,058 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,058 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,059 - INFO - Routing query 17 to cluster cluster_4. Predicted latency is 37.94s (ends at 853.05s). 
+2026-02-10 18:55:12,059 - INFO - (853.054) Query 17 completed on cluster cluster_4 with latency 37.94s.
+2026-02-10 18:55:12,059 - INFO - (863.556) Routing query 18 with template and idx 010_003.
+2026-02-10 18:55:12,060 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,061 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,061 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,062 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,063 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})], after: [Interval(815.1087483752273, 875.1087483752273, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,064 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,065 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,066 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(863.5562799627378, 923.5562799627378, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,066 - INFO - Routing query 18 to cluster cluster_4. Predicted latency is 6.66s (ends at 870.21s). 
+2026-02-10 18:55:12,066 - INFO - (870.214) Query 18 completed on cluster cluster_4 with latency 6.66s.
+2026-02-10 18:55:12,066 - INFO - (941.020) Routing query 19 with template and idx 040_003.
+2026-02-10 18:55:12,067 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,068 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,068 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,069 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,070 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,070 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,071 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,071 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(941.019963804129, 1001.019963804129, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,072 - INFO - Routing query 19 to cluster cluster_4. Predicted latency is 8.19s (ends at 949.21s). 
+2026-02-10 18:55:12,072 - INFO - (949.207) Query 19 completed on cluster cluster_4 with latency 8.19s.
+2026-02-10 18:55:12,072 - INFO - (1027.652) Routing query 20 with template and idx 074_002.
+2026-02-10 18:55:12,072 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,073 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,074 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,074 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,076 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,078 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,079 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,080 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,080 - INFO - Routing query 20 to cluster cluster_4. Predicted latency is 37.94s (ends at 1065.60s). 
+2026-02-10 18:55:12,080 - INFO - (1042.408) Routing query 21 with template and idx 074_002.
+2026-02-10 18:55:12,081 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,082 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,083 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,084 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,087 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0142 (Billed intervals before: [Interval(1027.6524175919296, 1087.6524175919296, {'query_ids': {'unknown', 20}})], after: [Interval(1027.6524175919296, 1121.6525, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,089 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,090 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,091 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1042.407818905505, 1102.407818905505, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,091 - INFO - Routing query 21 to cluster cluster_4. Predicted latency is 80.04s (ends at 1122.45s). 
+2026-02-10 18:55:12,091 - INFO - Updating predicted latencies for active queries on cluster cluster_4.
+2026-02-10 18:55:12,091 - INFO - 	Query 20: Old: 37.94s, Pred: 34.93s, New: 37.94s (ends at 1065.60s)
+2026-02-10 18:55:12,091 - INFO - (1065.597) Query 20 completed on cluster cluster_4 with latency 37.94s.
+2026-02-10 18:55:12,091 - INFO - (1122.451) Query 21 completed on cluster cluster_4 with latency 80.04s.
+2026-02-10 18:55:12,091 - INFO - (1135.397) Routing query 22 with template and idx 052_002.
+2026-02-10 18:55:12,092 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,093 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,094 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,095 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,096 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,097 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,098 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,098 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,098 - INFO - Routing query 22 to cluster cluster_4. Predicted latency is 1.36s (ends at 1136.75s). 
+2026-02-10 18:55:12,099 - INFO - (1136.754) Query 22 completed on cluster cluster_4 with latency 1.36s.
+2026-02-10 18:55:12,099 - INFO - (1193.237) Routing query 23 with template and idx 023_003.
+2026-02-10 18:55:12,100 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1683 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1294.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,100 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1683 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1294.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,101 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1253.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,102 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1253.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,104 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0192 (Billed intervals before: [Interval(1135.3972281790498, 1195.3972281790498, {'query_ids': {'unknown'}})], after: [Interval(1135.3972281790498, 1241.3972, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,106 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1253.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,108 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1253.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,110 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1193.2369245316397, 1253.2369245316397, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,110 - INFO - Routing query 23 to cluster cluster_4. Predicted latency is 48.20s (ends at 1241.43s). 
+2026-02-10 18:55:12,110 - INFO - (1241.432) Query 23 completed on cluster cluster_4 with latency 48.20s.
+2026-02-10 18:55:12,110 - INFO - (1283.343) Routing query 24 with template and idx 018_003.
+2026-02-10 18:55:12,111 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,112 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,113 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,113 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,114 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,115 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,116 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,117 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,117 - INFO - Routing query 24 to cluster cluster_4. Predicted latency is 19.35s (ends at 1302.70s). 
+2026-02-10 18:55:12,117 - INFO - (1302.695) Query 24 completed on cluster cluster_4 with latency 19.35s.
+2026-02-10 18:55:12,117 - INFO - (1338.827) Routing query 25 with template and idx 074_001.
+2026-02-10 18:55:12,118 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,119 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,120 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,121 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,123 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0137 (Billed intervals before: [Interval(1283.3429114684004, 1343.3429114684004, {'query_ids': {'unknown'}})], after: [Interval(1283.3429114684004, 1376.3429, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,125 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,126 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,126 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1338.826895720607, 1398.826895720607, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,126 - INFO - Routing query 25 to cluster cluster_4. Predicted latency is 37.94s (ends at 1376.77s). 
+2026-02-10 18:55:12,127 - INFO - (1369.860) Routing query 26 with template and idx 006_002.
+2026-02-10 18:55:12,128 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,128 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,129 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,130 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,133 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0138 (Billed intervals before: [Interval(1283.3429114684004, 1376.3429, {'query_ids': {25, 'unknown'}})], after: [Interval(1283.3429114684004, 1409.3429, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,134 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,135 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,136 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1369.8601655637576, 1429.8601655637576, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,136 - INFO - Routing query 26 to cluster cluster_4. Predicted latency is 40.13s (ends at 1409.99s). 
+2026-02-10 18:55:12,136 - INFO - Updating predicted latencies for active queries on cluster cluster_4.
+2026-02-10 18:55:12,136 - INFO - 	Query 25: Old: 37.94s, Pred: 1.75s, New: 37.94s (ends at 1376.77s)
+2026-02-10 18:55:12,136 - INFO - (1376.772) Query 25 completed on cluster cluster_4 with latency 37.94s.
+2026-02-10 18:55:12,136 - INFO - (1409.993) Query 26 completed on cluster cluster_4 with latency 40.13s.
+2026-02-10 18:55:12,136 - INFO - (1438.790) Routing query 27 with template and idx 035_001.
+2026-02-10 18:55:12,137 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,137 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,138 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,139 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,141 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,143 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,143 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,144 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,144 - INFO - Routing query 27 to cluster cluster_4. Predicted latency is 23.15s (ends at 1461.94s). 
+2026-02-10 18:55:12,145 - INFO - (1461.941) Query 27 completed on cluster cluster_4 with latency 23.15s.
+2026-02-10 18:55:12,145 - INFO - (1467.946) Routing query 28 with template and idx 047_003.
+2026-02-10 18:55:12,146 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1527.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,146 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1527.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,147 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1527.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,148 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1527.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,150 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})], after: [Interval(1438.789679019008, 1498.789679019008, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,152 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1527.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,153 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.1025 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1590.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,154 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.1025 (Billed intervals before: [], after: [Interval(1467.9462059013817, 1590.9462059013817, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,154 - INFO - Routing query 28 to cluster cluster_4. Predicted latency is 17.47s (ends at 1485.42s). 
+2026-02-10 18:55:12,154 - INFO - (1485.418) Query 28 completed on cluster cluster_4 with latency 17.47s.
+2026-02-10 18:55:12,154 - INFO - (1542.990) Routing query 29 with template and idx 034_002.
+2026-02-10 18:55:12,155 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,156 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,157 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,158 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,158 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,159 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,160 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,161 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1542.989655847126, 1602.989655847126, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,161 - INFO - Routing query 29 to cluster cluster_4. Predicted latency is 22.03s (ends at 1565.02s). 
+2026-02-10 18:55:12,161 - INFO - (1565.024) Query 29 completed on cluster cluster_4 with latency 22.03s.
+2026-02-10 18:55:12,161 - INFO - (1637.735) Routing query 30 with template and idx 073_001.
+2026-02-10 18:55:12,162 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,163 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,163 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,164 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,165 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,165 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,166 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,167 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1637.7352554350869, 1697.7352554350869, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,167 - INFO - Routing query 30 to cluster cluster_4. Predicted latency is 15.54s (ends at 1653.27s). 
+2026-02-10 18:55:12,167 - INFO - (1653.274) Query 30 completed on cluster cluster_4 with latency 15.54s.
+2026-02-10 18:55:12,167 - INFO - (1723.233) Routing query 31 with template and idx 087_001.
+2026-02-10 18:55:12,168 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,168 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,169 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,169 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,171 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,173 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,174 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,175 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,175 - INFO - Routing query 31 to cluster cluster_4. Predicted latency is 34.25s (ends at 1757.49s). 
+2026-02-10 18:55:12,176 - INFO - (1743.893) Routing query 32 with template and idx 084_003.
+2026-02-10 18:55:12,176 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,177 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,178 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,179 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,182 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown', 31}})], after: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,183 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,183 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,184 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1743.893164784424, 1803.893164784424, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,184 - INFO - Routing query 32 to cluster cluster_4. Predicted latency is 34.25s (ends at 1778.15s). 
+2026-02-10 18:55:12,184 - INFO - Updating predicted latencies for active queries on cluster cluster_4.
+2026-02-10 18:55:12,184 - INFO - 	Query 31: Old: 34.25s, Pred: 2.68s, New: 34.25s (ends at 1757.49s)
+2026-02-10 18:55:12,184 - INFO - (1757.486) Query 31 completed on cluster cluster_4 with latency 34.25s.
+2026-02-10 18:55:12,184 - INFO - (1761.432) Routing query 33 with template and idx 078_003.
+2026-02-10 18:55:12,185 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.2433 (Billed intervals before: [], after: [Interval(1761.4320425229116, 1907.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,186 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.2433 (Billed intervals before: [], after: [Interval(1761.4320425229116, 1907.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,186 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1761.4320425229116, 1821.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,187 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1761.4320425229116, 1821.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,191 - INFO - 	Cluster cluster_4: Marginal SLO violation: 90.5196, Marginal cost: 0.0963 (Billed intervals before: [Interval(1723.2328915569574, 1783.2328915569574, {'query_ids': {32, 'unknown'}})], after: [Interval(1723.2328915569574, 2014.2329, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,193 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 57.1632, Marginal cost: 0.0988 (Billed intervals before: [], after: [Interval(1761.4320425229116, 1998.432, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,194 - INFO - 	Cluster cluster_8: Marginal SLO violation: 180.0906, Marginal cost: 0.3000 (Billed intervals before: [], after: [Interval(1761.4320425229116, 2121.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,194 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 180.0906, Marginal cost: 0.3000 (Billed intervals before: [], after: [Interval(1761.4320425229116, 2121.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,195 - INFO - Routing query 33 to cluster cluster_32. Predicted latency is 23.45s (ends at 1784.88s). 
+2026-02-10 18:55:12,195 - INFO - (1784.880) Query 33 completed on cluster cluster_32 with latency 23.45s.
+2026-02-10 18:55:12,195 - INFO - (1778.146) Query 32 completed on cluster cluster_4 with latency 34.25s.
+2026-02-10 18:55:12,195 - INFO - (1808.813) Routing query 34 with template and idx 011_001.
+2026-02-10 18:55:12,197 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,199 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,200 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.0100 (Billed intervals before: [Interval(1761.4320425229116, 1821.4320425229116, {'query_ids': {'unknown'}})], after: [Interval(1761.4320425229116, 1824.4320425229116, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,200 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,202 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,206 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,207 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,209 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1808.8126828399509, 1868.8126828399509, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,209 - INFO - Routing query 34 to cluster cluster_32. Predicted latency is 15.62s (ends at 1824.43s). 
+2026-02-10 18:55:12,210 - INFO - (1824.432) Query 34 completed on cluster cluster_32 with latency 15.62s.
+2026-02-10 18:55:12,210 - INFO - (1848.931) Routing query 35 with template and idx 016_002.
+2026-02-10 18:55:12,211 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,212 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,212 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,213 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,215 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,217 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,219 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,221 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,221 - INFO - Routing query 35 to cluster cluster_4. Predicted latency is 16.00s (ends at 1864.93s). 
+2026-02-10 18:55:12,222 - INFO - (1864.932) Query 35 completed on cluster cluster_4 with latency 16.00s.
+2026-02-10 18:55:12,222 - INFO - (1904.536) Routing query 36 with template and idx 005_001.
+2026-02-10 18:55:12,222 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,223 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,224 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,225 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,227 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0058 (Billed intervals before: [Interval(1848.9305334386045, 1908.9305334386045, {'query_ids': {'unknown'}})], after: [Interval(1848.9305334386045, 1922.9305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,229 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,230 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,231 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1904.536349236356, 1964.536349236356, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,231 - INFO - Routing query 36 to cluster cluster_4. Predicted latency is 19.08s (ends at 1923.62s). 
+2026-02-10 18:55:12,231 - INFO - (1923.619) Query 36 completed on cluster cluster_4 with latency 19.08s.
+2026-02-10 18:55:12,231 - INFO - (1951.283) Routing query 37 with template and idx 001_003.
+2026-02-10 18:55:12,232 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,233 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,234 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,235 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,236 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,238 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,239 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,240 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,240 - INFO - Routing query 37 to cluster cluster_4. Predicted latency is 10.60s (ends at 1961.89s). 
+2026-02-10 18:55:12,241 - INFO - (1961.887) Query 37 completed on cluster cluster_4 with latency 10.60s.
+2026-02-10 18:55:12,241 - INFO - (2008.758) Routing query 38 with template and idx 061_002.
+2026-02-10 18:55:12,241 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,242 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,243 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,244 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,245 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0058 (Billed intervals before: [Interval(1951.2833685395756, 2011.2833685395756, {'query_ids': {'unknown'}})], after: [Interval(1951.2833685395756, 2025.2833685395756, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,246 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,247 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,247 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2008.7584159841404, 2068.7584159841404, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,247 - INFO - Routing query 38 to cluster cluster_4. Predicted latency is 16.80s (ends at 2025.56s). 
+2026-02-10 18:55:12,248 - INFO - (2025.558) Query 38 completed on cluster cluster_4 with latency 16.80s.
+2026-02-10 18:55:12,248 - INFO - (2103.043) Routing query 39 with template and idx 024_002.
+2026-02-10 18:55:12,248 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2103.043100419591, 2163.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,249 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2103.043100419591, 2163.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,250 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2103.043100419591, 2163.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,250 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2103.043100419591, 2163.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,252 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2103.043100419591, 2163.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,254 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2103.043100419591, 2163.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,255 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0525 (Billed intervals before: [], after: [Interval(2103.043100419591, 2166.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,256 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0525 (Billed intervals before: [], after: [Interval(2103.043100419591, 2166.043100419591, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,256 - INFO - Routing query 39 to cluster cluster_4. Predicted latency is 46.58s (ends at 2149.63s). 
+2026-02-10 18:55:12,256 - INFO - (2149.626) Query 39 completed on cluster cluster_4 with latency 46.58s.
+2026-02-10 18:55:12,256 - INFO - (2185.601) Routing query 40 with template and idx 084_002.
+2026-02-10 18:55:12,257 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,258 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,259 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,260 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,261 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,262 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,262 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,263 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,263 - INFO - Routing query 40 to cluster cluster_4. Predicted latency is 2.77s (ends at 2188.37s). 
+2026-02-10 18:55:12,263 - INFO - (2188.371) Query 40 completed on cluster cluster_4 with latency 2.77s.
+2026-02-10 18:55:12,263 - INFO - (2219.182) Routing query 41 with template and idx 069_002.
+2026-02-10 18:55:12,264 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,265 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,265 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,266 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,267 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0042 (Billed intervals before: [Interval(2185.6010914001945, 2245.6010914001945, {'query_ids': {'unknown'}})], after: [Interval(2185.6010914001945, 2255.6010914001945, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,267 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,268 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,269 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2219.1818668443016, 2279.1818668443016, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,269 - INFO - Routing query 41 to cluster cluster_4. Predicted latency is 36.48s (ends at 2255.67s). 
+2026-02-10 18:55:12,269 - INFO - (2255.666) Query 41 completed on cluster cluster_4 with latency 36.48s.
+2026-02-10 18:55:12,269 - INFO - (2281.489) Routing query 42 with template and idx 005_003.
+2026-02-10 18:55:12,270 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,270 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,271 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,272 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,272 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,273 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,274 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,274 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2281.4887153018385, 2341.4887153018385, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,274 - INFO - Routing query 42 to cluster cluster_4. Predicted latency is 20.30s (ends at 2301.79s). 
+2026-02-10 18:55:12,275 - INFO - (2301.791) Query 42 completed on cluster cluster_4 with latency 20.30s.
+2026-02-10 18:55:12,275 - INFO - (2363.033) Routing query 43 with template and idx 026_003.
+2026-02-10 18:55:12,275 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,276 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,277 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,277 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,278 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,279 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,279 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,280 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,280 - INFO - Routing query 43 to cluster cluster_4. Predicted latency is 19.53s (ends at 2382.56s). 
+2026-02-10 18:55:12,280 - INFO - (2382.559) Query 43 completed on cluster cluster_4 with latency 19.53s.
+2026-02-10 18:55:12,280 - INFO - (2394.488) Routing query 44 with template and idx 064_003.
+2026-02-10 18:55:12,281 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,282 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,282 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,283 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,285 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0058 (Billed intervals before: [Interval(2363.03256369658, 2423.03256369658, {'query_ids': {'unknown'}})], after: [Interval(2363.03256369658, 2437.0325, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,287 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,289 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,291 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2394.488411177139, 2454.488411177139, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,291 - INFO - Routing query 44 to cluster cluster_4. Predicted latency is 43.19s (ends at 2437.68s). 
+2026-02-10 18:55:12,291 - INFO - (2430.991) Routing query 45 with template and idx 050_003.
+2026-02-10 18:55:12,292 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,293 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,294 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,295 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,298 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0263 (Billed intervals before: [Interval(2363.03256369658, 2437.0325, {'query_ids': {'unknown', 44}})], after: [Interval(2363.03256369658, 2500.0325, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,300 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,301 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,302 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,302 - INFO - Routing query 45 to cluster cluster_4b. Predicted latency is 48.10s (ends at 2479.09s). 
+2026-02-10 18:55:12,302 - INFO - (2437.683) Query 44 completed on cluster cluster_4 with latency 43.19s.
+2026-02-10 18:55:12,302 - INFO - (2479.090) Query 45 completed on cluster cluster_4b with latency 48.10s.
+2026-02-10 18:55:12,303 - INFO - (2481.329) Routing query 46 with template and idx 014_001.
+2026-02-10 18:55:12,304 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,306 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,307 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,308 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,310 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,312 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0104 (Billed intervals before: [Interval(2430.9908124070516, 2490.9908124070516, {'query_ids': {'unknown'}})], after: [Interval(2430.9908124070516, 2515.9907, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,314 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,316 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2481.328966920881, 2541.328966920881, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,316 - INFO - Routing query 46 to cluster cluster_4b. Predicted latency is 34.72s (ends at 2516.05s). 
+2026-02-10 18:55:12,316 - INFO - (2490.013) Routing query 47 with template and idx 016_001.
+2026-02-10 18:55:12,317 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,318 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,319 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,320 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,322 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,326 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0088 (Billed intervals before: [Interval(2430.9908124070516, 2515.9907, {'query_ids': {'unknown', 46}})], after: [Interval(2430.9908124070516, 2536.9907, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,328 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,329 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2490.0130795651303, 2550.0130795651303, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,330 - INFO - Routing query 47 to cluster cluster_4b. Predicted latency is 47.31s (ends at 2537.32s). 
+2026-02-10 18:55:12,330 - INFO - Updating predicted latencies for active queries on cluster cluster_4b.
+2026-02-10 18:55:12,330 - INFO - 	Query 46: Old: 34.72s, Pred: 3.16s, New: 34.72s (ends at 2516.05s)
+2026-02-10 18:55:12,330 - INFO - (2516.050) Query 46 completed on cluster cluster_4b with latency 34.72s.
+2026-02-10 18:55:12,330 - INFO - (2537.322) Query 47 completed on cluster cluster_4b with latency 47.31s.
+2026-02-10 18:55:12,330 - INFO - (2553.582) Routing query 48 with template and idx 012_001.
+2026-02-10 18:55:12,331 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,332 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,333 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,334 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,335 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,337 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,339 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,341 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2553.5824343220097, 2613.5824343220097, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,341 - INFO - Routing query 48 to cluster cluster_4. Predicted latency is 1.98s (ends at 2555.56s). 
+2026-02-10 18:55:12,342 - INFO - (2555.562) Query 48 completed on cluster cluster_4 with latency 1.98s.
+2026-02-10 18:55:12,342 - INFO - (2652.564) Routing query 49 with template and idx 030_002.
+2026-02-10 18:55:12,343 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,344 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,345 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,345 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,347 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,349 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,351 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,353 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,353 - INFO - Routing query 49 to cluster cluster_4. Predicted latency is 12.80s (ends at 2665.36s). 
+2026-02-10 18:55:12,354 - INFO - (2665.360) Query 49 completed on cluster cluster_4 with latency 12.80s.
+2026-02-10 18:55:12,354 - INFO - (2686.550) Routing query 50 with template and idx 030_003.
+2026-02-10 18:55:12,355 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,355 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,356 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,357 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,358 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0021 (Billed intervals before: [Interval(2652.5643387499445, 2712.5643387499445, {'query_ids': {'unknown'}})], after: [Interval(2652.5643387499445, 2717.5643387499445, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,359 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,360 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,361 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2686.5499540684577, 2746.5499540684577, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,361 - INFO - Routing query 50 to cluster cluster_4. Predicted latency is 31.07s (ends at 2717.62s). 
+2026-02-10 18:55:12,361 - INFO - (2717.615) Query 50 completed on cluster cluster_4 with latency 31.07s.
+2026-02-10 18:55:12,361 - INFO - (2772.170) Routing query 51 with template and idx 031_001.
+2026-02-10 18:55:12,362 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,363 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,363 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,364 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,364 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,365 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,366 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,366 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2772.169887663305, 2832.169887663305, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,366 - INFO - Routing query 51 to cluster cluster_4. Predicted latency is 10.83s (ends at 2783.00s). 
+2026-02-10 18:55:12,367 - INFO - (2783.001) Query 51 completed on cluster cluster_4 with latency 10.83s.
+2026-02-10 18:55:12,367 - INFO - (2885.828) Routing query 52 with template and idx 097_002.
+2026-02-10 18:55:12,367 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,368 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,369 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,369 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,371 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,373 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,374 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,375 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2885.8277033830686, 2945.8277033830686, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,375 - INFO - Routing query 52 to cluster cluster_4. Predicted latency is 22.92s (ends at 2908.75s). 
+2026-02-10 18:55:12,376 - INFO - (2908.749) Query 52 completed on cluster cluster_4 with latency 22.92s.
+2026-02-10 18:55:12,376 - INFO - (2977.308) Routing query 53 with template and idx 064_001.
+2026-02-10 18:55:12,377 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,378 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,378 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,379 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,381 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,383 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,385 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,387 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(2977.3081251526946, 3037.3081251526946, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,387 - INFO - Routing query 53 to cluster cluster_4. Predicted latency is 36.63s (ends at 3013.94s). 
+2026-02-10 18:55:12,388 - INFO - (3013.940) Query 53 completed on cluster cluster_4 with latency 36.63s.
+2026-02-10 18:55:12,388 - INFO - (3077.061) Routing query 54 with template and idx 056_003.
+2026-02-10 18:55:12,389 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,389 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,390 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,391 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,392 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,393 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,394 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,395 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,395 - INFO - Routing query 54 to cluster cluster_4. Predicted latency is 10.83s (ends at 3087.89s). 
+2026-02-10 18:55:12,395 - INFO - (3087.893) Query 54 completed on cluster cluster_4 with latency 10.83s.
+2026-02-10 18:55:12,395 - INFO - (3108.264) Routing query 55 with template and idx 069_003.
+2026-02-10 18:55:12,396 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,396 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,397 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,398 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,400 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})], after: [Interval(3077.0612949981205, 3137.0612949981205, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,402 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,403 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,403 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3108.2644560347035, 3168.2644560347035, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,404 - INFO - Routing query 55 to cluster cluster_4. Predicted latency is 13.02s (ends at 3121.28s). 
+2026-02-10 18:55:12,404 - INFO - (3121.282) Query 55 completed on cluster cluster_4 with latency 13.02s.
+2026-02-10 18:55:12,404 - INFO - (3201.412) Routing query 56 with template and idx 028_002.
+2026-02-10 18:55:12,405 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,406 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,407 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,408 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,410 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,411 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,412 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,413 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3201.412302588208, 3261.412302588208, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,413 - INFO - Routing query 56 to cluster cluster_4. Predicted latency is 59.13s (ends at 3260.54s). 
+2026-02-10 18:55:12,414 - INFO - (3260.542) Query 56 completed on cluster cluster_4 with latency 59.13s.
+2026-02-10 18:55:12,414 - INFO - (3270.889) Routing query 57 with template and idx 010_003.
+2026-02-10 18:55:12,415 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,416 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,416 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,417 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,418 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,419 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,420 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,420 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3270.8890298027777, 3330.8890298027777, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,420 - INFO - Routing query 57 to cluster cluster_4. Predicted latency is 6.66s (ends at 3277.55s). 
+2026-02-10 18:55:12,421 - INFO - (3277.546) Query 57 completed on cluster cluster_4 with latency 6.66s.
+2026-02-10 18:55:12,421 - INFO - (3332.667) Routing query 58 with template and idx 027_002.
+2026-02-10 18:55:12,422 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,422 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,423 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,423 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,425 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,427 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,428 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,429 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3332.6674683243737, 3392.6674683243737, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,429 - INFO - Routing query 58 to cluster cluster_4. Predicted latency is 24.45s (ends at 3357.12s). 
+2026-02-10 18:55:12,430 - INFO - (3357.118) Query 58 completed on cluster cluster_4 with latency 24.45s.
+2026-02-10 18:55:12,430 - INFO - (3433.600) Routing query 59 with template and idx 071_003.
+2026-02-10 18:55:12,431 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,432 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,433 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,433 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,434 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,435 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,436 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,436 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3433.6004717439832, 3493.6004717439832, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,437 - INFO - Routing query 59 to cluster cluster_4. Predicted latency is 8.75s (ends at 3442.35s). 
+2026-02-10 18:55:12,437 - INFO - (3442.346) Query 59 completed on cluster cluster_4 with latency 8.75s.
+2026-02-10 18:55:12,437 - INFO - (3528.761) Routing query 60 with template and idx 077_001.
+2026-02-10 18:55:12,438 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,438 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,439 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,440 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,442 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,444 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,444 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,445 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,445 - INFO - Routing query 60 to cluster cluster_4. Predicted latency is 11.92s (ends at 3540.68s). 
+2026-02-10 18:55:12,446 - INFO - (3535.264) Routing query 61 with template and idx 044_001.
+2026-02-10 18:55:12,447 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,448 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,448 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,449 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,453 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0000 (Billed intervals before: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown', 60}})], after: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,455 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,456 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,457 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3535.2638069931495, 3595.2638069931495, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,457 - INFO - Routing query 61 to cluster cluster_4. Predicted latency is 11.92s (ends at 3547.19s). 
+2026-02-10 18:55:12,457 - INFO - Updating predicted latencies for active queries on cluster cluster_4.
+2026-02-10 18:55:12,457 - INFO - 	Query 60: Old: 11.92s, Pred: 15.18s, New: 15.18s (ends at 3543.94s)
+2026-02-10 18:55:12,457 - INFO - (3543.938) Query 60 completed on cluster cluster_4 with latency 15.18s.
+2026-02-10 18:55:12,457 - INFO - (3547.186) Query 61 completed on cluster cluster_4 with latency 11.92s.
+2026-02-10 18:55:12,457 - INFO - (3587.970) Routing query 62 with template and idx 061_003.
+2026-02-10 18:55:12,458 - INFO - 	Cluster cluster_16: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,459 - INFO - 	Cluster cluster_16b: Marginal SLO violation: 0.0000, Marginal cost: 0.1000 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,460 - INFO - 	Cluster cluster_32: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,461 - INFO - 	Cluster cluster_32b: Marginal SLO violation: 0.0000, Marginal cost: 0.2000 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,463 - INFO - 	Cluster cluster_4: Marginal SLO violation: 0.0000, Marginal cost: 0.0054 (Billed intervals before: [Interval(3528.7613388581153, 3588.7613388581153, {'query_ids': {'unknown'}})], after: [Interval(3528.7613388581153, 3601.7612, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,465 - INFO - 	Cluster cluster_4b: Marginal SLO violation: 0.0000, Marginal cost: 0.0250 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,466 - INFO - 	Cluster cluster_8: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,467 - INFO - 	Cluster cluster_8b: Marginal SLO violation: 0.0000, Marginal cost: 0.0500 (Billed intervals before: [], after: [Interval(3587.9697731809392, 3647.9697731809392, {'query_ids': {'unknown'}})])
+2026-02-10 18:55:12,467 - INFO - Routing query 62 to cluster cluster_4. Predicted latency is 14.21s (ends at 3602.18s). 
+2026-02-10 18:55:12,467 - INFO - (3602.184) Query 62 completed on cluster cluster_4 with latency 14.21s.
