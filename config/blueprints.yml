@@ -63,3 +63,27 @@ multi_32_4_4b_8_8b:
   - cluster_4b
   - cluster_8
   - cluster_8b
+multi_128_16_16b_256_32_32b_4_4b_512_64_8_8b:
+  cluster_names:
+  - cluster_128
+  - cluster_16
+  - cluster_16b
+  - cluster_256
+  - cluster_32
+  - cluster_32b
+  - cluster_4
+  - cluster_4b
+  - cluster_512
+  - cluster_64
+  - cluster_8
+  - cluster_8b
+multi_16_16b_32_32b_4_4b_8_8b:
+  cluster_names:
+  - cluster_16
+  - cluster_16b
+  - cluster_32
+  - cluster_32b
+  - cluster_4
+  - cluster_4b
+  - cluster_8
+  - cluster_8b
