@@ -37,4 +37,5 @@ CREATE EXTERNAL SCHEMA ext_tpcds10000 FROM redshift DATABASE tpcds_db SCHEMA tpc
 
 ```
 
+python3 experiments/08_selector_benchmarking/verbose_selection_on_chunk.py --iconq_model_id=1769376434 --workload_name=tpcds_99templates_00pctheavy_120meaninterarrivals --optimize_cumulative_slo_violation_time --use_stage_for_isolated_queries --run_id 9999 --use_simulator
 

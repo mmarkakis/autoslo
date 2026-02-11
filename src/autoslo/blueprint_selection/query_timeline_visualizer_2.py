@@ -89,7 +89,7 @@ class GanttRecorder:
                 violating_queries += q.violates_slo(slo_s)
                 violation_amount += q.slo_violation_amount_s(slo_s)
 
-            intervals.sort()
+            intervals.sort(key=lambda x: (x[0], x[1], x[2].get("query_id", "")))
             return intervals
 
         for (
@@ -200,6 +200,7 @@ def _build_shapes_for_snapshot(
     snap: Any,
     slo_s: float | dict[str, float],
     layout_plan: dict[str, Any],
+    snap_idx: int = 0,
 ):
     """Build rectangle shapes and hover points for a single snapshot."""
     shapes: list[dict[str, Any]] = []
@@ -218,11 +219,17 @@ def _build_shapes_for_snapshot(
         if layout_plan["max_lanes_by_cluster"].get(c, 0) > 0
     ]
 
+    lane_cache = layout_plan.get("lane_cache", {})
     for cluster_name in cluster_iter:
         intervals = snap.intervals_by_cluster.get(cluster_name, [])
         if not intervals:
             continue
-        lanes = _pack_into_lanes(intervals)
+        # Use cached lanes if available, otherwise compute
+        cache_key = (snap_idx, cluster_name)
+        if cache_key in lane_cache:
+            lanes = lane_cache[cache_key]
+        else:
+            lanes = _pack_into_lanes(intervals)
         base = layout_plan["base_offset_by_cluster"][cluster_name]
         reference_time = layout_plan["reference_time"]
 
@@ -308,6 +315,7 @@ def render_gantt_scrubber(
     workload_name: Optional[str] = None,
     violation_amount_threshold: Optional[float] = None,
     optimize_cumulative_slo_violation_time: bool = False,
+    include_animation_frames: bool = False,
 ) -> go.Figure:
     if not snapshots:
         raise ValueError("No snapshots to render")
@@ -333,10 +341,17 @@ def render_gantt_scrubber(
     )
 
     max_lanes_by_cluster: dict[str, int] = {c: 0 for c in cluster_order}
+    # Cache lane packing results to avoid redundant computation
+    _lane_cache: dict[tuple[int, str], list[list[tuple[float, float, dict[str, Any]]]]] = {}
     for c in cluster_order:
-        for snap in snapshots:
+        for snap_idx, snap in enumerate(snapshots):
             intervals = snap.intervals_by_cluster.get(c, [])
-            lane_count = len(_pack_into_lanes(intervals)) if intervals else 0
+            if intervals:
+                lanes = _pack_into_lanes(intervals)
+                _lane_cache[(snap_idx, c)] = lanes
+                lane_count = len(lanes)
+            else:
+                lane_count = 0
             if lane_count > max_lanes_by_cluster[c]:
                 max_lanes_by_cluster[c] = lane_count
 
@@ -381,11 +396,12 @@ def render_gantt_scrubber(
         y_max=y_pos,
         x_max=max_time,
         reference_time=0,
+        lane_cache=_lane_cache,
     )
 
     specs = [
-        _build_shapes_for_snapshot(s, slo_s, layout_plan=layout_plan)
-        for s in snapshots
+        _build_shapes_for_snapshot(s, slo_s, layout_plan=layout_plan, snap_idx=i)
+        for i, s in enumerate(snapshots)
     ]
     base = specs[0]
 
@@ -489,7 +505,22 @@ def render_gantt_scrubber(
             )
         return traces
 
-    base_label_traces = _build_label_traces(base, snapshots[0])
+    # Pre-compute all label traces to avoid redundant computation in slider steps
+    all_label_traces = [
+        _build_label_traces(specs[i], snapshots[i]) for i in range(len(snapshots))
+    ]
+    base_label_traces = all_label_traces[0]
+
+    # Pre-extract data from traces for slider updates to avoid repeated attribute access
+    precomputed_slider_data = []
+    for i in range(len(snapshots)):
+        combined_traces = specs[i]["hover_traces"] + all_label_traces[i]
+        precomputed_slider_data.append({
+            "x": [t.x for t in combined_traces],
+            "y": [t.y for t in combined_traces],
+            "text": [t.text for t in combined_traces],
+            "hovertext": [getattr(t, "hovertext", None) for t in combined_traces],
+        })
 
     # Build title dict with optional subtitle
     title_dict: dict[str, Any] = dict(text=title)
@@ -529,45 +560,8 @@ def render_gantt_scrubber(
                         dict(
                             method="update",
                             args=[
-                                # Update data traces
-                                {
-                                    "x": [
-                                        t.x
-                                        for t in (
-                                            specs[i]["hover_traces"]
-                                            + _build_label_traces(
-                                                specs[i], snapshots[i]
-                                            )
-                                        )
-                                    ],
-                                    "y": [
-                                        t.y
-                                        for t in (
-                                            specs[i]["hover_traces"]
-                                            + _build_label_traces(
-                                                specs[i], snapshots[i]
-                                            )
-                                        )
-                                    ],
-                                    "text": [
-                                        t.text
-                                        for t in (
-                                            specs[i]["hover_traces"]
-                                            + _build_label_traces(
-                                                specs[i], snapshots[i]
-                                            )
-                                        )
-                                    ],
-                                    "hovertext": [
-                                        getattr(t, "hovertext", None)
-                                        for t in (
-                                            specs[i]["hover_traces"]
-                                            + _build_label_traces(
-                                                specs[i], snapshots[i]
-                                            )
-                                        )
-                                    ],
-                                },
+                                # Update data traces (using precomputed data)
+                                precomputed_slider_data[i],
                                 # Update layout
                                 {
                                     "shapes": specs[i]["shapes"],
@@ -581,11 +575,17 @@ def render_gantt_scrubber(
                 )
             ],
         ),
-        frames=[
+    )
+
+    # Only generate frames if animation playback is needed.
+    # The slider works without frames (via the 'update' method in steps).
+    # Frame generation is expensive for large numbers of snapshots.
+    if include_animation_frames:
+        fig.frames = [
             go.Frame(
                 name=f"f{i}",
                 data=spec["hover_traces"]
-                + _build_label_traces(spec, snapshots[i]),
+                + all_label_traces[i],
                 layout=go.Layout(
                     shapes=spec["shapes"],
                     xaxis=dict(range=[-500, spec["x_max"] + 500]),
@@ -606,8 +606,8 @@ def render_gantt_scrubber(
                 ),
             )
             for i, spec in enumerate(specs)
-        ],
-    )
+        ]
+
     return fig
 
 
