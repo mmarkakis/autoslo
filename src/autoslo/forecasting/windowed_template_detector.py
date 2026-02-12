@@ -1,5 +1,7 @@
-import numpy as np
 from dataclasses import dataclass
+
+import numpy as np
+
 from autoslo.workload_definition.query import Query
 
 
@@ -9,6 +11,8 @@ class WindowCandidate:
     idle_ratio: float
     on_window_rel_start_s: float
     p_value: float = 1.0
+    num_windows_with_nonzero_arrivals: float = 0.0
+    num_total_windows_in_range: float = 0.0
 
 
 class WindowedTemplateDetector:
@@ -44,6 +48,7 @@ class WindowedTemplateDetector:
         )
 
         self._arrival_times_s.sort()
+
         self._n = len(self._arrival_times_s)
         self._num_permutations = num_permutations
         self._min_idle_ratio = min_idle_ratio
@@ -113,6 +118,12 @@ class WindowedTemplateDetector:
             "on_window_rel_start_s": float(
                 best_candidate.on_window_rel_start_s
             ),
+            "num_windows_with_nonzero_arrivals": float(
+                best_candidate.num_windows_with_nonzero_arrivals
+            ),
+            "num_total_windows_in_range": float(
+                best_candidate.num_total_windows_in_range
+            ),
             "p_value": float(best_candidate.p_value),
         }
 
@@ -120,13 +131,30 @@ class WindowedTemplateDetector:
         self, periods_s: list[float]
     ) -> list[WindowCandidate]:
         candidates_with_okay_idle_ratio: list[WindowCandidate] = []
+        two_days_s = 2 * 24 * 60 * 60
+        fraction_observed_cutoff = 2 / 3
+
         for period_s in periods_s:
-            candidate = self.create_candidate(self._arrival_times_s, period_s)
-            if candidate.idle_ratio >= self._min_idle_ratio:
+            candidate = WindowedTemplateDetector.create_candidate(
+                self._arrival_times_s, period_s
+            )
+            # The window must have been seen for more than 2 days.
+            num_required_windows = two_days_s / period_s
+
+            if (
+                candidate.idle_ratio >= self._min_idle_ratio
+                and candidate.num_total_windows_in_range > num_required_windows
+                and (
+                    candidate.num_windows_with_nonzero_arrivals
+                    / candidate.num_total_windows_in_range
+                    >= fraction_observed_cutoff
+                )
+            ):
                 candidates_with_okay_idle_ratio.append(candidate)
         return candidates_with_okay_idle_ratio
 
-    def create_candidate(self, arrival_times_s: np.ndarray, period_s):
+    @staticmethod
+    def create_candidate(arrival_times_s: np.ndarray, period_s):
         folded_arrival_times_s = np.sort(np.mod(arrival_times_s, period_s))
         gaps = np.diff(
             np.r_[folded_arrival_times_s, folded_arrival_times_s[0] + period_s]
@@ -138,10 +166,24 @@ class WindowedTemplateDetector:
             folded_arrival_times_s[max_gap_idx] + max_gap
         ) % period_s
 
+        observed_window_start_times_s = np.unique(
+            np.floor(arrival_times_s / period_s) * period_s
+            + on_window_rel_start_s
+        )
+        all_window_start_times_s = np.arange(
+            observed_window_start_times_s[0],
+            observed_window_start_times_s[-1] + period_s,
+            period_s,
+        )
+
         return WindowCandidate(
             period_s=period_s,
             idle_ratio=idle_ratio,
             on_window_rel_start_s=on_window_rel_start_s,
+            num_windows_with_nonzero_arrivals=len(
+                observed_window_start_times_s
+            ),
+            num_total_windows_in_range=len(all_window_start_times_s),
         )
 
     def find_candidates_with_okay_p_value(
@@ -164,7 +206,7 @@ class WindowedTemplateDetector:
                     rng.poisson(lam=arrivals_lambda, size=self._n)
                 )
                 null_arrivals_s = np.cumsum(null_interarrivals_s)
-                null_candidate = self.create_candidate(
+                null_candidate = WindowedTemplateDetector.create_candidate(
                     null_arrivals_s, candidate.period_s
                 )
 

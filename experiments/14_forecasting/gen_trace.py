@@ -3,11 +3,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
-
-@dataclass
-class QueryArrival:
-    template_id: str
-    arrival_time: datetime
+from autoslo.workload_definition.query import Query
 
 
 class ArrivalProcess:
@@ -36,7 +32,7 @@ class ArrivalProcess:
         active_window_end: datetime | None = None,
         *args,
         **kwargs,
-    ) -> list[QueryArrival]:
+    ) -> list[Query]:
         raise NotImplementedError("Subclasses must implement this method")
 
 
@@ -60,7 +56,7 @@ class PoissonProcess(ArrivalProcess):
         seed: int = 42,
         *args,
         **kwargs,
-    ) -> list[QueryArrival]:
+    ) -> list[Query]:
         current_time = start_time
         arrivals = []
         np.random.seed(seed)
@@ -74,16 +70,23 @@ class PoissonProcess(ArrivalProcess):
             1 / self.rate, size=samples_needed
         )
 
-        current_time = start_time
+        current_time_s = start_time.timestamp()
+        end_time_s = end_time.timestamp()
+        query_id = 0
         for template_id, inter_arrival_time in zip(
             template_ids, inter_arrival_times
         ):
-            current_time += timedelta(seconds=inter_arrival_time)
-            if current_time >= end_time:
+            if current_time_s >= end_time_s:
                 break
             arrivals.append(
-                QueryArrival(template_id=template_id, arrival_time=current_time)
+                Query(
+                    query_id=str(query_id),
+                    tpcds_temp_and_q_idx=template_id,
+                    start_time_s=current_time_s,
+                )
             )
+            current_time_s += inter_arrival_time
+            query_id += 1
 
         return arrivals
 
@@ -108,7 +111,7 @@ class SinusoidalPoissonProcess(ArrivalProcess):
         seed: int = 42,
         *args,
         **kwargs,
-    ) -> list[QueryArrival]:
+    ) -> list[Query]:
         # Split the interval between start_time and end_time into 1-minute segments.
         minute_starts = []
         current = start_time.replace(second=0, microsecond=0)
@@ -144,8 +147,10 @@ class SinusoidalPoissonProcess(ArrivalProcess):
                     template_id = template_ids[template_idx]
                     template_idx += 1
                     arrivals.append(
-                        QueryArrival(
-                            template_id=template_id, arrival_time=arrival_time
+                        Query(
+                            query_id=str(template_idx),
+                            tpcds_temp_and_q_idx=template_id,
+                            start_time_s=arrival_time.timestamp(),
                         )
                     )
 
@@ -176,7 +181,7 @@ class NoisyPeriodicProcess(ArrivalProcess):
         seed: int = 42,
         *args,
         **kwargs,
-    ) -> list[QueryArrival]:
+    ) -> list[Query]:
         window_starts = []
         current = start_time
         while current < end_time:
@@ -184,6 +189,8 @@ class NoisyPeriodicProcess(ArrivalProcess):
             current += timedelta(seconds=self.period_s)
 
         arrivals = []
+        np.random.seed(seed)
+        query_id = 0
         for window_start in window_starts:
             eff_window_width_s = min(
                 self.window_width_s, (end_time - window_start).total_seconds()
@@ -197,9 +204,12 @@ class NoisyPeriodicProcess(ArrivalProcess):
             for offset, template_id in zip(offsets, templates):
                 arrival_time = window_start + timedelta(seconds=offset)
                 arrivals.append(
-                    QueryArrival(
-                        template_id=template_id, arrival_time=arrival_time
+                    Query(
+                        query_id=str(query_id),
+                        tpcds_temp_and_q_idx=template_id,
+                        start_time_s=arrival_time.timestamp(),
                     )
                 )
+                query_id += 1
 
         return arrivals

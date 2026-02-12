@@ -1,5 +1,7 @@
 from collections import defaultdict
+from datetime import datetime, timedelta
 
+import matplotlib.pyplot as plt
 import rich
 
 from autoslo.forecasting.adhoc_template_detector import AdHocTemplateDetector
@@ -39,7 +41,7 @@ class ArrivalClassifier:
                 queries=self._queries_per_template[template_id]
             )
             result = detector.detect()
-            
+
             # Store detailed results
             self._template_details[template_id] = result
 
@@ -62,7 +64,7 @@ class ArrivalClassifier:
                 self._template_details[template].update(result)
             else:
                 self._template_details[template] = result
-            
+
             if result["is_normal"]:
                 self._template_classification[template] = "normal"
             else:
@@ -112,3 +114,78 @@ class ArrivalClassifier:
         self._determine_windowed_templates()
         self._determine_adhoc_templates()
         self._print_classification_summary()
+
+    def plot_overall_timeseries(self, bin_to: str = "minute") -> None:
+        """
+        Plots the overall arrival timeseries, binned by `bin_size_s` seconds.
+        """
+
+        fig, ax = plt.subplots(figsize=(35, 6))
+        # Get arrival times and round them down.
+        bin_fn = lambda t: t
+        if bin_to == "minute":
+            bin_fn = lambda t: t - (t % 60)
+
+        arrival_counts: defaultdict[datetime, int] = defaultdict(int)
+        for query in self._queries:
+            key = datetime.fromtimestamp(bin_fn(query.start_time_s))
+            arrival_counts[key] += 1
+
+        ax.bar(
+            *zip(*arrival_counts.items()), color="blue", alpha=0.7, width=0.01
+        )
+
+        # Plot dashed red vertical lines at the beginning of each day in the timeseries.
+        min_time = min(arrival_counts.keys())
+        max_time = max(arrival_counts.keys())
+        current_time = datetime(min_time.year, min_time.month, min_time.day)
+        while current_time < max_time:
+            # If it's a monday, make it red, otherwise gray.
+            color = "red" if current_time.weekday() == 0 else "gray"
+            ax.axvline(current_time, color=color, linestyle="--", alpha=0.5)
+            current_time += timedelta(days=1)
+
+        ax.set_title("Overall Arrival Timeseries")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Number of Arrivals")
+        ax.set_yscale("log")
+        plt.show()
+
+        return arrival_counts
+
+    def plot_timeseries_for_template(
+        self, template_id: int, bin_to: str = "minute"
+    ) -> None:
+        """Plots the arrival timeseries for a specific template"""
+
+        if template_id not in self._queries_per_template:
+            rich.print(f"Template {template_id} not found.")
+            return
+
+        fig, ax = plt.subplots(figsize=(35, 6))
+        bin_fn = lambda t: t
+        if bin_to == "minute":
+            bin_fn = lambda t: t - (t % 60)
+
+        arrival_counts: defaultdict[datetime, int] = defaultdict(int)
+        for query in self._queries_per_template[template_id]:
+            key = datetime.fromtimestamp(bin_fn(query.start_time_s))
+            arrival_counts[key] += 1
+        ax.bar(
+            *zip(*arrival_counts.items()), color="green", alpha=0.7, width=0.01
+        )
+
+        # Plot dashed red vertical lines at the beginning of each day in the timeseries.
+        min_time = min(arrival_counts.keys())
+        max_time = max(arrival_counts.keys())
+        current_time = datetime(min_time.year, min_time.month, min_time.day)
+        while current_time < max_time:
+            color = "red" if current_time.weekday() == 0 else "gray"
+            ax.axvline(current_time, color=color, linestyle="--", alpha=0.5)
+            current_time += timedelta(days=1)
+
+        ax.set_title(f"Arrival Timeseries for Template {template_id}")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Number of Arrivals")
+        ax.set_yscale("log")
+        plt.show()
