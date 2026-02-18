@@ -13,7 +13,7 @@ from autoslo.workload_definition.query import Query
 
 class ArrivalClassifier:
 
-    def __init__(self, queries: list[Query]):
+    def __init__(self, queries: list[Query], verbose: bool = True):
         self._queries = queries
         self._queries.sort(key=lambda x: x.start_time_s)
         self._reference_time = self._queries[0].start_time_s
@@ -29,12 +29,15 @@ class ArrivalClassifier:
         # Store detailed detection results for each template
         self._template_details: dict[int, dict] = {}
 
+        self._verbose = verbose
+
     def _determine_windowed_templates(self) -> None:
 
         distinct_templates = sorted(list(self._queries_per_template.keys()))
 
         # Pretty print the templates we're analyzing using rich.
-        rich.print(f"Analyzing {len(distinct_templates)} distinct templates")
+        if self._verbose:
+            rich.print(f"Analyzing {len(distinct_templates)} distinct templates")
 
         for template_id in distinct_templates:
             detector = WindowedTemplateDetector(
@@ -71,6 +74,8 @@ class ArrivalClassifier:
                 self._template_classification[template] = "ad-hoc"
 
     def _print_classification_summary(self) -> None:
+        if not self._verbose:
+            return
         classification_counts: dict[str, int] = defaultdict(int)
         for classification in self._template_classification.values():
             classification_counts[classification] += 1

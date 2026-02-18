@@ -1,0 +1,4 @@
+cluster_id: 12
+cluster_type: provisioned
+seed: 42
+tpcds_prob_distribution_dir: /home/markakis/chunkbench/data/generation_parameters/dist_16_rpu

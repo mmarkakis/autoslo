@@ -11,6 +11,7 @@ config/conn.yml
 data/composite_workloads/**/cached*
 data/models/
 data/redset_byproducts/
+data/redset_workloads/**/*.parquet
 data/runs/**/*.log
 data/runs/**/features_*
 data/runs/**/label_*
@@ -19,7 +20,7 @@ data/runs/**/tpcds_temp_and_q_idxs*
 data/runs/run_summary*
 data/strategy_runs/
 data/selector_runs/**/*.log
-
+data/test_workloads/**/*.parquet
 data/iconq_models/**/dataset.pkl
 
 
