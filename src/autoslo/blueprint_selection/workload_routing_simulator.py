@@ -177,7 +177,7 @@ class WorkloadRoutingSimulator:
 
     def finalize_log(self) -> None:
         """
-        Write out any remaining log entries and consolidate all log files into 
+        Write out any remaining log entries and consolidate all log files into
         one, deleting the individual log files afterwards to save space.
         """
 
@@ -367,20 +367,17 @@ class WorkloadRoutingSimulator:
                     still_active_queries.append(query)
             self._active_queries_per_cluster[cluster] = still_active_queries
 
+            billing_window_start = (
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    cluster
+                ]
+            )
             if (
                 (current_time_s is not None)
                 and (len(still_active_queries) == 0)
+                and (billing_window_start is not None)
                 and (
-                    self._most_recent_billing_window_start_time_per_cluster_s[
-                        cluster
-                    ]
-                    is not None
-                )
-                and (
-                    self._most_recent_billing_window_start_time_per_cluster_s[
-                        cluster
-                    ]
-                    + Billing.REDSHIFT_BILLING_THRESHOLD_S
+                    billing_window_start + Billing.REDSHIFT_BILLING_THRESHOLD_S
                     < current_time_s
                 )
             ):
