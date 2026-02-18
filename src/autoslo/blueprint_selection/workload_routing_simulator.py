@@ -1,8 +1,8 @@
-import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
+import pandas as pd
 import yaml
 from intervaltree import Interval  # type: ignore[import]
 
@@ -112,32 +112,22 @@ class WorkloadRoutingSimulator:
             yaml.safe_dump(d, f, sort_keys=False)
 
         # Set up logging if verbose is enabled.
-        if self._verbose:
-            log_filename = os.path.join(self._out_dir, "solve.log")
-            print(f"Configuring log at {log_filename}")
-            logging.basicConfig(
-                filename=log_filename,
-                filemode="w",
-                level=logging.INFO,
-                format="%(asctime)s - %(levelname)s - %(message)s",
-                force=True,
-            )
-            logging.info(
-                f"Starting simulator run for workload "
-                f"'{self._workload_name}' with model '{self._iconq_model_id}' "
-                f"and blueprint '{self._blueprint_name}'"
-            )
-            logging.info(
-                f"Optimize based on SLO violation amount: "
-                f"{self._optimize_based_on_slo_violation_amount} "
-                f"with thresholds: "
-                f"slo_violation_rate_threshold = "
-                f"{self._slo_violation_rate_threshold}, "
-                f"slo_violation_amount_threshold_s = "
-                f"{self._slo_violation_amount_threshold_s}, "
-                f"slo_s = "
-                f"{self._slo_s}"
-            )
+        self._log_idx = 0
+        self._log_rows: list[dict[str, Any]] = []
+        self._log_columns = [
+            "timestamp",
+            "event_type",
+            "query_id",
+            "tpcds_temp_and_q_idx",
+            "cluster_name",
+            "old_latency_s",
+            "raw_model_latency_s",
+            "latency_s",
+            "end_time_s",
+            "marginal_slo_violation",
+            "marginal_cost",
+        ]
+        self._log_threshold = 1000
 
         # Set up bookkeeping etc.
         self._cost_per_second_per_cluster: dict[str, float] = {}
@@ -158,9 +148,67 @@ class WorkloadRoutingSimulator:
                 cluster_name
             ] = None
 
-    def _log_if_verbose(self, message: str) -> None:
-        if self._verbose:
-            logging.info(message)
+    def _log_if_verbose(self, d: dict) -> None:
+        """
+        Create the specified log entry if verbose is enabled,
+        and write out to a parquet file if the number of log entries reaches
+        the threshold.
+
+        Parameters:
+            d: A dictionary containing the log entry data. The keys should match
+                the columns specified in self._log_columns.
+        """
+
+        if not self._verbose:
+            return
+
+        self._log_rows.append(d)
+
+        if len(self._log_rows) >= self._log_threshold:
+            self._log_df = pd.DataFrame(
+                self._log_rows, columns=self._log_columns
+            )
+            log_filename = os.path.join(
+                self._out_dir, f"solve_log_{self._log_idx}.parquet"
+            )
+            self._log_df.to_parquet(log_filename)
+            self._log_idx += 1
+            self._log_rows = []
+
+    def finalize_log(self) -> None:
+        """
+        Write out any remaining log entries and consolidate all log files into 
+        one, deleting the individual log files afterwards to save space.
+        """
+
+        if not self._verbose:
+            return
+
+        # Write out remaining log rows if any.
+        if len(self._log_rows) > 0:
+            self._log_df = pd.DataFrame(
+                self._log_rows, columns=self._log_columns
+            )
+            log_filename = os.path.join(
+                self._out_dir, f"solve_log_{self._log_idx}.parquet"
+            )
+            self._log_df.to_parquet(log_filename)
+            self._log_idx += 1
+            self._log_rows = []
+
+        # Consolidate log files into one.
+        all_log_dfs = []
+        for idx in range(self._log_idx):
+            log_filename = os.path.join(
+                self._out_dir, f"solve_log_{idx}.parquet"
+            )
+            df = pd.read_parquet(log_filename)
+            all_log_dfs.append(df)
+            os.remove(log_filename)
+        if len(all_log_dfs) > 0:
+            full_log_df = pd.concat(all_log_dfs, ignore_index=True)
+            full_log_out_path = os.path.join(self._out_dir, "solve_log.parquet")
+            full_log_df.to_parquet(full_log_out_path, index=False)
 
     def first_pass(self) -> None:
         """
@@ -183,8 +231,12 @@ class WorkloadRoutingSimulator:
             self._cleanup_completed_queries_up_to(query.start_time_s)
 
             self._log_if_verbose(
-                f"({query.start_time_s:.3f}) Routing query {query.query_id} "
-                f"with template and idx {query.tpcds_temp_and_q_idx}."
+                {
+                    "timestamp": query.start_time_s,
+                    "event_type": "arrival",
+                    "query_id": query.query_id,
+                    "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                }
             )
 
             # Add query to the right cluster.
@@ -197,10 +249,17 @@ class WorkloadRoutingSimulator:
             )
             self_latency_s = latencies_on_best_cluster_s[query.query_id]
             self._log_if_verbose(
-                f"Routing query {query.query_id} to cluster "
-                f"{selected_cluster_name}. Predicted latency is "
-                f"{self_latency_s:.2f}s (ends at "
-                f"{query.start_time_s + self_latency_s:.2f}s). "
+                {
+                    "timestamp": query.start_time_s,
+                    "event_type": "routing",
+                    "query_id": query.query_id,
+                    "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                    "cluster_name": selected_cluster_name,
+                    "old_latency_s": None,
+                    "raw_model_latency_s": None,
+                    "latency_s": self_latency_s,
+                    "end_time_s": query.start_time_s + self_latency_s,
+                }
             )
             self._active_queries_per_cluster[selected_cluster_name].append(
                 updated_query
@@ -209,11 +268,6 @@ class WorkloadRoutingSimulator:
 
             # Go through the active queries on the best cluster and update their
             # latencies based on the prediction results.
-            if len(self._active_queries_per_cluster[selected_cluster_name]) > 1:
-                self._log_if_verbose(
-                    f"Updating predicted latencies for active queries on "
-                    f"cluster {selected_cluster_name}."
-                )
             for q in self._active_queries_per_cluster[selected_cluster_name]:
                 if q.query_id == query.query_id:
                     continue
@@ -221,10 +275,17 @@ class WorkloadRoutingSimulator:
                 predicted_latency_s = latencies_on_best_cluster_s[q.query_id]
                 updated_latency_s = max(old_latency_s, predicted_latency_s)
                 self._log_if_verbose(
-                    f"\tQuery {q.query_id}: Old: {old_latency_s:.2f}s, "
-                    f"Pred: {predicted_latency_s:.2f}s, "
-                    f"New: {updated_latency_s:.2f}s (ends at "
-                    f"{q.start_time_s + updated_latency_s:.2f}s)"
+                    {
+                        "timestamp": query.start_time_s,
+                        "event_type": "latency_update",
+                        "query_id": q.query_id,
+                        "tpcds_temp_and_q_idx": q.tpcds_temp_and_q_idx,
+                        "cluster_name": selected_cluster_name,
+                        "old_latency_s": old_latency_s,
+                        "raw_model_latency_s": predicted_latency_s,
+                        "latency_s": updated_latency_s,
+                        "end_time_s": q.start_time_s + updated_latency_s,
+                    }
                 )
                 q.latency_s = updated_latency_s
 
@@ -266,6 +327,7 @@ class WorkloadRoutingSimulator:
 
         self.write_out_visualization()
         self.write_out_billing_interval_analysis()
+        self.finalize_log()
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         with open(mapping_out_path, "w") as f:
@@ -289,7 +351,18 @@ class WorkloadRoutingSimulator:
                 end_time_s = query.start_time_s + query.latency_s
                 if (current_time_s is None) or (end_time_s <= current_time_s):
                     self._completed_queries_per_cluster[cluster].append(query)
-                    ended_with_times.append((query, end_time_s))
+                    self._log_if_verbose(
+                        {
+                            "timestamp": end_time_s,
+                            "event_type": "completion",
+                            "query_id": query.query_id,
+                            "cluster_name": query.cluster_name,
+                            "old_latency_s": None,
+                            "raw_model_latency_s": None,
+                            "latency_s": query.latency_s,
+                            "end_time_s": end_time_s,
+                        }
+                    )
                 else:
                     still_active_queries.append(query)
             self._active_queries_per_cluster[cluster] = still_active_queries
@@ -316,13 +389,6 @@ class WorkloadRoutingSimulator:
                 self._most_recent_billing_window_start_time_per_cluster_s[
                     cluster
                 ] = None
-
-        for query, end_time_s in ended_with_times:
-            self._log_if_verbose(
-                f"({end_time_s:.3f}) Query {query.query_id} completed on "
-                f"cluster {query.cluster_name} with latency "
-                f"{query.latency_s:.2f}s."
-            )
 
     def _slo_cmp_with_tolerance(self, a: float, b: float) -> int:
         """
@@ -502,10 +568,19 @@ class WorkloadRoutingSimulator:
                 }
 
             self._log_if_verbose(
-                f"\tCluster {cluster_name}: Marginal SLO violation: "
-                f"{marginal_slo_violation:.4f}, Marginal cost: "
-                f"{marginal_cost:.4f} (Billed intervals before: {before_billed_intervals}, "
-                f"after: {after_billed_intervals})"
+                {
+                    "timestamp": query.start_time_s,
+                    "event_type": "cluster_consideration",
+                    "query_id": query.query_id,
+                    "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                    "cluster_name": cluster_name,
+                    "old_latency_s": None,
+                    "raw_model_latency_s": None,
+                    "latency_s": None,
+                    "end_time_s": None,
+                    "marginal_slo_violation": marginal_slo_violation,
+                    "marginal_cost": marginal_cost,
+                }
             )
 
         assert best_cluster_name is not None

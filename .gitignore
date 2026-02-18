@@ -4,6 +4,7 @@
 *.whl
 
 .ui-meta/
+.planning/
 
 scratch.ipynb
 config/conn.yml
