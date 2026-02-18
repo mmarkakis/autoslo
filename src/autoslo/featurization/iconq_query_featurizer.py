@@ -143,6 +143,59 @@ class IconqQueryFeaturizer:
                         featurization
                     )
 
+    def extend_featurization_cache_from_runs(
+        self, run_ids: list[str], write_out: bool = True
+    ) -> None:
+        """
+        Extends the featurization cache by featurizing queries from additional
+        runs. This can be used to featurize queries that were not in the
+        original runs used to initialize the featurizer.
+
+        Parameters:
+            run_ids: The run IDs to featurize and add to the cache.
+            write_out: Whether to save the featurizer after extending the cache.
+        """
+
+        feat_func = (
+            self.featurize_plan
+            if not self._from_sys_query_explain
+            else self.featurize_plan_from_sys_query_explain_rows
+        )
+        additional = 0
+        print(f"Initially, cache has {len(self._featurization_cache)} entries.")
+
+        for run_id in tqdm(run_ids):
+            trace = Trace(run_id)
+            tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+            was_aborted = trace.was_aborted()
+
+            info = (
+                trace.query_plans()
+                if not self._from_sys_query_explain
+                else trace.sys_query_explain_rows_per_query()
+            )
+
+            for query_id, aborted in was_aborted.items():
+                if aborted:
+                    # Ignore aborted queries for accurate featurization.
+                    continue
+
+                query_id = cast(str, query_id)
+                tpcds_temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+
+                if tpcds_temp_and_q_idx in self._featurization_cache:
+                    continue
+                if (query_id not in info) or (info[query_id] is None):
+                    self._featurization_cache[tpcds_temp_and_q_idx] = []
+                    continue
+                featurization = feat_func(info[query_id])  # type: ignore
+                self._featurization_cache[tpcds_temp_and_q_idx] = featurization
+                additional += 1
+        print(f"Added featurizations for {additional} queries to the cache.")
+
+        if write_out:
+            self.save()
+
     @property
     def num_dims(self) -> int:
         """
@@ -327,7 +380,9 @@ class IconqQueryFeaturizer:
         if tpcds_temp_and_q_idx in self._featurization_cache:
             return self._featurization_cache[tpcds_temp_and_q_idx]
 
-        raise ValueError("No cached featurization for this query.")
+        raise ValueError(
+            f"No cached featurization for TPC-DS template and query index {tpcds_temp_and_q_idx}."
+        )
 
     def featurize(
         self,
@@ -577,7 +632,7 @@ class IconqQueryFeaturizer:
                     features,
                 )
 
-    def save(self, timestamp:Optional[str] = None) -> str:
+    def save(self, timestamp: Optional[str] = None) -> str:
         """
         Saves the IconqQueryFeaturizer.
 
@@ -594,7 +649,7 @@ class IconqQueryFeaturizer:
             "iconq_query_featurizations",
             timestamp,
         )
-        os.makedirs(save_dir, exist_ok=(timestamp is not None)) 
+        os.makedirs(save_dir, exist_ok=(timestamp is not None))
 
         # Save featurizer parameters.
         param_path = os.path.join(save_dir, "params.yml")
@@ -634,7 +689,6 @@ class IconqQueryFeaturizer:
         # Also save it as a pickle for easier loading.
         pickle_path = os.path.join(save_dir, "featurizations.pkl")
         with open(pickle_path, "wb") as f:
-            print('here')
             pickle.dump(self._featurization_cache, f)
 
         return timestamp
