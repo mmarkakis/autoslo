@@ -19,6 +19,8 @@ from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.redset_workload import RedsetWorkload
+from autoslo.workload_definition.workload import Workload
 
 
 class WorkloadRoutingSimulator:
@@ -71,8 +73,11 @@ class WorkloadRoutingSimulator:
         self._simulator_run_id = simulator_run_id
         self._recorder = GanttRecorder()
 
-        workload = Chunk.load(workload_name)  # FIXME: generalize to workloads.
-        self._workload = workload
+        self._workload: Workload
+        if workload_name.startswith("redset"):
+            self._workload = RedsetWorkload.load(workload_name)
+        else:
+            self._workload = Chunk.load(workload_name)
 
         self._run_id = simulator_run_id or str(
             int(datetime.now().timestamp() * 1000)

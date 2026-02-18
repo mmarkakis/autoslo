@@ -37,7 +37,7 @@ def main(args) -> None:
     output_dir = os.path.join(
         pu.get_data_path(),
         "redset_workloads",
-        f"{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}",
+        f"redset_{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}",
     )
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "parameters.yml"), "w") as f:
@@ -110,7 +110,7 @@ def main(args) -> None:
 
     # Set columns.
     df["workload_id"] = (
-        f"{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}"
+        f"redset_{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}"
     )
     df["rel_start_time_s"] = (
         df["arrival_timestamp"] - df["arrival_timestamp"].min()
