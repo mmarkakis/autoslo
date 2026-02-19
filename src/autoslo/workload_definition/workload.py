@@ -11,8 +11,7 @@ class Workload(ABC):
         """Returns the name of the workload."""
         pass
 
-    @property
     @abstractmethod
-    def queries(self) -> list[Query]:
+    def queries(self, *args, **kwargs) -> list[Query]:
         """Returns the list of queries in the workload."""
         pass

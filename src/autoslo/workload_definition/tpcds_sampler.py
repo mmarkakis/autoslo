@@ -8,6 +8,11 @@ from autoslo.workload_definition.query import TPCDSTempAndQIdx
 
 
 class TPCDSSampler:
+    """
+    Sampler for TPC-DS queries based on a precomputed probability distribution
+    of templates and query indices (TPCDSTempAndQIdx) conditioned on query
+    latency bins.
+    """
 
     def __init__(
         self,
@@ -87,8 +92,8 @@ class TPCDSSampler:
             idxs = np.flatnonzero(latency_bin_idxs == b)
             A_codes[idxs] = np.searchsorted(self.C[b], u[idxs], side="right")
 
-        temp_and_q_idxs = [
-            self.column_dict[i] for i in A_codes.astype(np.int16)
+        temp_and_q_idxs = [ 
+            self.column_dict[i] for i in A_codes.astype(int)
         ]
 
         return pd.Series(temp_and_q_idxs, index=latencies_s.index)
