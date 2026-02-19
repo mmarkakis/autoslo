@@ -3,8 +3,10 @@ from datetime import datetime
 from typing import Any, Optional
 
 import pandas as pd
+from scipy import datasets
 import yaml
 from intervaltree import Interval  # type: ignore[import]
+from tqdm import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
@@ -15,11 +17,15 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.blueprints.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
+from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.query import Query
-from autoslo.workload_definition.redset_workload import RedsetWorkload
+from autoslo.workload_definition.redset_workload import (
+    RedsetWorkload,
+    RedsetWorkloadSamplingSpec,
+)
 from autoslo.workload_definition.workload import Workload
 
 
@@ -127,7 +133,7 @@ class WorkloadRoutingSimulator:
             "marginal_slo_violation",
             "marginal_cost",
         ]
-        self._log_threshold = 1000
+        self._log_threshold = 10000
 
         # Set up bookkeeping etc.
         self._cost_per_second_per_cluster: dict[str, float] = {}
@@ -210,29 +216,33 @@ class WorkloadRoutingSimulator:
             full_log_out_path = os.path.join(self._out_dir, "solve_log.parquet")
             full_log_df.to_parquet(full_log_out_path, index=False)
 
-    def first_pass(self) -> None:
+    def simulate_one(self, sampling_spec: RedsetWorkloadSamplingSpec) -> None:
         """
         First pass: route queries as they come in, preferring active endpoints
         and minimizing SLO violations.
         """
 
-        self._recorder.snapshot(
-            self._cost_per_second_per_cluster,
-            self._completed_queries_per_cluster,
-            self._active_queries_per_cluster,
-            label="Start (t = 0.0s)",
-            slo_s=self._slo_s,
-        )
-
         seq_num_to_cluster_name: dict[int, str] = {}
 
-        for i, query in enumerate(self._workload.queries):
+        queries = self._workload.queries(sampling_spec=sampling_spec)
+        print(
+            f"Simulating routing of {len(queries)} queries from workload "
+            f"{self._workload_name} using Iconq model {self._iconq_model_id} "
+            f"and blueprint {self._blueprint_name}..."
+        )
+        print(
+            f"The first and last relative query start times are {queries[0].rel_start_time_s} and {queries[-1].rel_start_time_s}"
+        )
 
-            self._cleanup_completed_queries_up_to(query.start_time_s)
+        total_queries = len(queries)
+
+        for i, query in tqdm(enumerate(queries), total=total_queries):
+
+            self._cleanup_completed_queries_up_to(query.rel_start_time_s)
 
             self._log_if_verbose(
                 {
-                    "timestamp": query.start_time_s,
+                    "timestamp": query.rel_start_time_s,
                     "event_type": "arrival",
                     "query_id": query.query_id,
                     "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
@@ -250,7 +260,7 @@ class WorkloadRoutingSimulator:
             self_latency_s = latencies_on_best_cluster_s[query.query_id]
             self._log_if_verbose(
                 {
-                    "timestamp": query.start_time_s,
+                    "timestamp": query.rel_start_time_s,
                     "event_type": "routing",
                     "query_id": query.query_id,
                     "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
@@ -258,7 +268,7 @@ class WorkloadRoutingSimulator:
                     "old_latency_s": None,
                     "raw_model_latency_s": None,
                     "latency_s": self_latency_s,
-                    "end_time_s": query.start_time_s + self_latency_s,
+                    "end_time_s": query.rel_start_time_s + self_latency_s,
                 }
             )
             self._active_queries_per_cluster[selected_cluster_name].append(
@@ -276,7 +286,7 @@ class WorkloadRoutingSimulator:
                 updated_latency_s = max(old_latency_s, predicted_latency_s)
                 self._log_if_verbose(
                     {
-                        "timestamp": query.start_time_s,
+                        "timestamp": query.rel_start_time_s,
                         "event_type": "latency_update",
                         "query_id": q.query_id,
                         "tpcds_temp_and_q_idx": q.tpcds_temp_and_q_idx,
@@ -284,7 +294,7 @@ class WorkloadRoutingSimulator:
                         "old_latency_s": old_latency_s,
                         "raw_model_latency_s": predicted_latency_s,
                         "latency_s": updated_latency_s,
-                        "end_time_s": q.start_time_s + updated_latency_s,
+                        "end_time_s": q.rel_start_time_s + updated_latency_s,
                     }
                 )
                 q.latency_s = updated_latency_s
@@ -299,33 +309,15 @@ class WorkloadRoutingSimulator:
             ):
                 self._most_recent_billing_window_start_time_per_cluster_s[
                     selected_cluster_name
-                ] = query.start_time_s
-
-            self._recorder.snapshot(
-                self._cost_per_second_per_cluster,
-                self._completed_queries_per_cluster,
-                self._active_queries_per_cluster,
-                label=f"First pass iter {i} (t = {query.start_time_s:.3f}s)",
-                slo_s=self._slo_s,
-            )
+                ] = query.rel_start_time_s
 
         workload_end_time_s = max(
-            q.start_time_s + q.latency_s
+            q.rel_start_time_s + q.latency_s
             for cluster_name in self._blueprint.cluster_names
             for q in self._completed_queries_per_cluster[cluster_name]
         )
 
         self._cleanup_completed_queries_up_to()
-
-        self._recorder.snapshot(
-            self._cost_per_second_per_cluster,
-            self._completed_queries_per_cluster,
-            self._active_queries_per_cluster,
-            label=f"Final (t = {workload_end_time_s:.3f}s)",
-            slo_s=self._slo_s,
-        )
-
-        self.write_out_visualization()
         self.write_out_billing_interval_analysis()
         self.finalize_log()
 
@@ -348,7 +340,7 @@ class WorkloadRoutingSimulator:
         for cluster, active_queries in self._active_queries_per_cluster.items():
             still_active_queries = []
             for query in active_queries:
-                end_time_s = query.start_time_s + query.latency_s
+                end_time_s = query.rel_start_time_s + query.latency_s
                 if (current_time_s is None) or (end_time_s <= current_time_s):
                     self._completed_queries_per_cluster[cluster].append(query)
                     self._log_if_verbose(
@@ -434,6 +426,9 @@ class WorkloadRoutingSimulator:
             query.tpcds_temp_and_q_idx
         )
 
+        before_costs: dict[str, float] = {}
+        before_slo_violations: dict[str, float] = {}
+
         for (
             cluster_name,
             active_queries,
@@ -467,7 +462,7 @@ class WorkloadRoutingSimulator:
                     self._most_recent_billing_window_start_time_per_cluster_s[
                         cluster_name
                     ],
-                    query.start_time_s,
+                    query.rel_start_time_s,
                 )
                 before_query_intervals.append(ongoing_billing_interval)
             before_billed_intervals = Billing.billed_intervals(
@@ -476,20 +471,31 @@ class WorkloadRoutingSimulator:
             before_cost = self._cost_per_second_per_cluster[
                 cluster_name
             ] * Billing.billed_s(before_billed_intervals)
+            before_costs[cluster_name] = before_cost
+            before_slo_violations[cluster_name] = before_slo_violation
 
-            # After routing:
+        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
+
+        for (
+            cluster_name,
+            active_queries,
+        ) in self._active_queries_per_cluster.items():
+
             active_w_current = active_queries + [query]
-            dataset = ConcurrentQueryDataset.build_from_query_groups(
-                iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
-                base_queries=active_w_current,
-                query_neighbors={
-                    q.query_id: active_w_current for q in active_w_current
-                },
-                use_log_runtime=self._iconq_model.trained_on_log_runtime,
-            )
-            predictions = self._iconq_model.predict_from_dataset(dataset)
+            run_to_base_to_neighbors[cluster_name] = {
+                q: active_w_current for q in active_w_current
+            }
+
+        dataset = ConcurrentQueryDataset.build_from_query_groups(
+            iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
+            run_to_base_to_neighbors=run_to_base_to_neighbors,
+        )
+        all_predictions = self._iconq_model.predict_from_dataset(dataset)
+
+        for cluster_name, predictions in all_predictions.items():
+
             latencies_after = [predictions[query.query_id].overall_mean_s()]
-            for q in active_queries:
+            for q in run_to_base_to_neighbors[cluster_name].keys():
                 query_id = q.query_id
                 latencies_after.append(
                     max(q.latency_s, predictions[query_id].overall_mean_s())
@@ -505,10 +511,15 @@ class WorkloadRoutingSimulator:
                 for latency_s in latencies_after
             ]
             after_slo_violation = sum(individual_after_slo_violations)
-            marginal_slo_violation = after_slo_violation - before_slo_violation
+            marginal_slo_violation = (
+                after_slo_violation - before_slo_violations[cluster_name]
+            )
             after_query_intervals = [
-                Interval(q.start_time_s, q.start_time_s + latency_s)
-                for q, latency_s in zip(active_w_current, latencies_after)
+                Interval(q.rel_start_time_s, q.rel_start_time_s + latency_s)
+                for q, latency_s in zip(
+                    run_to_base_to_neighbors[cluster_name].keys(),
+                    latencies_after,
+                )
             ]
             if (
                 self._most_recent_billing_window_start_time_per_cluster_s[
@@ -521,7 +532,7 @@ class WorkloadRoutingSimulator:
                         self._most_recent_billing_window_start_time_per_cluster_s[
                             cluster_name
                         ],
-                        query.start_time_s,
+                        query.rel_start_time_s,
                     )
                 )
             after_billed_intervals = Billing.billed_intervals(
@@ -530,7 +541,7 @@ class WorkloadRoutingSimulator:
             after_cost = self._cost_per_second_per_cluster[
                 cluster_name
             ] * Billing.billed_s(after_billed_intervals)
-            marginal_cost = after_cost - before_cost
+            marginal_cost = after_cost - before_costs[cluster_name]
 
             # Compare and update best if needed.
             if (
@@ -561,12 +572,15 @@ class WorkloadRoutingSimulator:
                 )
                 latencies_on_best_cluster_s = {
                     q.query_id: latency_s
-                    for q, latency_s in zip(active_w_current, latencies_after)
+                    for q, latency_s in zip(
+                        run_to_base_to_neighbors[cluster_name].keys(),
+                        latencies_after,
+                    )
                 }
 
             self._log_if_verbose(
                 {
-                    "timestamp": query.start_time_s,
+                    "timestamp": query.rel_start_time_s,
                     "event_type": "cluster_consideration",
                     "query_id": query.query_id,
                     "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,

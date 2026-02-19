@@ -122,11 +122,10 @@ class RedsetWorkload(Workload):
                 df["arrival_timestamp"]
             )  # ensure it's datetime
             min_time = df["arrival_timestamp"].min()
-            df["arrival_timestamp"] = min_time + timedelta(
-                seconds=(
-                    (df["arrival_timestamp"] - min_time).dt.total_seconds()
-                    / sampling_spec.real_s_per_output_s
-                )
+            df["arrival_timestamp"] = min_time + pd.to_timedelta(
+                (df["arrival_timestamp"] - min_time).dt.total_seconds()
+                / sampling_spec.real_s_per_output_s,
+                unit="s",
             )
 
         sampler = TPCDSSampler.from_dir(

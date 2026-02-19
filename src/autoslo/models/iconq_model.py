@@ -1,3 +1,4 @@
+from collections import defaultdict
 import logging
 import os
 import pickle
@@ -319,7 +320,7 @@ class IconqModel:
     def predict_from_dataset(
         self,
         dataset: ConcurrentQueryDataset,
-    ) -> dict[str, ModelPrediction]:
+    ) -> dict[str, dict[str, ModelPrediction]]:
         """
         Predicts the runtimes for the queries in the given dataset.
 
@@ -327,7 +328,7 @@ class IconqModel:
             dataset: The dataset to predict runtimes for.
 
         Returns:
-            A dictionary mapping query IDs to their predicted ModelPrediction.
+            A dictionary mapping (run_id, query_id) tuples to their predicted ModelPrediction.
         """
 
         dataloader, _ = self._get_dataloaders(
@@ -337,7 +338,7 @@ class IconqModel:
             save_dataset=False,
         )
 
-        predictions: dict[str, ModelPrediction] = {}
+        predictions: dict[str, dict[str, ModelPrediction]] = defaultdict(dict)
         self._nn.eval()
         with torch.no_grad():
             for batch in dataloader:
@@ -351,8 +352,9 @@ class IconqModel:
                     y,
                     query_id,
                     tpcds_temp_and_q_idx,
+                    run_id,
                 ) in batch_pred_v_true:
-                    predictions[query_id] = prediction
+                    predictions[run_id][query_id] = prediction
 
         return predictions
 
@@ -915,6 +917,8 @@ class IconqModel:
         ) = batch
 
         batch_pred_v_true = []
+        # List of (ModelPrediction, true_runtime, query_id, tpcds_temp_and_q_idx, run_id)
+        # tuples for the batch.
 
         if train_config.use_stage_for_isolated_queries:
             # Identify isolated queries in the batch and predict them,
@@ -960,6 +964,7 @@ class IconqModel:
                             y[i],
                             query_ids[i],
                             tpcds_temp_and_q_idxs[i],
+                            run_ids[i],
                         )
                     )
 
@@ -1038,6 +1043,7 @@ class IconqModel:
                             y_,
                             q,
                             t,
+                            r,
                         )
                     )
         elif self._loss_type == LossType.NLL:
@@ -1078,6 +1084,7 @@ class IconqModel:
                             y_,
                             q,
                             t,
+                            r,
                         )
                     )
         else:
@@ -1126,6 +1133,7 @@ class IconqModel:
                             y_,
                             q,
                             t,
+                            r,
                         )
                     )
 

@@ -243,10 +243,9 @@ class ConcurrentQueryDataset(Dataset):
     @staticmethod
     def build_from_query_groups(
         iconq_interaction_featurizer: IconqInteractionFeaturizer,
-        base_queries: list[Query],
-        query_neighbors: dict[str, list[Query]],
+        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]],
+
         use_log_runtime: bool = True,
-        run_id: Optional[str] = None,
     ) -> "ConcurrentQueryDataset":
         """
         Build a dataset from base queries and their pre-computed neighbors.
@@ -255,19 +254,18 @@ class ConcurrentQueryDataset(Dataset):
         all assumed to be on the same cluster.
 
         Parameters:
-            base_queries: List of Query objects for which to build dataset rows.
-            query_neighbors: Dict mapping query_id to list of neighboring queries.
-                Each query in base_queries should have an entry in this dict. If
-                the neighbors include the base query itself, it will be ignored.
+            iconq_interaction_featurizer: The featurizer to use for constructing
+                interaction features between queries.
+            run_to_base_to_neighbors: A dictionary mapping run IDs to dictionaries
+                that map base queries to their list of neighboring queries.
             use_log_runtime: Whether to use log(runtime) as the target variable.
-            run_id: Optional run ID to associate with all queries.
 
         Returns:
             A ConcurrentQueryDataset ready for training or inference.
         """
 
         # If empty, return empty dataset
-        if not base_queries or len(base_queries) == 0:
+        if len(run_to_base_to_neighbors) == 0:
             return ConcurrentQueryDataset(
                 x=[],
                 pinch_points=torch.tensor([], dtype=torch.int8),
@@ -286,77 +284,76 @@ class ConcurrentQueryDataset(Dataset):
         tpcds_temp_and_q_idx_out = []
         run_ids_out = []
         y_is_lower_bound_out = []
-        for base_query in base_queries:
-            neighbors = query_neighbors.get(base_query.query_id, [])
 
-            # Build interaction features
-            interaction_featurizations: dict[float, list[float]] = {}
+        for run_id, base_to_neighbors in run_to_base_to_neighbors.items():
+            for base_query in base_to_neighbors.keys():
 
-            # Add self-interaction (helps with isolated queries)
-            interaction_featurizations[base_query.start_time_s] = (
-                iconq_interaction_featurizer.featurize_from_vectors(
-                    cluster_name=base_query.cluster_name,
-                    qa_features=base_query.featurization,
-                    qa_start_time_s=base_query.start_time_s,
-                    qa_latency_prediction=base_query.stage_latency_prediction_s,
-                    qb_features=base_query.featurization,
-                    qb_start_time_s=base_query.start_time_s,
-                    qb_latency_prediction=base_query.stage_latency_prediction_s,
-                )
-            )
+                # Build interaction features
+                interaction_featurizations: dict[float, list[float]] = {}
 
-            # Add neighbor interactions, sorted by start time
-            for neighbor in sorted(neighbors, key=lambda q: q.start_time_s):
-                if neighbor.query_id == base_query.query_id:
-                    continue  # Skip self-interaction; already added
-                interaction_featurizations[neighbor.start_time_s] = (
+                # Add self-interaction (helps with isolated queries)
+                interaction_featurizations[base_query.rel_start_time_s] = (
                     iconq_interaction_featurizer.featurize_from_vectors(
                         cluster_name=base_query.cluster_name,
                         qa_features=base_query.featurization,
-                        qa_start_time_s=base_query.start_time_s,
+                        qa_start_time_s=base_query.rel_start_time_s,
                         qa_latency_prediction=base_query.stage_latency_prediction_s,
-                        qb_features=neighbor.featurization,
-                        qb_start_time_s=neighbor.start_time_s,
-                        qb_latency_prediction=neighbor.stage_latency_prediction_s,
+                        qb_features=base_query.featurization,
+                        qb_start_time_s=base_query.rel_start_time_s,
+                        qb_latency_prediction=base_query.stage_latency_prediction_s,
                     )
                 )
 
-            # Sort interactions by start time to create the sequence
-            neighbor_sort_order = sorted(interaction_featurizations.keys())
-
-            # Add to dataset
-            x.append(
-                torch.stack(
-                    [
-                        torch.tensor(
-                            interaction_featurizations[start_time],
-                            dtype=torch.float32,
+                # Add neighbor interactions, sorted by start time
+                for neighbor in base_to_neighbors[base_query]:
+                    if neighbor.query_id == base_query.query_id:
+                        continue  # Skip self-interaction; already added
+                    interaction_featurizations[neighbor.rel_start_time_s] = (
+                        iconq_interaction_featurizer.featurize_from_vectors(
+                            cluster_name=base_query.cluster_name,
+                            qa_features=base_query.featurization,
+                            qa_start_time_s=base_query.rel_start_time_s,
+                            qa_latency_prediction=base_query.stage_latency_prediction_s,
+                            qb_features=neighbor.featurization,
+                            qb_start_time_s=neighbor.rel_start_time_s,
+                            qb_latency_prediction=neighbor.stage_latency_prediction_s,
                         )
-                        for start_time in neighbor_sort_order
-                    ]
+                    )
+
+                # Sort interactions by start time to create the sequence
+                neighbor_sort_order = sorted(interaction_featurizations.keys())
+
+                # Add to dataset
+                x.append(
+                    torch.as_tensor(
+                        [
+                            interaction_featurizations[start_time]
+                            for start_time in neighbor_sort_order
+                        ],
+                        dtype=torch.float32,
+                    )
                 )
-            )
-            if base_query.latency_s is not None:
-                latency = base_query.latency_s
-                floored_latency = max(latency, 0.001)
-                y.append(
-                    floored_latency
-                    if not use_log_runtime
-                    else np.log(floored_latency)
+                if base_query.latency_s is not None:
+                    latency = base_query.latency_s
+                    floored_latency = max(latency, 0.001)
+                    y.append(
+                        floored_latency
+                        if not use_log_runtime
+                        else np.log(floored_latency)
+                    )
+                else:
+                    y.append(0.0)  # Placeholder if latency is not available
+                pinch_points.append(
+                    neighbor_sort_order.index(base_query.rel_start_time_s)
                 )
-            else:
-                y.append(0.0)  # Placeholder if latency is not available
-            pinch_points.append(
-                neighbor_sort_order.index(base_query.start_time_s)
-            )
-            query_ids_out.append(base_query.query_id)
-            tpcds_temp_and_q_idx_out.append(base_query.tpcds_temp_and_q_idx)
-            run_ids_out.append(run_id if run_id is not None else "unknown")
-            y_is_lower_bound_out.append(
-                base_query.latency_is_lower_bound
-                if (base_query.latency_is_lower_bound is not None)
-                else False
-            )
+                query_ids_out.append(base_query.query_id)
+                tpcds_temp_and_q_idx_out.append(base_query.tpcds_temp_and_q_idx)
+                run_ids_out.append(run_id if run_id is not None else "unknown")
+                y_is_lower_bound_out.append(
+                    base_query.latency_is_lower_bound
+                    if (base_query.latency_is_lower_bound is not None)
+                    else False
+                )
 
         # Convert to tensors
         x_tensorized = x
