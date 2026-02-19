@@ -244,7 +244,6 @@ class ConcurrentQueryDataset(Dataset):
     def build_from_query_groups(
         iconq_interaction_featurizer: IconqInteractionFeaturizer,
         run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]],
-
         use_log_runtime: bool = True,
     ) -> "ConcurrentQueryDataset":
         """
@@ -259,7 +258,7 @@ class ConcurrentQueryDataset(Dataset):
             run_to_base_to_neighbors: A dictionary mapping run IDs to dictionaries
                 that map base queries to their list of neighboring queries.
             use_log_runtime: Whether to use log(runtime) as the target variable.
-
+           
         Returns:
             A ConcurrentQueryDataset ready for training or inference.
         """
@@ -286,53 +285,100 @@ class ConcurrentQueryDataset(Dataset):
         y_is_lower_bound_out = []
 
         for run_id, base_to_neighbors in run_to_base_to_neighbors.items():
+
+            # Fast path: if every base query maps to the same neighbor list
+            # (identity check), the full group is all-vs-all. Build all
+            # interaction matrices in one batch call instead of one per base.
+            neighbor_ids = {id(v) for v in base_to_neighbors.values()}
+            if len(neighbor_ids) == 1:
+                # All base queries share one neighbor list.
+                shared_neighbors: list[Query] = next(
+                    iter(base_to_neighbors.values())
+                )
+                entries_for_batch = [
+                    (
+                        q.tpcds_temp_and_q_idx,
+                        q.rel_start_time_s,
+                        q.stage_latency_prediction_s,
+                    )
+                    for q in shared_neighbors
+                ]
+                # Index of each base query within shared_neighbors (O(1) lookup).
+                neighbor_pos = {id(q): i for i, q in enumerate(shared_neighbors)}
+                base_query_list = list(base_to_neighbors.keys())
+                base_idx_in_neighbors = [
+                    neighbor_pos[id(q)] for q in base_query_list
+                ]
+                cluster_name = base_query_list[0].cluster_name
+                arrays, pinch_indices = (
+                    iconq_interaction_featurizer
+                    .featurize_all_vs_all_to_numpy(
+                        cluster_name=cluster_name,
+                        entries=entries_for_batch,
+                    )
+                )
+                for base_query, base_idx in zip(
+                    base_query_list, base_idx_in_neighbors
+                ):
+                    x.append(torch.from_numpy(arrays[base_idx]))
+                    if base_query.latency_s is not None:
+                        latency = base_query.latency_s
+                        floored_latency = max(latency, 0.001)
+                        y.append(
+                            floored_latency
+                            if not use_log_runtime
+                            else np.log(floored_latency)
+                        )
+                    else:
+                        y.append(0.0)
+                    pinch_points.append(pinch_indices[base_idx])
+                    query_ids_out.append(base_query.query_id)
+                    tpcds_temp_and_q_idx_out.append(
+                        base_query.tpcds_temp_and_q_idx
+                    )
+                    run_ids_out.append(
+                        run_id if run_id is not None else "unknown"
+                    )
+                    y_is_lower_bound_out.append(
+                        base_query.latency_is_lower_bound
+                        if (base_query.latency_is_lower_bound is not None)
+                        else False
+                    )
+                continue
+
+            # General path: distinct neighbor lists per base query.
             for base_query in base_to_neighbors.keys():
 
-                # Build interaction features
-                interaction_featurizations: dict[float, list[float]] = {}
+                # Build qb_entries: self-interaction first, then neighbors.
+                qb_entries: list[
+                    tuple[float, str, float, bool]
+                ] = [
+                    (
+                        base_query.rel_start_time_s,
+                        base_query.tpcds_temp_and_q_idx,
+                        base_query.stage_latency_prediction_s,
+                        True,  # is_self
+                    )
+                ]
+                for neighbor in base_to_neighbors[base_query]:
+                    if neighbor.query_id != base_query.query_id:
+                        qb_entries.append((
+                            neighbor.rel_start_time_s,
+                            neighbor.tpcds_temp_and_q_idx,
+                            neighbor.stage_latency_prediction_s,
+                            False,  # is_self
+                        ))
 
-                # Add self-interaction (helps with isolated queries)
-                interaction_featurizations[base_query.rel_start_time_s] = (
-                    iconq_interaction_featurizer.featurize_from_vectors(
+                arr, pinch_idx = (
+                    iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
                         cluster_name=base_query.cluster_name,
-                        qa_features=base_query.featurization,
+                        qa_tpcds_temp_and_q_idx=base_query.tpcds_temp_and_q_idx,
                         qa_start_time_s=base_query.rel_start_time_s,
                         qa_latency_prediction=base_query.stage_latency_prediction_s,
-                        qb_features=base_query.featurization,
-                        qb_start_time_s=base_query.rel_start_time_s,
-                        qb_latency_prediction=base_query.stage_latency_prediction_s,
+                        qb_entries=qb_entries,
                     )
                 )
-
-                # Add neighbor interactions, sorted by start time
-                for neighbor in base_to_neighbors[base_query]:
-                    if neighbor.query_id == base_query.query_id:
-                        continue  # Skip self-interaction; already added
-                    interaction_featurizations[neighbor.rel_start_time_s] = (
-                        iconq_interaction_featurizer.featurize_from_vectors(
-                            cluster_name=base_query.cluster_name,
-                            qa_features=base_query.featurization,
-                            qa_start_time_s=base_query.rel_start_time_s,
-                            qa_latency_prediction=base_query.stage_latency_prediction_s,
-                            qb_features=neighbor.featurization,
-                            qb_start_time_s=neighbor.rel_start_time_s,
-                            qb_latency_prediction=neighbor.stage_latency_prediction_s,
-                        )
-                    )
-
-                # Sort interactions by start time to create the sequence
-                neighbor_sort_order = sorted(interaction_featurizations.keys())
-
-                # Add to dataset
-                x.append(
-                    torch.as_tensor(
-                        [
-                            interaction_featurizations[start_time]
-                            for start_time in neighbor_sort_order
-                        ],
-                        dtype=torch.float32,
-                    )
-                )
+                x.append(torch.from_numpy(arr))
                 if base_query.latency_s is not None:
                     latency = base_query.latency_s
                     floored_latency = max(latency, 0.001)
@@ -343,9 +389,7 @@ class ConcurrentQueryDataset(Dataset):
                     )
                 else:
                     y.append(0.0)  # Placeholder if latency is not available
-                pinch_points.append(
-                    neighbor_sort_order.index(base_query.rel_start_time_s)
-                )
+                pinch_points.append(pinch_idx)
                 query_ids_out.append(base_query.query_id)
                 tpcds_temp_and_q_idx_out.append(base_query.tpcds_temp_and_q_idx)
                 run_ids_out.append(run_id if run_id is not None else "unknown")

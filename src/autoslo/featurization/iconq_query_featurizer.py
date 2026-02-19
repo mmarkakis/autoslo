@@ -89,6 +89,11 @@ class IconqQueryFeaturizer:
             Trace.TPCDSTempAndQIdx,
             IconqQueryFeaturizer.IconqQueryFeaturization,
         ] = {}
+        # Lazy numpy cache: populated on first call to
+        # featurize_from_tpcds_temp_and_q_idx_as_numpy.
+        self._np_featurization_cache: dict[
+            Trace.TPCDSTempAndQIdx, np.ndarray
+        ] = {}
 
         if precomputed_top_operators is not None:
             self._top_operators = precomputed_top_operators
@@ -383,6 +388,29 @@ class IconqQueryFeaturizer:
         raise ValueError(
             f"No cached featurization for TPC-DS template and query index {tpcds_temp_and_q_idx}."
         )
+
+    def featurize_from_tpcds_temp_and_q_idx_as_numpy(
+        self,
+        tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+    ) -> np.ndarray:
+        """
+        Like featurize_from_tpcds_temp_and_q_idx, but returns the featurization
+        as a float32 numpy array. Results are cached so the list[float] →
+        np.ndarray conversion happens at most once per distinct query type.
+
+        Parameters:
+            tpcds_temp_and_q_idx: The TPC-DS template and query index
+                identifying the query to convert.
+
+        Returns:
+            The featurization as a 1-D float32 numpy array of shape (num_dims,).
+        """
+        if tpcds_temp_and_q_idx not in self._np_featurization_cache:
+            self._np_featurization_cache[tpcds_temp_and_q_idx] = np.array(
+                self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx),
+                dtype=np.float32,
+            )
+        return self._np_featurization_cache[tpcds_temp_and_q_idx]
 
     def featurize(
         self,
