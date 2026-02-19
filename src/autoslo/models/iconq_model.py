@@ -1,7 +1,7 @@
-from collections import defaultdict
 import logging
 import os
 import pickle
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
@@ -826,17 +826,18 @@ class IconqModel:
         # Calculate error metrics
         errors: dict[str, float] = {}
 
+        # (ModelPrediction, true_runtime, query_id, tpcds_temp_and_q_idx, run_id)
         abs_error = [
             abs(pred.overall_mean_s() - true)
-            for pred, true, _, _ in all_pred_v_true
+            for pred, true, _, _, _ in all_pred_v_true
         ]
         q_error = [
             max(pred.overall_mean_s() / true, true / pred.overall_mean_s())
-            for pred, true, _, _ in all_pred_v_true
+            for pred, true, _, _, _ in all_pred_v_true
         ]
         was_aborted = [
             pred.metadata.get("target_is_lower_bound", False)
-            for pred, _, _, _ in all_pred_v_true
+            for pred, _, _, _, _ in all_pred_v_true
         ]
 
         for aborted in [True, False]:
@@ -868,29 +869,30 @@ class IconqModel:
         if training_dir is not None:
             val_df = pd.DataFrame()
             val_df["query_id"] = [
-                query_id for _, _, query_id, _ in all_pred_v_true
+                query_id for _, _, query_id, _, _ in all_pred_v_true
             ]
             val_df["num_other_concurrent_queries"] = [
                 pred.metadata["num_other_concurrent_queries"]
-                for pred, _, _, _ in all_pred_v_true
+                for pred, _, _, _, _ in all_pred_v_true
             ]
-            val_df["y"] = [true for _, true, _, _ in all_pred_v_true]
-            val_df["y_pred"] = [pred for pred, _, _, _ in all_pred_v_true]
+            val_df["y"] = [true for _, true, _, _, _ in all_pred_v_true]
+            val_df["y_pred"] = [pred for pred, _, _, _, _ in all_pred_v_true]
             val_df["target_is_lower_bound"] = [
                 pred.metadata["target_is_lower_bound"]
-                for pred, _, _, _ in all_pred_v_true
+                for pred, _, _, _, _ in all_pred_v_true
             ]
             val_df["tpcds_temp_and_q_idx"] = [
-                t for _, _, _, t in all_pred_v_true
+                t for _, _, _, t, _ in all_pred_v_true
             ]
             val_df["abs_error"] = abs_error
             val_df["q_error"] = q_error
             val_df["run_id"] = [
-                pred.metadata["run_id"] for pred, _, _, _ in all_pred_v_true
+                pred.metadata["run_id"] for pred, _, _, _, _ in all_pred_v_true
             ]
             if "loss" in all_pred_v_true[0][0].metadata:
                 val_df["individual_loss"] = [
-                    pred.metadata["loss"] for pred, _, _, _ in all_pred_v_true
+                    pred.metadata["loss"]
+                    for pred, _, _, _, _ in all_pred_v_true
                 ]
 
             val_df.sort_values("y", inplace=True, ascending=False)

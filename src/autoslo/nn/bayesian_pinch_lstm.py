@@ -44,24 +44,43 @@ class BayesianPinchLSTM(nn.Module):
         self._dropout = nn.Dropout(dropout)
         self._num_layers_total = num_layers_forward + num_layers_reverse
         self._device = device
+        self._is_bayesian = is_bayesian
 
-        self._cells = nn.ModuleList(
-            [
-                BayesianLSTMCell(
-                    input_size=(
-                        self._input_size
-                        if (
-                            i in [0, num_layers_forward]
-                        )  # First layer per direction.
-                        else self._1d_hidden_size
-                    ),
-                    hidden_size=self._1d_hidden_size,
-                    is_bayesian=is_bayesian,
-                    device=self._device,
-                ).to(self._device)
-                for i in range(self._num_layers_total)
-            ]
-        )
+        if not is_bayesian:
+            # Use PyTorch's fused nn.LSTM kernel — far faster than a Python
+            # timestep loop over individual BayesianLSTMCells.
+            self._forward_lstm = nn.LSTM(
+                input_size=self._input_size,
+                hidden_size=self._1d_hidden_size,
+                num_layers=self._num_layers_forward,
+                batch_first=True,
+                dropout=dropout if num_layers_forward > 1 else 0.0,
+            ).to(device)
+            self._reverse_lstm = nn.LSTM(
+                input_size=self._input_size,
+                hidden_size=self._1d_hidden_size,
+                num_layers=self._num_layers_reverse,
+                batch_first=True,
+                dropout=dropout if num_layers_reverse > 1 else 0.0,
+            ).to(device)
+        else:
+            self._cells = nn.ModuleList(
+                [
+                    BayesianLSTMCell(
+                        input_size=(
+                            self._input_size
+                            if (
+                                i in [0, num_layers_forward]
+                            )  # First layer per direction.
+                            else self._1d_hidden_size
+                        ),
+                        hidden_size=self._1d_hidden_size,
+                        is_bayesian=is_bayesian,
+                        device=self._device,
+                    ).to(self._device)
+                    for i in range(self._num_layers_total)
+                ]
+            )
         # N.B: The first `num_layers_forward` cells are for the forward LSTM, 
         # and the remaining `num_layers_reverse` cells are for the reverse LSTM.
 
@@ -90,6 +109,71 @@ class BayesianPinchLSTM(nn.Module):
         batch_size, seq_len, input_size = x.size()
         assert input_size == self._input_size
         assert x_len.size() == (batch_size,)
+
+        if not self._is_bayesian:
+            return self._forward_fused(x, x_len, pinch_points)
+        return self._forward_cell(x, x_len, pinch_points)
+
+    def _build_x_rev(
+        self,
+        x: torch.Tensor,
+        x_len: torch.Tensor,
+    ) -> torch.Tensor:
+        """Reverse each sequence within its valid length, keeping padding at
+        the end."""
+        batch_size, seq_len, _ = x.size()
+        x_rev = x.clone()
+        idx = torch.arange(seq_len, device=self._device).unsqueeze(0).expand(
+            batch_size, -1
+        )  # Shape (batch_size, seq_len)
+        mask = idx < x_len.unsqueeze(1)  # Shape (batch_size, seq_len)
+        for i in range(batch_size):
+            x_rev[i, mask[i]] = x[i, mask[i]].flip(0)
+        return x_rev
+
+    def _forward_fused(
+        self,
+        x: torch.Tensor,
+        x_len: torch.Tensor,
+        pinch_points: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Fast path using PyTorch's fused nn.LSTM kernel (no Python timestep
+        loop). Used when is_bayesian=False.
+        """
+        batch_size = x.size(0)
+
+        # Forward direction: run full sequence, pick hidden state at pinch point
+        outputs_f, _ = self._forward_lstm(x)
+        # outputs_f shape: (batch_size, seq_len, 1d_hidden_size)
+        outputs_f_final = outputs_f[
+            torch.arange(batch_size, device=self._device), pinch_points
+        ]  # Shape: (batch_size, 1d_hidden_size)
+
+        # Reverse direction: reverse each sequence, run, pick at reverse index
+        x_rev = self._build_x_rev(x, x_len)
+        outputs_r, _ = self._reverse_lstm(x_rev)
+        # outputs_r shape: (batch_size, seq_len, 1d_hidden_size)
+        outputs_r_final = outputs_r[
+            torch.arange(batch_size, device=self._device),
+            x_len - 1 - pinch_points,
+        ]  # Shape: (batch_size, 1d_hidden_size)
+
+        return torch.cat(
+            (outputs_f_final, outputs_r_final), dim=1
+        )  # Shape: (batch_size, hidden_size)
+
+    def _forward_cell(
+        self,
+        x: torch.Tensor,
+        x_len: torch.Tensor,
+        pinch_points: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Bayesian path: Python timestep loop over BayesianLSTMCells. Used when
+        is_bayesian=True.
+        """
+        batch_size, seq_len, _ = x.size()
 
         # Initialize hidden and cell states
         h = x.new_zeros(
@@ -131,14 +215,7 @@ class BayesianPinchLSTM(nn.Module):
         # sequences are zero-padded so we can't just start processing from the 
         # back. The easiest way is to unpad, reverse, repad the sequences, and 
         # then process them "in order".
-        x_rev = x.clone()
-        idx = (torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)).to(
-            self._device
-        )  # Shape (batch_size, seq_len)
-        mask = idx < x_len.unsqueeze(1)  # Shape (batch_size, seq_len)
-
-        for i in range(batch_size):
-            x_rev[i, mask[i]] = x[i, mask[i]].flip(0)
+        x_rev = self._build_x_rev(x, x_len)
 
         # Reverse pass - The final effect should be to create a tensor of shape 
         # (batch_size, 1d_hidden_size), where each element is the hidden state 
@@ -170,8 +247,6 @@ class BayesianPinchLSTM(nn.Module):
             outputs_r_idx
         ]  # `outputs_r_final` has shape (batch_size, 1d_hidden_size)
 
-        outputs = torch.cat(
+        return torch.cat(
             (outputs_f_final, outputs_r_final), dim=1
         )  # Shape (batch_size, hidden_size)
-
-        return outputs

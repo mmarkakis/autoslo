@@ -96,7 +96,7 @@ if __name__ == "__main__":
         "--iconq_model_id",
         type=str,
         help="The ID of the Iconq model to use.",
-        default='1769376434'
+        default='1771539369'
     )
     parser.add_argument(
         "--slo_s",

@@ -467,13 +467,13 @@ class QueryTimeline:
         return Query(
             query_id=interval.data["query_id"],
             tpcds_temp_and_q_idx=interval.data["tpcds_temp_and_q_idx"],
-            start_time_s=interval.begin,
-            latency_s=interval.end - interval.begin,
-            cluster_name=cluster_name,
             featurization=interval.data["featurization"],
+            rel_start_time_s=interval.begin,
+            cluster_name=cluster_name,
             stage_latency_prediction_s=interval.data[
                 "stage_model_predictions_per_rpu"
             ][Cluster.rpu_for_cluster_name(cluster_name)],
+            latency_s=interval.end - interval.begin,
             latency_is_lower_bound=interval.data.get("was_aborted", False),
         )
 
@@ -510,9 +510,12 @@ class QueryTimeline:
             A ConcurrentQueryDataset representing the timeline.
         """
         # For each cluster, build the dataset
-        base_queries = []
-        query_neighbors: dict[str, list[Query]] = {}
+        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = (
+            defaultdict(dict)
+        )
 
+        if run_id is None:
+            run_id = "default_run_id"
         included_clusters = (
             [cluster_name] if cluster_name is not None else self.active_clusters
         )
@@ -535,9 +538,7 @@ class QueryTimeline:
                     cluster_name=cluster_name_local,
                     interval=base_iv,
                 )
-                base_queries.append(base_query)
-
-                query_neighbors[base_query.query_id] = [
+                neighbors = [
                     self._query_from_interval(
                         cluster_name=cluster_name_local,
                         interval=neighbor_iv,
@@ -545,12 +546,12 @@ class QueryTimeline:
                     for neighbor_iv in neighbor_ivs
                 ]
 
+                run_to_base_to_neighbors[run_id][base_query] = neighbors
+
         return ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=self._iconq_interaction_featurizer,
-            base_queries=base_queries,
-            query_neighbors=query_neighbors,
+            run_to_base_to_neighbors=run_to_base_to_neighbors,
             use_log_runtime=use_log_runtime,
-            run_id=run_id,
         )
 
     @staticmethod

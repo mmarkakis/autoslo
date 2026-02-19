@@ -173,6 +173,7 @@ def plot_qerror_single_barchart(
     ax.set_title(title)
     ax.legend(fontsize=fontsize)
 
+
 def plot_qerror_single_barchart_bounded(
     ax: plt.Axes,
     title: str,
@@ -347,9 +348,16 @@ def main(iconq_model_id: str, hide_plot_title: bool):
             )
         split_true_y[split] = pd.Series(true_y_d)
 
-        split_predicted_y[split] = model.predict_from_dataset(
+        predictions_per_run = model.predict_from_dataset(
             dataset=split_dataset,
         )
+        flattened = {
+            query_id: pred
+            for run_preds in predictions_per_run.values()
+            for query_id, pred in run_preds.items()
+        }
+
+        split_predicted_y[split] = flattened
 
         title = split.title() + " Set"
 
