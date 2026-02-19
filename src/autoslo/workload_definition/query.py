@@ -25,6 +25,14 @@ class Query:
     latency_s: float = -1
     latency_is_lower_bound: bool = False
 
+    def __hash__(self):
+        return hash(self.query_id)
+    
+    def __eq__(self, other):
+        if not isinstance(other, Query):
+            return NotImplemented
+        return self.query_id == other.query_id
+
     def __post_init__(self):
         if (self.abs_start_time.timestamp() < 0) and (
             self.rel_start_time_s < 0
@@ -38,20 +46,6 @@ class Query:
             )
         elif self.rel_start_time_s < 0:
             self.rel_start_time_s = self.abs_start_time.timestamp()
-
-    @property
-    def abs_start_time(self) -> datetime:
-        """
-        Returns the absolute start time of the query as a datetime object.
-        """
-        return self.abs_start_time
-
-    @property
-    def start_time_s(self) -> float:
-        """
-        Returns the relative start time of the query.
-        """
-        return self.rel_start_time_s
 
     def as_interval(self) -> Interval:
         """Returns the execution interval of the query as an Interval object."""
