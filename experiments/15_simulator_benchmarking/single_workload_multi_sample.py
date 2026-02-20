@@ -18,10 +18,10 @@ def main(args):
     base_sampling_spec = RedsetWorkloadSamplingSpec(
         tpcds_prob_distribution_dir=args.tpcds_prob_distribution_dir,
         seed=42,
-        abs_start_time=datetime(2024, 3, 1, 0, 0, 0),
-        abs_end_time=datetime(2024, 3, 1, 4, 0, 0),
-        real_queries_per_output_queries=4,
-        real_s_per_output_s=4,
+        abs_start_time=datetime(2024, 4, 1, 0, 0, 0),
+        abs_end_time=datetime(2024, 4, 2, 0, 0, 0),
+        real_queries_per_output_queries=6,
+        real_s_per_output_s=6,
     )
     blueprint = Blueprint.maximal(max_rpu=32)
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
         "--num_samples",
         type=int,
         help="The number of samples to take from the workload for simulation.",
-        default=5,
+        default=20,
     )
     parser.add_argument(
         "--tpcds_prob_distribution_dir",

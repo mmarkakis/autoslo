@@ -1,0 +1,11 @@
+run_id: '1771571057668'
+workload_name: redset_provisioned_cluster12
+iconq_model_id: '1771539369'
+blueprint_name: multi_16_16b_32_32b_4_4b_8_8b
+slo_s: 180.0
+optimize_based_on_slo_violation_amount: true
+slo_violation_rate_threshold: 0.05
+slo_violation_amount_threshold_s: 30.0
+verbose: true
+export_video: false
+video_frame_duration: 1.0
