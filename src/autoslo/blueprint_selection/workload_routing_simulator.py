@@ -154,6 +154,73 @@ class WorkloadRoutingSimulator:
                 cluster_name
             ] = None
 
+        # Cache before-state per cluster to avoid redundant interval merges.
+        self._cached_before_cost: dict[str, float] = {
+            name: 0.0 for name in self._blueprint.cluster_names
+        }
+        self._cached_before_slo_violation: dict[str, float] = {
+            name: 0.0 for name in self._blueprint.cluster_names
+        }
+        self._before_cache_valid: dict[str, bool] = {
+            name: False for name in self._blueprint.cluster_names
+        }
+
+    def reset(self, simulator_run_id: Optional[str] = None) -> None:
+        """
+        Reset the simulator state for a new run, reusing the model and workload.
+        This allows multiple samples to be run without reloading heavy objects.
+
+        Parameters:
+            simulator_run_id: Optional run ID for the new run. If None, generates
+                a new timestamp-based ID.
+        """
+        self._run_id = simulator_run_id or str(
+            int(datetime.now().timestamp() * 1000)
+        )
+        self._out_dir = os.path.join(
+            pu.get_data_path(), "simulator_runs", self._run_id
+        )
+        os.makedirs(self._out_dir, exist_ok=True)
+
+        # Re-write config.yml for the new run_id.
+        config_out_path = os.path.join(self._out_dir, "config.yml")
+        with open(config_out_path, "w") as f:
+            d = {
+                "run_id": self._run_id,
+                "workload_name": self._workload_name,
+                "iconq_model_id": self._iconq_model_id,
+                "blueprint_name": self._blueprint_name,
+                "slo_s": self._slo_s,
+                "optimize_based_on_slo_violation_amount": (
+                    self._optimize_based_on_slo_violation_amount
+                ),
+                "slo_violation_rate_threshold": (
+                    self._slo_violation_rate_threshold
+                ),
+                "slo_violation_amount_threshold_s": (
+                    self._slo_violation_amount_threshold_s
+                ),
+                "verbose": self._verbose,
+                "export_video": self._export_video,
+                "video_frame_duration": self._video_frame_duration,
+            }
+            yaml.safe_dump(d, f, sort_keys=False)
+
+        # Reset logging.
+        self._log_idx = 0
+        self._log_rows = []
+        self._recorder = GanttRecorder()
+
+        # Reset per-run bookkeeping for all clusters.
+        for cluster_name in self._blueprint.cluster_names:
+            self._active_queries_per_cluster[cluster_name] = []
+            self._completed_queries_per_cluster[cluster_name] = []
+            self._most_recent_billing_window_start_time_per_cluster_s[
+                cluster_name
+            ] = None
+            # Invalidate before-cache for the new run.
+            self._before_cache_valid[cluster_name] = False
+
     def _log_if_verbose(self, d: dict) -> None:
         """
         Create the specified log entry if verbose is enabled,
@@ -274,6 +341,8 @@ class WorkloadRoutingSimulator:
             self._active_queries_per_cluster[selected_cluster_name].append(
                 updated_query
             )
+            # Invalidate the before-cache for this cluster since its state changed.
+            self._before_cache_valid[selected_cluster_name] = False
             seq_num_to_cluster_name[i] = selected_cluster_name
 
             # Go through the active queries on the best cluster and update their
@@ -358,6 +427,9 @@ class WorkloadRoutingSimulator:
                 else:
                     still_active_queries.append(query)
             self._active_queries_per_cluster[cluster] = still_active_queries
+            # Invalidate the before-cache if active queries changed.
+            if len(still_active_queries) != len(active_queries):
+                self._before_cache_valid[cluster] = False
 
             billing_window_start = (
                 self._most_recent_billing_window_start_time_per_cluster_s[
@@ -434,6 +506,14 @@ class WorkloadRoutingSimulator:
             active_queries,
         ) in self._active_queries_per_cluster.items():
 
+            # Use cached before-state if valid; recompute only if cluster state changed.
+            if self._before_cache_valid[cluster_name]:
+                before_costs[cluster_name] = self._cached_before_cost[cluster_name]
+                before_slo_violations[cluster_name] = (
+                    self._cached_before_slo_violation[cluster_name]
+                )
+                continue
+
             query.cluster_name = cluster_name
             query.stage_latency_prediction_s = (
                 self._iconq_model.stage_model.predict_from_tpcds_temp_and_q_idx(
@@ -468,11 +548,22 @@ class WorkloadRoutingSimulator:
             before_billed_intervals = Billing.billed_intervals(
                 before_query_intervals
             )
-            before_cost = self._cost_per_second_per_cluster[
-                cluster_name
-            ] * Billing.billed_s(before_billed_intervals)
+            # Sum billed intervals directly instead of calling Billing.billed_s(),
+            # which would redundantly call billed_intervals() again.
+            before_billed_s = sum(
+                iv.end - iv.begin for iv in before_billed_intervals
+            )
+            before_cost = (
+                self._cost_per_second_per_cluster[cluster_name]
+                * before_billed_s
+            )
             before_costs[cluster_name] = before_cost
             before_slo_violations[cluster_name] = before_slo_violation
+
+            # Cache the computed before-state for this cluster.
+            self._cached_before_cost[cluster_name] = before_cost
+            self._cached_before_slo_violation[cluster_name] = before_slo_violation
+            self._before_cache_valid[cluster_name] = True
 
         run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
 
@@ -538,9 +629,14 @@ class WorkloadRoutingSimulator:
             after_billed_intervals = Billing.billed_intervals(
                 after_query_intervals
             )
-            after_cost = self._cost_per_second_per_cluster[
-                cluster_name
-            ] * Billing.billed_s(after_billed_intervals)
+            # Sum billed intervals directly instead of calling Billing.billed_s().
+            after_billed_s = sum(
+                iv.end - iv.begin for iv in after_billed_intervals
+            )
+            after_cost = (
+                self._cost_per_second_per_cluster[cluster_name]
+                * after_billed_s
+            )
             marginal_cost = after_cost - before_costs[cluster_name]
 
             # Compare and update best if needed.

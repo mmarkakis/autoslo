@@ -52,7 +52,7 @@ class Query:
         return Interval(
             begin=self.rel_start_time_s,
             end=self.rel_start_time_s + self.latency_s,
-            data=self.__dict__,
+            data={"query_id": self.query_id},
         )
 
     def slo_deviation_amount_s(self, slo_s: float) -> float:

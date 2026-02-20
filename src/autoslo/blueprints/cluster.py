@@ -21,6 +21,8 @@ class Cluster:
     ALL_ALLOWED_RPU_SIZES = UP_TO_32_RPU_SIZES
 
     _all_cluster_configs = None
+    _ordered_cluster_names_per_rpu: dict[int, list[str]] | None = None
+    _rpu_per_cluster_name: dict[str, int] | None = None
 
     @staticmethod
     def all_allowed_rpu_sizes() -> list[int]:
@@ -110,12 +112,13 @@ class Cluster:
         Returns:
             A list of cluster names that have the specified RPU size.
         """
-        d = defaultdict(list)
-        for cluster_name, config in cls.all_cluster_configs().items():
-            rpu = config["rpu"]
-            d[rpu].append(cluster_name)
-
-        return {rpu: sorted(cluster_names) for rpu, cluster_names in d.items()}
+        if cls._ordered_cluster_names_per_rpu is None:
+            d = defaultdict(list)
+            for cluster_name, config in cls.all_cluster_configs().items():
+                rpu = config["rpu"]
+                d[rpu].append(cluster_name)
+            cls._ordered_cluster_names_per_rpu = {rpu: sorted(cluster_names) for rpu, cluster_names in d.items()}
+        return cls._ordered_cluster_names_per_rpu
     
     @classmethod
     def rpu_for_cluster_name(cls, cluster_name: str) -> int:
@@ -131,12 +134,16 @@ class Cluster:
         Raises:
             KeyError: If the cluster_name is not found in the configuration.
         """
-        all_cluster_configs = cls.all_cluster_configs()
-        if cluster_name not in all_cluster_configs:
+        if cls._rpu_per_cluster_name is None:
+            cls._rpu_per_cluster_name = {
+                cluster_name: config["rpu"]
+                for cluster_name, config in cls.all_cluster_configs().items()
+            }
+        if cluster_name not in cls._rpu_per_cluster_name:
             raise KeyError(
                 f"Cluster name '{cluster_name}' not found in config."
             )
-        return all_cluster_configs[cluster_name]["rpu"]
+        return cls._rpu_per_cluster_name[cluster_name]
 
     @staticmethod
     def from_config(cluster_name: str) -> "Cluster":

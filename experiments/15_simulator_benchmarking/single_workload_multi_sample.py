@@ -2,8 +2,6 @@ import argparse
 import os
 from datetime import datetime
 
-import yaml
-
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.workload_routing_simulator import (
     WorkloadRoutingSimulator,
@@ -12,6 +10,7 @@ from autoslo.blueprints.blueprint import Blueprint
 from autoslo.workload_definition.redset_workload import (
     RedsetWorkloadSamplingSpec,
 )
+from autoslo.workload_definition.tpcds_sampler import TPCDSSampler
 
 
 def main(args):
@@ -32,6 +31,26 @@ def main(args):
         f"model {args.iconq_model_id}..."
     )
 
+    # Create the simulator once and reset it for each sample.
+    simulator = WorkloadRoutingSimulator(
+        workload_name=args.workload_name,
+        iconq_model_id=args.iconq_model_id,
+        blueprint_name=blueprint.name,
+        slo_s=args.slo_s,
+        optimize_based_on_slo_violation_amount=args.optimize_cumulative_slo_violation_time,
+        slo_violation_rate_threshold=args.slo_violation_rate_threshold,
+        slo_violation_amount_threshold_s=args.slo_violation_amount_threshold_s,
+        verbose=True,
+        export_video=args.export_video,
+        video_frame_duration=args.video_frame_duration,
+    )
+
+    # Warm up featurization caches before the first sample.
+    sampler = TPCDSSampler.from_dir(args.tpcds_prob_distribution_dir)
+    tpcds_vocab = list(sampler.column_dict.values())
+    simulator._iconq_model.iconq_query_featurizer.warm_up_cache(tpcds_vocab)
+    print("Featurization cache warm-up complete.")
+
     for i in range(args.num_samples):
         sampling_spec = RedsetWorkloadSamplingSpec(
             tpcds_prob_distribution_dir=args.tpcds_prob_distribution_dir,
@@ -43,19 +62,7 @@ def main(args):
         )
 
         start = datetime.now().timestamp()
-        simulator = WorkloadRoutingSimulator(
-            workload_name=args.workload_name,
-            iconq_model_id=args.iconq_model_id,
-            blueprint_name=blueprint.name,
-            slo_s=args.slo_s,
-            optimize_based_on_slo_violation_amount=args.optimize_cumulative_slo_violation_time,
-            slo_violation_rate_threshold=args.slo_violation_rate_threshold,
-            slo_violation_amount_threshold_s=args.slo_violation_amount_threshold_s,
-            verbose=True,
-            export_video=args.export_video,
-            video_frame_duration=args.video_frame_duration,
-        )
-
+        simulator.reset()
         simulator.simulate_one(sampling_spec=sampling_spec)
         end = datetime.now().timestamp()
         print(
@@ -96,7 +103,7 @@ if __name__ == "__main__":
         "--iconq_model_id",
         type=str,
         help="The ID of the Iconq model to use.",
-        default='1771539369'
+        default="1771539369",
     )
     parser.add_argument(
         "--slo_s",

@@ -412,6 +412,26 @@ class IconqQueryFeaturizer:
             )
         return self._np_featurization_cache[tpcds_temp_and_q_idx]
 
+    def warm_up_cache(self, tpcds_vocab: list[Trace.TPCDSTempAndQIdx]) -> None:
+        """
+        Pre-populate both _featurization_cache and _np_featurization_cache for
+        the given TPC-DS vocabulary. This amortizes cold-cache costs when
+        running multiple simulations with the same workload.
+
+        Parameters:
+            tpcds_vocab: A list of TPC-DS template and query indices to
+                featurize and cache.
+        """
+        for tpcds_temp_and_q_idx in tqdm(
+            tpcds_vocab, desc="Warming up IconqQueryFeaturizer cache"
+        ):
+            # This call populates _featurization_cache.
+            _ = self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx)
+            # This call populates _np_featurization_cache.
+            _ = self.featurize_from_tpcds_temp_and_q_idx_as_numpy(
+                tpcds_temp_and_q_idx
+            )
+
     def featurize(
         self,
         query_text: str,

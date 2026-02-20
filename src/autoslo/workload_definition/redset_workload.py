@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -128,9 +128,16 @@ class RedsetWorkload(Workload):
                 unit="s",
             )
 
-        sampler = TPCDSSampler.from_dir(
-            sampling_spec.tpcds_prob_distribution_dir
-        )
+        # Cache TPCDSSampler by directory to avoid disk I/O on every sample.
+        if not hasattr(self, "_sampler_cache"):
+            self._sampler_cache = {}  # type: ignore
+        if sampling_spec.tpcds_prob_distribution_dir not in self._sampler_cache:
+            self._sampler_cache[sampling_spec.tpcds_prob_distribution_dir] = (
+                TPCDSSampler.from_dir(
+                    sampling_spec.tpcds_prob_distribution_dir
+                )
+            )
+        sampler = self._sampler_cache[sampling_spec.tpcds_prob_distribution_dir]
         df["tpcds_temp_and_q_idx"] = sampler.sample(
             latencies_s=df["latency_s"], seed=sampling_spec.seed
         )
@@ -138,14 +145,19 @@ class RedsetWorkload(Workload):
             df["arrival_timestamp"] - df["arrival_timestamp"].min()
         ).dt.total_seconds()
 
-        queries = []
-        for _, row in df.iterrows():
-            queries.append(
-                Query(
-                    query_id=row["query_id"],
-                    tpcds_temp_and_q_idx=row["tpcds_temp_and_q_idx"],
-                    abs_start_time=row["arrival_timestamp"],
-                    rel_start_time_s=row["rel_start_time_s"],
-                )
+        # Use vectorized column extraction + zip instead of iterrows() for O(N) instead of O(N²) performance.
+        query_ids = df["query_id"].tolist()
+        tpcds_indices = df["tpcds_temp_and_q_idx"].tolist()
+        abs_times = df["arrival_timestamp"].tolist()
+        rel_times = df["rel_start_time_s"].tolist()
+
+        queries = [
+            Query(
+                query_id=qid,
+                tpcds_temp_and_q_idx=tpcds_idx,
+                abs_start_time=abs_time,
+                rel_start_time_s=rel_time,
             )
+            for qid, tpcds_idx, abs_time, rel_time in zip(query_ids, tpcds_indices, abs_times, rel_times)
+        ]
         return queries

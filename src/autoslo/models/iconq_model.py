@@ -340,7 +340,8 @@ class IconqModel:
         if n == 0:
             return predictions
 
-        self._nn.eval()
+        if self._nn.training:
+            self._nn.eval()
         with torch.no_grad():
             # Bypass the DataLoader machinery entirely: directly collate
             # fixed-size slices and pass them to a loss-free inference method.
@@ -413,22 +414,25 @@ class IconqModel:
                 LossType.SENSITIVE_Q_ERROR metadata). Pass None (default) during
                 inference — the metadata field will be set to 0.0.
         """
+        # Move all tensors to CPU and convert to numpy once upfront to minimize GPU sync points.
         x_len_np = x_len.detach().cpu().numpy()
         y_is_lower_bound_np = y_is_lower_bound.detach().cpu().numpy()
+        mean_np = y_pred_mean.detach().cpu().numpy()
+        logvar_np = y_pred_logvar.detach().cpu().numpy()
+        # Vectorize logvar->stddev conversion (exp(logvar/2)) instead of per-item list comprehension.
+        stddev_np = np.exp(logvar_np / 2)
+        mix_np = y_pred_mix.detach().cpu().numpy() if y_pred_mix is not None else None
         result: list[tuple[ModelPrediction, str, str]] = []
 
         if self._loss_type == LossType.MDN_NLL:
-            mean_np = y_pred_mean.detach().cpu().numpy()
-            logvar_np = y_pred_logvar.detach().cpu().numpy()
-            mix_np = y_pred_mix.detach().cpu().numpy()
-            for m, l, mix, le, q, t, r in zip(
-                mean_np, logvar_np, mix_np,
-                x_len_np, query_ids, tpcds_temp_and_q_idxs, run_ids,
-            ):
+            for i, (m, le, mix, q, t, r) in enumerate(zip(
+                mean_np, x_len_np, mix_np,
+                query_ids, tpcds_temp_and_q_idxs, run_ids,
+            )):
                 result.append((
                     ModelPrediction(
                         mean_s=m,
-                        std_dev_s=[np.exp(li / 2) for li in l],
+                        std_dev_s=stddev_np[i],
                         mix_coeffs=mix,
                         metadata={
                             "num_other_concurrent_queries": int(le) - 1,
@@ -441,16 +445,14 @@ class IconqModel:
                     q,
                 ))
         elif self._loss_type == LossType.NLL:
-            mean_np = y_pred_mean.detach().cpu().numpy()
-            logvar_np = y_pred_logvar.detach().cpu().numpy()
-            for m, l, le, q, t, r in zip(
-                mean_np, logvar_np,
-                x_len_np, query_ids, tpcds_temp_and_q_idxs, run_ids,
-            ):
+            for i, (m, le, q, t, r) in enumerate(zip(
+                mean_np, x_len_np,
+                query_ids, tpcds_temp_and_q_idxs, run_ids,
+            )):
                 result.append((
                     ModelPrediction(
                         mean_s=m,
-                        std_dev_s=[np.exp(li / 2) for li in l],
+                        std_dev_s=stddev_np[i],
                         metadata={
                             "num_other_concurrent_queries": int(le) - 1,
                             "run_id": r,
@@ -462,7 +464,6 @@ class IconqModel:
                     q,
                 ))
         else:  # LossType.SENSITIVE_Q_ERROR
-            mean_np = y_pred_mean.detach().cpu().numpy()
             losses: list | np.ndarray = (
                 per_item_losses if per_item_losses is not None
                 else [0.0] * len(mean_np)
@@ -516,17 +517,18 @@ class IconqModel:
         result: list[tuple[ModelPrediction, str, str]] = []
 
         # Handle isolated queries via the stage model when configured.
+        # Batch the length check with a single CPU conversion instead of per-item .item() calls.
         if train_config.use_stage_for_isolated_queries:
-            non_isolated_indices = []
-            for i in range(len(x_len)):
-                if x_len[i].item() > 1:
-                    non_isolated_indices.append(i)
-                else:
-                    pred = self._predict_isolated_query(
-                        i, x, pinch_points, query_ids, tpcds_temp_and_q_idxs,
-                        run_ids, y_is_lower_bound,
-                    )
-                    result.append((pred, run_ids[i], query_ids[i]))
+            x_len_np = x_len.cpu().numpy() if isinstance(x_len, torch.Tensor) else x_len
+            non_isolated_indices = cast(list[int], np.where(x_len_np > 1)[0].tolist())
+            isolated_indices = cast(list[int], np.where(x_len_np <= 1)[0].tolist())
+            
+            for i in isolated_indices:
+                pred = self._predict_isolated_query(
+                    i, x, pinch_points, query_ids, tpcds_temp_and_q_idxs,
+                    run_ids, y_is_lower_bound,
+                )
+                result.append((pred, run_ids[i], query_ids[i]))
 
             if not non_isolated_indices:
                 return result
@@ -539,10 +541,14 @@ class IconqModel:
             run_ids = [run_ids[i] for i in non_isolated_indices]
             y_is_lower_bound = y_is_lower_bound[non_isolated_indices]
 
+        # Move tensors to device once at the start, not multiple times in the forward call.
+        x = x.to(self._device)
+        x_len = x_len.to(self._device)
+        pinch_points = pinch_points.to(self._device)
         y_pred_mean, y_pred_logvar, y_pred_mix = self._nn(
-            x.to(self._device),
-            x_len.to(self._device),
-            pinch_points.to(self._device),
+            x,
+            x_len,
+            pinch_points,
             train_config.mdn_mix_softmax_temperature,
         )
 
