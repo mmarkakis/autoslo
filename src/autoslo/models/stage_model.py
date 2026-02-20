@@ -81,6 +81,14 @@ class StageModel:
                 "xgboost_model_train_params must be provided."
             )
 
+        # Memoization cache: (tpcds_temp_and_q_idx, cluster_name) -> ModelPrediction.
+        # Both sub-models are deterministic functions of these two inputs, so
+        # any repeated call for the same pair is a free dict lookup. The TPC-DS
+        # vocabulary is finite (~800 entries), so the cache saturates quickly.
+        self._prediction_cache: dict[
+            tuple[Trace.TPCDSTempAndQIdx, str], ModelPrediction
+        ] = {}
+
     def predict(
         self, query_texts: dict[str, str], cluster_name: str
     ) -> dict[str, ModelPrediction]:
@@ -121,28 +129,47 @@ class StageModel:
         """
         overall_predictions: dict[str, ModelPrediction] = {}
 
+        # Check memoization cache first; compute only for unseen pairs.
+        remaining_query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx] = {}
+        for query_id, tpcds in query_temp_and_q_idxs.items():
+            cached = self._prediction_cache.get((tpcds, cluster_name))
+            if cached is not None:
+                overall_predictions[query_id] = cached
+            else:
+                remaining_query_temp_and_q_idxs[query_id] = tpcds
+
+        if not remaining_query_temp_and_q_idxs:
+            return overall_predictions
+
         # Process cache model first
         cache_predictions = self._cache_model.predict_from_tpcds_temp_and_q_idx(
-            query_temp_and_q_idxs, 
+            remaining_query_temp_and_q_idxs,
             cluster_name=cluster_name,
         )
-        remaining_query_temp_and_q_idxs = {}
+        xgboost_remaining: dict[str, Trace.TPCDSTempAndQIdx] = {}
         for query_id, prediction in cache_predictions.items():
             if prediction is not None:
                 overall_predictions[query_id] = prediction
+                self._prediction_cache[
+                    (remaining_query_temp_and_q_idxs[query_id], cluster_name)
+                ] = prediction
             else:
-                remaining_query_temp_and_q_idxs[query_id] = (
-                    query_temp_and_q_idxs[query_id]
-                )
+                xgboost_remaining[query_id] = remaining_query_temp_and_q_idxs[
+                    query_id
+                ]
 
         # Use XGBoost only for the queries that were not cache hits.
         xgboost_predictions = (
             self._xgboost_model.predict_from_tpcds_temp_and_q_idx(
-                remaining_query_temp_and_q_idxs, 
+                xgboost_remaining,
                 cluster_name=cluster_name,
             )
         )
-        overall_predictions |= xgboost_predictions
+        for query_id, prediction in xgboost_predictions.items():
+            overall_predictions[query_id] = prediction
+            self._prediction_cache[
+                (xgboost_remaining[query_id], cluster_name)
+            ] = prediction
 
         return overall_predictions
 

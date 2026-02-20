@@ -320,43 +320,241 @@ class IconqModel:
     def predict_from_dataset(
         self,
         dataset: ConcurrentQueryDataset,
+        inference_batch_size: int = 512,
     ) -> dict[str, dict[str, ModelPrediction]]:
         """
         Predicts the runtimes for the queries in the given dataset.
 
         Parameters:
             dataset: The dataset to predict runtimes for.
+            inference_batch_size: Maximum number of items to process per
+                forward pass. Defaults to 512, which handles typical simulator
+                datasets in one shot while remaining memory-safe.
 
         Returns:
             A dictionary mapping (run_id, query_id) tuples to their predicted ModelPrediction.
         """
 
-        dataloader, _ = self._get_dataloaders(
-            dataset,
-            train_config=self._train_config_sequence[-1],
-            split=False,
-            save_dataset=False,
-        )
-
         predictions: dict[str, dict[str, ModelPrediction]] = defaultdict(dict)
+        n = len(dataset)
+        if n == 0:
+            return predictions
+
         self._nn.eval()
         with torch.no_grad():
-            for batch in dataloader:
-                batch_loss, batch_pred_v_true = self._process_batch(
-                    batch=batch,
-                    train_config=self._train_config_sequence[-1],
-                    derive_individual_predictions=True,
+            # Bypass the DataLoader machinery entirely: directly collate
+            # fixed-size slices and pass them to a loss-free inference method.
+            # This eliminates per-batch DataLoader overhead (iterator init,
+            # collate_fn wrapping) and avoids computing losses during inference.
+            for start in range(0, n, inference_batch_size):
+                end = min(start + inference_batch_size, n)
+                batch = ConcurrentQueryDataset.collate_and_pad(
+                    [dataset[i] for i in range(start, end)]
                 )
-                for (
-                    prediction,
-                    y,
-                    query_id,
-                    tpcds_temp_and_q_idx,
-                    run_id,
-                ) in batch_pred_v_true:
+                for prediction, run_id, query_id in self._infer_batch(batch):
                     predictions[run_id][query_id] = prediction
 
         return predictions
+
+    def _predict_isolated_query(
+        self,
+        i: int,
+        x: torch.Tensor,
+        pinch_points: torch.Tensor,
+        query_ids: list[str],
+        tpcds_temp_and_q_idxs: list,
+        run_ids: list[str],
+        y_is_lower_bound: torch.Tensor,
+    ) -> ModelPrediction:
+        """
+        Predict a single isolated query (sequence length == 1) via the stage
+        model and wrap the result in a ModelPrediction.
+        """
+        rpu = x[i][pinch_points[i]][
+            self._iconq_interaction_featurizer.rpu_dim_idx
+        ].item()
+        cluster_name = Cluster.ordered_cluster_names_per_rpu()[int(rpu)][0]
+        pred = self.stage_model.predict_from_tpcds_temp_and_q_idx(
+            {query_ids[i]: tpcds_temp_and_q_idxs[i]},
+            cluster_name=cluster_name,
+        )[query_ids[i]]
+        return ModelPrediction(
+            mean_s=pred.mean_s,
+            std_dev_s=pred.std_dev_s,
+            mix_coeffs=pred.mix_coeffs,
+            metadata={
+                "num_other_concurrent_queries": 0,
+                "run_id": run_ids[i],
+                "tpcds_temp_and_q_idx": tpcds_temp_and_q_idxs[i],
+                "query_id": query_ids[i],
+                "target_is_lower_bound": y_is_lower_bound[i].item(),
+                "loss": 0.0,
+            },
+        )
+
+    def _build_predictions_from_nn_output(
+        self,
+        y_pred_mean: torch.Tensor,
+        y_pred_logvar: torch.Tensor,
+        y_pred_mix: torch.Tensor,
+        x_len: torch.Tensor,
+        query_ids: list[str],
+        tpcds_temp_and_q_idxs: list,
+        run_ids: list[str],
+        y_is_lower_bound: torch.Tensor,
+        per_item_losses: Optional[np.ndarray] = None,
+    ) -> list[tuple[ModelPrediction, str, str]]:
+        """
+        Convert NN output tensors into a list of (ModelPrediction, run_id, query_id)
+        tuples. Handles all three loss types.
+
+        Parameters:
+            per_item_losses: Per-sample loss values (only used for
+                LossType.SENSITIVE_Q_ERROR metadata). Pass None (default) during
+                inference — the metadata field will be set to 0.0.
+        """
+        x_len_np = x_len.detach().cpu().numpy()
+        y_is_lower_bound_np = y_is_lower_bound.detach().cpu().numpy()
+        result: list[tuple[ModelPrediction, str, str]] = []
+
+        if self._loss_type == LossType.MDN_NLL:
+            mean_np = y_pred_mean.detach().cpu().numpy()
+            logvar_np = y_pred_logvar.detach().cpu().numpy()
+            mix_np = y_pred_mix.detach().cpu().numpy()
+            for m, l, mix, le, q, t, r in zip(
+                mean_np, logvar_np, mix_np,
+                x_len_np, query_ids, tpcds_temp_and_q_idxs, run_ids,
+            ):
+                result.append((
+                    ModelPrediction(
+                        mean_s=m,
+                        std_dev_s=[np.exp(li / 2) for li in l],
+                        mix_coeffs=mix,
+                        metadata={
+                            "num_other_concurrent_queries": int(le) - 1,
+                            "run_id": r,
+                            "tpcds_temp_and_q_idx": t,
+                            "query_id": q,
+                        },
+                    ),
+                    r,
+                    q,
+                ))
+        elif self._loss_type == LossType.NLL:
+            mean_np = y_pred_mean.detach().cpu().numpy()
+            logvar_np = y_pred_logvar.detach().cpu().numpy()
+            for m, l, le, q, t, r in zip(
+                mean_np, logvar_np,
+                x_len_np, query_ids, tpcds_temp_and_q_idxs, run_ids,
+            ):
+                result.append((
+                    ModelPrediction(
+                        mean_s=m,
+                        std_dev_s=[np.exp(li / 2) for li in l],
+                        metadata={
+                            "num_other_concurrent_queries": int(le) - 1,
+                            "run_id": r,
+                            "tpcds_temp_and_q_idx": t,
+                            "query_id": q,
+                        },
+                    ),
+                    r,
+                    q,
+                ))
+        else:  # LossType.SENSITIVE_Q_ERROR
+            mean_np = y_pred_mean.detach().cpu().numpy()
+            losses: list | np.ndarray = (
+                per_item_losses if per_item_losses is not None
+                else [0.0] * len(mean_np)
+            )
+            for m, le, q, t, r, yislb, loss_val in zip(
+                mean_np, x_len_np, query_ids, tpcds_temp_and_q_idxs, run_ids,
+                y_is_lower_bound_np, losses,
+            ):
+                result.append((
+                    ModelPrediction(
+                        mean_s=m,
+                        metadata={
+                            "num_other_concurrent_queries": int(le) - 1,
+                            "run_id": r,
+                            "tpcds_temp_and_q_idx": t,
+                            "query_id": q,
+                            "target_is_lower_bound": yislb,
+                            "loss": loss_val,
+                        },
+                    ),
+                    r,
+                    q,
+                ))
+
+        return result
+
+    def _infer_batch(
+        self,
+        batch: tuple,
+    ) -> list[tuple["ModelPrediction", str, str]]:
+        """
+        Runs a single forward pass on a pre-collated batch without computing
+        any loss. Returns a list of (ModelPrediction, run_id, query_id) tuples.
+
+        This is faster than ``_process_batch(..., derive_individual_predictions=True)``
+        because it skips the loss computation entirely.
+        """
+
+        (
+            x,
+            x_len,
+            pinch_points,
+            y,
+            query_ids,
+            tpcds_temp_and_q_idxs,
+            run_ids,
+            y_is_lower_bound,
+        ) = batch
+
+        train_config = self._train_config_sequence[-1]
+        result: list[tuple[ModelPrediction, str, str]] = []
+
+        # Handle isolated queries via the stage model when configured.
+        if train_config.use_stage_for_isolated_queries:
+            non_isolated_indices = []
+            for i in range(len(x_len)):
+                if x_len[i].item() > 1:
+                    non_isolated_indices.append(i)
+                else:
+                    pred = self._predict_isolated_query(
+                        i, x, pinch_points, query_ids, tpcds_temp_and_q_idxs,
+                        run_ids, y_is_lower_bound,
+                    )
+                    result.append((pred, run_ids[i], query_ids[i]))
+
+            if not non_isolated_indices:
+                return result
+
+            x = x[non_isolated_indices]
+            x_len = x_len[non_isolated_indices]
+            pinch_points = pinch_points[non_isolated_indices]
+            query_ids = [query_ids[i] for i in non_isolated_indices]
+            tpcds_temp_and_q_idxs = [tpcds_temp_and_q_idxs[i] for i in non_isolated_indices]
+            run_ids = [run_ids[i] for i in non_isolated_indices]
+            y_is_lower_bound = y_is_lower_bound[non_isolated_indices]
+
+        y_pred_mean, y_pred_logvar, y_pred_mix = self._nn(
+            x.to(self._device),
+            x_len.to(self._device),
+            pinch_points.to(self._device),
+            train_config.mdn_mix_softmax_temperature,
+        )
+
+        if self._trained_on_log_runtime:
+            y_pred_mean = torch.exp(y_pred_mean)
+            y_pred_logvar = torch.exp(y_pred_logvar)
+
+        result.extend(self._build_predictions_from_nn_output(
+            y_pred_mean, y_pred_logvar, y_pred_mix,
+            x_len, query_ids, tpcds_temp_and_q_idxs, run_ids, y_is_lower_bound,
+        ))
+        return result
 
     def save(self) -> str:
         """
@@ -931,44 +1129,13 @@ class IconqModel:
                 if x_len[i].item() > 1:
                     non_isolated_indices.append(i)
                 else:
-                    # Isolated query; use stage model to predict.
-                    rpu = x[i][pinch_points[i]][
-                        self._iconq_interaction_featurizer.rpu_dim_idx
-                    ].item()
-                    cluster_name = Cluster.ordered_cluster_names_per_rpu()[
-                        int(rpu)
-                    ][0]
-
-                    pred = self.stage_model.predict_from_tpcds_temp_and_q_idx(
-                        {query_ids[i]: tpcds_temp_and_q_idxs[i]},
-                        cluster_name=cluster_name,
-                    )[query_ids[i]]
-
-                    batch_pred_v_true.append(
-                        (
-                            ModelPrediction(
-                                mean_s=pred.mean_s,
-                                std_dev_s=pred.std_dev_s,
-                                mix_coeffs=pred.mix_coeffs,
-                                metadata={
-                                    "num_other_concurrent_queries": 0,
-                                    "run_id": run_ids[i],
-                                    "tpcds_temp_and_q_idx": tpcds_temp_and_q_idxs[
-                                        i
-                                    ],
-                                    "query_id": query_ids[i],
-                                    "target_is_lower_bound": y_is_lower_bound[
-                                        i
-                                    ],
-                                    "loss": 0.0,
-                                },
-                            ),
-                            y[i],
-                            query_ids[i],
-                            tpcds_temp_and_q_idxs[i],
-                            run_ids[i],
-                        )
+                    pred = self._predict_isolated_query(
+                        i, x, pinch_points, query_ids, tpcds_temp_and_q_idxs,
+                        run_ids, y_is_lower_bound,
                     )
+                    batch_pred_v_true.append((
+                        pred, y[i], query_ids[i], tpcds_temp_and_q_idxs[i], run_ids[i],
+                    ))
 
             if len(non_isolated_indices) == 0:
                 # All queries were isolated; nothing more to do.
@@ -1017,37 +1184,16 @@ class IconqModel:
                 batch_loss = loss
             else:
                 batch_loss = loss.mean()
-                for m, l, x, y_, q, t, r, le in zip(
-                    y_pred_mean.detach().numpy(),
-                    y_pred_logvar.detach().numpy(),
-                    y_pred_mix.detach().numpy(),
-                    y.numpy(),
-                    query_ids,
+                y_np = y.detach().cpu().numpy()
+                for (pred, r, q), y_, t in zip(
+                    self._build_predictions_from_nn_output(
+                        y_pred_mean, y_pred_logvar, y_pred_mix,
+                        x_len, query_ids, tpcds_temp_and_q_idxs, run_ids, y_is_lower_bound,
+                    ),
+                    y_np,
                     tpcds_temp_and_q_idxs,
-                    run_ids,
-                    x_len.detach().numpy(),
                 ):
-                    num_other_concurrent_queries = le - 1
-
-                    batch_pred_v_true.append(
-                        (
-                            ModelPrediction(
-                                mean_s=m,
-                                std_dev_s=[np.exp(li / 2) for li in l],
-                                mix_coeffs=x,
-                                metadata={
-                                    "num_other_concurrent_queries": num_other_concurrent_queries,
-                                    "run_id": r,
-                                    "tpcds_temp_and_q_idx": t,
-                                    "query_id": q,
-                                },
-                            ),
-                            y_,
-                            q,
-                            t,
-                            r,
-                        )
-                    )
+                    batch_pred_v_true.append((pred, y_, q, t, r))
         elif self._loss_type == LossType.NLL:
             loss = negative_log_likelihood_loss(
                 y_pred_mean,
@@ -1061,34 +1207,16 @@ class IconqModel:
                 batch_loss = loss
             else:
                 batch_loss = loss.mean()
-                for m, l, y_, q, t, r, le in zip(
-                    y_pred_mean.detach().numpy(),
-                    y_pred_logvar.detach().numpy(),
-                    y.numpy(),
-                    query_ids,
+                y_np = y.detach().cpu().numpy()
+                for (pred, r, q), y_, t in zip(
+                    self._build_predictions_from_nn_output(
+                        y_pred_mean, y_pred_logvar, y_pred_mix,
+                        x_len, query_ids, tpcds_temp_and_q_idxs, run_ids, y_is_lower_bound,
+                    ),
+                    y_np,
                     tpcds_temp_and_q_idxs,
-                    run_ids,
-                    x_len.detach().numpy(),
                 ):
-                    num_other_concurrent_queries = le - 1
-                    batch_pred_v_true.append(
-                        (
-                            ModelPrediction(
-                                mean_s=m,
-                                std_dev_s=[np.exp(li / 2) for li in l],
-                                metadata={
-                                    "num_other_concurrent_queries": num_other_concurrent_queries,
-                                    "run_id": r,
-                                    "tpcds_temp_and_q_idx": t,
-                                    "query_id": q,
-                                },
-                            ),
-                            y_,
-                            q,
-                            t,
-                            r,
-                        )
-                    )
+                    batch_pred_v_true.append((pred, y_, q, t, r))
         else:
             min_val: float | torch.Tensor = 0.001
             if train_config.penalize_based_on_overlap:
@@ -1108,36 +1236,17 @@ class IconqModel:
                 batch_loss = loss
             else:
                 batch_loss = loss.mean()
-                for m, y_, q, t, r, le, yislb, loss in zip(
-                    y_pred_mean.detach().numpy(),
-                    y.numpy(),
-                    query_ids,
+                y_np = y.detach().cpu().numpy()
+                for (pred, r, q), y_, t in zip(
+                    self._build_predictions_from_nn_output(
+                        y_pred_mean, y_pred_logvar, y_pred_mix,
+                        x_len, query_ids, tpcds_temp_and_q_idxs, run_ids, y_is_lower_bound,
+                        per_item_losses=loss.detach().cpu().numpy(),
+                    ),
+                    y_np,
                     tpcds_temp_and_q_idxs,
-                    run_ids,
-                    x_len.detach().numpy(),
-                    y_is_lower_bound.numpy(),
-                    loss.detach().numpy(),
                 ):
-                    num_other_concurrent_queries = le - 1
-                    batch_pred_v_true.append(
-                        (
-                            ModelPrediction(
-                                mean_s=m,
-                                metadata={
-                                    "num_other_concurrent_queries": num_other_concurrent_queries,
-                                    "run_id": r,
-                                    "tpcds_temp_and_q_idx": t,
-                                    "query_id": q,
-                                    "target_is_lower_bound": yislb,
-                                    "loss": loss,
-                                },
-                            ),
-                            y_,
-                            q,
-                            t,
-                            r,
-                        )
-                    )
+                    batch_pred_v_true.append((pred, y_, q, t, r))
 
         return (
             batch_loss,
