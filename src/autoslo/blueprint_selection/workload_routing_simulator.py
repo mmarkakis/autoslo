@@ -165,6 +165,12 @@ class WorkloadRoutingSimulator:
             name: False for name in self._blueprint.cluster_names
         }
 
+        # Incremental neighbor tracking: maps query_id → full list of all queries
+        # that have ever been concurrent with it (active co-runners at assignment
+        # time + any since-completed neighbors). Maintained incrementally so
+        # routing needs no scans — just a lookup + the single incoming query.
+        self._neighbors_per_active_query: dict[str, list[Query]] = {}
+
     def reset(self, simulator_run_id: Optional[str] = None) -> None:
         """
         Reset the simulator state for a new run, reusing the model and workload.
@@ -220,6 +226,8 @@ class WorkloadRoutingSimulator:
             ] = None
             # Invalidate before-cache for the new run.
             self._before_cache_valid[cluster_name] = False
+
+        self._neighbors_per_active_query = {}
 
     def _log_if_verbose(self, d: dict) -> None:
         """
@@ -338,6 +346,12 @@ class WorkloadRoutingSimulator:
                     "end_time_s": query.rel_start_time_s + self_latency_s,
                 }
             )
+            current_actives = self._active_queries_per_cluster[selected_cluster_name]
+            # Initialize this query's neighbor list with all currently active
+            # co-runners, and add it to each of their lists in turn.
+            self._neighbors_per_active_query[updated_query.query_id] = list(current_actives)
+            for active_q in current_actives:
+                self._neighbors_per_active_query[active_q.query_id].append(updated_query)
             self._active_queries_per_cluster[selected_cluster_name].append(
                 updated_query
             )
@@ -412,6 +426,7 @@ class WorkloadRoutingSimulator:
                 end_time_s = query.rel_start_time_s + query.latency_s
                 if (current_time_s is None) or (end_time_s <= current_time_s):
                     self._completed_queries_per_cluster[cluster].append(query)
+                    del self._neighbors_per_active_query[query.query_id]
                     self._log_if_verbose(
                         {
                             "timestamp": end_time_s,
@@ -500,13 +515,25 @@ class WorkloadRoutingSimulator:
 
         before_costs: dict[str, float] = {}
         before_slo_violations: dict[str, float] = {}
+        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
 
+        # Single pass over clusters: compute before-state (with caching) and
+        # build neighbor sets. For each active query, _neighbors_per_active_query
+        # already holds its full co-runner history; we just append the incoming
+        # query as a hypothetical. The incoming query's own list is the active set.
         for (
             cluster_name,
             active_queries,
         ) in self._active_queries_per_cluster.items():
 
-            # Use cached before-state if valid; recompute only if cluster state changed.
+            # --- neighbor sets ---
+            run_to_base_to_neighbors[cluster_name] = {
+                q: self._neighbors_per_active_query[q.query_id] + [query]
+                for q in active_queries
+            }
+            run_to_base_to_neighbors[cluster_name][query] = active_queries + [query]
+
+            # --- before-state (cached) ---
             if self._before_cache_valid[cluster_name]:
                 before_costs[cluster_name] = self._cached_before_cost[cluster_name]
                 before_slo_violations[cluster_name] = (
@@ -521,7 +548,6 @@ class WorkloadRoutingSimulator:
                 )[query.query_id].overall_mean_s()
             )
 
-            # Before routing:
             individual_before_slo_violations: list[float] | list[bool] = [
                 (
                     q.slo_violation_amount_s(self._slo_s)
@@ -532,50 +558,23 @@ class WorkloadRoutingSimulator:
             ]
             before_slo_violation = sum(individual_before_slo_violations)
             before_query_intervals = [q.as_interval() for q in active_queries]
-            if (
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    cluster_name
-                ]
-                is not None
-            ):
-                ongoing_billing_interval = Interval(
-                    self._most_recent_billing_window_start_time_per_cluster_s[
-                        cluster_name
-                    ],
-                    query.rel_start_time_s,
+            billing_window_start = (
+                self._most_recent_billing_window_start_time_per_cluster_s[cluster_name]
+            )
+            if billing_window_start is not None:
+                before_query_intervals.append(
+                    Interval(billing_window_start, query.rel_start_time_s)
                 )
-                before_query_intervals.append(ongoing_billing_interval)
-            before_billed_intervals = Billing.billed_intervals(
-                before_query_intervals
-            )
-            # Sum billed intervals directly instead of calling Billing.billed_s(),
-            # which would redundantly call billed_intervals() again.
             before_billed_s = sum(
-                iv.end - iv.begin for iv in before_billed_intervals
+                iv.end - iv.begin
+                for iv in Billing.billed_intervals(before_query_intervals)
             )
-            before_cost = (
-                self._cost_per_second_per_cluster[cluster_name]
-                * before_billed_s
-            )
+            before_cost = self._cost_per_second_per_cluster[cluster_name] * before_billed_s
             before_costs[cluster_name] = before_cost
             before_slo_violations[cluster_name] = before_slo_violation
-
-            # Cache the computed before-state for this cluster.
             self._cached_before_cost[cluster_name] = before_cost
             self._cached_before_slo_violation[cluster_name] = before_slo_violation
             self._before_cache_valid[cluster_name] = True
-
-        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
-
-        for (
-            cluster_name,
-            active_queries,
-        ) in self._active_queries_per_cluster.items():
-
-            active_w_current = active_queries + [query]
-            run_to_base_to_neighbors[cluster_name] = {
-                q: active_w_current for q in active_w_current
-            }
 
         dataset = ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
@@ -639,26 +638,15 @@ class WorkloadRoutingSimulator:
             )
             marginal_cost = after_cost - before_costs[cluster_name]
 
-            # Compare and update best if needed.
+            # Compare and update best if needed. Cache the cmp result to avoid
+            # calling _slo_cmp_with_tolerance twice with the same arguments.
+            slo_cmp = self._slo_cmp_with_tolerance(
+                marginal_slo_violation, marginal_slo_violation_on_best_cluster
+            )
             if (
                 (best_cluster_name is None)
-                or (
-                    self._slo_cmp_with_tolerance(
-                        marginal_slo_violation,
-                        marginal_slo_violation_on_best_cluster,
-                    )
-                    < 0
-                )
-                or (
-                    (
-                        self._slo_cmp_with_tolerance(
-                            marginal_slo_violation,
-                            marginal_slo_violation_on_best_cluster,
-                        )
-                        == 0
-                    )
-                    and (marginal_cost < marginal_cost_on_best_cluster)
-                )
+                or (slo_cmp < 0)
+                or (slo_cmp == 0 and marginal_cost < marginal_cost_on_best_cluster)
             ):
                 best_cluster_name = cluster_name
                 marginal_slo_violation_on_best_cluster = marginal_slo_violation

@@ -35,3 +35,17 @@ chunk_traces:
   - name: query_text
     type: str
     description: The SQL text of the query executed.
+
+redset_workload:
+  - name: workload_id
+    type: str
+    description: The unique identifier of the workload.
+  - name: query_id
+    type: str
+    description: The unique identifier of the query (within this workload).
+  - name: abs_start_time
+    type: datetime
+    description: The absolute start time of the query.
+  - name: tpcds_temp_and_q_idx
+    type: Query.TPCDSTempAndQIdx
+    description: The template and query index of the TPC-DS query executed.
