@@ -43,6 +43,7 @@ def main(args):
         iconq_model_id=args.iconq_model_id,
         blueprint_name=blueprint.name,
         slo_s=args.slo_s,
+        slo_dict_filename=args.slo_dict_filename,
         optimize_based_on_slo_violation_amount=args.optimize_cumulative_slo_violation_time,
         slo_violation_rate_threshold=args.slo_violation_rate_threshold,
         slo_violation_amount_threshold_s=args.slo_violation_amount_threshold_s,
@@ -117,6 +118,18 @@ if __name__ == "__main__":
         type=float,
         help="The SLO to meet, in seconds.",
         default=180.0,
+    )
+    parser.add_argument(
+        "--slo_dict_filename",
+        type=str,
+        default=None,
+        help=(
+            "Filename (not full path) of a YAML file under "
+            "data/generation_parameters/ mapping template IDs to per-template "
+            "SLO values in seconds.  E.g. 'slo_dict.yml'.  When given, "
+            "routing and violation stats use per-template SLOs instead of the "
+            "global --slo_s for overridden templates."
+        ),
     )
     parser.add_argument(
         "--slo_violation_rate_threshold",

@@ -48,15 +48,20 @@ export default function GanttViewer({ experimentName, runId }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ fontSize: '0.8rem', color: '#718096', marginBottom: '0.5rem' }}>
         {timeline.total_queries} queries &nbsp;·&nbsp;
-        SLO {timeline.slo_s}s &nbsp;·&nbsp;
-        violations{' '}
+        Default SLO: {timeline.default_slo_s}s
+        {timeline.slo_dict && Object.keys(timeline.slo_dict).length > 0 && (
+          <span style={{ color: '#a0aec0' }}>
+            {' '}· {Object.keys(timeline.slo_dict).length} template overrides
+          </span>
+        )}{' '}
+        &nbsp;·&nbsp; violations{' '}
         <span style={{ color: timeline.violation_rate > 0.05 ? '#fc8181' : '#68d391' }}>
           {(timeline.violation_rate * 100).toFixed(1)}%
         </span>{' '}
         &nbsp;·&nbsp; cost ${Number(timeline.total_cost).toFixed(2)}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <GanttChart intervals={timeline.intervals} sloS={timeline.slo_s} />
+        <GanttChart intervals={timeline.intervals} sloS={timeline.default_slo_s} />
       </div>
     </div>
   )

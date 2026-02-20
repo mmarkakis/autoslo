@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import autoslo.utils.paths as pu
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 router = APIRouter()
 
@@ -65,8 +66,12 @@ class RunSummary(BaseModel):
     run_id: str
     seed: int | None = None
     slo_s: float | None = None
+    slo_dict_filename: str | None = None
+    slo_dict: dict | None = None
     blueprint_name: str | None = None
     violation_rate: float | None = None
+    violating_queries: int | None = None
+    total_queries: int | None = None
     total_cost: float | None = None
     violation_amount_s: float | None = None
     num_queries: int | None = None
@@ -86,17 +91,32 @@ class TimelineInterval(BaseModel):
     end_s: float
     state: str  # "COMPLETED" | "RUNNING"
     violates_slo: bool
+    slo_s: float
 
 
 class TimelineData(BaseModel):
     run_id: str
     experiment_name: str | None
-    slo_s: float
+    default_slo_s: float
+    slo_dict: dict
+    slo_dict_filename: str | None
     total_queries: int
     violating_queries: int
     violation_rate: float
     total_cost: float
     intervals: list[TimelineInterval]
+
+
+class TemplateStats(BaseModel):
+    template_id: int
+    slo_s: float
+    occurrences: int
+    compliant: int
+    compliance_rate: float
+    avg_latency_s: float
+    p50_latency_s: float
+    p95_latency_s: float
+    avg_excess_s: float
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +178,11 @@ def get_run_timeline(experiment: str, run_id: str):
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
-    slo_s: float = config.get("slo_s", 0.0)
+    resolver = SloResolver.from_dict(
+        default_slo_s=config.get("slo_s", 0.0),
+        slo_dict=config.get("slo_dict") or {},
+        slo_dict_filename=config.get("slo_dict_filename"),
+    )
 
     # --- reconstruct timeline from log ---
     log = pd.read_parquet(log_path)
@@ -206,18 +230,21 @@ def get_run_timeline(experiment: str, run_id: str):
         end_s = float(row["final_end_s"])
         duration = end_s - start_s
         state = str(row["state"])
-        viol = state == "COMPLETED" and duration > slo_s
+        tpcds = row.get("tpcds_temp_and_q_idx")
+        row_slo_s = resolver.resolve(tpcds)
+        viol = state == "COMPLETED" and duration > row_slo_s
         if viol:
             violating_queries += 1
         intervals.append(
             TimelineInterval(
                 cluster_name=str(row["cluster_name"]),
                 query_id=qid,
-                tpcds_temp_and_q_idx=row.get("tpcds_temp_and_q_idx"),
+                tpcds_temp_and_q_idx=tpcds,
                 start_s=start_s,
                 end_s=end_s,
                 state=state,
                 violates_slo=viol,
+                slo_s=row_slo_s,
             )
         )
 
@@ -234,7 +261,9 @@ def get_run_timeline(experiment: str, run_id: str):
     return TimelineData(
         run_id=run_id,
         experiment_name=experiment,
-        slo_s=slo_s,
+        default_slo_s=resolver.default_slo_s,
+        slo_dict=resolver.slo_dict,
+        slo_dict_filename=resolver.slo_dict_filename,
         total_queries=total_queries,
         violating_queries=violating_queries,
         violation_rate=violation_rate,
@@ -265,3 +294,87 @@ def get_run_config(experiment: str, run_id: str) -> dict:
     _require_file(config_path, f"config for run '{run_id}'")
     with open(config_path) as f:
         return yaml.safe_load(f) or {}
+
+
+@router.get(
+    "/simulator/runs/{experiment}/{run_id}/template_stats",
+    response_model=list[TemplateStats],
+)
+def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
+    """
+    Return per-template compliance statistics for the specified run.
+
+    For each template ID seen in the completion events of the solve log, returns:
+    - occurrences       : number of completed queries for that template
+    - compliant         : queries whose latency ≤ per-template SLO
+    - compliance_rate   : compliant / occurrences
+    - avg/p50/p95 latency
+    - avg_excess_s      : average(max(0, latency - slo_s)) across all queries
+    """
+    import numpy as np
+
+    rdir = _run_dir(experiment, run_id)
+    log_path = os.path.join(rdir, "solve_log.parquet")
+    config_path = os.path.join(rdir, "config.yml")
+
+    _require_file(log_path, f"solve_log for run '{run_id}'")
+    _require_file(config_path, f"config for run '{run_id}'")
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    resolver = SloResolver.from_dict(
+        default_slo_s=config.get("slo_s", 0.0),
+        slo_dict=config.get("slo_dict") or {},
+        slo_dict_filename=config.get("slo_dict_filename"),
+    )
+
+    log = pd.read_parquet(log_path)
+    completions = log[log["event_type"] == "completion"].copy()
+
+    # Join with routing to get tpcds_temp_and_q_idx (completions log lacks it)
+    routing = (
+        log[log["event_type"] == "routing"]
+        .set_index("query_id")[["tpcds_temp_and_q_idx", "latency_s"]]
+    )
+    # Completions have query_id in the index after set_index; merge on query_id
+    completions = completions.set_index("query_id")
+    # Use latency_s from completions when available, fall back to routing
+    merged = completions[["latency_s"]].join(
+        routing[["tpcds_temp_and_q_idx"]], how="left"
+    )
+    merged["latency_s"] = merged["latency_s"].fillna(0.0)
+
+    # Extract template IDs
+    from autoslo.workload_definition.query import Query
+
+    merged["template_id"] = merged["tpcds_temp_and_q_idx"].map(
+        lambda x: Query.template_id(x) if pd.notna(x) and x else -1
+    )
+    merged["slo_s_row"] = merged["tpcds_temp_and_q_idx"].map(resolver.resolve)
+
+    results: list[TemplateStats] = []
+    for tid, group in merged.groupby("template_id"):
+        if tid == -1:
+            continue
+        lats = group["latency_s"].to_numpy(dtype=float)
+        slo_val = float(group["slo_s_row"].iloc[0])
+        n = len(lats)
+        compliant = int((lats <= slo_val).sum())
+        excess = np.maximum(0.0, lats - slo_val)
+        results.append(
+            TemplateStats(
+                template_id=int(tid),  # type: ignore[arg-type]
+                slo_s=slo_val,
+                occurrences=n,
+                compliant=compliant,
+                compliance_rate=round(compliant / n, 6) if n > 0 else 0.0,
+                avg_latency_s=round(float(np.mean(lats)), 4),
+                p50_latency_s=round(float(np.percentile(lats, 50)), 4),
+                p95_latency_s=round(float(np.percentile(lats, 95)), 4),
+                avg_excess_s=round(float(np.mean(excess)), 4),
+            )
+        )
+
+    results.sort(key=lambda s: s.template_id)
+    return results

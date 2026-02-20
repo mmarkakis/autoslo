@@ -26,6 +26,7 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     GanttRecorder,
     render_gantt_scrubber,
 )
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
 
@@ -43,15 +44,16 @@ def _load_run(run_dir: str | Path) -> tuple[dict, pd.DataFrame]:
     return config, log
 
 
-def _color(state: str, duration: float, slo_s: float) -> str:
+def _color(state: str, duration: float, resolver: SloResolver, tpcds_temp_and_q_idx: str | None = None) -> str:
     if state == "RUNNING":
         return Palette.light_gray
+    slo_s = resolver.resolve(tpcds_temp_and_q_idx)
     return Palette.dark_red if duration > slo_s else Palette.light_green
 
 
 def _snapshot_from_query_dicts(
     query_rows: list[dict[str, Any]],
-    slo_s: float,
+    resolver: SloResolver,
     cost_per_second_per_cluster: dict[str, float],
     label: str,
 ) -> GanttSnapshot:
@@ -70,11 +72,12 @@ def _snapshot_from_query_dicts(
         e = row["end_s"]
         state = row["state"]
         duration = e - s
-        color = _color(state, duration, slo_s)
+        tpcds = row.get("tpcds_temp_and_q_idx", "")
+        color = _color(state, duration, resolver, tpcds)
 
         meta: dict[str, Any] = {
             "query_id": row["query_id"],
-            "tpcds_temp_and_q_idx": row.get("tpcds_temp_and_q_idx", ""),
+            "tpcds_temp_and_q_idx": tpcds,
             "stage_latency_prediction_s": duration,  # best approximation
             "state": state,
             "color": color,
@@ -83,9 +86,10 @@ def _snapshot_from_query_dicts(
 
         total_queries += 1
         if state != "RUNNING":
-            if duration > slo_s:
+            effective_slo_s = resolver.resolve(tpcds)
+            if duration > effective_slo_s:
                 violating_queries += 1
-                violation_amount += duration - slo_s
+                violation_amount += duration - effective_slo_s
 
     # sort each cluster's intervals
     for cluster in intervals_by_cluster:
@@ -154,7 +158,11 @@ def build_final_snapshot_from_log(
     Coloring: green ≤ slo_s, red > slo_s (RUNNING intervals use gray).
     """
     log = pd.read_parquet(log_path)
-    slo_s: float = config["slo_s"]
+    resolver = SloResolver.from_dict(
+        default_slo_s=config["slo_s"],
+        slo_dict=config.get("slo_dict") or {},
+        slo_dict_filename=config.get("slo_dict_filename"),
+    )
     cost_per_second = _cost_per_second_from_config(config)
 
     # --- index relevant events by query_id ---
@@ -207,7 +215,7 @@ def build_final_snapshot_from_log(
         for qid, row in df.iterrows()
     ]
 
-    return _snapshot_from_query_dicts(rows, slo_s, cost_per_second, label="Final")
+    return _snapshot_from_query_dicts(rows, resolver, cost_per_second, label="Final")
 
 
 def build_scrubber_snapshots_from_log(
@@ -229,7 +237,11 @@ def build_scrubber_snapshots_from_log(
     backend API surface is complete; the frontend scrubber can be added later.
     """
     log = pd.read_parquet(log_path)
-    slo_s: float = config["slo_s"]
+    resolver = SloResolver.from_dict(
+        default_slo_s=config["slo_s"],
+        slo_dict=config.get("slo_dict") or {},
+        slo_dict_filename=config.get("slo_dict_filename"),
+    )
     cost_per_second = _cost_per_second_from_config(config)
 
     # Build a per-query event timeline for fast lookup.
@@ -287,7 +299,7 @@ def build_scrubber_snapshots_from_log(
                 "state": state,
             })
 
-        snap = _snapshot_from_query_dicts(rows, slo_s, cost_per_second, label=label)
+        snap = _snapshot_from_query_dicts(rows, resolver, cost_per_second, label=label)
         snapshots.append(snap)
 
     return snapshots

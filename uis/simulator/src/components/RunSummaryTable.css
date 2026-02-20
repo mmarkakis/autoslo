@@ -83,3 +83,15 @@
 .rst-bad {
   color: #fc8181 !important;
 }
+
+.rst-stats-cell {
+  cursor: pointer;
+  text-align: center;
+  font-size: 1rem;
+  opacity: 0.7;
+  user-select: none;
+}
+
+.rst-stats-cell:hover {
+  opacity: 1;
+}

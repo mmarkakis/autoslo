@@ -114,10 +114,12 @@ function buildPlotData(intervals) {
 
         const dur = (iv.end_s - iv.start_s).toFixed(2)
         const violation = iv.violates_slo ? '⚠ SLO violated' : '✓ SLO met'
+        const sloLine = iv.slo_s != null ? `SLO: ${Number(iv.slo_s).toFixed(2)}s<br>` : ''
         const tooltip =
           `<b>Query ${iv.query_id}</b><br>` +
           (iv.tpcds_temp_and_q_idx != null ? `${iv.tpcds_temp_and_q_idx}<br>` : '') +
           `Cluster: ${iv.cluster_name}<br>` +
+          sloLine +
           `${iv.start_s.toFixed(2)}s → ${iv.end_s.toFixed(2)}s (${dur}s)<br>` +
           `${iv.state} · ${violation}`
 

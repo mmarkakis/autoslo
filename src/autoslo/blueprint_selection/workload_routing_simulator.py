@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection import log_timeline_builder
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
@@ -56,6 +57,7 @@ class WorkloadRoutingSimulator:
         optimize_based_on_slo_violation_amount: bool = False,
         slo_violation_rate_threshold: float = 0,
         slo_violation_amount_threshold_s: float = 0,
+        slo_dict_filename: Optional[str] = None,
         verbose: bool = False,
         export_video: bool = False,
         video_frame_duration: float = 1.0,
@@ -67,6 +69,8 @@ class WorkloadRoutingSimulator:
         self._blueprint_name = blueprint_name
         self._blueprint = Blueprint.from_config(blueprint_name)
         self._slo_s = slo_s
+        self._slo_dict_filename = slo_dict_filename
+        self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
         self._iconq_model = IconqModel.load(model_id=iconq_model_id)
 
         self._optimize_based_on_slo_violation_amount = (
@@ -178,6 +182,8 @@ class WorkloadRoutingSimulator:
                 "iconq_model_id": self._iconq_model_id,
                 "blueprint_name": self._blueprint_name,
                 "slo_s": self._slo_s,
+                "slo_dict_filename": self._slo_dict_filename,
+                "slo_dict": self._slo_resolver.slo_dict,
                 "optimize_based_on_slo_violation_amount": (
                     self._optimize_based_on_slo_violation_amount
                 ),
@@ -442,6 +448,7 @@ class WorkloadRoutingSimulator:
                             "timestamp": end_time_s,
                             "event_type": "completion",
                             "query_id": query.query_id,
+                            "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
                             "cluster_name": query.cluster_name,
                             "old_latency_s": None,
                             "raw_model_latency_s": None,
@@ -564,9 +571,13 @@ class WorkloadRoutingSimulator:
 
             individual_before_slo_violations: list[float] | list[bool] = [
                 (
-                    q.slo_violation_amount_s(self._slo_s)
+                    q.slo_violation_amount_s(
+                        self._slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                    )
                     if self._optimize_based_on_slo_violation_amount
-                    else q.violates_slo(self._slo_s)
+                    else q.violates_slo(
+                        self._slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                    )
                 )
                 for q in active_queries
             ]
@@ -613,13 +624,22 @@ class WorkloadRoutingSimulator:
                 )
 
             # Process prediction results.
+            # Build per-query SLO list parallel to latencies_after:
+            # first entry = incoming query, remainder = dict keys in order.
+            _queries_for_slo = [query] + list(
+                run_to_base_to_neighbors[cluster_name].keys()
+            )
+            _slos_after = [
+                self._slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                for q in _queries_for_slo
+            ]
             individual_after_slo_violations: list[float] | list[bool] = [
                 (
-                    max(0, latency_s - self._slo_s)
+                    max(0, latency_s - slo_s)
                     if self._optimize_based_on_slo_violation_amount
-                    else latency_s > self._slo_s
+                    else latency_s > slo_s
                 )
-                for latency_s in latencies_after
+                for latency_s, slo_s in zip(latencies_after, _slos_after)
             ]
             after_slo_violation = sum(individual_after_slo_violations)
             marginal_slo_violation = (
@@ -832,20 +852,27 @@ class WorkloadRoutingSimulator:
             import pandas as _pd
 
             log = _pd.read_parquet(log_path)
-            completions = log[log["event_type"] == "completion"]
+            completions = log[log["event_type"] == "completion"].copy()
             num_queries = len(completions)
             if num_queries > 0 and self._slo_s:
                 durations = completions["latency_s"].fillna(0.0)
-                violations = durations > self._slo_s
+                # Compute per-row SLO using the resolver so that
+                # per-template overrides are reflected in violation stats.
+                per_row_slo = completions["tpcds_temp_and_q_idx"].map(
+                    self._slo_resolver.resolve
+                ).fillna(self._slo_s)
+                violations = durations > per_row_slo
                 violation_rate = float(violations.mean())
                 violation_amount_s = float(
-                    (durations - self._slo_s).clip(lower=0.0).sum()
+                    (durations - per_row_slo).clip(lower=0.0).sum()
                 )
 
         run_entry = {
             "run_id": self._run_id,
             "seed": self._seed,
             "slo_s": self._slo_s,
+            "slo_dict_filename": self._slo_dict_filename,
+            "slo_dict": self._slo_resolver.slo_dict,
             "blueprint_name": self._blueprint_name,
             "violation_rate": round(violation_rate, 6),
             "total_cost": round(total_cost, 4),
