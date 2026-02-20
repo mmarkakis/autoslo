@@ -20,16 +20,22 @@ def main(args):
         seed=42,
         abs_start_time=datetime(2024, 4, 1, 0, 0, 0),
         abs_end_time=datetime(2024, 4, 2, 0, 0, 0),
-        real_queries_per_output_queries=6,
-        real_s_per_output_s=6,
+        real_queries_per_output_queries=24,
+        real_s_per_output_s=24,
     )
-    blueprint = Blueprint.maximal(max_rpu=32)
+    blueprint = Blueprint.maximal(max_rpu=args.max_rpu)
+
+    # Derive experiment_name from CLI arg or auto-generate from key params.
+    experiment_name = args.experiment_name or (
+        f"{args.workload_name}__{blueprint.name}__slo{args.slo_s}"
+    )
 
     print(
         f"Running {args.num_samples} simulations on workload "
         f"{args.workload_name} with blueprint {blueprint.name} and IconQ "
         f"model {args.iconq_model_id}..."
     )
+    print(f"Experiment name: {experiment_name}")
 
     # Create the simulator once and reset it for each sample.
     simulator = WorkloadRoutingSimulator(
@@ -43,6 +49,7 @@ def main(args):
         verbose=True,
         export_video=args.export_video,
         video_frame_duration=args.video_frame_duration,
+        experiment_name=experiment_name,
     )
 
     # Warm up featurization caches before the first sample.
@@ -140,6 +147,16 @@ if __name__ == "__main__":
         type=float,
         help="The threshold for acceptable cumulative SLO violation time in seconds.",
         default=30.0,
+    )
+    parser.add_argument(
+        "--experiment_name",
+        type=str,
+        default=None,
+        help=(
+            "Name of the experiment group for this batch of runs. "
+            "Runs will be stored under simulator_runs/<experiment_name>/. "
+            "Defaults to '<workload>__<blueprint>__slo<slo_s>'."
+        ),
     )
     parser.add_argument(
         "--continue_runs",

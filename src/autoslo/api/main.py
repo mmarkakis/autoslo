@@ -6,6 +6,7 @@ from autoslo.api.routers import (
     composite_router,
     chunk_router,
     strat_router,
+    simulator_router,
 )
 
 app = FastAPI(title="AutoSLO API", version="1.0.0")
@@ -24,6 +25,7 @@ app.include_router(composite_router.router, prefix="/api", tags=["composite"])
 app.include_router(chunk_router.router, prefix="/api", tags=["chunk"])
 app.include_router(strat_router.router, prefix="/api", tags=["strat"])
 app.include_router(classifier_router.router, prefix="/api", tags=["classifier"])
+app.include_router(simulator_router.router, prefix="/api", tags=["simulator"])
 
 
 @app.get("/")

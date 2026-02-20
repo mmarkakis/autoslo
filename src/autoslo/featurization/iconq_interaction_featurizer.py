@@ -355,8 +355,9 @@ class IconqInteractionFeaturizer:
         qb_t = np.empty(n, dtype=np.float32)
         for sorted_pos, (_, (idx, t, lat)) in enumerate(sorted_entries):
             qb_feat[sorted_pos] = (
-                self._iconq_query_featurizer
-                .featurize_from_tpcds_temp_and_q_idx_as_numpy(idx)
+                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx_as_numpy(
+                    idx
+                )
             )
             qb_lat[sorted_pos] = lat
             qb_t[sorted_pos] = t
@@ -368,8 +369,9 @@ class IconqInteractionFeaturizer:
 
             # qa columns: constant across all rows — broadcast once.
             arr[:, :q_dim] = (
-                self._iconq_query_featurizer
-                .featurize_from_tpcds_temp_and_q_idx_as_numpy(qa_idx)
+                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx_as_numpy(
+                    qa_idx
+                )
             )
             arr[:, q_dim] = qa_lat
 

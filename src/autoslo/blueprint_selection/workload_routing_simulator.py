@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 from typing import Any, Optional
@@ -5,12 +6,13 @@ from typing import Any, Optional
 import pandas as pd
 from scipy import datasets
 import yaml
+from filelock import FileLock
 from intervaltree import Interval  # type: ignore[import]
 from tqdm import tqdm
 
 import autoslo.utils.paths as pu
+from autoslo.blueprint_selection import log_timeline_builder
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
-    GanttRecorder,
     export_gantt_video,
     render_gantt_scrubber,
 )
@@ -58,6 +60,7 @@ class WorkloadRoutingSimulator:
         export_video: bool = False,
         video_frame_duration: float = 1.0,
         simulator_run_id: Optional[str] = None,
+        experiment_name: Optional[str] = None,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -77,7 +80,7 @@ class WorkloadRoutingSimulator:
         self._export_video = export_video
         self._video_frame_duration = video_frame_duration
         self._simulator_run_id = simulator_run_id
-        self._recorder = GanttRecorder()
+        self._experiment_name = experiment_name
 
         self._workload: Workload
         if workload_name.startswith("redset"):
@@ -89,33 +92,11 @@ class WorkloadRoutingSimulator:
             int(datetime.now().timestamp() * 1000)
         )
 
+        self._seed: Optional[int] = None  # populated in simulate_one
+
         # Setup the outputs directory.
-        self._out_dir = os.path.join(
-            pu.get_data_path(), "simulator_runs", self._run_id
-        )
-        os.makedirs(self._out_dir, exist_ok=True)
-        config_out_path = os.path.join(self._out_dir, "config.yml")
-        with open(config_out_path, "w") as f:
-            d = {
-                "run_id": self._run_id,
-                "workload_name": self._workload_name,
-                "iconq_model_id": self._iconq_model_id,
-                "blueprint_name": self._blueprint_name,
-                "slo_s": self._slo_s,
-                "optimize_based_on_slo_violation_amount": (
-                    self._optimize_based_on_slo_violation_amount
-                ),
-                "slo_violation_rate_threshold": (
-                    self._slo_violation_rate_threshold
-                ),
-                "slo_violation_amount_threshold_s": (
-                    self._slo_violation_amount_threshold_s
-                ),
-                "verbose": self._verbose,
-                "export_video": self._export_video,
-                "video_frame_duration": self._video_frame_duration,
-            }
-            yaml.safe_dump(d, f, sort_keys=False)
+        self._out_dir = self._make_out_dir(self._run_id)
+        self._write_config_yml()
 
         # Set up logging if verbose is enabled.
         self._log_idx = 0
@@ -171,28 +152,28 @@ class WorkloadRoutingSimulator:
         # routing needs no scans — just a lookup + the single incoming query.
         self._neighbors_per_active_query: dict[str, list[Query]] = {}
 
-    def reset(self, simulator_run_id: Optional[str] = None) -> None:
-        """
-        Reset the simulator state for a new run, reusing the model and workload.
-        This allows multiple samples to be run without reloading heavy objects.
+    # ------------------------------------------------------------------
+    # helper: build/return the output directory path
+    # ------------------------------------------------------------------
+    def _make_out_dir(self, run_id: str) -> str:
+        if self._experiment_name:
+            out_dir = os.path.join(
+                pu.get_data_path(),
+                "simulator_runs",
+                self._experiment_name,
+                run_id,
+            )
+        else:
+            out_dir = os.path.join(pu.get_data_path(), "simulator_runs", run_id)
+        os.makedirs(out_dir, exist_ok=True)
+        return out_dir
 
-        Parameters:
-            simulator_run_id: Optional run ID for the new run. If None, generates
-                a new timestamp-based ID.
-        """
-        self._run_id = simulator_run_id or str(
-            int(datetime.now().timestamp() * 1000)
-        )
-        self._out_dir = os.path.join(
-            pu.get_data_path(), "simulator_runs", self._run_id
-        )
-        os.makedirs(self._out_dir, exist_ok=True)
-
-        # Re-write config.yml for the new run_id.
+    def _write_config_yml(self) -> None:
         config_out_path = os.path.join(self._out_dir, "config.yml")
         with open(config_out_path, "w") as f:
             d = {
                 "run_id": self._run_id,
+                "experiment_name": self._experiment_name,
                 "workload_name": self._workload_name,
                 "iconq_model_id": self._iconq_model_id,
                 "blueprint_name": self._blueprint_name,
@@ -209,13 +190,29 @@ class WorkloadRoutingSimulator:
                 "verbose": self._verbose,
                 "export_video": self._export_video,
                 "video_frame_duration": self._video_frame_duration,
+                "seed": self._seed,
             }
             yaml.safe_dump(d, f, sort_keys=False)
+
+    def reset(self, simulator_run_id: Optional[str] = None) -> None:
+        """
+        Reset the simulator state for a new run, reusing the model and workload.
+        This allows multiple samples to be run without reloading heavy objects.
+
+        Parameters:
+            simulator_run_id: Optional run ID for the new run. If None, generates
+                a new timestamp-based ID.
+        """
+        self._run_id = simulator_run_id or str(
+            int(datetime.now().timestamp() * 1000)
+        )
+        self._seed = None
+        self._out_dir = self._make_out_dir(self._run_id)
+        self._write_config_yml()
 
         # Reset logging.
         self._log_idx = 0
         self._log_rows = []
-        self._recorder = GanttRecorder()
 
         # Reset per-run bookkeeping for all clusters.
         for cluster_name in self._blueprint.cluster_names:
@@ -299,6 +296,10 @@ class WorkloadRoutingSimulator:
 
         seq_num_to_cluster_name: dict[int, str] = {}
 
+        # Store seed so it ends up in config.yml and experiment_meta.json
+        self._seed = getattr(sampling_spec, "seed", None)
+        self._write_config_yml()
+
         queries = self._workload.queries(sampling_spec=sampling_spec)
         print(
             f"Simulating routing of {len(queries)} queries from workload "
@@ -346,12 +347,18 @@ class WorkloadRoutingSimulator:
                     "end_time_s": query.rel_start_time_s + self_latency_s,
                 }
             )
-            current_actives = self._active_queries_per_cluster[selected_cluster_name]
+            current_actives = self._active_queries_per_cluster[
+                selected_cluster_name
+            ]
             # Initialize this query's neighbor list with all currently active
             # co-runners, and add it to each of their lists in turn.
-            self._neighbors_per_active_query[updated_query.query_id] = list(current_actives)
+            self._neighbors_per_active_query[updated_query.query_id] = list(
+                current_actives
+            )
             for active_q in current_actives:
-                self._neighbors_per_active_query[active_q.query_id].append(updated_query)
+                self._neighbors_per_active_query[active_q.query_id].append(
+                    updated_query
+                )
             self._active_queries_per_cluster[selected_cluster_name].append(
                 updated_query
             )
@@ -407,6 +414,9 @@ class WorkloadRoutingSimulator:
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         with open(mapping_out_path, "w") as f:
             yaml.safe_dump(seq_num_to_cluster_name, f, sort_keys=False)
+
+        if self._experiment_name:
+            self._write_experiment_meta()
 
     def _cleanup_completed_queries_up_to(
         self, current_time_s: Optional[float] = None
@@ -531,11 +541,15 @@ class WorkloadRoutingSimulator:
                 q: self._neighbors_per_active_query[q.query_id] + [query]
                 for q in active_queries
             }
-            run_to_base_to_neighbors[cluster_name][query] = active_queries + [query]
+            run_to_base_to_neighbors[cluster_name][query] = active_queries + [
+                query
+            ]
 
             # --- before-state (cached) ---
             if self._before_cache_valid[cluster_name]:
-                before_costs[cluster_name] = self._cached_before_cost[cluster_name]
+                before_costs[cluster_name] = self._cached_before_cost[
+                    cluster_name
+                ]
                 before_slo_violations[cluster_name] = (
                     self._cached_before_slo_violation[cluster_name]
                 )
@@ -559,7 +573,9 @@ class WorkloadRoutingSimulator:
             before_slo_violation = sum(individual_before_slo_violations)
             before_query_intervals = [q.as_interval() for q in active_queries]
             billing_window_start = (
-                self._most_recent_billing_window_start_time_per_cluster_s[cluster_name]
+                self._most_recent_billing_window_start_time_per_cluster_s[
+                    cluster_name
+                ]
             )
             if billing_window_start is not None:
                 before_query_intervals.append(
@@ -569,11 +585,16 @@ class WorkloadRoutingSimulator:
                 iv.end - iv.begin
                 for iv in Billing.billed_intervals(before_query_intervals)
             )
-            before_cost = self._cost_per_second_per_cluster[cluster_name] * before_billed_s
+            before_cost = (
+                self._cost_per_second_per_cluster[cluster_name]
+                * before_billed_s
+            )
             before_costs[cluster_name] = before_cost
             before_slo_violations[cluster_name] = before_slo_violation
             self._cached_before_cost[cluster_name] = before_cost
-            self._cached_before_slo_violation[cluster_name] = before_slo_violation
+            self._cached_before_slo_violation[cluster_name] = (
+                before_slo_violation
+            )
             self._before_cache_valid[cluster_name] = True
 
         dataset = ConcurrentQueryDataset.build_from_query_groups(
@@ -633,8 +654,7 @@ class WorkloadRoutingSimulator:
                 iv.end - iv.begin for iv in after_billed_intervals
             )
             after_cost = (
-                self._cost_per_second_per_cluster[cluster_name]
-                * after_billed_s
+                self._cost_per_second_per_cluster[cluster_name] * after_billed_s
             )
             marginal_cost = after_cost - before_costs[cluster_name]
 
@@ -646,7 +666,10 @@ class WorkloadRoutingSimulator:
             if (
                 (best_cluster_name is None)
                 or (slo_cmp < 0)
-                or (slo_cmp == 0 and marginal_cost < marginal_cost_on_best_cluster)
+                or (
+                    slo_cmp == 0
+                    and marginal_cost < marginal_cost_on_best_cluster
+                )
             ):
                 best_cluster_name = cluster_name
                 marginal_slo_violation_on_best_cluster = marginal_slo_violation
@@ -693,11 +716,19 @@ class WorkloadRoutingSimulator:
 
     def write_out_visualization(self) -> None:
         """
-        Write out an HTML visualization of the query assignment.
+        Write out an HTML visualization of the query assignment, built from the
+        solve log (no longer driven by in-memory snapshots).
         Optionally also exports a video if export_video flag is set.
         """
+        log_path = os.path.join(self._out_dir, "solve_log.parquet")
+        with open(os.path.join(self._out_dir, "config.yml")) as f:
+            config = yaml.safe_load(f)
+
+        snapshot = log_timeline_builder.build_final_snapshot_from_log(
+            log_path=log_path, config=config
+        )
         fig = render_gantt_scrubber(
-            self._recorder.snapshots,
+            [snapshot],
             slo_s=self._slo_s,
             violation_rate_threshold=self._slo_violation_rate_threshold,
             violation_amount_threshold=self._slo_violation_amount_threshold_s,
@@ -708,14 +739,13 @@ class WorkloadRoutingSimulator:
         )
 
         out_path = os.path.join(self._out_dir, "visualization.html")
-
         fig.write_html(out_path, auto_play=False, include_plotlyjs="cdn")
 
         # Export video if requested
         if self._export_video:
             video_out_path = os.path.join(self._out_dir, "visualization.mp4")
             export_gantt_video(
-                snapshots=self._recorder.snapshots,
+                snapshots=[snapshot],
                 slo_s=self._slo_s,
                 output_path=video_out_path,
                 frame_duration=self._video_frame_duration,
@@ -766,3 +796,77 @@ class WorkloadRoutingSimulator:
         out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
         with open(out_path, "w") as f:
             yaml.safe_dump(d, f, sort_keys=False)
+
+    def _write_experiment_meta(self) -> None:
+        """
+        Append this run's summary stats to the shared experiment_meta.json,
+        creating it if it does not exist.  Uses a file lock for safety when
+        multiple simulator processes share the same experiment directory.
+        """
+        if not self._experiment_name:
+            return
+
+        experiment_dir = os.path.join(
+            pu.get_data_path(), "simulator_runs", self._experiment_name
+        )
+        meta_path = os.path.join(experiment_dir, "experiment_meta.json")
+        lock_path = meta_path + ".lock"
+
+        # Compute summary stats from the billing analysis file.
+        billing_path = os.path.join(
+            self._out_dir, "billing_interval_analysis.yml"
+        )
+        total_cost = 0.0
+        if os.path.exists(billing_path):
+            with open(billing_path) as f:
+                billing = yaml.safe_load(f) or {}
+            for cluster_data in billing.values():
+                total_cost += cluster_data.get("total_billed_cost", 0.0)
+
+        # Compute violation stats from the solve log.
+        violation_rate = 0.0
+        violation_amount_s = 0.0
+        num_queries = 0
+        log_path = os.path.join(self._out_dir, "solve_log.parquet")
+        if os.path.exists(log_path):
+            import pandas as _pd
+
+            log = _pd.read_parquet(log_path)
+            completions = log[log["event_type"] == "completion"]
+            num_queries = len(completions)
+            if num_queries > 0 and self._slo_s:
+                durations = completions["latency_s"].fillna(0.0)
+                violations = durations > self._slo_s
+                violation_rate = float(violations.mean())
+                violation_amount_s = float(
+                    (durations - self._slo_s).clip(lower=0.0).sum()
+                )
+
+        run_entry = {
+            "run_id": self._run_id,
+            "seed": self._seed,
+            "slo_s": self._slo_s,
+            "blueprint_name": self._blueprint_name,
+            "violation_rate": round(violation_rate, 6),
+            "total_cost": round(total_cost, 4),
+            "violation_amount_s": round(violation_amount_s, 4),
+            "num_queries": num_queries,
+            "completed_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+
+        with FileLock(lock_path):
+            if os.path.exists(meta_path):
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            else:
+                meta = {
+                    "experiment_name": self._experiment_name,
+                    "runs": [],
+                }
+            # Replace entry if run_id already present (idempotent re-runs)
+            meta["runs"] = [
+                r for r in meta["runs"] if r.get("run_id") != self._run_id
+            ]
+            meta["runs"].append(run_entry)
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
