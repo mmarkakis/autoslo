@@ -44,7 +44,7 @@ class WindowedTemplateDetector:
     ):
         self._queries = queries
         self._arrival_times_s = np.array(
-            [query.arrival_time.timestamp() for query in queries]
+            [query.rel_start_time_s for query in queries]
         )
 
         self._arrival_times_s.sort()

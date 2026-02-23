@@ -34,7 +34,7 @@ class AdHocTemplateDetector:
         )
         total_num_days = len(
             set(
-                datetime.fromtimestamp(query.start_time_s).date()
+                query.abs_start_time.date()
                 for queries in self._queries_per_template.values()
                 for query in queries
             )
@@ -44,7 +44,7 @@ class AdHocTemplateDetector:
 
         for template_id, queries in self._queries_per_template.items():
             # Sort the queries by arrival time to make the subsequent analysis easier.
-            queries.sort(key=lambda x: x.start_time_s)
+            queries.sort(key=lambda x: x.rel_start_time_s)
 
             # Look at number of queries.
             num_queries = len(queries)
@@ -52,7 +52,7 @@ class AdHocTemplateDetector:
 
             # Look at number of unique days.
             unique_days = set(
-                datetime.fromtimestamp(query.start_time_s).date()
+                query.abs_start_time.date()
                 for query in queries
             )
             num_unique_days = len(unique_days)
@@ -106,13 +106,13 @@ class AdHocTemplateDetector:
         # taking weekday/weekend into account.
         weekday_distributions = []
         weekend_distributions = []
-        previous_day = queries[0].arrival_time.date()
-        previous_day_is_weekday = queries[0].arrival_time.weekday() < 5
+        previous_day = queries[0].abs_start_time.date()
+        previous_day_is_weekday = queries[0].abs_start_time.weekday() < 5
 
         daily_counts = np.zeros(24)
         for query in queries:
 
-            current_day = query.arrival_time.date()
+            current_day = query.abs_start_time.date()
 
             if current_day != previous_day:
                 daily_counts /= np.sum(
@@ -124,9 +124,9 @@ class AdHocTemplateDetector:
                     weekend_distributions.append(daily_counts)
                 daily_counts = np.zeros(24)
                 previous_day = current_day
-                previous_day_is_weekday = query.arrival_time.weekday() < 5
+                previous_day_is_weekday = query.abs_start_time.weekday() < 5
 
-            daily_counts[query.arrival_time.hour] += 1
+            daily_counts[query.abs_start_time.hour] += 1
 
         # Store the last day's distribution as well.
         daily_counts /= np.sum(daily_counts)  # Normalize to get a distribution.
@@ -172,12 +172,12 @@ class AdHocTemplateDetector:
     def _compute_weekly_seasonality(self, queries):
 
         week_distributions = []
-        previous_week = queries[0].arrival_time.isocalendar()[1]
+        previous_week = queries[0].abs_start_time.isocalendar()[1]
 
         weekly_counts = np.zeros(7)
         for query in queries:
 
-            current_week = query.arrival_time.isocalendar()[1]
+            current_week = query.abs_start_time.isocalendar()[1]
 
             if current_week != previous_week:
                 weekly_counts /= np.sum(
@@ -187,7 +187,7 @@ class AdHocTemplateDetector:
                 weekly_counts = np.zeros(7)
                 previous_week = current_week
 
-            weekly_counts[query.arrival_time.weekday()] += 1
+            weekly_counts[query.abs_start_time.weekday()] += 1
 
         # Store the last week's distribution as well.
         weekly_counts /= np.sum(

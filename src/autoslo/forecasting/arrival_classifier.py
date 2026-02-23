@@ -15,8 +15,8 @@ class ArrivalClassifier:
 
     def __init__(self, queries: list[Query], verbose: bool = True):
         self._queries = queries
-        self._queries.sort(key=lambda x: x.start_time_s)
-        self._reference_time = self._queries[0].start_time_s
+        self._queries.sort(key=lambda x: x.rel_start_time_s)
+        self._reference_time = self._queries[0].rel_start_time_s
 
         self._queries_per_template: dict[int, list[Query]] = defaultdict(list)
         for query in self._queries:
@@ -133,7 +133,7 @@ class ArrivalClassifier:
 
         arrival_counts: defaultdict[datetime, int] = defaultdict(int)
         for query in self._queries:
-            key = datetime.fromtimestamp(bin_fn(query.start_time_s))
+            key = datetime.fromtimestamp(bin_fn(query.rel_start_time_s))
             arrival_counts[key] += 1
 
         ax.bar(
@@ -174,7 +174,7 @@ class ArrivalClassifier:
 
         arrival_counts: defaultdict[datetime, int] = defaultdict(int)
         for query in self._queries_per_template[template_id]:
-            key = datetime.fromtimestamp(bin_fn(query.start_time_s))
+            key = datetime.fromtimestamp(bin_fn(query.rel_start_time_s))
             arrival_counts[key] += 1
         ax.bar(
             *zip(*arrival_counts.items()), color="green", alpha=0.7, width=0.01
