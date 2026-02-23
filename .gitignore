@@ -21,6 +21,7 @@ data/runs/**/tpcds_temp_and_q_idxs*
 data/runs/run_summary*
 data/strategy_runs/
 data/selector_runs/**/*.log
+data/simulator_runs/test*
 data/test_workloads/**/*.parquet
 data/iconq_models/**/dataset.pkl
 
