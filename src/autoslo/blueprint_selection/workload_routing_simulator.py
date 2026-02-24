@@ -22,6 +22,7 @@ from autoslo.blueprints.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.routing.routing_core import ClusterSnapshot, RoutingCore
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.query import Query
@@ -483,22 +484,6 @@ class WorkloadRoutingSimulator:
                     cluster
                 ] = None
 
-    def _slo_cmp_with_tolerance(self, a: float, b: float) -> int:
-        """
-        Compare two SLO violation amounts with a tolerance for optimization.
-
-        Returns:
-            -1 if a < b (considering the tolerance),
-            0 if a and b are close enough to be considered equal,
-            1 if a > b (considering the tolerance).
-        """
-        if a + self.TOLERANCE_FOR_SLO_VIOLATION_AMOUNT_OPTIMIZATION_S < b:
-            return -1
-        elif b + self.TOLERANCE_FOR_SLO_VIOLATION_AMOUNT_OPTIMIZATION_S < a:
-            return 1
-        else:
-            return 0
-
     def _find_best_cluster_for_query(
         self,
         query: Query,
@@ -506,6 +491,10 @@ class WorkloadRoutingSimulator:
         """
         Finds the best cluster to route the query to, based on the projected
         latency and SLO violation amount.
+
+        Uses :mod:`autoslo.routing.routing_core` for the stateless scoring
+        and selection logic so that the simulator evaluates the same policy
+        as the online router.
 
         Parameters:
             query: The query to route.
@@ -519,13 +508,6 @@ class WorkloadRoutingSimulator:
                 projected latencies on the best cluster.
         """
 
-        # Best bookkeeping.
-        best_cluster_name = None
-        marginal_slo_violation_on_best_cluster = float("inf")
-        marginal_cost_on_best_cluster = float("inf")
-        stage_latency_prediction_on_best_cluster_s = float("inf")
-        latencies_on_best_cluster_s: dict[str, float] = {}
-
         query.featurization = self._iconq_model.iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
             query.tpcds_temp_and_q_idx
         )
@@ -533,17 +515,17 @@ class WorkloadRoutingSimulator:
         before_costs: dict[str, float] = {}
         before_slo_violations: dict[str, float] = {}
         run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
+        snapshots: dict[str, ClusterSnapshot] = {}
+        stage_latency_predictions: dict[str, float] = {}
 
         # Single pass over clusters: compute before-state (with caching) and
-        # build neighbor sets. For each active query, _neighbors_per_active_query
-        # already holds its full co-runner history; we just append the incoming
-        # query as a hypothetical. The incoming query's own list is the active set.
+        # build neighbor sets.
         for (
             cluster_name,
             active_queries,
         ) in self._active_queries_per_cluster.items():
 
-            # --- neighbor sets ---
+            # --- neighbor sets (for model dataset) ---
             run_to_base_to_neighbors[cluster_name] = {
                 q: self._neighbors_per_active_query[q.query_id] + [query]
                 for q in active_queries
@@ -551,6 +533,19 @@ class WorkloadRoutingSimulator:
             run_to_base_to_neighbors[cluster_name][query] = active_queries + [
                 query
             ]
+
+            # --- build snapshot for routing_core ---
+            snapshot = ClusterSnapshot(
+                cluster_name=cluster_name,
+                cost_per_second=self._cost_per_second_per_cluster[cluster_name],
+                active_queries=list(active_queries),
+                billing_window_start_s=(
+                    self._most_recent_billing_window_start_time_per_cluster_s[
+                        cluster_name
+                    ]
+                ),
+            )
+            snapshots[cluster_name] = snapshot
 
             # --- before-state (cached) ---
             if self._before_cache_valid[cluster_name]:
@@ -560,150 +555,57 @@ class WorkloadRoutingSimulator:
                 before_slo_violations[cluster_name] = (
                     self._cached_before_slo_violation[cluster_name]
                 )
-                continue
+            else:
+                query.cluster_name = cluster_name
+                query.stage_latency_prediction_s = self._iconq_model.stage_model.predict_from_tpcds_temp_and_q_idx(
+                    {query.query_id: query.tpcds_temp_and_q_idx},
+                    cluster_name,
+                )[
+                    query.query_id
+                ].overall_mean_s()
 
-            query.cluster_name = cluster_name
-            query.stage_latency_prediction_s = (
-                self._iconq_model.stage_model.predict_from_tpcds_temp_and_q_idx(
-                    {query.query_id: query.tpcds_temp_and_q_idx}, cluster_name
-                )[query.query_id].overall_mean_s()
-            )
-
-            individual_before_slo_violations: list[float] | list[bool] = [
-                (
-                    q.slo_violation_amount_s(
-                        self._slo_resolver.resolve(q.tpcds_temp_and_q_idx)
-                    )
-                    if self._optimize_based_on_slo_violation_amount
-                    else q.violates_slo(
-                        self._slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                before_cost, before_slo_violation = (
+                    RoutingCore.compute_before_state(
+                        snapshot=snapshot,
+                        current_time_s=query.rel_start_time_s,
+                        slo_resolver=self._slo_resolver,
+                        optimize_by_amount=self._optimize_based_on_slo_violation_amount,
                     )
                 )
-                for q in active_queries
-            ]
-            before_slo_violation = sum(individual_before_slo_violations)
-            before_query_intervals = [q.as_interval() for q in active_queries]
-            billing_window_start = (
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    cluster_name
-                ]
-            )
-            if billing_window_start is not None:
-                before_query_intervals.append(
-                    Interval(billing_window_start, query.rel_start_time_s)
+                before_costs[cluster_name] = before_cost
+                before_slo_violations[cluster_name] = before_slo_violation
+                self._cached_before_cost[cluster_name] = before_cost
+                self._cached_before_slo_violation[cluster_name] = (
+                    before_slo_violation
                 )
-            before_billed_s = sum(
-                iv.end - iv.begin
-                for iv in Billing.billed_intervals(before_query_intervals)
-            )
-            before_cost = (
-                self._cost_per_second_per_cluster[cluster_name]
-                * before_billed_s
-            )
-            before_costs[cluster_name] = before_cost
-            before_slo_violations[cluster_name] = before_slo_violation
-            self._cached_before_cost[cluster_name] = before_cost
-            self._cached_before_slo_violation[cluster_name] = (
-                before_slo_violation
-            )
-            self._before_cache_valid[cluster_name] = True
+                self._before_cache_valid[cluster_name] = True
 
+            # Track stage latency prediction for this cluster.
+            stage_latency_predictions[cluster_name] = (
+                query.stage_latency_prediction_s
+            )
+
+        # --- Run the model in one batched call across all clusters ---
         dataset = ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
             run_to_base_to_neighbors=run_to_base_to_neighbors,
         )
         all_predictions = self._iconq_model.predict_from_dataset(dataset)
 
+        # --- Score each cluster using routing_core ---
+        scores = []
         for cluster_name, predictions in all_predictions.items():
-
-            latencies_after = [predictions[query.query_id].overall_mean_s()]
-            for q in run_to_base_to_neighbors[cluster_name].keys():
-                query_id = q.query_id
-                latencies_after.append(
-                    max(q.latency_s, predictions[query_id].overall_mean_s())
-                )
-
-            # Process prediction results.
-            # Build per-query SLO list parallel to latencies_after:
-            # first entry = incoming query, remainder = dict keys in order.
-            _queries_for_slo = [query] + list(
-                run_to_base_to_neighbors[cluster_name].keys()
+            score = RoutingCore.score_placement(
+                query=query,
+                snapshot=snapshots[cluster_name],
+                predictions=predictions,
+                current_time_s=query.rel_start_time_s,
+                slo_resolver=self._slo_resolver,
+                optimize_by_amount=self._optimize_based_on_slo_violation_amount,
+                before_cost=before_costs[cluster_name],
+                before_slo_violation=before_slo_violations[cluster_name],
             )
-            _slos_after = [
-                self._slo_resolver.resolve(q.tpcds_temp_and_q_idx)
-                for q in _queries_for_slo
-            ]
-            individual_after_slo_violations: list[float] | list[bool] = [
-                (
-                    max(0, latency_s - slo_s)
-                    if self._optimize_based_on_slo_violation_amount
-                    else latency_s > slo_s
-                )
-                for latency_s, slo_s in zip(latencies_after, _slos_after)
-            ]
-            after_slo_violation = sum(individual_after_slo_violations)
-            marginal_slo_violation = (
-                after_slo_violation - before_slo_violations[cluster_name]
-            )
-            after_query_intervals = [
-                Interval(q.rel_start_time_s, q.rel_start_time_s + latency_s)
-                for q, latency_s in zip(
-                    run_to_base_to_neighbors[cluster_name].keys(),
-                    latencies_after,
-                )
-            ]
-            if (
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    cluster_name
-                ]
-                is not None
-            ):
-                after_query_intervals.append(
-                    Interval(
-                        self._most_recent_billing_window_start_time_per_cluster_s[
-                            cluster_name
-                        ],
-                        query.rel_start_time_s,
-                    )
-                )
-            after_billed_intervals = Billing.billed_intervals(
-                after_query_intervals
-            )
-            # Sum billed intervals directly instead of calling Billing.billed_s().
-            after_billed_s = sum(
-                iv.end - iv.begin for iv in after_billed_intervals
-            )
-            after_cost = (
-                self._cost_per_second_per_cluster[cluster_name] * after_billed_s
-            )
-            marginal_cost = after_cost - before_costs[cluster_name]
-
-            # Compare and update best if needed. Cache the cmp result to avoid
-            # calling _slo_cmp_with_tolerance twice with the same arguments.
-            slo_cmp = self._slo_cmp_with_tolerance(
-                marginal_slo_violation, marginal_slo_violation_on_best_cluster
-            )
-            if (
-                (best_cluster_name is None)
-                or (slo_cmp < 0)
-                or (
-                    slo_cmp == 0
-                    and marginal_cost < marginal_cost_on_best_cluster
-                )
-            ):
-                best_cluster_name = cluster_name
-                marginal_slo_violation_on_best_cluster = marginal_slo_violation
-                marginal_cost_on_best_cluster = marginal_cost
-                stage_latency_prediction_on_best_cluster_s = (
-                    query.stage_latency_prediction_s
-                )
-                latencies_on_best_cluster_s = {
-                    q.query_id: latency_s
-                    for q, latency_s in zip(
-                        run_to_base_to_neighbors[cluster_name].keys(),
-                        latencies_after,
-                    )
-                }
+            scores.append(score)
 
             self._log_if_verbose(
                 {
@@ -716,23 +618,27 @@ class WorkloadRoutingSimulator:
                     "raw_model_latency_s": None,
                     "latency_s": None,
                     "end_time_s": None,
-                    "marginal_slo_violation": marginal_slo_violation,
-                    "marginal_cost": marginal_cost,
+                    "marginal_slo_violation": score.marginal_slo_violation,
+                    "marginal_cost": score.marginal_cost,
                 }
             )
 
-        assert best_cluster_name is not None
-
-        # Update the query's cluster and stage latency prediction to reflect the
-        # best cluster choice.
-        query.cluster_name = best_cluster_name
-        query.stage_latency_prediction_s = (
-            stage_latency_prediction_on_best_cluster_s
+        assert scores, "No clusters produced predictions."
+        best = RoutingCore.pick_best(
+            scores,
+            tolerance=self.TOLERANCE_FOR_SLO_VIOLATION_AMOUNT_OPTIMIZATION_S,
         )
-        query.latency_s = latencies_on_best_cluster_s[query.query_id]
+
+        # Update the query's cluster and stage latency prediction to reflect
+        # the best cluster choice.
+        query.cluster_name = best.cluster_name
+        query.stage_latency_prediction_s = stage_latency_predictions.get(
+            best.cluster_name, query.stage_latency_prediction_s
+        )
+        query.latency_s = best.latencies[query.query_id]
         query.latency_is_lower_bound = False
 
-        return (best_cluster_name, query, latencies_on_best_cluster_s)
+        return (best.cluster_name, query, best.latencies)
 
     def write_out_visualization(self) -> None:
         """
@@ -858,9 +764,11 @@ class WorkloadRoutingSimulator:
                 durations = completions["latency_s"].fillna(0.0)
                 # Compute per-row SLO using the resolver so that
                 # per-template overrides are reflected in violation stats.
-                per_row_slo = completions["tpcds_temp_and_q_idx"].map(
-                    self._slo_resolver.resolve
-                ).fillna(self._slo_s)
+                per_row_slo = (
+                    completions["tpcds_temp_and_q_idx"]
+                    .map(self._slo_resolver.resolve)
+                    .fillna(self._slo_s)
+                )
                 violations = durations > per_row_slo
                 violation_rate = float(violations.mean())
                 violation_amount_s = float(
