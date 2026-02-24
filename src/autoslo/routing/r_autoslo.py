@@ -85,7 +85,7 @@ class RAutoSLO(QueryRouter):
             Optional callback invoked (without arguments) when the router
             determines that *every* eligible cluster would incur an SLO
             violation for the incoming query.  The capacity controller
-            hooks into this to trigger scale-up.
+            hooks into this to trigger spin-up.
         """
         super().__init__(*args, **kwargs)
 
