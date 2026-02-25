@@ -146,6 +146,12 @@ class RAutoSLO(QueryRouter):
             cn: Cluster.from_config(cn).rpu for cn in eligible_cluster_names
         }
 
+        # Inject RPU lookup into the interaction featurizer so that it can
+        # resolve RPU for dynamically created clusters (not in conn.yml).
+        self._iconq_model.iconq_interaction_featurizer.set_rpu_lookup(
+            self.get_rpu
+        )
+
         self._name = (
             f"RAutoSLO(iconq_model_id={repr(iconq_model_id)}, "
             f"default_slo_s={default_slo_s})"

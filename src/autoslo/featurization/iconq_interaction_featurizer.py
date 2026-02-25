@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -56,6 +56,35 @@ class IconqInteractionFeaturizer:
                 iconq_query_featurizer_id
             )
         self._ignore_cluster_size = ignore_cluster_size
+        self._rpu_lookup: Callable[[str], int] | None = None
+
+    def set_rpu_lookup(self, lookup: Callable[[str], int]) -> None:
+        """Override the default RPU lookup used when featurizing.
+
+        By default, :meth:`_get_rpu` calls
+        ``Cluster.rpu_for_cluster_name(cluster_name)``, which reads
+        ``conn.yml`` and therefore fails for dynamically created clusters
+        that have no config entry.  Call this method to supply a
+        runtime-provided lookup (e.g. ``RAutoSLO.get_rpu``) that covers
+        both static and dynamic clusters.
+
+        Parameters
+        ----------
+        lookup :
+            Callable that maps a cluster name to its RPU count.
+        """
+        self._rpu_lookup = lookup
+
+    def _get_rpu(self, cluster_name: str) -> int:
+        """Return the RPU count for *cluster_name*.
+
+        Uses the injected lookup if one has been set via
+        :meth:`set_rpu_lookup`; falls back to
+        ``Cluster.rpu_for_cluster_name`` otherwise.
+        """
+        if self._rpu_lookup is not None:
+            return self._rpu_lookup(cluster_name)
+        return Cluster.rpu_for_cluster_name(cluster_name)
 
     @property
     def num_dims(self) -> int:
@@ -216,7 +245,7 @@ class IconqInteractionFeaturizer:
         """
         rpu = 0.0
         if not self.ignore_cluster_size:
-            rpu = Cluster.rpu_for_cluster_name(cluster_name)
+            rpu = self._get_rpu(cluster_name)
         return (
             qa_features
             + [qa_latency_prediction]
@@ -268,7 +297,7 @@ class IconqInteractionFeaturizer:
         rpu = (
             0.0
             if self._ignore_cluster_size
-            else Cluster.rpu_for_cluster_name(cluster_name)
+            else self._get_rpu(cluster_name)
         )
 
         # Sort by qb start time once.
@@ -336,7 +365,7 @@ class IconqInteractionFeaturizer:
         rpu = (
             0.0
             if self._ignore_cluster_size
-            else Cluster.rpu_for_cluster_name(cluster_name)
+            else self._get_rpu(cluster_name)
         )
 
         # Sort by start time once, track original indices for pinch lookup.
