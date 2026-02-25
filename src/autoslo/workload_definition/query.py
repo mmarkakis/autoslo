@@ -25,6 +25,13 @@ class Query:
     latency_s: float = -1
     latency_is_lower_bound: bool = False
 
+    slo_s: float | None = None
+    """Per-query SLO in seconds.
+
+    When set, the query carries its own SLO so callers do not need a separate
+    ``SloResolver``.  ``None`` means "use the resolver / external SLO".
+    """
+
     def __hash__(self):
         return hash(self.query_id)
     
