@@ -20,6 +20,8 @@ from autoslo.routing.r_autoslo import RAutoSLO
 from autoslo.routing.routing_core import ClusterSnapshot
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query
+from autoslo.blueprints.cluster import Cluster
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -141,6 +143,9 @@ def _make_router(
     bp.cluster_names = list(cluster_names)
     bp.name = "mock_blueprint"
     router._blueprint = bp
+
+    # RPU lookup
+    router._rpu_per_cluster = {cn: 8 for cn in cluster_names}
 
     return router
 
@@ -428,3 +433,100 @@ class TestNeighborHistory:
             q.query_id for q in r._neighbors_per_active_query["q3"]
         }
         assert q3_neighbor_ids == {"q2"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: dynamic cluster management (add / remove)
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicClusterManagement:
+
+    def test_add_cluster(self):
+        r = _make_router(["c0"])
+
+        c1 = Cluster(rpu=16, name="c1")
+        r.add_cluster(c1)
+
+        assert "c1" in r._eligible_cluster_names
+        assert "c1" in r._active_queries
+        assert r._cost_per_second["c1"] == c1.cost_per_second
+        assert r._rpu_per_cluster["c1"] == 16
+        assert r._billing_window_start_s["c1"] is None
+        assert r._recent_tables["c1"] == set()
+
+    def test_add_duplicate_raises(self):
+        r = _make_router(["c0"])
+
+        c0_dup = Cluster(rpu=32, name="c0")
+        with pytest.raises(ValueError, match="already registered"):
+            r.add_cluster(c0_dup)
+
+    def test_remove_cluster(self):
+        r = _make_router(["c0", "c1"])
+        r.remove_cluster("c1")
+
+        assert "c1" not in r._eligible_cluster_names
+        assert "c1" not in r._active_queries
+        assert "c1" not in r._cost_per_second
+        assert "c1" not in r._rpu_per_cluster
+        assert "c1" not in r._billing_window_start_s
+        assert "c1" not in r._recent_tables
+
+    def test_remove_nonexistent_raises(self):
+        r = _make_router(["c0"])
+        with pytest.raises(KeyError, match="not registered"):
+            r.remove_cluster("nonexistent")
+
+    def test_remove_cluster_with_active_queries_raises(self):
+        """Removing a cluster with active queries raises an error, since the
+        caller should have drained it first."""
+        r = _make_router(["c0", "c1"])
+        r.on_query_start(
+            "q1", "c1", tpcds_temp_and_q_idx="1_0", current_time_s=0.0
+        )
+        assert len(r.get_active_queries("c1")) == 1
+        with pytest.raises(ValueError, match="has active queries"):
+            r.remove_cluster("c1")
+        assert "c1" in r._active_queries
+        # neighbor history for q1 should also be gone
+        assert "q1" in r._neighbors_per_active_query
+
+    def test_get_rpu(self):
+        r = _make_router(["c0"])
+        assert r.get_rpu("c0") == 8
+
+    def test_get_rpu_dynamic_cluster(self):
+        r = _make_router(["c0"])
+
+        c1 = Cluster(rpu=32, name="c1")
+        r.add_cluster(c1)
+        assert r.get_rpu("c1") == 32
+
+    def test_add_then_route(self):
+        """A dynamically added cluster participates in routing."""
+        r = _make_router(["c0"])
+
+        c1 = Cluster(rpu=16, name="c1")
+        r.add_cluster(c1)
+
+        result = r.route_query(
+            query_id="q1",
+            tpcds_temp_and_q_idx="1_0",
+            start_time_s=0.0,
+        )
+        assert result in ["c0", "c1"]
+
+    def test_add_then_lifecycle(self):
+        """Query lifecycle works on a dynamically added cluster."""
+        r = _make_router(["c0"])
+
+        c1 = Cluster(rpu=16, name="c1")
+        r.add_cluster(c1)
+
+        r.on_query_start(
+            "q1", "c1", tpcds_temp_and_q_idx="1_0", current_time_s=0.0
+        )
+        assert len(r.get_active_queries("c1")) == 1
+        r.on_query_finish("q1", "c1", current_time_s=5.0)
+        assert len(r.get_active_queries("c1")) == 0

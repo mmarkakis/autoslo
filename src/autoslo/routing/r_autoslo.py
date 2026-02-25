@@ -141,6 +141,11 @@ class RAutoSLO(QueryRouter):
         # Capacity pressure callback ------------------------------------------
         self._on_capacity_pressure = on_capacity_pressure
 
+        # RPU lookup (supports both config-based and dynamic clusters) ------
+        self._rpu_per_cluster: dict[str, int] = {
+            cn: Cluster.from_config(cn).rpu for cn in eligible_cluster_names
+        }
+
         self._name = (
             f"RAutoSLO(iconq_model_id={repr(iconq_model_id)}, "
             f"default_slo_s={default_slo_s})"
@@ -434,3 +439,85 @@ class RAutoSLO(QueryRouter):
         with self._lock:
             active = list(self._active_queries[cluster_name].values())
         return RoutingCore.compute_slo_headroom(active, self._slo_resolver)
+
+    # ------------------------------------------------------------------
+    # Dynamic cluster management
+    # ------------------------------------------------------------------
+
+    def add_cluster(self, cluster: Cluster) -> None:
+        """Register a dynamically provisioned cluster for routing.
+
+        Initialises all per-cluster bookkeeping so that the new cluster
+        becomes eligible for ``route_query`` immediately.
+
+        Parameters
+        ----------
+        cluster :
+            The cluster to add.  Must not already be registered.
+
+        Raises
+        ------
+        ValueError
+            If a cluster with the same name is already registered.
+        """
+        cn = cluster.name
+        with self._lock:
+            if cn in self._active_queries:
+                raise ValueError(
+                    f"Cluster {cn!r} is already registered."
+                )
+            self._eligible_cluster_names.append(cn)
+            self._active_queries[cn] = {}
+            self._billing_window_start_s[cn] = None
+            self._cost_per_second[cn] = cluster.cost_per_second
+            self._recent_tables[cn] = set()
+            self._rpu_per_cluster[cn] = cluster.rpu
+
+    def remove_cluster(self, cluster_name: str) -> None:
+        """
+        Unregister a cluster, making it ineligible for routing. Fails if there
+        are active queries on the cluster, or if the cluster is not registered.
+
+        Parameters
+        ----------
+        cluster_name :
+            Name of the cluster to remove.
+
+        Raises
+        ------
+        KeyError
+            If the cluster name is not registered.
+        ValueError
+            If there are active queries on the cluster.  The caller is 
+            responsible for ensuring that the cluster is no longer being routed 
+            to and that all active queries have finished before calling this 
+            method.  
+
+        """
+        with self._lock:
+            if cluster_name not in self._active_queries:
+                raise KeyError(
+                    f"Cluster {cluster_name!r} is not registered."
+                )
+            if self._active_queries[cluster_name]:
+                raise ValueError(
+                    f"Cluster {cluster_name!r} has active queries."
+                )
+            self._eligible_cluster_names.remove(cluster_name)
+            # Clean up neighbor refs for any still-active queries on
+            # the removed cluster.
+            for qid in list(self._active_queries[cluster_name].keys()):
+                self._neighbors_per_active_query.pop(qid, None)
+            del self._active_queries[cluster_name]
+            del self._billing_window_start_s[cluster_name]
+            del self._cost_per_second[cluster_name]
+            del self._recent_tables[cluster_name]
+            del self._rpu_per_cluster[cluster_name]
+
+    def get_rpu(self, cluster_name: str) -> int:
+        """Return the RPU for *cluster_name*.
+
+        Works for both config-based and dynamically added clusters.
+        """
+        with self._lock:
+            return self._rpu_per_cluster[cluster_name]
