@@ -38,6 +38,11 @@ from autoslo.forecasting.workload_sampler import (
     WorkloadSampler,
     add_absolute_timestamps,
 )
+from autoslo.forecasting.recurring_pattern import (
+    RecurringPatternExtractor,
+    RecurringPatternResult,
+    RecurringTemplate,
+)
 
 __all__ = [
     "PhaseHMM",
@@ -56,4 +61,7 @@ __all__ = [
     "plot_phase_duration_hist",
     "plot_transition_heatmap",
     "plot_class_mix_over_time",
+    "RecurringPatternExtractor",
+    "RecurringPatternResult",
+    "RecurringTemplate",
 ]
