@@ -1,3 +1,4 @@
+import itertools
 from typing import Optional
 
 from psycopg2.pool import ThreadedConnectionPool
@@ -23,6 +24,7 @@ class Cluster:
     ALL_ALLOWED_RPU_SIZES = UP_TO_32_RPU_SIZES
 
     _all_cluster_configs = None
+    _new_counter = itertools.count()
     _ordered_cluster_names_per_rpu: dict[int, list[str]] | None = None
     _rpu_per_cluster_name: dict[str, int] | None = None
 
@@ -223,7 +225,8 @@ class Cluster:
         A new ``Cluster`` instance with no connection info.
         """
         if name is None:
-            name = f"cluster_{rpu}_{int(datetime.now().timestamp())}"
+            seq = next(Cluster._new_counter)
+            name = f"cluster_{rpu}_{int(datetime.now().timestamp())}_{seq}"
         return Cluster(
             rpu=rpu,
             name=name,
