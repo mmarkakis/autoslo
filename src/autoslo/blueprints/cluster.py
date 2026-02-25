@@ -7,6 +7,8 @@ from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 from collections import defaultdict
 
+from datetime import datetime
+
 
 class Cluster:
     """
@@ -191,6 +193,63 @@ class Cluster:
             cost_per_rpu_hour=cost_per_rpu_hour,
             conn_info=conn_info,
         )
+
+    @staticmethod
+    def new(
+        rpu: int,
+        name: Optional[str] = None,
+        cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
+    ) -> "Cluster":
+        """
+        Create a spec-only cluster with no config lookup.
+
+        This is the factory for dynamically provisioned clusters (used by
+        the simulator and the capacity controller).  No connection info is
+        attached — call :meth:`attach_conn_info` after the AWS workgroup
+        is created.
+
+        Parameters
+        ----------
+        rpu:
+            The number of Redshift Processing Units for the cluster.
+        name:
+            Optional explicit name.  If *None*, auto-generated as
+            ``"cluster_{rpu}_{unix_timestamp}"``.
+        cost_per_rpu_hour:
+            Cost per RPU per hour (defaults to US-East-1 pricing).
+
+        Returns
+        -------
+        A new ``Cluster`` instance with no connection info.
+        """
+        if name is None:
+            name = f"cluster_{rpu}_{int(datetime.now().timestamp())}"
+        return Cluster(
+            rpu=rpu,
+            name=name,
+            conn_info=None,
+            cost_per_rpu_hour=cost_per_rpu_hour,
+        )
+
+    def attach_conn_info(self, conn_info: ClusterConnInfo) -> None:
+        """Attach connection information after live provisioning.
+
+        Parameters
+        ----------
+        conn_info:
+            The connection info obtained after the AWS workgroup becomes
+            available.
+
+        Raises
+        ------
+        ValueError
+            If connection info has already been set.
+        """
+        if self._conn_info is not None:
+            raise ValueError(
+                f"Cluster {self._name!r} already has connection info."
+            )
+        self._conn_info = conn_info
 
     @property
     def name(self) -> str:

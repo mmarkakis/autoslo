@@ -1,13 +1,18 @@
 """
 autoslo.capacity
 ================
-Capacity management: online autoscaling and offline policy tuning.
+Capacity management: online autoscaling, offline policy tuning, and
+cluster provisioning.
 
 Public API
 ----------
 CapacityController          Background autoscaler (spin-up / tear-down).
+ClusterProvisioner          ABC for cluster lifecycle operations.
+SimulatedProvisioner        Instant provisioner for simulation.
+RedshiftServerlessProvisioner   Live AWS provisioner.
 PolicyTuner                 Simulation-based Pareto policy sweep.
 PolicyParams                Frozen policy-parameter pair.
+DynamicClusterConfig        Dynamic cluster environment config.
 SweepResult / SweepEntry    Sweep outputs.
 ScenarioOutcome             Per-scenario cost/violation summary.
 compute_pareto_front        Standalone O(N log N) Pareto extraction.
@@ -17,8 +22,13 @@ VALID_OBJECTIVES            Recognised objective names.
 """
 
 from autoslo.capacity.capacity_controller import CapacityController
+from autoslo.capacity.cluster_provisioner import (
+    ClusterProvisioner,
+    SimulatedProvisioner,
+)
 from autoslo.capacity.policy_tuner import (
     VALID_OBJECTIVES,
+    DynamicClusterConfig,
     PolicyParams,
     PolicyTuner,
     ScenarioOutcome,
@@ -31,9 +41,12 @@ from autoslo.capacity.policy_tuner import (
 
 __all__ = [
     "CapacityController",
+    "ClusterProvisioner",
+    "DynamicClusterConfig",
     "PolicyParams",
     "PolicyTuner",
     "ScenarioOutcome",
+    "SimulatedProvisioner",
     "SweepEntry",
     "SweepResult",
     "VALID_OBJECTIVES",
