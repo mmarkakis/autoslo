@@ -39,8 +39,9 @@ class CapacityController:
     slo_resolver:
         Resolves per-query SLOs (shared with the router).
     on_spin_up:
-        Callback ``(reason: str) -> None`` invoked when a spin-up is
-        needed.  The *reason* string is for logging/observability.
+        Callback ``(reason: str, rpu: int) -> None`` invoked when a
+        spin-up is needed.  *rpu* is the RPU size the controller
+        recommends (the smallest from *allowed_rpu_sizes*).
     on_tear_down:
         Callback ``(cluster_name: str) -> None`` invoked when a specific
         cluster should be torn down.
@@ -53,17 +54,22 @@ class CapacityController:
         Number of consecutive poll periods a cluster must remain idle
         (zero active queries) before ``on_tear_down`` is called.
         Default 5.
+    allowed_rpu_sizes:
+        RPU sizes available for dynamic spin-up (sorted ascending).
+        If *None*, defaults to ``[8]`` (a safe single-size default).
+        The controller always picks the **smallest** available RPU.
     """
 
     def __init__(
         self,
         get_active_queries: Callable[[], dict[str, list[Query]]],
         slo_resolver: "SloResolver",  # type: ignore[name-defined]  # noqa: F821
-        on_spin_up: Optional[Callable[[str], None]] = None,
+        on_spin_up: Optional[Callable[[str, int], None]] = None,
         on_tear_down: Optional[Callable[[str], None]] = None,
         poll_interval_s: float = 60.0,
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
+        allowed_rpu_sizes: Optional[list[int]] = None,
     ) -> None:
         self._get_active_queries = get_active_queries
         self._slo_resolver = slo_resolver
@@ -72,6 +78,9 @@ class CapacityController:
         self._poll_interval_s = poll_interval_s
         self._eta_crit = eta_crit
         self._idle_periods_before_tear_down = idle_periods_before_tear_down
+        self._allowed_rpu_sizes: list[int] = sorted(
+            allowed_rpu_sizes if allowed_rpu_sizes is not None else [8]
+        )
 
         # Idle tracking: cluster_name → consecutive idle polls
         self._idle_counts: dict[str, int] = {}
@@ -155,6 +164,14 @@ class CapacityController:
     def poll_interval_s(self, value: float) -> None:
         self._poll_interval_s = value
 
+    @property
+    def allowed_rpu_sizes(self) -> list[int]:
+        return list(self._allowed_rpu_sizes)
+
+    @allowed_rpu_sizes.setter
+    def allowed_rpu_sizes(self, value: list[int]) -> None:
+        self._allowed_rpu_sizes = sorted(value)
+
     # ------------------------------------------------------------------
     # Core loop
     # ------------------------------------------------------------------
@@ -203,10 +220,11 @@ class CapacityController:
                 if headroom <= self._eta_crit
                 else "capacity_pressure_signal"
             )
-            logger.info("Spin-up triggered: %s", reason)
+            rpu = self._allowed_rpu_sizes[0]  # smallest available
+            logger.info("Spin-up triggered: %s (rpu=%d)", reason, rpu)
             if self._on_spin_up is not None:
                 try:
-                    self._on_spin_up(reason)
+                    self._on_spin_up(reason, rpu)
                 except Exception:
                     logger.exception("on_spin_up callback failed")
 

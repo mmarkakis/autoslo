@@ -82,6 +82,33 @@ class PolicyParams:
     idle_periods_before_tear_down: int
 
 
+@dataclass(frozen=True)
+class DynamicClusterConfig:
+    """Configuration describing the dynamic cluster environment.
+
+    Stored alongside sweep results for reproducibility — the policy tuner
+    does **not** interpret these values itself.  Instead, the caller's
+    ``simulate_fn`` closure uses them when constructing a
+    :class:`~autoslo.blueprints.cluster_pool.ClusterPool` and
+    :class:`~autoslo.capacity.cluster_provisioner.SimulatedProvisioner`.
+
+    Attributes
+    ----------
+    initial_rpus : tuple[int, ...]
+        RPU sizes for clusters available from the start of each
+        simulation scenario.
+    allowed_rpu_sizes : tuple[int, ...]
+        RPU sizes that the capacity controller may dynamically spin up.
+    spin_up_delay_s : float
+        Simulated delay (seconds) between requesting spin-up and the
+        cluster becoming available.
+    """
+
+    initial_rpus: tuple[int, ...] = (8,)
+    allowed_rpu_sizes: tuple[int, ...] = (4, 8, 16, 32)
+    spin_up_delay_s: float = 120.0
+
+
 @dataclass
 class ScenarioOutcome:
     """Aggregate statistics from running one parameter combination across
@@ -153,12 +180,15 @@ class SweepResult:
         Name of the primary (x-axis) objective used for the front.
     objective_y : str
         Name of the secondary (y-axis) objective used for the front.
+    cluster_config : DynamicClusterConfig | None
+        The dynamic cluster config used for these simulations, if any.
     """
 
     entries: list[SweepEntry] = field(default_factory=list)
     pareto_front: list[SweepEntry] = field(default_factory=list)
     objective_x: str = "mean_cost"
     objective_y: str = "mean_violation_rate"
+    cluster_config: DynamicClusterConfig | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -274,15 +304,23 @@ class PolicyTuner:
     simulate_fn : Callable[[PolicyParams], ScenarioOutcome]
         A function that, given a parameter combination, runs the
         simulation(s) and returns aggregate statistics.
+    cluster_config : DynamicClusterConfig, optional
+        Dynamic cluster configuration for reproducibility.  Stored in
+        the :class:`SweepResult` so the exact environment can be
+        reconstructed later.  The tuner itself does **not** use this
+        value — the ``simulate_fn`` should close over whatever cluster
+        config it needs.
     """
 
     def __init__(
         self,
         grid: Iterable[PolicyParams],
         simulate_fn: Callable[[PolicyParams], ScenarioOutcome],
+        cluster_config: DynamicClusterConfig | None = None,
     ) -> None:
         self._grid = list(grid)
         self._simulate_fn = simulate_fn
+        self._cluster_config = cluster_config
 
     # ------------------------------------------------------------------
     # Grid factory
@@ -365,6 +403,7 @@ class PolicyTuner:
             pareto_front=front,
             objective_x=objective_x,
             objective_y=objective_y,
+            cluster_config=self._cluster_config,
         )
 
 

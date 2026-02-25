@@ -51,12 +51,12 @@ class TestCapacityControllerSpinUp:
         eta = 0.2
 
         active = {"c0": [_q("a", latency=slo_s * (1 - free_frac))]}
-        spin_ups: list[str] = []
+        spin_ups: list[tuple[str, int]] = []
 
         ctrl = CapacityController(
             get_active_queries=lambda: active,
             slo_resolver=_resolver(slo_s),
-            on_spin_up=lambda reason: spin_ups.append(reason),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
             eta_crit=eta,
         )
         ctrl.tick_once()
@@ -69,17 +69,17 @@ class TestCapacityControllerSpinUp:
         eta = 0.2
 
         active = {"c0": [_q("a", latency=slo_s * (1 - free_frac))]}
-        spin_ups: list[str] = []
+        spin_ups: list[tuple[str, int]] = []
 
         ctrl = CapacityController(
             get_active_queries=lambda: active,
             slo_resolver=_resolver(slo_s),
-            on_spin_up=lambda reason: spin_ups.append(reason),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
             eta_crit=eta,
         )
         ctrl.tick_once()
         assert len(spin_ups) == 1
-        assert "headroom" in spin_ups[0]
+        assert "headroom" in spin_ups[0][0]
 
     def test_spin_up_on_pressure_signal(self):
         """Pressure flag → spin-up even if headroom is fine."""
@@ -88,17 +88,17 @@ class TestCapacityControllerSpinUp:
         eta = 0.2
 
         active = {"c0": [_q("a", latency=slo_s * (1 - free_frac))]}
-        spin_ups: list[str] = []
+        spin_ups: list[tuple[str, int]] = []
 
         ctrl = CapacityController(
             get_active_queries=lambda: active,
             slo_resolver=_resolver(slo_s),
-            on_spin_up=lambda reason: spin_ups.append(reason),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
             eta_crit=eta,
         )
         ctrl.tick_once(pressure=True)
         assert len(spin_ups) == 1
-        assert "pressure" in spin_ups[0]
+        assert "pressure" in spin_ups[0][0]
 
     def test_spin_up_when_no_queries(self):
         """Empty system → headroom=1.0 → no spin-up."""
@@ -106,12 +106,12 @@ class TestCapacityControllerSpinUp:
         eta = 0.2
 
         active: dict[str, list[Query]] = {"c0": []}
-        spin_ups: list[str] = []
+        spin_ups: list[tuple[str, int]] = []
 
         ctrl = CapacityController(
             get_active_queries=lambda: active,
             slo_resolver=_resolver(slo_s),
-            on_spin_up=lambda reason: spin_ups.append(reason),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
             eta_crit=eta,
         )
         ctrl.tick_once()
@@ -243,13 +243,13 @@ class TestCapacityControllerBackgroundThread:
         before the poll interval elapses."""
         import time
 
-        spin_ups: list[str] = []
+        spin_ups: list[tuple[str, int]] = []
         # Very long poll interval — should not fire within 1 second
         # unless the pressure signal wakes it.
         ctrl = CapacityController(
             get_active_queries=lambda: {"c0": [_q("a", latency=9.9)]},
             slo_resolver=_resolver(10.0),
-            on_spin_up=lambda reason: spin_ups.append(reason),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
             poll_interval_s=600.0,  # 10 minutes
             eta_crit=0.1,
         )
@@ -260,3 +260,39 @@ class TestCapacityControllerBackgroundThread:
         ctrl.stop(timeout=2.0)
         # Should have fired because of the pressure signal.
         assert len(spin_ups) >= 1
+
+
+class TestCapacityControllerRPUSelection:
+
+    def test_spin_up_passes_smallest_rpu(self):
+        """on_spin_up receives the smallest allowed RPU."""
+        active = {"c0": [_q("a", latency=9.5)]}
+        spin_ups: list[tuple[str, int]] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(10.0),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
+            eta_crit=0.2,
+            allowed_rpu_sizes=[32, 16, 8],
+        )
+        ctrl.tick_once()
+        assert len(spin_ups) == 1
+        assert spin_ups[0][1] == 8  # smallest
+
+    def test_default_rpu_sizes(self):
+        ctrl = CapacityController(
+            get_active_queries=lambda: {},
+            slo_resolver=_resolver(),
+        )
+        assert ctrl.allowed_rpu_sizes == [8]
+
+    def test_allowed_rpu_sizes_settable(self):
+        ctrl = CapacityController(
+            get_active_queries=lambda: {},
+            slo_resolver=_resolver(),
+            allowed_rpu_sizes=[4, 16],
+        )
+        assert ctrl.allowed_rpu_sizes == [4, 16]
+        ctrl.allowed_rpu_sizes = [32, 8]
+        assert ctrl.allowed_rpu_sizes == [8, 32]  # sorted
