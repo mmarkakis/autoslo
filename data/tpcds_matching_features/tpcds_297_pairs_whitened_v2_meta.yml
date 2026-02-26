@@ -1,0 +1,10 @@
+feature_table_id: tpcds_297_pairs_whitened_v2
+feature_names:
+- num_joins
+- num_scans
+- num_aggregations
+- num_permanent_tables_accessed
+- log_mbytes_scanned
+num_pairs: 297
+run_ids:
+- '1767009691'
