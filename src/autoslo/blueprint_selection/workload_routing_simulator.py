@@ -8,8 +8,6 @@ from typing import Any, Optional
 import pandas as pd
 import yaml
 from filelock import FileLock
-from intervaltree import Interval  # type: ignore[import]
-from scipy import datasets
 from tqdm import tqdm
 
 import autoslo.utils.paths as pu
@@ -135,6 +133,11 @@ class WorkloadRoutingSimulator:
             "end_time_s",
             "marginal_slo_violation",
             "marginal_cost",
+            "rpu",
+            "reason",
+            "num_active_queries",
+            "num_active_clusters",
+            "headroom",
         ]
         self._log_threshold = 10000
 
@@ -417,6 +420,16 @@ class WorkloadRoutingSimulator:
             rpu,
             ready_time,
         )
+        self._log_if_verbose(
+            {
+                "timestamp": self._current_sim_time_s,
+                "event_type": "spin_up_scheduled",
+                "cluster_name": cluster.name,
+                "rpu": rpu,
+                "reason": reason,
+                "end_time_s": ready_time,
+            }
+        )
 
     def _on_sim_tear_down(self, cluster_name: str) -> None:
         """Capacity-controller callback: begin graceful tear-down.
@@ -439,6 +452,17 @@ class WorkloadRoutingSimulator:
                 "cluster.",
                 cluster_name,
             )
+            self._log_if_verbose(
+                {
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "tear_down_blocked",
+                    "cluster_name": cluster_name,
+                    "reason": "last_routable_cluster",
+                    "num_active_clusters": len(
+                        self._active_queries_per_cluster
+                    ),
+                }
+            )
             return
         assert self._provisioner is not None
         self._provisioner.tear_down(cluster_name, self._current_sim_time_s)
@@ -450,8 +474,26 @@ class WorkloadRoutingSimulator:
                 cluster_name,
                 len(active),
             )
+            self._log_if_verbose(
+                {
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "tear_down_requested",
+                    "cluster_name": cluster_name,
+                    "reason": "draining",
+                    "num_active_queries": len(active),
+                }
+            )
         else:
             self._deactivate_cluster_bookkeeping(cluster_name)
+            self._log_if_verbose(
+                {
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "tear_down_requested",
+                    "cluster_name": cluster_name,
+                    "reason": "immediate",
+                    "num_active_queries": 0,
+                }
+            )
 
     def _process_pending_events_up_to(self, time_s: float) -> None:
         """Drain cluster-ready events that fire at or before *time_s*."""
@@ -465,6 +507,17 @@ class WorkloadRoutingSimulator:
                 cluster.name,
                 cluster.rpu,
                 time_s,
+            )
+            self._log_if_verbose(
+                {
+                    "timestamp": time_s,
+                    "event_type": "cluster_ready",
+                    "cluster_name": cluster.name,
+                    "rpu": cluster.rpu,
+                    "num_active_clusters": len(
+                        self._active_queries_per_cluster
+                    ),
+                }
             )
 
     def _advance_simulated_time(self, target_time_s: float) -> None:
@@ -480,6 +533,30 @@ class WorkloadRoutingSimulator:
             self._process_pending_events_up_to(tick_time)
             self._cleanup_completed_queries_up_to(tick_time)
             self._current_sim_time_s = tick_time
+
+            # Compute headroom for logging before the tick.
+            all_active = [
+                q
+                for cn, qs in self._active_queries_per_cluster.items()
+                if cn not in self._draining_clusters
+                for q in qs
+            ]
+            headroom = RoutingCore.compute_slo_headroom(
+                all_active, self._slo_resolver
+            )
+            self._log_if_verbose(
+                {
+                    "timestamp": tick_time,
+                    "event_type": "capacity_tick",
+                    "headroom": headroom,
+                    "num_active_queries": len(all_active),
+                    "num_active_clusters": len(
+                        self._active_queries_per_cluster
+                    )
+                    - len(self._draining_clusters),
+                }
+            )
+
             self._capacity_controller.tick_once()
             self._next_tick_time_s += self._cc_poll_interval_s
             # Process events spawned by this tick (e.g. delay=0 spin-ups).
@@ -700,6 +777,18 @@ class WorkloadRoutingSimulator:
         for cn in clusters_to_deactivate:
             logger.debug(
                 "Draining cluster %s is now empty — deactivating.", cn
+            )
+            self._log_if_verbose(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": "cluster_deactivated",
+                    "cluster_name": cn,
+                    "reason": "drain_complete",
+                    "num_active_clusters": len(
+                        self._active_queries_per_cluster
+                    )
+                    - 1,  # this one is about to be removed
+                }
             )
             self._deactivate_cluster_bookkeeping(cn)
 

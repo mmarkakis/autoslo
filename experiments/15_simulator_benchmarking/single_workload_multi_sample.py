@@ -7,6 +7,7 @@ from autoslo.blueprint_selection.workload_routing_simulator import (
     WorkloadRoutingSimulator,
 )
 from autoslo.blueprints.blueprint import Blueprint
+from autoslo.capacity.policy_tuner import DynamicClusterConfig
 from autoslo.workload_definition.redset_workload import (
     RedsetWorkloadSamplingSpec,
 )
@@ -23,25 +24,55 @@ def main(args):
         real_queries_per_output_queries=24,
         real_s_per_output_s=24,
     )
-    blueprint = Blueprint.maximal(max_rpu=args.max_rpu)
+
+    # --- Mode-specific setup ------------------------------------------------
+    dynamic_config: DynamicClusterConfig | None = None
+    blueprint_label: str  # human-readable label used for experiment naming
+
+    if args.dynamic:
+        initial_rpus = tuple(args.initial_rpus)
+        allowed_rpu_sizes = tuple(args.allowed_rpu_sizes)
+        dynamic_config = DynamicClusterConfig(
+            initial_rpus=initial_rpus,
+            allowed_rpu_sizes=allowed_rpu_sizes,
+            spin_up_delay_s=args.spin_up_delay_s,
+        )
+        blueprint_name = "dynamic"
+        blueprint_label = (
+            f"dynamic_init({'_'.join(str(r) for r in initial_rpus)})"
+            f"_allowed({'_'.join(str(r) for r in sorted(allowed_rpu_sizes))})"
+        )
+    else:
+        blueprint = Blueprint.maximal(max_rpu=args.max_rpu)
+        blueprint_name = blueprint.name
+        blueprint_label = blueprint.name
 
     # Derive experiment_name from CLI arg or auto-generate from key params.
     experiment_name = args.experiment_name or (
-        f"{args.workload_name}__{blueprint.name}__slo{args.slo_s}"
+        f"{args.workload_name}__{blueprint_label}__slo{args.slo_s}"
     )
 
     print(
         f"Running {args.num_samples} simulations on workload "
-        f"{args.workload_name} with blueprint {blueprint.name} and IconQ "
+        f"{args.workload_name} with blueprint '{blueprint_label}' and IconQ "
         f"model {args.iconq_model_id}..."
     )
+    if args.dynamic:
+        print(
+            f"Dynamic mode: initial_rpus={dynamic_config.initial_rpus}, "
+            f"allowed_rpu_sizes={dynamic_config.allowed_rpu_sizes}, "
+            f"spin_up_delay_s={dynamic_config.spin_up_delay_s}, "
+            f"eta_crit={args.eta_crit}, "
+            f"idle_periods={args.idle_periods_before_tear_down}, "
+            f"poll_interval_s={args.capacity_poll_interval_s}"
+        )
     print(f"Experiment name: {experiment_name}")
 
     # Create the simulator once and reset it for each sample.
     simulator = WorkloadRoutingSimulator(
         workload_name=args.workload_name,
         iconq_model_id=args.iconq_model_id,
-        blueprint_name=blueprint.name,
+        blueprint_name=blueprint_name,
         slo_s=args.slo_s,
         slo_dict_filename=args.slo_dict_filename,
         optimize_based_on_slo_violation_amount=args.optimize_cumulative_slo_violation_time,
@@ -51,6 +82,10 @@ def main(args):
         export_video=args.export_video,
         video_frame_duration=args.video_frame_duration,
         experiment_name=experiment_name,
+        dynamic_cluster_config=dynamic_config,
+        eta_crit=args.eta_crit,
+        idle_periods_before_tear_down=args.idle_periods_before_tear_down,
+        capacity_poll_interval_s=args.capacity_poll_interval_s,
     )
 
     # Warm up featurization caches before the first sample.
@@ -180,7 +215,79 @@ if __name__ == "__main__":
         "--max_rpu",
         type=int,
         default=32,
-        help="The maximum RPU to use in the blueprint.",
+        help="The maximum RPU to use in the blueprint (static mode only).",
+    )
+
+    # --- Dynamic mode -------------------------------------------------------
+    parser.add_argument(
+        "--dynamic",
+        action="store_true",
+        help=(
+            "Enable dynamic cluster provisioning mode.  When set, the "
+            "simulator starts with --initial_rpus clusters and uses the "
+            "capacity controller to spin up / tear down clusters at runtime. "
+            "Mutually exclusive with static blueprint mode."
+        ),
+    )
+    parser.add_argument(
+        "--initial_rpus",
+        type=int,
+        nargs="+",
+        default=[8],
+        metavar="RPU",
+        help=(
+            "RPU sizes for clusters available from the start of the "
+            "simulation (dynamic mode only).  Pass multiple values for "
+            "multiple initial clusters, e.g. --initial_rpus 8 16."
+        ),
+    )
+    parser.add_argument(
+        "--allowed_rpu_sizes",
+        type=int,
+        nargs="+",
+        default=[4, 8, 16, 32],
+        metavar="RPU",
+        help=(
+            "RPU sizes the capacity controller may spin up dynamically "
+            "(dynamic mode only).  E.g. --allowed_rpu_sizes 4 8 16 32."
+        ),
+    )
+    parser.add_argument(
+        "--spin_up_delay_s",
+        type=float,
+        default=120.0,
+        help=(
+            "Simulated delay in seconds between requesting a cluster "
+            "spin-up and it becoming available (dynamic mode only)."
+        ),
+    )
+    parser.add_argument(
+        "--eta_crit",
+        type=float,
+        default=0.1,
+        help=(
+            "SLO headroom threshold below which a new cluster is spun up. "
+            "headroom = (slo - latency) / slo; values <= eta_crit trigger "
+            "spin-up (dynamic mode only)."
+        ),
+    )
+    parser.add_argument(
+        "--idle_periods_before_tear_down",
+        type=int,
+        default=5,
+        help=(
+            "Number of consecutive idle polling periods before a cluster "
+            "is torn down (dynamic mode only)."
+        ),
+    )
+    parser.add_argument(
+        "--capacity_poll_interval_s",
+        type=float,
+        default=60.0,
+        help=(
+            "How often (seconds of simulated time) the capacity controller "
+            "checks SLO headroom (dynamic mode only)."
+        ),
     )
 
     args = parser.parse_args()
