@@ -144,6 +144,14 @@ class Cluster:
                 for cluster_name, config in cls.all_cluster_configs().items()
             }
         if cluster_name not in cls._rpu_per_cluster_name:
+            # Dynamic clusters have names like "cluster_{rpu}_{ts}_{counter}".
+            # Try to parse the RPU directly from the name rather than failing.
+            parts = cluster_name.split("_")
+            if len(parts) >= 2:
+                try:
+                    return int(parts[1])
+                except ValueError:
+                    pass
             raise KeyError(
                 f"Cluster name '{cluster_name}' not found in config."
             )

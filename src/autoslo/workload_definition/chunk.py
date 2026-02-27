@@ -9,7 +9,8 @@ import yaml
 
 import autoslo.utils.colors as cu
 import autoslo.utils.paths as pu
-from autoslo.workload_definition.workload import Query, Workload
+from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.trace import Trace
 
 
@@ -352,8 +353,8 @@ class Chunk(Workload):
         ) as f:
             yaml.dump(stats, f, sort_keys=False)
 
-    @property
-    def queries(self) -> list[Query]:
+
+    def queries(self, *args, **kwargs) -> list[Query]:
         """
         Get the list of queries in the chunk workload.
 
@@ -374,7 +375,7 @@ class Chunk(Workload):
         self._queries = [
             Query(
                 query_id=row["query_id"],
-                start_time_s=row["rel_start_time_s"],
+                rel_start_time_s=row["rel_start_time_s"],
                 tpcds_temp_and_q_idx=(
                     f"{row['query_template']:03d}_"
                     f"{row['query_num_within_template']:03d}"
