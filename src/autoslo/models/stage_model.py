@@ -8,6 +8,7 @@ import autoslo.utils.paths as pu
 from autoslo.models.cache_model import CacheModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.models.xgboost_model import XGBoostModel
+from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -81,16 +82,19 @@ class StageModel:
                 "xgboost_model_train_params must be provided."
             )
 
-        # Memoization cache: (tpcds_temp_and_q_idx, cluster_name) -> ModelPrediction.
+        # Memoization cache: (query_text_id, cluster_name) -> ModelPrediction.
         # Both sub-models are deterministic functions of these two inputs, so
-        # any repeated call for the same pair is a free dict lookup. The TPC-DS
+        # any repeated call for the same pair is a free dict lookup. The
         # vocabulary is finite (~800 entries), so the cache saturates quickly.
         self._prediction_cache: dict[
-            tuple[Trace.TPCDSTempAndQIdx, str], ModelPrediction
+            tuple[QueryTextId, str], ModelPrediction
         ] = {}
 
     def predict(
-        self, query_texts: dict[str, str], cluster_name: str
+        self,
+        query_texts: dict[str, str],
+        cluster_name: str,
+        schema_name: str,
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given query texts.
@@ -99,28 +103,28 @@ class StageModel:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
             cluster_name: The name of the cluster where the queries will be run.
+            schema_name: The name of the schema the queries belong to.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
-        query_temp_and_q_idxs = {
-            query_id: Trace.extract_temp_and_q_idxs(query_text)
+        query_text_ids = {
+            query_id: Trace.extract_query_text_id(query_text, schema_name)
             for query_id, query_text in query_texts.items()
         }
-        return self.predict_from_tpcds_temp_and_q_idx(query_temp_and_q_idxs, cluster_name)
+        return self.predict_from_query_text_id(query_text_ids, cluster_name)
 
-    def predict_from_tpcds_temp_and_q_idx(
-        self, query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx], cluster_name: str
+    def predict_from_query_text_id(
+        self, query_text_ids: dict[str, QueryTextId], cluster_name: str
     ) -> dict[str, ModelPrediction]:
         """
-        Predicts the runtime of the given queries, based on their TPC-DS
-        template and query indices.
+        Predicts the runtime of the given queries, based on their
+        :class:`~autoslo.workload_definition.query.QueryTextId`.
 
         Parameters:
-            query_temp_and_q_idxs: The TPC-DS template and query indices of
-                the queries to predict the runtime of, as a dictionary mapping
-                query ids to TPC-DS template and query indices.
+            query_text_ids: A dictionary mapping query ids to
+                :class:`~autoslo.workload_definition.query.QueryTextId` objects.
             cluster_name: The name of the cluster where the queries will be run.
 
         Returns:
@@ -130,37 +134,37 @@ class StageModel:
         overall_predictions: dict[str, ModelPrediction] = {}
 
         # Check memoization cache first; compute only for unseen pairs.
-        remaining_query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx] = {}
-        for query_id, tpcds in query_temp_and_q_idxs.items():
-            cached = self._prediction_cache.get((tpcds, cluster_name))
+        remaining_query_text_ids: dict[str, QueryTextId] = {}
+        for query_id, query_text_id in query_text_ids.items():
+            cached = self._prediction_cache.get((query_text_id, cluster_name))
             if cached is not None:
                 overall_predictions[query_id] = cached
             else:
-                remaining_query_temp_and_q_idxs[query_id] = tpcds
+                remaining_query_text_ids[query_id] = query_text_id
 
-        if not remaining_query_temp_and_q_idxs:
+        if not remaining_query_text_ids:
             return overall_predictions
 
         # Process cache model first
-        cache_predictions = self._cache_model.predict_from_tpcds_temp_and_q_idx(
-            remaining_query_temp_and_q_idxs,
+        cache_predictions = self._cache_model.predict_from_query_text_id(
+            remaining_query_text_ids,
             cluster_name=cluster_name,
         )
-        xgboost_remaining: dict[str, Trace.TPCDSTempAndQIdx] = {}
+        xgboost_remaining: dict[str, QueryTextId] = {}
         for query_id, prediction in cache_predictions.items():
             if prediction is not None:
                 overall_predictions[query_id] = prediction
                 self._prediction_cache[
-                    (remaining_query_temp_and_q_idxs[query_id], cluster_name)
+                    (remaining_query_text_ids[query_id], cluster_name)
                 ] = prediction
             else:
-                xgboost_remaining[query_id] = remaining_query_temp_and_q_idxs[
+                xgboost_remaining[query_id] = remaining_query_text_ids[
                     query_id
                 ]
 
         # Use XGBoost only for the queries that were not cache hits.
         xgboost_predictions = (
-            self._xgboost_model.predict_from_tpcds_temp_and_q_idx(
+            self._xgboost_model.predict_from_query_text_id(
                 xgboost_remaining,
                 cluster_name=cluster_name,
             )

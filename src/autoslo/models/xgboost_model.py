@@ -11,6 +11,7 @@ from xgboost import XGBRegressor
 import autoslo.utils.paths as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.model_prediction import ModelPrediction
+from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 from autoslo.blueprints.cluster import Cluster
@@ -31,7 +32,7 @@ class XGBoostModel:
         eval_metric: str = "mae",
         early_stopping_rounds: int = 100,
         random_seed: int = 42,
-        iconq_query_featurizer_id: Optional[str] = None,
+        iconq_query_featurizer_id: Optional[tuple[str, str]] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
         ignore_cluster_size: bool = False,
     ):
@@ -80,7 +81,7 @@ class XGBoostModel:
         else:
             self._iconq_query_featurizer_id = iconq_query_featurizer_id
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                iconq_query_featurizer_id
+                *iconq_query_featurizer_id
             )
 
         self._train_on_log_runtime = train_on_log_runtime
@@ -103,7 +104,10 @@ class XGBoostModel:
         self._ignore_cluster_size = ignore_cluster_size
 
     def predict(
-        self, query_texts: dict[str, str], cluster_name: str
+        self,
+        query_texts: dict[str, str],
+        cluster_name: str,
+        schema_name: str,
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given query texts.
@@ -112,32 +116,30 @@ class XGBoostModel:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
             cluster_name: The name of the cluster where the queries will be run.
+            schema_name: The name of the schema the queries belong to.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
-        query_temp_and_q_idxs = {
-            query_id: Trace.extract_temp_and_q_idxs(query_text)
+        query_text_ids = {
+            query_id: Trace.extract_query_text_id(query_text, schema_name)
             for query_id, query_text in query_texts.items()
         }
-        return self.predict_from_tpcds_temp_and_q_idx(
-            query_temp_and_q_idxs, cluster_name
-        )
+        return self.predict_from_query_text_id(query_text_ids, cluster_name)
 
-    def predict_from_tpcds_temp_and_q_idx(
+    def predict_from_query_text_id(
         self,
-        query_temp_and_q_idxs: dict[str, Trace.TPCDSTempAndQIdx],
+        query_text_ids: dict[str, QueryTextId],
         cluster_name: str,
     ) -> dict[str, ModelPrediction]:
         """
-        Predicts the runtime of the given queries, based on their TPC-DS
-        template and query indices.
+        Predicts the runtime of the given queries, based on their
+        :class:`~autoslo.workload_definition.query.QueryTextId`.
 
         Parameters:
-            query_temp_and_q_idxs: The TPC-DS template and query indices of
-                the queries to predict the runtime of, as a dictionary mapping
-                query ids to TPC-DS template and query indices.
+            query_text_ids: A dictionary mapping query ids to
+                :class:`~autoslo.workload_definition.query.QueryTextId` objects.
             cluster_name: The name of the cluster where the queries will be run.
 
         Returns:
@@ -151,9 +153,9 @@ class XGBoostModel:
             else Cluster.rpu_for_cluster_name(cluster_name)
         )
 
-        for query_id, temp_and_q_idx in query_temp_and_q_idxs.items():
-            featurization = self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                temp_and_q_idx
+        for query_id, query_text_id in query_text_ids.items():
+            featurization = self._iconq_query_featurizer.featurize_from_query_text_id(
+                query_text_id
             ).copy()
             if featurization is None:
                 raise ValueError(
