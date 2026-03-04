@@ -5,8 +5,8 @@ from datetime import datetime
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.workload_routing_simulator import (
-    WorkloadRoutingSimulator,
+from autoslo.workload_execution.workload_simulator import (
+    WorkloadSimulator,
 )
 from autoslo.blueprints.blueprint import Blueprint
 
@@ -80,7 +80,7 @@ def main(args):
                 f"model {args.iconq_model_id}..."
             )
             start = datetime.now().timestamp()
-            simulator = WorkloadRoutingSimulator(
+            simulator = WorkloadSimulator(
                 workload_name=workload_name,
                 iconq_model_id=args.iconq_model_id,
                 blueprint_name=blueprint.name,

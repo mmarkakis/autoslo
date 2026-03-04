@@ -7,7 +7,7 @@ bookkeeping to a
 :class:`~autoslo.routing.cluster_state_tracker.ClusterStateTracker`.
 
 This is the single entry-point used by
-:class:`~autoslo.workload_execution.query_runner.QueryRunner` for all
+:class:`~autoslo.workload_execution.query_runner.WorkloadRunner` for all
 routing variants — the *behaviour* is determined entirely by the
 plugged-in policy.
 """
@@ -94,7 +94,7 @@ class Router:
         )
 
     # ------------------------------------------------------------------
-    # Lifecycle hooks (called by QueryRunner)
+    # Lifecycle hooks (called by WorkloadRunner)
     # ------------------------------------------------------------------
 
     def on_query_start(

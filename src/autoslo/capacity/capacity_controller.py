@@ -10,7 +10,7 @@ signal), the controller triggers a spin-up.  When a cluster is idle for
 a configurable number of consecutive periods, a tear-down is triggered.
 
 Spin-up / tear-down actions are communicated through callbacks so that
-callers (the ``QueryRunner``, the simulator, or a test harness) can wire
+callers (the ``WorkloadRunner``, the simulator, or a test harness) can wire
 them to the appropriate infra API or simulation event.
 """
 

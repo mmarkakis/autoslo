@@ -1,8 +1,8 @@
 import argparse
 
 from autoslo.blueprint_selection.selector import BlueprintSelector
-from autoslo.blueprint_selection.workload_routing_simulator import (
-    WorkloadRoutingSimulator,
+from autoslo.workload_execution.workload_simulator import (
+    WorkloadSimulator,
 )
 
 from autoslo.blueprints.blueprint import Blueprint
@@ -35,7 +35,7 @@ def main(args):
     else:
         blueprint = Blueprint.maximal(max_rpu=32)
 
-        simulator = WorkloadRoutingSimulator(
+        simulator = WorkloadSimulator(
             workload_name=args.workload_name,
             iconq_model_id=args.iconq_model_id,
             blueprint_name=blueprint.name,
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_simulator",
         action="store_true",
-        help="Whether to use the WorkloadRoutingSimulator instead of the selector.",
+        help="Whether to use the WorkloadSimulator instead of the selector.",
     )
     args = parser.parse_args()
     main(args)

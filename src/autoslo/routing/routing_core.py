@@ -1,7 +1,7 @@
 """
 routing_core.py
 ---------------
-Stateless routing logic extracted from WorkloadRoutingSimulator and RIconq.
+Stateless routing logic extracted from WorkloadSimulator and RIconq.
 
 This module provides the pure computational core for query routing decisions:
 scoring a placement, comparing candidates, computing SLO headroom, and
@@ -139,7 +139,7 @@ class RoutingCore:
         by *snapshot*, given the latency *predictions* returned by the model.
 
         This is a corrected extraction of the scoring logic from
-        ``WorkloadRoutingSimulator._find_best_cluster_for_query``.  The original
+        ``WorkloadSimulator._find_best_cluster_for_query``.  The original
         code had a misalignment: ``latencies_after`` carried an extra element at
         index 0 (the incoming query's raw prediction) that shifted the
         ``zip(keys, latencies_after)`` used for billing intervals and the final

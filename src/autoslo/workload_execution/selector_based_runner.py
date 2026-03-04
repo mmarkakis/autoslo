@@ -12,7 +12,7 @@ from autoslo.routing.query_router import QueryRouter
 from autoslo.routing.r_fixed import RFixed
 from autoslo.routing.r_modelbased import RModelBased
 from autoslo.routing.r_seqnum import RSeqNum
-from autoslo.workload_execution.query_runner import QueryRunner
+from autoslo.workload_execution.workload_runner import WorkloadRunner
 from autoslo.workload_execution.run_stats_collector import RunStatsCollector
 
 
@@ -21,7 +21,7 @@ async def run_using_selector(base_args: argparse.Namespace):
     Run selected workload.
 
     Parameters:
-        base_args: Base arguments to pass to each QueryRunner instance.
+        base_args: Base arguments to pass to each WorkloadRunner instance.
     """
 
     run_ids = []
@@ -64,7 +64,7 @@ async def run_using_selector(base_args: argparse.Namespace):
         print(
             f"{datetime.now()} Running example workload {example_workload_name} on cluster {cluster.name}..."
         )
-        run_id = await QueryRunner(example_args).run()
+        run_id = await WorkloadRunner(example_args).run()
         run_ids.append(run_id)
 
     print(f"{datetime.now()} Sleeping for 30 seconds...")
@@ -79,7 +79,7 @@ async def run_using_selector(base_args: argparse.Namespace):
         print(
             f"{datetime.now()} Running example workload {example_workload_name} again on cluster {cluster.name}..."
         )
-        run_id = await QueryRunner(example_args).run()
+        run_id = await WorkloadRunner(example_args).run()
         run_ids.append(run_id)
 
     
@@ -96,7 +96,7 @@ async def run_using_selector(base_args: argparse.Namespace):
     print(
         f"{datetime.now()} Running workload {base_args.workload_name}..."
     )
-    run_id = await QueryRunner(base_args).run()
+    run_id = await WorkloadRunner(base_args).run()
     run_ids.append(run_id)
 
     print(f"{datetime.now()} Sleeping for 5 minutes...")

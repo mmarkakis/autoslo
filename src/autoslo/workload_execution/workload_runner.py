@@ -22,13 +22,13 @@ from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
 
 
-class QueryRunner:
+class WorkloadRunner:
     def __init__(
         self,
         config_path: str | Path,
     ):
         """
-        Initialize the QueryRunner from a YAML config file.
+        Initialize the WorkloadRunner from a YAML config file.
 
         Parameters:
             config_path: Path to a YAML config file inside
@@ -394,5 +394,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    qr = QueryRunner(args.config)
+    qr = WorkloadRunner(args.config)
     asyncio.run(qr.run())

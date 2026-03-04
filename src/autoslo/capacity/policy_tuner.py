@@ -21,7 +21,7 @@ Typical usage
 ... )
 >>>
 >>> def run(p: PolicyParams) -> ScenarioOutcome:
-...     # ... run WorkloadRoutingSimulator with p ...
+...     # ... run WorkloadSimulator with p ...
 ...     return ScenarioOutcome(mean_cost=..., mean_violation_rate=...,
 ...                            mean_violation_amount_s=...,
 ...                            mean_relative_violation=...)

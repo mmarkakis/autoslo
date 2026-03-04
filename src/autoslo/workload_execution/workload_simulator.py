@@ -2,6 +2,7 @@ import heapq
 import json
 import logging
 import os
+import shutil
 from datetime import datetime
 from typing import Any, Optional
 
@@ -37,7 +38,7 @@ from autoslo.workload_definition.workload import Workload
 logger = logging.getLogger(__name__)
 
 
-class WorkloadRoutingSimulator:
+class WorkloadSimulator:
     """
     Overall strategy:
     Phase 1: As each query comes in, route it to some endpoint to minimize the
@@ -68,10 +69,12 @@ class WorkloadRoutingSimulator:
         video_frame_duration: float = 1.0,
         simulator_run_id: Optional[str] = None,
         experiment_name: Optional[str] = None,
+        overwrite_experiment: bool = False,
         dynamic_cluster_config: Optional[DynamicClusterConfig] = None,
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
         capacity_poll_interval_s: float = 60.0,
+        min_cluster_lifetime_s: float = 1200.0,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -88,6 +91,8 @@ class WorkloadRoutingSimulator:
         self._cc_eta_crit = eta_crit
         self._cc_idle_periods = idle_periods_before_tear_down
         self._cc_poll_interval_s = capacity_poll_interval_s
+        # Minimum cluster lifetime
+        self._cc_min_cluster_lifetime_s = min_cluster_lifetime_s
 
         self._optimize_based_on_slo_violation_amount = (
             optimize_based_on_slo_violation_amount
@@ -101,7 +106,7 @@ class WorkloadRoutingSimulator:
         self._video_frame_duration = video_frame_duration
         self._simulator_run_id = simulator_run_id
         self._experiment_name = experiment_name
-
+        self._overwrite_experiment = overwrite_experiment
         self._workload: Workload
         if workload_name.startswith("redset"):
             self._workload = RedsetWorkload.load(workload_name)
@@ -181,10 +186,13 @@ class WorkloadRoutingSimulator:
     # ------------------------------------------------------------------
     def _make_out_dir(self, run_id: str) -> str:
         if self._experiment_name:
+            experiment_dir = os.path.join(
+                pu.get_data_path(), "simulator_runs", self._experiment_name
+            )
+            if os.path.exists(experiment_dir) and self._overwrite_experiment:
+                shutil.rmtree(experiment_dir)
             out_dir = os.path.join(
-                pu.get_data_path(),
-                "simulator_runs",
-                self._experiment_name,
+                experiment_dir,
                 run_id,
             )
         else:
@@ -395,7 +403,14 @@ class WorkloadRoutingSimulator:
             eta_crit=self._cc_eta_crit,
             idle_periods_before_tear_down=self._cc_idle_periods,
             allowed_rpu_sizes=list(config.allowed_rpu_sizes),
+            min_cluster_lifetime_s=self._cc_min_cluster_lifetime_s,
+            get_current_time_s=lambda: self._current_sim_time_s,
         )
+
+        # Register all initial clusters with the controller so
+        # they are protected by the minimum lifetime.
+        for cn in list(self._active_queries_per_cluster.keys()):
+            self._capacity_controller.notify_cluster_ready(cn, 0.0)
 
         # Event queue
         self._pending_events = []
@@ -502,6 +517,13 @@ class WorkloadRoutingSimulator:
             self._activate_cluster_bookkeeping(
                 cluster.name, cluster.cost_per_second
             )
+            # Notify the capacity controller that the cluster
+            # is now ready (decrements pending count and records ready
+            # time for minimum-lifetime enforcement).
+            if self._capacity_controller is not None:
+                self._capacity_controller.notify_cluster_ready(
+                    cluster.name, time_s
+                )
             logger.debug(
                 "Cluster %s (%d RPU) became ready at t=%.1f",
                 cluster.name,
@@ -550,9 +572,7 @@ class WorkloadRoutingSimulator:
                     "event_type": "capacity_tick",
                     "headroom": headroom,
                     "num_active_queries": len(all_active),
-                    "num_active_clusters": len(
-                        self._active_queries_per_cluster
-                    )
+                    "num_active_clusters": len(self._active_queries_per_cluster)
                     - len(self._draining_clusters),
                 }
             )
@@ -775,18 +795,14 @@ class WorkloadRoutingSimulator:
 
         # Deactivate fully-drained clusters (outside the iteration).
         for cn in clusters_to_deactivate:
-            logger.debug(
-                "Draining cluster %s is now empty — deactivating.", cn
-            )
+            logger.debug("Draining cluster %s is now empty — deactivating.", cn)
             self._log_if_verbose(
                 {
                     "timestamp": current_time_s,
                     "event_type": "cluster_deactivated",
                     "cluster_name": cn,
                     "reason": "drain_complete",
-                    "num_active_clusters": len(
-                        self._active_queries_per_cluster
-                    )
+                    "num_active_clusters": len(self._active_queries_per_cluster)
                     - 1,  # this one is about to be removed
                 }
             )

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_execution.run_stats_collector import RunStatsCollector
-from autoslo.workload_execution.query_runner import QueryRunner
+from autoslo.workload_execution.workload_runner import WorkloadRunner
 
 FIRST_PART_OPTIONS = [
     #"heavy", 
@@ -21,7 +21,7 @@ async def run_all_interference_workloads(base_args: argparse.Namespace):
     Run all interference workloads sequentially with a 10-minute pause between each run.
 
     Parameters:
-        base_args: Base arguments to pass to each QueryRunner instance.
+        base_args: Base arguments to pass to each WorkloadRunner instance.
     """
 
     run_ids = []
@@ -35,14 +35,14 @@ async def run_all_interference_workloads(base_args: argparse.Namespace):
     print(
         f"{datetime.now()} Running example workload {example_workload_name}..."
     )
-    run_id = await QueryRunner(example_args).run()
+    run_id = await WorkloadRunner(example_args).run()
     run_ids.append(run_id)
     print(f"{datetime.now()} Sleeping for 2 minutes...")
     await asyncio.sleep(2 * 60)
     print(
         f"{datetime.now()} Running example workload {example_workload_name} again..."
     )
-    run_id = await QueryRunner(example_args).run()
+    run_id = await WorkloadRunner(example_args).run()
     run_ids.append(run_id)
 
     if not base_args.test_run:
@@ -61,7 +61,7 @@ async def run_all_interference_workloads(base_args: argparse.Namespace):
                 full_args = argparse.Namespace(
                     **vars(base_args), workload_name=workload_name
                 )
-                run_id = await QueryRunner(full_args).run()
+                run_id = await WorkloadRunner(full_args).run()
                 run_ids.append(run_id)
 
                 print(f"{datetime.now()} Sleeping for 10 minutes...")

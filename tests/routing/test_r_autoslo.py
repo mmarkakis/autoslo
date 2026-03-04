@@ -324,7 +324,7 @@ class TestRouteQuery:
         assert result in ["c0", "c1"]
 
     def test_kwargs_compatibility(self):
-        """QueryRunner passes seq_num and tpcds_temp_and_q_idx as kwargs."""
+        """WorkloadRunner passes seq_num and tpcds_temp_and_q_idx as kwargs."""
         r = _make_router(["c0"])
         result = r.route_query(
             seq_num="q1",
