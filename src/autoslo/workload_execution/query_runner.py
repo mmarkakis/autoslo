@@ -13,7 +13,7 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster_pool import ClusterPool
 from autoslo.routing.query_router import QueryRouter
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
@@ -31,7 +31,7 @@ class QueryRunner:
         Parameters:
             config_path: Path to a YAML config file inside
                 ``data/query_runner_configs/``.  The file must contain the
-                fields: ``workload_name``, ``blueprint_name``,
+                fields: ``workload_name``, ``initial_rpus``,
                 ``query_router_name``, ``maxconns``, ``closed_loop``.
         """
         self.config_path = Path(config_path)
@@ -68,18 +68,17 @@ class QueryRunner:
         self.workload_df = self.workload.df
         self.schema = Schema.load(self.workload.schema_name)
 
-        # Validate blueprint name.
-        all_known_blueprints = pu.get_blueprint_dicts_from_config()
-        if cfg["blueprint_name"] not in all_known_blueprints:
-            raise ValueError(f"Blueprint name {cfg['blueprint_name']} not known.")
-        self.blueprint_name = cfg["blueprint_name"]
-        self.blueprint = Blueprint.from_config(self.blueprint_name)
+        # Build the cluster pool from the configured RPU sizes.
+        initial_rpus = cfg["initial_rpus"]
+        if not initial_rpus:
+            raise ValueError("'initial_rpus' must list at least one RPU size.")
+        self.cluster_pool = ClusterPool(initial_rpus=initial_rpus)
 
         # Validate maxconns and set up connection pool map.
         if cfg["maxconns"] < 1:
             raise ValueError("maxconns must be at least 1.")
         self.maxconns = cfg["maxconns"]
-        self.conn_pools = self.blueprint.conn_pool_map(
+        self.conn_pools = self.cluster_pool.conn_pool_map(
             maxconn=self.maxconns, search_path=self.schema.search_path
         )
 
@@ -146,7 +145,7 @@ class QueryRunner:
             "num_queries": len(self.workload_df),
             "schema_name": self.schema.name,
             "search_path": self.schema.search_path,
-            "blueprint_name": self.blueprint_name,
+            "initial_rpus": [c.rpu for c in self.cluster_pool.clusters],
             "query_router_name": self.query_router_name,
             "maxconns": self.maxconns,
             "closed_loop": self.closed_loop,

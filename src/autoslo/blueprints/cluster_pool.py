@@ -41,12 +41,17 @@ class ClusterPool:
         self,
         initial_clusters: list[Cluster] | None = None,
         *,
+        initial_rpus: list[int] | None = None,
         allowed_rpu_sizes: list[int] | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self._clusters: dict[str, Cluster] = {}
         if initial_clusters:
             for c in initial_clusters:
+                self._clusters[c.name] = c
+        if initial_rpus:
+            for rpu in initial_rpus:
+                c = Cluster.new(rpu=rpu)
                 self._clusters[c.name] = c
         self._allowed_rpu_sizes: list[int] = sorted(
             allowed_rpu_sizes
