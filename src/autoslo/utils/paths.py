@@ -133,6 +133,14 @@ def get_models_dir() -> str:
     return os.path.join(get_data_path(), "models")
 
 
+def get_schemas_path() -> str:
+    """
+    Return the absolute path to the schemas config directory.
+    Schema config files live at ``{schemas_path}/{schema_name}.yml``.
+    """
+    return os.path.join(get_data_path(), "schemas")
+
+
 def get_heavy_templates_files() -> dict[str, str]:
     """
     Return the path to the heavy templates file for TPC-DS.

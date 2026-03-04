@@ -13,7 +13,9 @@ from tqdm.auto import tqdm
 import autoslo.utils.paths as pu
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.routing.query_router import QueryRouter
-from autoslo.workload_execution.trace import Trace
+from autoslo.workload_definition.workload import Workload
+from autoslo.workload_definition.query_text_registry import QueryTextRegistry
+from autoslo.workload_definition.schema import Schema
 
 
 class QueryRunner:
@@ -52,7 +54,10 @@ class QueryRunner:
             raise FileNotFoundError(
                 f"Workload file {self.workload_path} does not exist."
             )
-        self.workload_df = pd.read_parquet(self.workload_path)
+        self.workload = Workload.load(self.workload_path)
+        self.workload.set_rel_start_times_from_zero()
+        self.workload_df = self.workload.df
+        self.schema = Schema.load(self.workload.schema_name)
 
         # Validate blueprint name.
         all_known_blueprints = pu.get_blueprint_dicts_from_config()
@@ -61,31 +66,12 @@ class QueryRunner:
         self.blueprint_name = args.blueprint_name
         self.blueprint = Blueprint.from_config(self.blueprint_name)
 
-        # Obtain AWS account ID, region, and schema name from conn info file.
-        self.conn_info_path = pu.get_conn_info_path()
-        if not os.path.exists(self.conn_info_path):
-            raise FileNotFoundError(
-                f"Connection info file {self.conn_info_path} does not exist."
-            )
-        with open(self.conn_info_path, "r") as f:
-            all_conn_info = yaml.safe_load(f)
-
-        if args.tpcds_scale_factor not in all_conn_info["scale_factors"]:
-            raise ValueError(
-                f"Scale factor {args.tpcds_scale_factor} not found in "
-                "connection info."
-            )
-        self.tpcds_scale_factor = args.tpcds_scale_factor
-        self.schema_name = all_conn_info["scale_factors"][
-            args.tpcds_scale_factor
-        ]
-
         # Validate maxconns and set up connection pool map.
         if args.maxconns < 1:
             raise ValueError("maxconns must be at least 1.")
         self.maxconns = args.maxconns
         self.conn_pools = self.blueprint.conn_pool_map(
-            maxconn=self.maxconns, search_path=self.schema_name
+            maxconn=self.maxconns, search_path=self.schema.search_path
         )
 
         # Set additional parameters.
@@ -151,8 +137,8 @@ class QueryRunner:
             "run_id": run_id,
             "workload_name": self.workload_name,
             "num_queries": len(self.workload_df),
-            "scale_factor": self.tpcds_scale_factor,
-            "schema_name": self.schema_name,
+            "schema_name": self.schema.name,
+            "search_path": self.schema.search_path,
             "blueprint_name": self.blueprint_name,
             "query_router_name": self.query_router_name,
             "maxconns": self.maxconns,
@@ -216,6 +202,7 @@ class QueryRunner:
         rel_start_time_s: float,
         query_id: str,
         query_text: str,
+        query_text_id: str,
         cluster_name: str,
     ) -> None:
         """
@@ -227,6 +214,7 @@ class QueryRunner:
             rel_start_time_s: Relative start time in seconds from the reference timestamp.
             query_id: ID of the query.
             query_text: SQL text of the query.
+            query_text_id: The query_text_id for this query (used for routing).
             cluster_name: Name of the cluster to run the query on.
         """
         now = self._async_ts()
@@ -238,15 +226,11 @@ class QueryRunner:
         )
         if delay > 0:
             await asyncio.sleep(delay)
-        tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(
-            query_text,
-            has_prepended_run_information=False,
-        )
         now = self._async_ts()
         self.query_router.on_query_start(
             query_id=query_id,
             cluster_name=cluster_name,
-            tpcds_temp_and_q_idx=tpcds_temp_and_q_idx,
+            query_text_id=query_text_id,
             start_time_s=now,
         )
         try:
@@ -281,17 +265,25 @@ class QueryRunner:
 
         for _, row in self.workload_df.iterrows():
             query_id = row["query_id"]
-            query_text = row["query_text"]
+            query_text_id = str(row["query_text_id"])
+            schema_name = str(row.get("schema_name", ""))
             rel_start_time_s = row["rel_start_time_s"]
+
+            # Resolve the SQL text from the registry.
+            query_text = QueryTextRegistry.get(schema_name, query_text_id)
+            if query_text is None:
+                logging.warning(
+                    f"No query text found for schema '{schema_name}', "
+                    f"query_text_id '{query_text_id}'. Skipping query {query_id}."
+                )
+                continue
 
             route_start_timestamp = self._async_ts()
             cluster_name = self.query_router.route_query(
                 query_text=query_text,
                 workload_name=self.workload_name,
                 seq_num=query_id,
-                tpcds_temp_and_q_idx=(
-                    f"{row['query_template']:03d}_{row['query_num_within_template']:03d}"
-                ),
+                query_text_id=query_text_id,
             )
             route_end_timestamp = self._async_ts()
             route_info.append(
@@ -316,6 +308,7 @@ class QueryRunner:
                     rel_start_time_s,
                     query_id,
                     query_text,
+                    query_text_id=query_text_id,
                     cluster_name=cluster_name,
                 )
                 tasks.append(task)
@@ -328,6 +321,7 @@ class QueryRunner:
                     0,
                     query_id,
                     query_text,
+                    query_text_id=query_text_id,
                     cluster_name=cluster_name,
                 )
 
@@ -367,12 +361,6 @@ if __name__ == "__main__":
         type=str,
         default="benchmarking_workload_99_3_3_shuffled_42",
         help="Name of the workload to run.",
-    )
-    parser.add_argument(
-        "--tpcds_scale_factor",
-        type=int,
-        default=1000,
-        help="TPC-DS scale factor to run against.",
     )
     parser.add_argument(
         "--blueprint_name",

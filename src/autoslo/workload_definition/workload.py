@@ -31,7 +31,7 @@ class Workload:
     not need to call ``super().__init__()``.
     """
 
-    def __init__(self, df: pd.DataFrame | None = None) -> None:
+    def __init__(self, df: pd.DataFrame) -> None:
         """
         Parameters
         ----------
@@ -39,8 +39,37 @@ class Workload:
             A :class:`~pandas.DataFrame` matching the ``workload`` schema.
             Pass ``None`` only when constructing a subclass that supplies its
             own data.
+
+        Raises
+        ------
+        ValueError
+            If *df* is not ``None`` and is missing any of the required columns
+            from :data:`WORKLOAD_SCHEMA_COLUMNS`.
+        ValueError
+            If *df* contains multiple distinct values in the ``workload_id``
+            column or the ``schema_name`` column, which are expected to be
+            uniform across the workload.
         """
         self._df = df
+        for col in WORKLOAD_SCHEMA_COLUMNS:
+            if col not in df.columns:
+                raise ValueError(
+                    f"DataFrame is missing required column {col!r} from "
+                    f"WORKLOAD_SCHEMA_COLUMNS."
+                )
+
+        if (
+            len(df["workload_id"].unique()) > 1
+            or len(df["schema_name"].unique()) > 1
+        ):
+            raise ValueError(
+                "All rows in the workload DataFrame must share the same "
+                "workload_id and schema_name, but found multiple: "
+                f"workload_id: {df['workload_id'].unique()}, "
+                f"schema_name: {df['schema_name'].unique()}"
+            )
+        self.set_rel_start_times_from_abs()
+
         self._queries_cache: list[Query] | None = None
 
     # ------------------------------------------------------------------
@@ -70,12 +99,15 @@ class Workload:
     @property
     def name(self) -> str:
         """The workload identifier, taken from the ``workload_id`` column."""
-        if self._df is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} must either be backed by a DataFrame "
-                "or override 'name'."
-            )
         return str(self._df["workload_id"].iloc[0])
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """
+        The underlying :class:`~pandas.DataFrame`.
+        """
+
+        return self._df
 
     def queries(self) -> list[Query]:
         """Return the list of :class:`~autoslo.workload_definition.query.Query`
@@ -100,27 +132,57 @@ class Workload:
                     query_text_id=str(row["query_text_id"]),
                     schema_name=str(row.get("schema_name", "")),
                     repetition_id=str(row.get("repetition_id", "")),
-                    abs_start_time=row["abs_start_time"],
+                    rel_start_time_s=float(row.get("rel_start_time_s", -1)),
                 )
             )
         self._queries_cache = result
         return result
 
     # ------------------------------------------------------------------
-    # DataFrame access
+    # Start time manipulation
     # ------------------------------------------------------------------
 
-    @property
-    def df(self) -> pd.DataFrame:
-        """The underlying :class:`~pandas.DataFrame`.
-
-        Raises
-        ------
-        RuntimeError
-            If this workload instance is not backed by a DataFrame.
+    def set_rel_start_times_from_abs(self) -> None:
         """
-        if self._df is None:
-            raise RuntimeError(
-                f"{type(self).__name__} is not backed by a DataFrame."
-            )
-        return self._df
+        Create a column of relative start times (``rel_start_time_s``) derived
+        from absolute start times (``abs_start_time``) using epoch timestamps.
+
+        This is a mutating operation that adds or overwrites the
+        ``rel_start_time_s`` column in the backing DataFrame.
+
+        """
+        self._df["rel_start_time_s"] = self._df["abs_start_time"].apply(
+            lambda t: t.timestamp()
+        )
+        self._queries_cache = None
+
+    def set_rel_start_times_from_zero(self) -> None:
+        """
+        Create a column of relative start times (``rel_start_time_s``) derived
+        from absolute start times (``abs_start_time``) by rebasing to zero.
+
+        This is a mutating operation that adds or overwrites the
+        ``rel_start_time_s`` column in the backing DataFrame.
+        """
+        min_timestamp = self._df["abs_start_time"].min().timestamp()
+        self._df["rel_start_time_s"] = self._df["abs_start_time"].apply(
+            lambda t: t.timestamp() - min_timestamp
+        )
+        self._queries_cache = None
+
+    def rescale_rel_start_times(self, factor: float) -> None:
+        """
+        Rescale the relative start times (``rel_start_time_s``) by a constant
+        factor.
+
+        This is a mutating operation that modifies the existing
+        ``rel_start_time_s`` column in the backing DataFrame.  Absolute start
+        times are left unchanged.
+
+        Parameters
+        ----------
+        factor:
+            The constant factor by which to multiply all relative start times.
+        """
+        self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
+        self._queries_cache = None

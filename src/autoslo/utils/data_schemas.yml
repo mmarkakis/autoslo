@@ -49,3 +49,25 @@ redset_workload:
   - name: tpcds_temp_and_q_idx
     type: Query.TPCDSTempAndQIdx
     description: The template and query index of the TPC-DS query executed.
+
+
+workload:
+  - name: workload_name
+    type: str
+    description: The name of the workload.
+  - name: query_id
+    type: str
+    description: The unique identifier of the query (within this workload).
+  - name: abs_start_time
+    type: datetime
+    description: The absolute start time of the query.
+  - name: schema_name
+    type: str
+    description: The schema name of the query executed.
+  - name: query_text_id
+    type: str
+    description: The unique identifier of the query text.
+  - name: repetition_id
+    type: str
+    description: An identifier assigned to the query for the purpose of 
+      identifying repetitions of the same query across the workload. 
