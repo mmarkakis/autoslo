@@ -5,19 +5,42 @@ from typing import TypeAlias
 from intervaltree import Interval  # type: ignore[import]
 
 QueryFeaturization: TypeAlias = list[float]
-TPCDSTempAndQIdx: TypeAlias = str
+
+# Generic identifier for what query text a query instance is using.
+# Historically this encoded a TPC-DS template + index (e.g. "42_001");
+# the field is now called query_text_id so it can accommodate any schema.
+QueryTextId: TypeAlias = str
+
 
 
 @dataclass
 class Query:
-    """Class representing a single query in the workload."""
+    """Class representing a single query in a workload.
+
+    A ``Query`` corresponds to one row in the ``workload`` data schema: it
+    carries the query's identity fields (``query_id``, ``query_text_id``,
+    ``schema_name``, ``repetition_id``) as well as optional execution-time
+    fields populated after a run (latency, featurization, …).
+    """
 
     query_id: str
-    tpcds_temp_and_q_idx: TPCDSTempAndQIdx
+    query_text_id: QueryTextId
+    """Opaque key that identifies the query text within its schema.
+
+    The actual SQL can be retrieved via
+    ``QueryTextRegistry.get(schema_name, query_text_id)``.
+    """
+
     featurization: QueryFeaturization = field(default_factory=list)
 
     abs_start_time: datetime = datetime.fromtimestamp(-1, tz=timezone.utc)
     rel_start_time_s: float = -1
+
+    schema_name: str = ""
+    """The database schema this query targets (e.g. ``"ext_tpcds1000"``)."""
+
+    repetition_id: str = ""
+    """Identifies repeated instances of the same query text within a workload."""
 
     cluster_name: str = ""
     stage_latency_prediction_s: float = -1
@@ -86,31 +109,3 @@ class Query:
     def slo_slack_amount_s(self, slo_s: float) -> float:
         """Returns the amount of SLO slack in seconds."""
         return max(0.0, -self.slo_deviation_amount_s(slo_s))
-
-    @staticmethod
-    def template_id(temp_and_q_idx: TPCDSTempAndQIdx) -> int:
-        """
-        Extract the TPC-DS template number from the given template and query
-        index string.
-
-        Parameters:
-            temp_and_q_idx: The TPC-DS template and query index string.
-
-        Returns:
-            The template number as an integer.
-        """
-        return int(str(temp_and_q_idx).split("_")[0])
-
-    @staticmethod
-    def idx_in_template(temp_and_q_idx: TPCDSTempAndQIdx) -> int:
-        """
-        Extract the TPC-DS query index from the given template and query index
-        string.
-
-        Parameters:
-            temp_and_q_idx: The TPC-DS template and query index string.
-
-        Returns:
-            The query index as an integer.
-        """
-        return int(str(temp_and_q_idx).split("_")[1])
