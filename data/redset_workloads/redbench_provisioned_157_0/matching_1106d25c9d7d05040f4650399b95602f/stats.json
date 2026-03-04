@@ -1,10 +1,10 @@
 {
   "sampling_steps": {
-    "5": 80,
+    "5": 79,
     "1": 66647,
-    "4 -> 6": 33863,
-    "2": 124,
-    "3 -> 6": 1
+    "4 -> 6": 33867,
+    "2": 108,
+    "3 -> 6": 14
   },
   "matched_workload_size": {
     "num_queries": 100793,
@@ -12,10 +12,10 @@
     "num_insert_queries": 77,
     "num_update_queries": 1,
     "num_delete_queries": 0,
-    "repetition_ratio": 0.8935411805590031,
-    "dml_aware_repetition_ratio": 0.8903837561435735,
-    "scanset_repetition_ratio": 0.9994439755746413,
-    "dml_aware_scanset_repetition_ratio": 0.9975773221466514
+    "repetition_ratio": 0.9928014694931242,
+    "dml_aware_repetition_ratio": 0.9857022290622053,
+    "scanset_repetition_ratio": 0.999453904582237,
+    "dml_aware_scanset_repetition_ratio": 0.9975177481010773
   },
   "timeline_size": {
     "num_queries": 100793,
