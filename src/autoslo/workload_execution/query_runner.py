@@ -14,7 +14,9 @@ from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster_pool import ClusterPool
-from autoslo.routing.query_router import QueryRouter
+from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+from autoslo.routing.router import Router
+from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
@@ -32,7 +34,7 @@ class QueryRunner:
             config_path: Path to a YAML config file inside
                 ``data/query_runner_configs/``.  The file must contain the
                 fields: ``workload_name``, ``initial_rpus``,
-                ``query_router_name``, ``maxconns``, ``closed_loop``.
+                ``routing_policy``, ``maxconns``, ``closed_loop``.
         """
         self.config_path = Path(config_path)
         with open(self.config_path, "r") as f:
@@ -82,9 +84,26 @@ class QueryRunner:
             maxconn=self.maxconns, search_path=self.schema.search_path
         )
 
-        # Set additional parameters.
-        self.query_router_name = cfg["query_router_name"]
-        self.query_router = QueryRouter.from_name(self.query_router_name)
+        # Build state tracker and router.
+        self.state_tracker = ClusterStateTracker.from_cluster_pool(
+            self.cluster_pool
+        )
+        policy_cfg = dict(cfg["routing_policy"])
+        self.routing_policy_config = policy_cfg
+        self.routing_policy_name = policy_cfg.pop("type")
+        RoutingPolicy.ensure_registry_populated()
+        if self.routing_policy_name not in RoutingPolicy._registry:
+            raise ValueError(
+                f"Unknown routing policy type: {self.routing_policy_name!r}. "
+                f"Available: {sorted(RoutingPolicy._registry)}"
+            )
+        self.routing_policy = RoutingPolicy._registry[
+            self.routing_policy_name
+        ](**policy_cfg)
+        self.router = Router(
+            policy=self.routing_policy,
+            state_tracker=self.state_tracker,
+        )
         self.closed_loop = bool(cfg.get("closed_loop", False))
 
     def _ts(self, cast_to_int: bool = False) -> Union[int, float]:
@@ -146,7 +165,7 @@ class QueryRunner:
             "schema_name": self.schema.name,
             "search_path": self.schema.search_path,
             "initial_rpus": [c.rpu for c in self.cluster_pool.clusters],
-            "query_router_name": self.query_router_name,
+            "routing_policy": self.routing_policy_config,
             "maxconns": self.maxconns,
             "closed_loop": self.closed_loop,
         }
@@ -237,7 +256,7 @@ class QueryRunner:
         if delay > 0:
             await asyncio.sleep(delay)
         now = self._async_ts()
-        self.query_router.on_query_start(
+        self.router.on_query_start(
             query_id=query_id,
             cluster_name=cluster_name,
             query_text_id=query_text_id,
@@ -250,7 +269,7 @@ class QueryRunner:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, fn)
         finally:
-            self.query_router.on_query_finish(
+            self.router.on_query_finish(
                 query_id=query_id,
                 cluster_name=cluster_name,
             )
@@ -289,10 +308,8 @@ class QueryRunner:
                 continue
 
             route_start_timestamp = self._async_ts()
-            cluster_name = self.query_router.route_query(
-                query_text=query_text,
-                workload_name=self.workload_name,
-                seq_num=query_id,
+            cluster_name = self.router.route_query(
+                query_id=query_id,
                 query_text_id=query_text_id,
             )
             route_end_timestamp = self._async_ts()
@@ -342,14 +359,14 @@ class QueryRunner:
         # Save query routing timings.
         route_info_df = pd.DataFrame(route_info)
         route_info_df["run_id"] = run_id
-        route_info_df["query_router_name"] = self.query_router_name
+        route_info_df["routing_policy"] = self.routing_policy_name
         route_info_df["routing_time_s"] = (
             route_info_df["route_end_timestamp"]
             - route_info_df["route_start_timestamp"]
         )
         column_order = [
             "run_id",
-            "query_router_name",
+            "routing_policy",
             "query_seq_num",
             "cluster_name",
             "route_start_timestamp",

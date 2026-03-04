@@ -1,0 +1,134 @@
+"""
+routing_policy.py
+-----------------
+Abstract base for routing policies and simple built-in implementations.
+
+A :class:`RoutingPolicy` encapsulates *how* a query is assigned to a
+cluster, without owning any per-query bookkeeping.  Bookkeeping lives in
+:class:`~autoslo.routing.cluster_state_tracker.ClusterStateTracker`.
+"""
+
+from __future__ import annotations
+
+import itertools
+from abc import abstractmethod
+from typing import TYPE_CHECKING, Any
+
+from autoslo.utils.class_with_factory import ClassWithFactory
+from autoslo.workload_definition.query import Query
+
+if TYPE_CHECKING:
+    from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+
+
+class RoutingPolicy(ClassWithFactory):
+    """Base class for all routing policies.
+
+    Subclasses must implement :meth:`select_cluster`.  Optionally override
+    :meth:`build_tracking_query` to create richer :class:`Query` objects
+    for the state tracker (e.g. with featurisations for model-based
+    policies).
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    @abstractmethod
+    def select_cluster(
+        self,
+        query_id: str,
+        query_text_id: str,
+        start_time_s: float,
+        state_tracker: ClusterStateTracker,
+    ) -> str:
+        """Choose the best cluster for the incoming query.
+
+        Parameters
+        ----------
+        query_id :
+            Unique query identifier.
+        query_text_id :
+            Query-text identifier (used for featurisation lookup).
+        start_time_s :
+            Arrival time (wall-clock or simulated) in seconds.
+        state_tracker :
+            Read-only view of per-cluster bookkeeping.
+
+        Returns
+        -------
+        str
+            Name of the cluster the query should be sent to.
+        """
+        ...
+
+    def build_tracking_query(
+        self,
+        query_id: str,
+        cluster_name: str,
+        query_text_id: str,
+        start_time_s: float,
+    ) -> Query:
+        """Create a :class:`Query` suitable for the state tracker.
+
+        The default implementation returns a minimal object.  Model-based
+        policies should override this to attach featurisations and
+        stage-model predictions.
+        """
+        return Query(
+            query_id=str(query_id),
+            query_text_id=str(query_text_id),
+            rel_start_time_s=start_time_s,
+            cluster_name=cluster_name,
+            latency_s=-1,
+        )
+
+    def on_attach(self, state_tracker: ClusterStateTracker) -> None:
+        """Called once when the policy is attached to a Router.
+
+        Override to perform one-time setup that requires the tracker
+        (e.g. injecting an RPU-lookup callback into a featuriser).
+        """
+
+
+# -----------------------------------------------------------------------
+# Built-in simple policies
+# -----------------------------------------------------------------------
+
+
+class RoundRobinPolicy(RoutingPolicy):
+    """Cycle through eligible clusters in order."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cycle: itertools.cycle[str] | None = None
+
+    def select_cluster(
+        self,
+        query_id: str,
+        query_text_id: str,
+        start_time_s: float,
+        state_tracker: ClusterStateTracker,
+    ) -> str:
+        names = state_tracker.cluster_names
+        if not names:
+            raise RuntimeError("No clusters available for routing.")
+        if self._cycle is None:
+            self._cycle = itertools.cycle(names)
+        return next(self._cycle)
+
+
+class FixedPolicy(RoutingPolicy):
+    """Always route to a single pre-configured cluster."""
+
+    def __init__(self, cluster_name: str, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cluster_name = cluster_name
+
+    def select_cluster(
+        self,
+        query_id: str,
+        query_text_id: str,
+        start_time_s: float,
+        state_tracker: ClusterStateTracker,
+    ) -> str:
+        return self._cluster_name
