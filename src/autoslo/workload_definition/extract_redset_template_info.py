@@ -61,12 +61,12 @@ def process_cluster(cluster_id: int) -> bool:
 
         # Remove cached results, non-SELECT queries, and rows with null
         # feature_fingerprint.
-        # mask = (
-        #     (~df["was_cached"])
-        #     & (df["query_type"].str.lower() == "select")
-        #     & (df["feature_fingerprint"].notna())
-        # )
-        # df = df[mask]
+        mask = (
+            (~df["was_cached"])
+            & (df["query_type"].str.lower() == "select")
+            & (df["feature_fingerprint"].notna())
+        )
+        df = df[mask]
         if len(df) == 0:
             logger.info(
                 f"Skipping cluster {cluster_id} because it has no valid "
@@ -79,7 +79,7 @@ def process_cluster(cluster_id: int) -> bool:
             )
             return False
 
-        # Only keep the cluster if no day has fewer than 100 queries, and no
+        # Only keep the cluster if no day has fewer than 240 queries, and no
         # day has more than 10k queries.
         df["date"] = df["arrival_timestamp"].dt.date
         date_counts = df["date"].value_counts()
@@ -88,10 +88,10 @@ def process_cluster(cluster_id: int) -> bool:
         date_counts = date_counts.reindex(
             pd.date_range(min_date, max_date), fill_value=0
         )
-        if (date_counts < 100).any():
+        if (date_counts < 24 * 10).any():
             logger.info(
                 f"Skipping cluster {cluster_id} because it does not have at "
-                f"least 100 queries on each day."
+                f"least 240 queries on each day."
             )
             end_time = pd.Timestamp.now()
             duration = end_time - start_time
@@ -99,10 +99,10 @@ def process_cluster(cluster_id: int) -> bool:
                 f"Finished processing cluster {cluster_id} in {duration}."
             )
             return False
-        if (date_counts > 10000).any():
+        if (date_counts > 24 * 60 * 60).any():
             logger.info(
                 f"Skipping cluster {cluster_id} because it has more than "
-                f"10k queries on at least one day."
+                f"86400 queries on at least one day."
             )
             end_time = pd.Timestamp.now()
             duration = end_time - start_time
@@ -179,6 +179,7 @@ def process_cluster(cluster_id: int) -> bool:
     # Plot arrival patterns.
     logger.info(f"Plotting arrival patterns for cluster {cluster_id}.")
     plot(workload_df, out_dir, cluster_id)
+    plot2(workload_df, out_dir, cluster_id)
 
     end_time = pd.Timestamp.now()
     duration = end_time - start_time
@@ -197,7 +198,7 @@ def plot(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
     df["week"] = df["arrival_timestamp"].dt.isocalendar().week
 
     # Plot a 2*2 grid of plots.
-    fig, axs = plt.subplots(3, 2, figsize=(15, 15), sharey="row")
+    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
 
     # Top left: number of queries per iso week, as a box plot. The x-axis should
     # be the week number, and the y-axis should be the number of queries. Each
@@ -205,7 +206,7 @@ def plot(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
     # the number of queries on that day.
     daily_counts_s = df.groupby(["week", "day"]).size()
     daily_counts = daily_counts_s.reset_index(name="query_count")
-    sns.boxplot(x="week", y="query_count", data=daily_counts, ax=axs[0, 0])
+    sns.barplot(x="week", y="query_count", data=daily_counts, ax=axs[0, 0])
     axs[0, 0].set_xlabel("Week Number")
     axs[0, 0].set_ylabel("Number of Queries")
     axs[0, 0].set_title(f"Weekly Query Counts")
@@ -213,7 +214,7 @@ def plot(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
     # Top right: number of queries per day of week.
     daily_counts_s = df.groupby(["day_of_week", "day"]).size()
     daily_counts = daily_counts_s.reset_index(name="query_count")
-    sns.boxplot(
+    sns.barplot(
         x="day_of_week", y="query_count", data=daily_counts, ax=axs[0, 1]
     )
     axs[0, 1].set_xlabel("Day of Week")
@@ -227,7 +228,7 @@ def plot(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
         df[df["query_type"] == "select"].groupby(["hour_of_day", "day"]).size()
     )
     hourly_counts = hourly_counts_s.reset_index(name="query_count")
-    sns.boxplot(
+    sns.barplot(
         x="hour_of_day", y="query_count", data=hourly_counts, ax=axs[1, 0]
     )
     axs[1, 0].set_xlabel("Hour of Day")
@@ -236,48 +237,19 @@ def plot(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
     axs[1, 0].set_xticks(range(0, 24))
     axs[1, 0].set_yscale("log")
 
-    # Middle right: number of non-select queries per hour of day.
-    hourly_counts_s = (
-        df[df["query_type"] != "select"].groupby(["hour_of_day", "day"]).size()
-    )
-    hourly_counts = hourly_counts_s.reset_index(name="query_count")
-    sns.boxplot(
-        x="hour_of_day",
-        y="query_count",
-        data=hourly_counts,
-        ax=axs[1, 1],
-        color="orange",
-    )
-    axs[1, 1].set_xlabel("Hour of Day")
-    axs[1, 1].set_ylabel("Number of Queries")
-    axs[1, 1].set_title(f"Hourly Non-SELECT Query Counts")
-    axs[1, 1].set_xticks(range(0, 24))
-    axs[1, 1].set_yscale("log")
-
-    # Bottom left: latency distribution of select queries per hour of day.
-    sns.boxplot(
+    # Middle right: latency distribution of select queries per hour of day.
+    sns.barplot(
         x="hour_of_day",
         y="latency_s",
         data=df[df["query_type"] == "select"],
-        ax=axs[2, 0],
+        ax=axs[1, 1],
     )
-    axs[2, 0].set_xlabel("Hour of Day")
-    axs[2, 0].set_ylabel("Latency (s)")
-    axs[2, 0].set_title(f"Hourly SELECT Query Latencies")
-    axs[2, 0].set_yscale("log")
+    axs[1, 1].set_xlabel("Hour of Day")
+    axs[1, 1].set_ylabel("Latency (s)")
+    axs[1, 1].set_title(f"Hourly SELECT Query Latencies")
+    axs[1, 1].set_yscale("log")
 
-    # Bottom right: latency distribution of non-select queries per hour of day.
-    sns.boxplot(
-        x="hour_of_day",
-        y="latency_s",
-        data=df[df["query_type"] != "select"],
-        ax=axs[2, 1],
-        color="orange",
-    )
-    axs[2, 1].set_xlabel("Hour of Day")
-    axs[2, 1].set_ylabel("Latency (s)")
-    axs[2, 1].set_title(f"Hourly Non-SELECT Query Latencies")
-    axs[2, 1].set_yscale("log")
+   
 
     plt.suptitle(
         f"Query Arrival Patterns for Cluster {cluster_id}", fontsize=16
@@ -285,6 +257,47 @@ def plot(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
     plt.tight_layout()
     fig_path = os.path.join(out_dir, f"arrival_patterns.png")
     plt.savefig(fig_path, dpi=300)
+
+def plot2(workload_df: pd.DataFrame, out_dir: str, cluster_id: int):
+
+    df = workload_df.copy()
+    df["arrival_hour"] = df["arrival_timestamp"].dt.floor("h")
+    df["hour_of_day"] = df["arrival_timestamp"].dt.hour
+    df["day"] = df["arrival_timestamp"].dt.date
+    df["on_weekend"] = df["arrival_timestamp"].dt.dayofweek >= 5
+    df["day_of_week"] = df["arrival_timestamp"].dt.dayofweek
+    df["week"] = df["arrival_timestamp"].dt.isocalendar().week
+
+    fig, axs = plt.subplots(2, 1, figsize=(15, 10))
+
+    # Top: number of queries per hour timeseries, across the entire time range.
+    hourly_counts_s = df.groupby("arrival_hour").size()
+    hourly_counts = hourly_counts_s.reset_index(name="query_count")
+    sns.lineplot(x="arrival_hour", y="query_count", data=hourly_counts, ax=axs[0])
+    axs[0].set_xlabel("Arrival Hour")
+    axs[0].set_ylabel("Number of Queries")
+    axs[0].set_title(f"Hourly Query Counts Over Time")
+
+    # Bottom: Latency per hour barchart with distribution, across the entire time range.
+    sns.barplot(
+        x="arrival_hour",
+        y="latency_s",
+        data=df[df["query_type"] == "select"],
+        ax=axs[1],
+    )
+    axs[1].set_xlabel("Arrival Hour")
+    axs[1].set_ylabel("Latency (s)")
+    axs[1].set_title(f"Hourly SELECT Query Latencies Over Time")
+    axs[1].set_yscale("log")
+   
+
+    plt.suptitle(
+        f"Query Arrival Patterns for Cluster {cluster_id}", fontsize=16
+    )
+    plt.tight_layout()
+    fig_path = os.path.join(out_dir, f"arrival_patterns2.png")
+    plt.savefig(fig_path, dpi=300)
+
 
 
 if __name__ == "__main__":
