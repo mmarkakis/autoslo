@@ -130,7 +130,7 @@ class WorkloadSimulator:
             "timestamp",
             "event_type",
             "query_id",
-            "tpcds_temp_and_q_idx",
+            "query_text_id",
             "cluster_name",
             "old_latency_s",
             "raw_model_latency_s",
@@ -626,7 +626,7 @@ class WorkloadSimulator:
                     "timestamp": query.rel_start_time_s,
                     "event_type": "arrival",
                     "query_id": query.query_id,
-                    "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                    "query_text_id": query.query_text_id.value,
                 }
             )
 
@@ -644,7 +644,7 @@ class WorkloadSimulator:
                     "timestamp": query.rel_start_time_s,
                     "event_type": "routing",
                     "query_id": query.query_id,
-                    "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                    "query_text_id": query.query_text_id.value,
                     "cluster_name": selected_cluster_name,
                     "old_latency_s": None,
                     "raw_model_latency_s": None,
@@ -684,7 +684,7 @@ class WorkloadSimulator:
                         "timestamp": query.rel_start_time_s,
                         "event_type": "latency_update",
                         "query_id": q.query_id,
-                        "tpcds_temp_and_q_idx": q.tpcds_temp_and_q_idx,
+                        "query_text_id": q.query_text_id.value,
                         "cluster_name": selected_cluster_name,
                         "old_latency_s": old_latency_s,
                         "raw_model_latency_s": predicted_latency_s,
@@ -750,7 +750,7 @@ class WorkloadSimulator:
                             "timestamp": end_time_s,
                             "event_type": "completion",
                             "query_id": query.query_id,
-                            "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                            "query_text_id": query.query_text_id.value,
                             "cluster_name": query.cluster_name,
                             "old_latency_s": None,
                             "raw_model_latency_s": None,
@@ -832,8 +832,8 @@ class WorkloadSimulator:
                 projected latencies on the best cluster.
         """
 
-        query.featurization = self._iconq_model.iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-            query.tpcds_temp_and_q_idx
+        query.featurization = self._iconq_model.iconq_query_featurizer.featurize_from_query_text_id(
+            query.query_text_id
         )
 
         before_costs: dict[str, float] = {}
@@ -887,8 +887,8 @@ class WorkloadSimulator:
                 )
             else:
                 query.cluster_name = cluster_name
-                query.stage_latency_prediction_s = self._iconq_model.stage_model.predict_from_tpcds_temp_and_q_idx(
-                    {query.query_id: query.tpcds_temp_and_q_idx},
+                query.stage_latency_prediction_s = self._iconq_model.stage_model.predict_from_query_text_id(
+                    {query.query_id: query.query_text_id},
                     cluster_name,
                 )[
                     query.query_id
@@ -942,7 +942,7 @@ class WorkloadSimulator:
                     "timestamp": query.rel_start_time_s,
                     "event_type": "cluster_consideration",
                     "query_id": query.query_id,
-                    "tpcds_temp_and_q_idx": query.tpcds_temp_and_q_idx,
+                    "query_text_id": query.query_text_id.value,
                     "cluster_name": cluster_name,
                     "old_latency_s": None,
                     "raw_model_latency_s": None,
@@ -1102,7 +1102,7 @@ class WorkloadSimulator:
                 # Compute per-row SLO using the resolver so that
                 # per-template overrides are reflected in violation stats.
                 per_row_slo = (
-                    completions["tpcds_temp_and_q_idx"]
+                    completions["query_text_id"]
                     .map(self._slo_resolver.resolve)
                     .fillna(self._slo_s)
                 )
