@@ -1,0 +1,23 @@
+{
+  "support_benchmarks": {
+    "id": "tpcds",
+    "sf": 1,
+    "name": "TPC-DS 1 GB",
+    "stats_table": "tpcds_stats",
+    "table_ids_table": "tpcds_table_ids",
+    "override": false
+  },
+  "start_date": "2024-03-01 00:00:00",
+  "end_date": "2024-06-01 00:00:00",
+  "matching_method": "join",
+  "redset_exclude_tables_never_read": false,
+  "use_table_versioning": false,
+  "limit_redset_rows_read": null,
+  "output_dir": "output/tmp_matching",
+  "wl_dir": "output/generated_workloads",
+  "stats_db_filepath": "output/tmp_matching/stats.duckdb",
+  "redset_path": "/home/markakis/redset/provisioned/parts/157.parquet",
+  "cluster_id": 157,
+  "database_id": 0,
+  "redset_dataset": "provisioned"
+}

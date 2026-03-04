@@ -25,6 +25,9 @@ data/simulator_runs/test*
 data/test_workloads/**/*.parquet
 data/iconq_models/**/dataset.pkl
 
+data/redset_workloads/redbench_*/matching_*/queries.json
+data/redset_workloads/redbench_*/matching_*/workload.csv
+
 
 
 site/
