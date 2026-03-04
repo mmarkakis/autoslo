@@ -12,7 +12,7 @@ config/conn.yml
 data/composite_workloads/**/cached*
 data/models/
 data/redset_byproducts/
-data/redset_workloads/**/*.parquet
+data/redset_executable_workloads/**/*.parquet
 data/runs/**/*.log
 data/runs/**/features_*
 data/runs/**/label_*
@@ -25,8 +25,8 @@ data/simulator_runs/test*
 data/test_workloads/**/*.parquet
 data/iconq_models/**/dataset.pkl
 
-data/redset_workloads/redbench_*/matching_*/queries.json
-data/redset_workloads/redbench_*/matching_*/workload.csv
+data/redset_executable_workloads/redbench_*/matching_*/queries.json
+data/redset_executable_workloads/redbench_*/matching_*/workload.csv
 
 
 
