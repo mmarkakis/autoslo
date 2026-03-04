@@ -9,7 +9,7 @@ from autoslo.workload_definition.query import Query
 
 # Columns that every workload file is expected to provide.
 WORKLOAD_SCHEMA_COLUMNS: list[str] = [
-    "workload_id",
+    "workload_name",
     "query_id",
     "abs_start_time",
     "schema_name",
@@ -23,7 +23,7 @@ class Workload:
 
     Each row in the backing ``DataFrame`` corresponds to one submitted query
     and must include the columns listed in :data:`WORKLOAD_SCHEMA_COLUMNS`.
-    The ``workload_id`` column is uniform across all rows and serves as the
+    The ``workload_name`` column is uniform across all rows and serves as the
     workload's :attr:`name`.
 
     The class can also be used as a base class.  Subclasses that manage their
@@ -46,7 +46,7 @@ class Workload:
             If *df* is not ``None`` and is missing any of the required columns
             from :data:`WORKLOAD_SCHEMA_COLUMNS`.
         ValueError
-            If *df* contains multiple distinct values in the ``workload_id``
+            If *df* contains multiple distinct values in the ``workload_name``
             column or the ``schema_name`` column, which are expected to be
             uniform across the workload.
         """
@@ -59,15 +59,17 @@ class Workload:
                 )
 
         if (
-            len(df["workload_id"].unique()) > 1
+            len(df["workload_name"].unique()) > 1
             or len(df["schema_name"].unique()) > 1
         ):
             raise ValueError(
                 "All rows in the workload DataFrame must share the same "
-                "workload_id and schema_name, but found multiple: "
-                f"workload_id: {df['workload_id'].unique()}, "
+                "workload_name and schema_name, but found multiple: "
+                f"workload_name: {df['workload_name'].unique()}, "
                 f"schema_name: {df['schema_name'].unique()}"
             )
+        self._workload_name = str(df["workload_name"].iloc[0])
+        self._schema_name = str(df["schema_name"].iloc[0])
         self.set_rel_start_times_from_abs()
 
         self._queries_cache: list[Query] | None = None
@@ -97,9 +99,14 @@ class Workload:
     # ------------------------------------------------------------------
 
     @property
-    def name(self) -> str:
-        """The workload identifier, taken from the ``workload_id`` column."""
-        return str(self._df["workload_id"].iloc[0])
+    def workload_name(self) -> str:
+        """The workload identifier, taken from the ``workload_name`` column."""
+        return self._workload_name
+
+    @property
+    def schema_name(self) -> str:
+        """The schema name, taken from the ``schema_name`` column."""
+        return self._schema_name
 
     @property
     def df(self) -> pd.DataFrame:

@@ -2,8 +2,10 @@ import argparse
 import asyncio
 import logging
 import os
+import shutil
 from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 from typing import Union
 
 import pandas as pd
@@ -21,16 +23,23 @@ from autoslo.workload_definition.schema import Schema
 class QueryRunner:
     def __init__(
         self,
-        args: argparse.Namespace,
+        config_path: str | Path,
     ):
         """
-        Initialize the QueryRunner.
+        Initialize the QueryRunner from a YAML config file.
 
         Parameters:
-            args: Command-line arguments.
+            config_path: Path to a YAML config file inside
+                ``data/query_runner_configs/``.  The file must contain the
+                fields: ``workload_name``, ``blueprint_name``,
+                ``query_router_name``, ``maxconns``, ``closed_loop``.
         """
+        self.config_path = Path(config_path)
+        with open(self.config_path, "r") as f:
+            cfg = yaml.safe_load(f)
+
         # Validate workload name and load workload file.
-        self.workload_name = args.workload_name
+        self.workload_name = cfg["workload_name"]
         if self.workload_name.startswith("benchmarking_workload_"):
             self.workload_path = os.path.join(
                 pu.get_data_path(),
@@ -61,25 +70,23 @@ class QueryRunner:
 
         # Validate blueprint name.
         all_known_blueprints = pu.get_blueprint_dicts_from_config()
-        if args.blueprint_name not in all_known_blueprints:
-            raise ValueError(f"Blueprint name {args.blueprint_name} not known.")
-        self.blueprint_name = args.blueprint_name
+        if cfg["blueprint_name"] not in all_known_blueprints:
+            raise ValueError(f"Blueprint name {cfg['blueprint_name']} not known.")
+        self.blueprint_name = cfg["blueprint_name"]
         self.blueprint = Blueprint.from_config(self.blueprint_name)
 
         # Validate maxconns and set up connection pool map.
-        if args.maxconns < 1:
+        if cfg["maxconns"] < 1:
             raise ValueError("maxconns must be at least 1.")
-        self.maxconns = args.maxconns
+        self.maxconns = cfg["maxconns"]
         self.conn_pools = self.blueprint.conn_pool_map(
             maxconn=self.maxconns, search_path=self.schema.search_path
         )
 
         # Set additional parameters.
-        self.query_router_name = args.query_router_name
-        self.query_router = QueryRouter.from_name(
-            args.query_router_name,
-        )
-        self.closed_loop = args.closed_loop
+        self.query_router_name = cfg["query_router_name"]
+        self.query_router = QueryRouter.from_name(self.query_router_name)
+        self.closed_loop = bool(cfg.get("closed_loop", False))
 
     def _ts(self, cast_to_int: bool = False) -> Union[int, float]:
         """
@@ -150,6 +157,10 @@ class QueryRunner:
         logging.info(
             f"Run parameters saved to {os.path.join(run_dir, 'run_params.yml')}"
         )
+
+        # Keep a verbatim copy of the config file used for this run.
+        shutil.copy2(self.config_path, os.path.join(run_dir, "runner_config.yml"))
+        logging.info(f"Config file copied to {os.path.join(run_dir, 'runner_config.yml')}")
 
         return run_id, run_dir
 
@@ -355,40 +366,17 @@ class QueryRunner:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run queries from a workload.")
+    parser = argparse.ArgumentParser(
+        description="Run queries from a workload using a YAML config file."
+    )
     parser.add_argument(
-        "--workload_name",
+        "config",
         type=str,
-        default="benchmarking_workload_99_3_3_shuffled_42",
-        help="Name of the workload to run.",
+        default=os.path.join(pu.get_query_runner_configs_path(), "default.yml"),
+        help="Path to the runner config YAML file (default: "
+        "data/query_runner_configs/default.yml).",
     )
-    parser.add_argument(
-        "--blueprint_name",
-        type=str,
-        default="single_8",
-        help="Blueprint name to run on.",
-    )
-    parser.add_argument(
-        "--query_router_name",
-        type=str,
-        default="RFixed(fixed_cluster_name='cluster_8')",
-        help="Name of the QueryRouter to use.",
-    )
-    parser.add_argument(
-        "--maxconns",
-        type=int,
-        default=1000,
-        help="Maximum number of connections in the connection pool.",
-    )
-    parser.add_argument(
-        "--closed_loop",
-        action="store_true",
-        help="If set, run in closed loop (wait for each query to finish before "
-        "starting the next).",
-    )
-
     args = parser.parse_args()
 
-    # Create and run the QueryRunner.
-    qr = QueryRunner(args)
+    qr = QueryRunner(args.config)
     asyncio.run(qr.run())

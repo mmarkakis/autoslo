@@ -141,6 +141,14 @@ def get_schemas_path() -> str:
     return os.path.join(get_data_path(), "schemas")
 
 
+def get_query_runner_configs_path() -> str:
+    """
+    Return the absolute path to the query runner configs directory.
+    Config files live at ``{path}/{config_name}.yml``.
+    """
+    return os.path.join(get_data_path(), "query_runner_configs")
+
+
 def get_heavy_templates_files() -> dict[str, str]:
     """
     Return the path to the heavy templates file for TPC-DS.
