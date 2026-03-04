@@ -328,31 +328,3 @@ class RoutingCore:
 
         return min_headroom if min_headroom != float("inf") else 1.0
 
-    # --------------------------------------------------------------------------
-    # Cache affinity (stub — Phase 1 placeholder)
-    # --------------------------------------------------------------------------
-
-    @staticmethod
-    def compute_cache_affinity(
-        query: Query,
-        recent_tables: set[str],
-        query_tables: set[str],
-    ) -> float:
-        """Compute the cache affinity between a query and a cluster.
-
-        Affinity = |tables(query) ∩ recent_tables(cluster)|.
-
-        Parameters
-        ----------
-        query:
-            The incoming query (unused directly; query_tables carries its info).
-        recent_tables:
-            Tables recently touched on the candidate cluster.
-        query_tables:
-            Tables scanned by the incoming query.
-
-        Returns
-        -------
-        Non-negative affinity score.
-        """
-        return float(len(query_tables & recent_tables))

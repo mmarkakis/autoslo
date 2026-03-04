@@ -6,7 +6,6 @@ Covers:
 - score_placement (alignment correctness, SLO violations, billing cost)
 - pick_best (lexicographic selection, tolerance handling)
 - compute_slo_headroom (empty, healthy, violated)
-- compute_cache_affinity (overlap counting)
 - _slo_cmp_with_tolerance (comparison edge cases)
 """
 
@@ -491,32 +490,3 @@ class TestComputeSloHeadroom:
         assert h == pytest.approx(1.0 - large_factor)
 
 
-# ---------------------------------------------------------------------------
-# compute_cache_affinity
-# ---------------------------------------------------------------------------
-
-
-class TestComputeCacheAffinity:
-
-    def test_no_overlap(self):
-        q = _q("a", start=0.0, latency=1.0)
-        assert (
-            RoutingCore.compute_cache_affinity(q, {"t1", "t2"}, {"t3", "t4"})
-            == 0.0
-        )
-
-    def test_full_overlap(self):
-        q = _q("a", start=0.0, latency=1.0)
-        assert (
-            RoutingCore.compute_cache_affinity(q, {"t1", "t2"}, {"t1", "t2"})
-            == 2.0
-        )
-
-    def test_partial_overlap(self):
-        q = _q("a", start=0.0, latency=1.0)
-        assert (
-            RoutingCore.compute_cache_affinity(
-                q, {"t1", "t2", "t3"}, {"t2", "t4"}
-            )
-            == 1.0
-        )
