@@ -1,9 +1,8 @@
 import os
-import pickle
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Optional, TypeAlias, cast
+from typing import Any, Optional, cast
 
 import pandas as pd
 import pyarrow as pa
@@ -16,6 +15,8 @@ import autoslo.utils.paths as pu
 from autoslo.blueprints.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
 from autoslo.utils.billing import Billing
+from autoslo.workload_definition.query import QueryTextId
+from autoslo.workload_definition.query_plan_registry import QueryPlanRegistry
 
 
 class Trace:
@@ -63,8 +64,6 @@ class Trace:
     ]
     REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
 
-    TPCDSTempAndQIdx: TypeAlias = str
-    """Represents the template number and the number of the query within it."""
 
     def __init__(self, run_id: str):
         """
@@ -431,118 +430,110 @@ class Trace:
         return pd.concat(series).reindex(self.query_ids)
 
     @staticmethod
-    def extract_temp_and_q_idxs(
-        query_text: str, has_prepended_run_information: bool = True
-    ) -> "TPCDSTempAndQIdx":
+    def extract_query_text_id(
+        query_text: str,
+        schema_name: str,
+        has_prepended_run_information: bool = True,
+    ) -> QueryTextId:
         """
-        Extract the TPC-DS template and query index from the given query text.
+        Extract the query text ID from the given TPC-DS query text.
+
+        The ID is encoded in the SQL comment prepended by the TPC-DS query
+        generator (e.g. ``"42_001"``).  The returned :class:`QueryTextId`
+        combines *schema_name* with the extracted template/index pair in the
+        canonical ``"schema#template#index"`` format.
 
         Parameters:
             query_text: The text of the query.
+            schema_name: The schema the query belongs to (e.g.
+                ``"ext_tpcds1000"``).  Used to construct the full
+                :class:`QueryTextId`.
             has_prepended_run_information: Whether the query text has prepended
                 run information.
 
         Returns:
-            A tuple containing the template number and the query index.
+            The :class:`QueryTextId` for the query.
 
         Raises:
             ValueError: If the query text does not contain a valid TPC-DS
-                template and query index following the required format.
+                query text ID following the required format.
         """
         try:
             idx = 1 if has_prepended_run_information else 0
-            return query_text.split("\\n")[idx][-11:-4].strip()
+            raw_id = query_text.split("\\n")[idx][-11:-4].strip()
+            template_id, query_index = raw_id.split("_", 1)
+            return QueryTextId(f"{schema_name}#{template_id}#{query_index}")
 
         except Exception as e:
             raise ValueError(
-                "Query text does not contain a valid TPC-DS template and "
-                "query index following the required format."
+                "Query text does not contain a valid TPC-DS query text ID "
+                "following the required format."
             ) from e
 
-    @staticmethod
-    def extract_temp(temp_and_q_idx: "TPCDSTempAndQIdx") -> int:
-        """
-        Extract the TPC-DS template number from the given template and query
-        index string.
-
-        Parameters:
-            temp_and_q_idx: The TPC-DS template and query index string.
-
-        Returns:
-            The template number as an integer.
-        """
-        return int(str(temp_and_q_idx).split("_")[0])
-
-    @staticmethod
-    def extract_q_idx(temp_and_q_idx: "TPCDSTempAndQIdx") -> int:
-        """
-        Extract the TPC-DS query index from the given template and query index
-        string.
-
-        Parameters:
-            temp_and_q_idx: The TPC-DS template and query index string.
-
-        Returns:
-            The query index as an integer.
-        """
-        return int(str(temp_and_q_idx).split("_")[1])
-
     @property
-    def tpcds_temp_and_q_idxs(self) -> pd.Series:
+    def query_text_ids(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
-        the TPCDS template and query indices associated with each query.
+        :class:`~autoslo.workload_definition.query.QueryTextId` objects
+        associated with each query.
 
         The order of the query IDs in the Series matches the order of the query
-        IDs provided by the `query_ids` property.
+        IDs provided by the ``query_ids`` property.
+
+        The cache file stores the ``.value`` strings in the canonical
+        ``"schema#template#index"`` format.  Old cache files that used the
+        bare ``"template_index"`` format are detected and invalidated
+        automatically.
         """
-        # Check if there is a cached version of the TPCDS template and query
-        # indices.
         run_dir = os.path.join(pu.get_runs_path(), self.run_id)
-        tpcds_temp_and_q_idxs_path = os.path.join(
-            run_dir, "tpcds_temp_and_q_idxs.parquet"
-        )
-        if os.path.exists(tpcds_temp_and_q_idxs_path):
-            # Set the uuid to the query IDs in the cached series.
+        cache_path = os.path.join(run_dir, "query_text_ids.parquet")
+
+        # Read schema_name once — needed for both cache-miss and stale-check.
+        run_params_path = os.path.join(run_dir, "run_params.yml")
+        with open(run_params_path, "r") as f:
+            run_params = yaml.safe_load(f)
+        schema_name = run_params["schema_name"]
+
+        if os.path.exists(cache_path):
             concatenated = cast(
                 pd.Series,
-                pd.read_parquet(tpcds_temp_and_q_idxs_path).squeeze("columns"),
+                pd.read_parquet(cache_path).squeeze("columns"),
             )
-            concatenated.index = pd.Index(
-                [f"{q.split('#')[0]}#{self._uuid}" for q in concatenated.index]
-            )
-            return concatenated
+            # Stale-cache guard: old format stored bare "template_index"
+            # strings without a '#'.  Detect and invalidate.
+            if not concatenated.empty and "#" not in str(concatenated.iloc[0]):
+                os.remove(cache_path)
+            else:
+                # Re-attach the current UUID so joins against live query IDs work.
+                concatenated.index = pd.Index(
+                    [f"{q.split('#')[0]}#{self._uuid}" for q in concatenated.index]
+                )
+                return concatenated.map(QueryTextId)
 
-        # If not, compute the TPCDS template and query indices.
+        # Compute query text IDs from the raw query texts.
         series = []
         for cluster_name, df in self._dfs["sys_query_history"].items():
-            # Read another local copy of the query history for this cluster,
-            # including the query text field.
             df_with_query_text = pd.read_parquet(
                 os.path.join(
                     run_dir, f"sys_query_history+{cluster_name}.parquet"
                 ),
                 columns=["query_id", "query_text"],
             )
-
-            # Adjust the query IDs and derive the TPCDS template and query
-            # indices.
             df_with_query_text["query_id"] = df_with_query_text.apply(
                 lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
                 axis=1,
             )
-            df_with_query_text["tup"] = df_with_query_text["query_text"].apply(
-                self.extract_temp_and_q_idxs
+            df_with_query_text["query_text_id"] = df_with_query_text[
+                "query_text"
+            ].apply(
+                lambda t: Trace.extract_query_text_id(t, schema_name).value
             )
-            s = df_with_query_text.set_index("query_id")["tup"]
+            s = df_with_query_text.set_index("query_id")["query_text_id"]
             series.append(s)
 
-        # Cache the TPCDS template and query indices for future use.
         concatenated = pd.concat(series).reindex(self.query_ids)
-        concatenated.to_frame().to_parquet(
-            tpcds_temp_and_q_idxs_path, index=True
-        )
-        return pd.Series(concatenated)
+        concatenated.to_frame().to_parquet(cache_path, index=True)
+        return concatenated.map(QueryTextId)
 
     def query_is_non_overlapping(self) -> pd.Series:
         """
@@ -665,40 +656,34 @@ class Trace:
         with open(run_params_path, "r") as f:
             run_params = yaml.safe_load(f)
         schema_name = run_params["schema_name"]
-        workload_name = run_params["workload_name"]
-
-        # Load any pre-parsed plans.
-        parsed_plans_path = os.path.join(
-            pu.get_data_path(), "parsed_query_plans", f"{schema_name}.pkl"
-        )
-        parsed_plans: dict[Trace.TPCDSTempAndQIdx, Any] = {}
-        if not ignore_caching:
-            if os.path.exists(parsed_plans_path):
-                with open(parsed_plans_path, "rb") as f:
-                    parsed_plans = pickle.load(f)
 
         # Determine any queries still to be parsed and exit early if none.
         query_ids_to_parse_per_cluster: dict[
-            str, list[tuple[str, Trace.TPCDSTempAndQIdx]]
+            str, list[tuple[str, QueryTextId]]
         ] = defaultdict(list)
-        for query_id, temp_and_q_idx in self.tpcds_temp_and_q_idxs.items():
+        for query_id, query_text_id in self.query_text_ids.items():
             query_id = cast(str, query_id)
-            temp_and_q_idx
-            if temp_and_q_idx in parsed_plans:
-                d[query_id] = parsed_plans[temp_and_q_idx]
+            cached_plan = (
+                None
+                if ignore_caching
+                else QueryPlanRegistry.get(query_text_id)
+            )
+            if cached_plan is not None:
+                d[query_id] = cached_plan
             else:
                 cluster = query_id.rsplit("_", maxsplit=1)[0]
                 query_ids_to_parse_per_cluster[cluster].append(
-                    (query_id, temp_and_q_idx)
+                    (query_id, query_text_id)
                 )
         if all(len(v) == 0 for v in query_ids_to_parse_per_cluster.values()):
             return d
 
         # Parse the remaining queries.
+        new_plans: dict[str, Any] = {}
         for cluster_name, query_ids in query_ids_to_parse_per_cluster.items():
             explain_df = self._dfs["sys_query_explain"][cluster_name]
 
-            for query_id, temp_and_q_idx in query_ids:
+            for query_id, query_text_id in query_ids:
                 query_df = explain_df[explain_df["query_id"] == query_id]
                 if len(query_df) == 0:
                     continue
@@ -722,14 +707,11 @@ class Trace:
                 verbose_plan_dict["num_tables"] = len(tables)
 
                 d[cast(str, query_id)] = verbose_plan_dict
-                parsed_plans[temp_and_q_idx] = verbose_plan_dict
+                new_plans[query_text_id] = verbose_plan_dict
 
-        # Cache the parsed plans for future use.
-        if not ignore_caching:
-            with open(parsed_plans_path, "wb") as f:
-                pickle.dump(parsed_plans, f)
-            with open(parsed_plans_path.replace(".pkl", ".yml"), "w") as f:
-                yaml.dump(parsed_plans, f, sort_keys=False)
+        # Persist newly parsed plans to the QueryPlanRegistry.
+        if not ignore_caching and new_plans:
+            QueryPlanRegistry.update(schema_name, new_plans, save=True)
 
         return d
 

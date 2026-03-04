@@ -4,6 +4,7 @@ import numpy as np
 
 from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -18,7 +19,7 @@ class IconqInteractionFeaturizer:
 
     def __init__(
         self,
-        iconq_query_featurizer_id: Optional[str] = None,
+        iconq_query_featurizer_id: Optional[tuple[str, str]] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
         ignore_cluster_size: bool = False,
     ):
@@ -27,9 +28,11 @@ class IconqInteractionFeaturizer:
 
         Parameters:
             iconq_query_featurizer_id: The identifier of the
-                IconqQueryFeaturizer to use for featurizing queries. If not
-                provided, must provide iconq_query_featurizer_init_params, with
-                appropriate keys, to initialize a new IconqQueryFeaturizer.
+                IconqQueryFeaturizer to use for featurizing queries, as a
+                ``(schema_name, timestamp)`` tuple returned by
+                :meth:`~IconqQueryFeaturizer.save`. If not provided, must
+                provide iconq_query_featurizer_init_params, with appropriate
+                keys, to initialize a new IconqQueryFeaturizer.
             iconq_query_featurizer_init_params: The initialization parameters
                 for the IconqQueryFeaturizer, if iconq_query_featurizer_id is
                 not provided. Must include a key for each required parameter of
@@ -53,7 +56,7 @@ class IconqInteractionFeaturizer:
         else:
             self._iconq_query_featurizer_id = iconq_query_featurizer_id
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                iconq_query_featurizer_id
+                *iconq_query_featurizer_id
             )
         self._ignore_cluster_size = ignore_cluster_size
         self._rpu_lookup: Callable[[str], int] | None = None
@@ -165,55 +168,57 @@ class IconqInteractionFeaturizer:
         Returns:
             The features of the interaction between the two queries.
         """
-        qa_tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(qa_query_text)
-        qb_tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(qb_query_text)
+        qa_query_text_id = Trace.extract_query_text_id(
+            qa_query_text, self._iconq_query_featurizer._schema_name
+        )
+        qb_query_text_id = Trace.extract_query_text_id(
+            qb_query_text, self._iconq_query_featurizer._schema_name
+        )
 
-        return self.featurize_from_tpcds_temp_and_q_idx(
+        return self.featurize_from_query_text_id(
             cluster_name=cluster_name,
-            qa_tpcds_temp_and_q_idx=qa_tpcds_temp_and_q_idx,
+            qa_query_text_id=qa_query_text_id,
             qa_start_time_s=qa_start_time_s,
             qa_latency_prediction=qa_latency_prediction,
-            qb_tpcds_temp_and_q_idx=qb_tpcds_temp_and_q_idx,
+            qb_query_text_id=qb_query_text_id,
             qb_start_time_s=qb_start_time_s,
             qb_latency_prediction=qb_latency_prediction,
         )
 
-    def featurize_from_tpcds_temp_and_q_idx(
+    def featurize_from_query_text_id(
         self,
         cluster_name: str,
-        qa_tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        qa_query_text_id: QueryTextId,
         qa_start_time_s: float,
         qa_latency_prediction: float,
-        qb_tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        qb_query_text_id: QueryTextId,
         qb_start_time_s: float,
         qb_latency_prediction: float,
     ) -> IconqInteractionFeaturization:
         """
-        Featurizes the interaction between two queries, given their TPC-DS
-        template and query indices.
+        Featurizes the interaction between two queries, given their query text
+        IDs.
 
         Parameters:
             cluster_name: The name of the cluster on which the queries are
                 executed.
-            qa_tpcds_temp_and_q_idx: The TPC-DS template and query index of the
-                first query.
+            qa_query_text_id: The query text ID of the first query.
             qa_start_time_s: The first query start time (Unix timestamp).
             qa_latency_prediction: The latency prediction of the first query.
-            qb_tpcds_temp_and_q_idx: The TPC-DS template and query index of the
-                second query.
+            qb_query_text_id: The query text ID of the second query.
             qb_start_time_s: The second query start time (Unix timestamp).
             qb_latency_prediction: The latency prediction of the second query.
         """
 
         return self.featurize_from_vectors(
             cluster_name=cluster_name,
-            qa_features=self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                qa_tpcds_temp_and_q_idx
+            qa_features=self._iconq_query_featurizer.featurize_from_query_text_id(
+                qa_query_text_id
             ),
             qa_start_time_s=qa_start_time_s,
             qa_latency_prediction=qa_latency_prediction,
-            qb_features=self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                qb_tpcds_temp_and_q_idx
+            qb_features=self._iconq_query_featurizer.featurize_from_query_text_id(
+                qb_query_text_id
             ),
             qb_start_time_s=qb_start_time_s,
             qb_latency_prediction=qb_latency_prediction,
@@ -261,27 +266,27 @@ class IconqInteractionFeaturizer:
     def featurize_one_vs_many_to_numpy(
         self,
         cluster_name: str,
-        qa_tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        qa_query_text_id: QueryTextId,
         qa_start_time_s: float,
         qa_latency_prediction: float,
-        qb_entries: list[tuple[float, Trace.TPCDSTempAndQIdx, float, bool]],
+        qb_entries: list[tuple[float, QueryTextId, float, bool]],
     ) -> tuple[np.ndarray, int]:
         """
         Featurize a single base query (qa) against an ordered collection of
         neighbor queries (qb), writing all rows into one pre-allocated float32
         numpy array.
 
-        This is the batch equivalent of calling featurize_from_tpcds_temp_and_q_idx
+        This is the batch equivalent of calling featurize_from_query_text_id
         N times. It avoids per-row list allocations, repeated list concatenation,
         repeated rpu lookups, and the O(N) pinch-point search.
 
         Parameters:
             cluster_name: The cluster on which all queries execute.
-            qa_tpcds_temp_and_q_idx: Template/query index of the base query.
+            qa_query_text_id: Query text ID of the base query.
             qa_start_time_s: Start time of the base query (seconds).
             qa_latency_prediction: Stage-model latency prediction for qa.
             qb_entries: One entry per row to produce. Each entry is a 4-tuple
-                (qb_start_time_s, qb_tpcds_temp_and_q_idx, qb_latency_prediction,
+                (qb_start_time_s, qb_query_text_id, qb_latency_prediction,
                 is_self). Entries need not be sorted; this method sorts them by
                 start time internally. The self-entry (is_self=True) identifies
                 the pinch point.
@@ -306,8 +311,8 @@ class IconqInteractionFeaturizer:
         arr = np.empty((len(qb_entries_sorted), feat_dim), dtype=np.float32)
 
         # qa columns are identical for every row — broadcast-assign once.
-        qa_np = self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx_as_numpy(
-            qa_tpcds_temp_and_q_idx
+        qa_np = self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
+            qa_query_text_id
         )
         arr[:, :q_dim] = qa_np
         arr[:, q_dim] = qa_latency_prediction
@@ -315,7 +320,7 @@ class IconqInteractionFeaturizer:
         pinch_idx = 0
         for j, (qb_t, qb_idx, qb_lat, is_self) in enumerate(qb_entries_sorted):
             arr[j, q_dim + 1 : 2 * q_dim + 1] = (
-                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx_as_numpy(
+                self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
                     qb_idx
                 )
             )
@@ -331,7 +336,7 @@ class IconqInteractionFeaturizer:
     def featurize_all_vs_all_to_numpy(
         self,
         cluster_name: str,
-        entries: list[tuple[Trace.TPCDSTempAndQIdx, float, float]],
+        entries: list[tuple[QueryTextId, float, float]],
     ) -> tuple[list[np.ndarray], list[int]]:
         """
         Batch version of featurize_one_vs_many_to_numpy for the all-vs-all
@@ -348,7 +353,7 @@ class IconqInteractionFeaturizer:
 
         Parameters:
             cluster_name: The cluster on which all queries execute.
-            entries: One entry per query: (tpcds_temp_and_q_idx, start_time_s,
+            entries: One entry per query: (query_text_id, start_time_s,
                 latency_prediction). The order need not be sorted.
 
         Returns:
@@ -384,7 +389,7 @@ class IconqInteractionFeaturizer:
         qb_t = np.empty(n, dtype=np.float32)
         for sorted_pos, (_, (idx, t, lat)) in enumerate(sorted_entries):
             qb_feat[sorted_pos] = (
-                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx_as_numpy(
+                self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
                     idx
                 )
             )
@@ -398,7 +403,7 @@ class IconqInteractionFeaturizer:
 
             # qa columns: constant across all rows — broadcast once.
             arr[:, :q_dim] = (
-                self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx_as_numpy(
+                self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
                     qa_idx
                 )
             )

@@ -6,10 +6,33 @@ from intervaltree import Interval  # type: ignore[import]
 
 QueryFeaturization: TypeAlias = list[float]
 
-# Generic identifier for what query text a query instance is using.
-# Historically this encoded a TPC-DS template + index (e.g. "42_001");
-# the field is now called query_text_id so it can accommodate any schema.
-QueryTextId: TypeAlias = str
+@dataclass(frozen=True)
+class QueryTextId:
+    """Opaque identifier for a query's text. Includes 3 pound-separated parts: 
+    - The schema name (e.g. "ext_tpcds1000")
+    - The template ID (e.g. "42")
+    - The query index within the template (e.g. "001")
+    For example, "ext_tpcds1000#42#001".
+    """
+    value: str
+
+    def __str__(self):
+        return self.value
+    
+    @property
+    def schema_name(self) -> str:
+        """Extracts the schema name from the query text ID."""
+        return self.value.split("#")[0]
+
+    @property
+    def template_id(self) -> str:
+        """Extracts the template ID from the query text ID."""
+        return self.value.split("#")[1]
+    
+    @property
+    def query_index(self) -> str:
+        """Extracts the query index from the query text ID."""
+        return self.value.split("#")[2]
 
 
 

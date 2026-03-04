@@ -14,6 +14,7 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
+from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -40,10 +41,7 @@ class IconqQueryFeaturizer:
         precomputed_top_operators: Optional[list[str]] = None,
         precomputed_top_tables: Optional[list[tuple[str, int]]] = None,
         precomputed_featurization_cache: Optional[
-            dict[
-                Trace.TPCDSTempAndQIdx,
-                IconqQueryFeaturization,
-            ]
+            dict[str, IconqQueryFeaturization]
         ] = None,
         from_sys_query_explain: bool = False,
     ) -> None:
@@ -67,7 +65,7 @@ class IconqQueryFeaturizer:
             precomputed_top_operators: If provided, the top M operators to use.
             precomputed_top_tables: If provided, the top N tables to use.
             precomputed_featurization_cache: If provided, a cache mapping
-                TPC-DS template and query indices to their featurizations.
+                query text IDs to their featurizations.
             from_sys_query_explain: Whether the featurizer should operate based
                 on sys_query_explain data (newer version), instead of parsed
                 query plans (older version).
@@ -86,14 +84,11 @@ class IconqQueryFeaturizer:
         self._from_sys_query_explain = from_sys_query_explain
 
         self._featurization_cache: dict[
-            Trace.TPCDSTempAndQIdx,
-            IconqQueryFeaturizer.IconqQueryFeaturization,
+            str, IconqQueryFeaturizer.IconqQueryFeaturization
         ] = {}
         # Lazy numpy cache: populated on first call to
-        # featurize_from_tpcds_temp_and_q_idx_as_numpy.
-        self._np_featurization_cache: dict[
-            Trace.TPCDSTempAndQIdx, np.ndarray
-        ] = {}
+        # featurize_from_query_text_id_as_numpy.
+        self._np_featurization_cache: dict[str, np.ndarray] = {}
 
         if precomputed_top_operators is not None:
             self._top_operators = precomputed_top_operators
@@ -121,7 +116,7 @@ class IconqQueryFeaturizer:
 
             for run_id in tqdm(run_ids):
                 trace = Trace(run_id)
-                tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+                query_text_ids = trace.query_text_ids
                 was_aborted = trace.was_aborted()
 
                 info = (
@@ -136,17 +131,15 @@ class IconqQueryFeaturizer:
                         continue
 
                     query_id = cast(str, query_id)
-                    tpcds_temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+                    query_text_id = query_text_ids[query_id]
 
-                    if tpcds_temp_and_q_idx in self._featurization_cache:
+                    if query_text_id.value in self._featurization_cache:
                         continue
                     if (query_id not in info) or (info[query_id] is None):
-                        self._featurization_cache[tpcds_temp_and_q_idx] = []
+                        self._featurization_cache[query_text_id] = []
                         continue
                     featurization = feat_func(info[query_id])  # type: ignore
-                    self._featurization_cache[tpcds_temp_and_q_idx] = (
-                        featurization
-                    )
+                    self._featurization_cache[query_text_id] = featurization
 
     def extend_featurization_cache_from_runs(
         self, run_ids: list[str], write_out: bool = True
@@ -171,7 +164,7 @@ class IconqQueryFeaturizer:
 
         for run_id in tqdm(run_ids):
             trace = Trace(run_id)
-            tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+            query_text_ids = trace.query_text_ids
             was_aborted = trace.was_aborted()
 
             info = (
@@ -186,15 +179,15 @@ class IconqQueryFeaturizer:
                     continue
 
                 query_id = cast(str, query_id)
-                tpcds_temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+                query_text_id = query_text_ids[query_id]
 
-                if tpcds_temp_and_q_idx in self._featurization_cache:
+                if query_text_id.value in self._featurization_cache:
                     continue
                 if (query_id not in info) or (info[query_id] is None):
-                    self._featurization_cache[tpcds_temp_and_q_idx] = []
+                    self._featurization_cache[query_text_id] = []
                     continue
                 featurization = feat_func(info[query_id])  # type: ignore
-                self._featurization_cache[tpcds_temp_and_q_idx] = featurization
+                self._featurization_cache[query_text_id] = featurization
                 additional += 1
         print(f"Added featurizations for {additional} queries to the cache.")
 
@@ -363,74 +356,69 @@ class IconqQueryFeaturizer:
             print(f"  {table_name}: {size} rows")
         return table_names_and_sizes[: self._n]
 
-    def featurize_from_tpcds_temp_and_q_idx(
+    def featurize_from_query_text_id(
         self,
-        tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        query_text_id: QueryTextId,
     ) -> IconqQueryFeaturization:
         """
-        Converts the query represented by the given TPC-DS query ID into a
-        vectorized representation.
+        Converts the query identified by *query_text_id* into a vectorized
+        representation.
 
         Parameters:
-            tpcds_temp_and_q_idx: The TPC-DS template and query index
-                identifying the query to convert.
+            query_text_id: The query text ID identifying the query to convert.
 
         Returns:
-            The vectorized representation of the query text.
+            The vectorized representation of the query.
 
         Raises:
-            ValueError: If the TPC-DS query ID is not in the cache.
+            ValueError: If *query_text_id* is not in the featurization cache.
         """
 
-        if tpcds_temp_and_q_idx in self._featurization_cache:
-            return self._featurization_cache[tpcds_temp_and_q_idx]
+        if query_text_id.value in self._featurization_cache:
+            return self._featurization_cache[query_text_id]
 
         raise ValueError(
-            f"No cached featurization for TPC-DS template and query index {tpcds_temp_and_q_idx}."
+            f"No cached featurization for query_text_id '{query_text_id}'."
         )
 
-    def featurize_from_tpcds_temp_and_q_idx_as_numpy(
+    def featurize_from_query_text_id_as_numpy(
         self,
-        tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        query_text_id: QueryTextId,
     ) -> np.ndarray:
         """
-        Like featurize_from_tpcds_temp_and_q_idx, but returns the featurization
+        Like :meth:`featurize_from_query_text_id`, but returns the featurization
         as a float32 numpy array. Results are cached so the list[float] →
-        np.ndarray conversion happens at most once per distinct query type.
+        np.ndarray conversion happens at most once per distinct query text ID.
 
         Parameters:
-            tpcds_temp_and_q_idx: The TPC-DS template and query index
-                identifying the query to convert.
+            query_text_id: The query text ID identifying the query to convert.
 
         Returns:
             The featurization as a 1-D float32 numpy array of shape (num_dims,).
         """
-        if tpcds_temp_and_q_idx not in self._np_featurization_cache:
-            self._np_featurization_cache[tpcds_temp_and_q_idx] = np.array(
-                self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx),
+        if query_text_id.value not in self._np_featurization_cache:
+            self._np_featurization_cache[query_text_id] = np.array(
+                self.featurize_from_query_text_id(query_text_id),
                 dtype=np.float32,
             )
-        return self._np_featurization_cache[tpcds_temp_and_q_idx]
+        return self._np_featurization_cache[query_text_id]
 
-    def warm_up_cache(self, tpcds_vocab: list[Trace.TPCDSTempAndQIdx]) -> None:
+    def warm_up_cache(self, query_text_ids: list[QueryTextId]) -> None:
         """
         Pre-populate both _featurization_cache and _np_featurization_cache for
-        the given TPC-DS vocabulary. This amortizes cold-cache costs when
+        the given query text IDs. This amortizes cold-cache costs when
         running multiple simulations with the same workload.
 
         Parameters:
-            tpcds_vocab: A list of TPC-DS template and query indices to
-                featurize and cache.
+            query_text_ids: A list of query text IDs to featurize and cache.
         """
-        for tpcds_temp_and_q_idx in tqdm(
-            tpcds_vocab, desc="Warming up IconqQueryFeaturizer cache"
+        for query_text_id in tqdm(
+            query_text_ids, desc="Warming up IconqQueryFeaturizer cache"
         ):
             # This call populates _featurization_cache.
-            _ = self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx)
+            _ = self.featurize_from_query_text_id(query_text_id)
             # This call populates _np_featurization_cache.
-            _ = self.featurize_from_tpcds_temp_and_q_idx_as_numpy(
-                tpcds_temp_and_q_idx
-            )
+            _ = self.featurize_from_query_text_id_as_numpy(query_text_id)
 
     def featurize(
         self,
@@ -451,13 +439,13 @@ class IconqQueryFeaturizer:
                 extracted TPC-DS query ID.
         """
 
-        tpcds_temp_and_q_idx = Trace.extract_temp_and_q_idxs(query_text)
-        if tpcds_temp_and_q_idx is None:
+        query_text_id = Trace.extract_query_text_id(query_text, self._schema_name)
+        if query_text_id is None:
             raise ValueError(
-                "Could not extract TPC-DS template and query index."
+                "Could not extract query text ID from query text."
             )
 
-        return self.featurize_from_tpcds_temp_and_q_idx(tpcds_temp_and_q_idx)
+        return self.featurize_from_query_text_id(query_text_id)
 
     def featurize_trace(
         self, trace: Trace
@@ -474,13 +462,11 @@ class IconqQueryFeaturizer:
         featurizations: dict[
             str, IconqQueryFeaturizer.IconqQueryFeaturization
         ] = {}
-        tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+        query_text_ids = trace.query_text_ids
 
-        for query_id, tpcds_temp_and_q_idx in tpcds_temp_and_q_idxs.items():
+        for query_id, query_text_id in query_text_ids.items():
             query_id = cast(str, query_id)
-            featurization = self.featurize_from_tpcds_temp_and_q_idx(
-                tpcds_temp_and_q_idx
-            )
+            featurization = self.featurize_from_query_text_id(query_text_id)
             featurizations[query_id] = featurization
 
         return featurizations
@@ -498,9 +484,10 @@ class IconqQueryFeaturizer:
         """
         d: dict[str, Any] = {}
         d["query_text"] = query_text
-        d["tpcds_temp_and_q_idx"] = Trace.extract_temp_and_q_idxs(query_text)
-        d["featurization"] = self.featurize_from_tpcds_temp_and_q_idx(
-            d["tpcds_temp_and_q_idx"]
+        query_text_id = Trace.extract_query_text_id(query_text, self._schema_name)
+        d["query_text_id"] = query_text_id.value
+        d["featurization"] = self.featurize_from_query_text_id(
+            query_text_id
         )
 
         d["human_readable_featurization"] = []
@@ -680,21 +667,21 @@ class IconqQueryFeaturizer:
                     features,
                 )
 
-    def save(self, timestamp: Optional[str] = None) -> str:
+    def save(self, timestamp: Optional[str] = None) -> tuple[str, str]:
         """
         Saves the IconqQueryFeaturizer.
 
         Returns:
-            The identifier of the saved IconqQueryFeaturizer. This is a
-                subdirectory under `data/iconq_query_featurizations/` named
-                with the current timestamp.
+            A tuple of (schema_name, timestamp) that uniquely identifies the
+            saved featurizer.
         """
         # Create directory.
         if timestamp is None:
             timestamp = str(int(datetime.now().timestamp()))
         save_dir = os.path.join(
             pu.get_data_path(),
-            "iconq_query_featurizations",
+            "__query_featurizations",
+            self._schema_name,
             timestamp,
         )
         os.makedirs(save_dir, exist_ok=(timestamp is not None))
@@ -722,13 +709,10 @@ class IconqQueryFeaturizer:
         cache_path = os.path.join(save_dir, "featurizations.yml")
         with open(cache_path, "w") as f:
             l = []
-            for (
-                tpcds_temp_and_q_idx,
-                featurization,
-            ) in self._featurization_cache.items():
+            for query_text_id, featurization in self._featurization_cache.items():
                 l.append(
                     {
-                        "tpcds_temp_and_q_idx": tpcds_temp_and_q_idx,
+                        "query_text_id": query_text_id,
                         "featurization": featurization,
                     }
                 )
@@ -739,14 +723,16 @@ class IconqQueryFeaturizer:
         with open(pickle_path, "wb") as f:
             pickle.dump(self._featurization_cache, f)
 
-        return timestamp
+        # Return the full featurizer ID: "<schema_name>/<timestamp>".
+        return self._schema_name, timestamp
 
     @staticmethod
-    def load(timestamp: str) -> "IconqQueryFeaturizer":
+    def load(schema_name: str, timestamp: str) -> "IconqQueryFeaturizer":
         """
         Loads a IconqQueryFeaturizer from a directory.
 
         Parameters:
+            schema_name: The schema the featurizer was trained for.
             timestamp: The timestamp of the directory to load the
                 IconqQueryFeaturizer from.
         """
@@ -754,7 +740,8 @@ class IconqQueryFeaturizer:
         # Load parameters.
         load_dir = os.path.join(
             pu.get_data_path(),
-            "iconq_query_featurizations",
+            "__query_featurizations",
+            schema_name,
             timestamp,
         )
         param_path = os.path.join(load_dir, "params.yml")
@@ -773,7 +760,7 @@ class IconqQueryFeaturizer:
             with open(yaml_cache_path, "r") as f:
                 l = yaml.safe_load(f)
             precomputed_featurization_cache = {
-                item["tpcds_temp_and_q_idx"]: item["featurization"]
+                item["query_text_id"]: item["featurization"]
                 for item in l
             }
         else:
@@ -799,21 +786,19 @@ class IconqQueryFeaturizer:
 
         return featurizer
 
-    def table_access_pattern_cosine_similarity_from_tpcds_temp_and_q_idxs(
+    def table_access_pattern_cosine_similarity_from_query_text_ids(
         self,
-        tpcds_temp_and_q_idx_a: Trace.TPCDSTempAndQIdx,
-        tpcds_temp_and_q_idx_b: Trace.TPCDSTempAndQIdx,
+        query_text_id_a: QueryTextId,
+        query_text_id_b: QueryTextId,
         binarize: float = False,
     ) -> float:
         """
         Computes the cosine similarity between two queries based on their table
-        access patterns, given their TPC-DS template and query indices.
+        access patterns, given their query text IDs.
 
         Parameters:
-            tpcds_temp_and_q_idx_a: The TPC-DS template and query index of the
-                first query.
-            tpcds_temp_and_q_idx_b: The TPC-DS template and query index of the
-                second query.
+            query_text_id_a: The query text ID of the first query.
+            query_text_id_b: The query text ID of the second query.
             binarize: Whether to ignore the exact values of the table-related
                 features, instead only considering whether or not they are zero.
 
@@ -821,12 +806,8 @@ class IconqQueryFeaturizer:
             A cosine similarity score between 0 and 1, where 1 means identical
             table access patterns.
         """
-        featurization_a = self.featurize_from_tpcds_temp_and_q_idx(
-            tpcds_temp_and_q_idx_a
-        )
-        featurization_b = self.featurize_from_tpcds_temp_and_q_idx(
-            tpcds_temp_and_q_idx_b
-        )
+        featurization_a = self.featurize_from_query_text_id(query_text_id_a)
+        featurization_b = self.featurize_from_query_text_id(query_text_id_b)
         return self.table_access_pattern_cosine_similarity(
             featurization_a, featurization_b, binarize
         )
@@ -870,33 +851,27 @@ class IconqQueryFeaturizer:
 
         return dot_product / (norm_a * norm_b)
 
-    def table_access_pattern_coverage_from_tpcds_temp_and_q_idxs(
+    def table_access_pattern_coverage_from_query_text_ids(
         self,
-        tpcds_temp_and_q_idx_a: Trace.TPCDSTempAndQIdx,
-        tpcds_temp_and_q_idx_b: Trace.TPCDSTempAndQIdx,
+        query_text_id_a: QueryTextId,
+        query_text_id_b: QueryTextId,
     ) -> float:
         """
         Computes the coverage between two queries based on their table
-        access patterns, given their TPC-DS template and query indices. Assume
-        that query A is the reference query, and query B is the query whose
-        coverage is being measured.
+        access patterns, given their query text IDs. Assume that query A is the
+        reference query, and query B is the query whose coverage is being
+        measured.
 
         Parameters:
-            tpcds_temp_and_q_idx_a: The TPC-DS template and query index of the
-                first query.
-            tpcds_temp_and_q_idx_b: The TPC-DS template and query index of the
-                second query.
+            query_text_id_a: The query text ID of the first query.
+            query_text_id_b: The query text ID of the second query.
 
         Returns:
             A coverage score between 0 and 1, where 1 means query A had already
             accessed all tables that query B accessed.
         """
-        featurization_a = self.featurize_from_tpcds_temp_and_q_idx(
-            tpcds_temp_and_q_idx_a
-        )
-        featurization_b = self.featurize_from_tpcds_temp_and_q_idx(
-            tpcds_temp_and_q_idx_b
-        )
+        featurization_a = self.featurize_from_query_text_id(query_text_id_a)
+        featurization_b = self.featurize_from_query_text_id(query_text_id_b)
         return self.table_access_pattern_coverage(
             featurization_a, featurization_b
         )
@@ -932,8 +907,8 @@ class IconqQueryFeaturizer:
 
         return numerator / denominator
 
-    def nonzero_feature_for_table_from_tpcds_temp_and_q_idx(
-        self, tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx, table_name: str
+    def nonzero_feature_for_table_from_query_text_id(
+        self, query_text_id: QueryTextId, table_name: str
     ) -> bool:
         """
         Answers whether the featurization for the given query has a non-zero
@@ -941,9 +916,7 @@ class IconqQueryFeaturizer:
         sanity checking.
         """
 
-        featurization = self.featurize_from_tpcds_temp_and_q_idx(
-            tpcds_temp_and_q_idx
-        )
+        featurization = self.featurize_from_query_text_id(query_text_id)
         return self.nonzero_feature_for_table(featurization, table_name)
 
     def nonzero_feature_for_table(
