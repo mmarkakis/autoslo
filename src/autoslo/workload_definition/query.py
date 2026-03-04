@@ -59,9 +59,6 @@ class Query:
     abs_start_time: datetime = datetime.fromtimestamp(-1, tz=timezone.utc)
     rel_start_time_s: float = -1
 
-    schema_name: str = ""
-    """The database schema this query targets (e.g. ``"ext_tpcds1000"``)."""
-
     repetition_id: str = ""
     """Identifies repeated instances of the same query text within a workload."""
 

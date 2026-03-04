@@ -4,15 +4,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from autoslo.workload_definition.query import Query
-
+from autoslo.workload_definition.query import Query, QueryTextId
 
 # Columns that every workload file is expected to provide.
 WORKLOAD_SCHEMA_COLUMNS: list[str] = [
-    "workload_name",
     "query_id",
     "abs_start_time",
-    "schema_name",
     "query_text_id",
     "repetition_id",
 ]
@@ -31,10 +28,12 @@ class Workload:
     not need to call ``super().__init__()``.
     """
 
-    def __init__(self, df: pd.DataFrame) -> None:
+    def __init__(self, workload_name: str, df: pd.DataFrame) -> None:
         """
         Parameters
         ----------
+        workload_name:
+            The name of the workload.
         df:
             A :class:`~pandas.DataFrame` matching the ``workload`` schema.
             Pass ``None`` only when constructing a subclass that supplies its
@@ -43,14 +42,11 @@ class Workload:
         Raises
         ------
         ValueError
-            If *df* is not ``None`` and is missing any of the required columns
-            from :data:`WORKLOAD_SCHEMA_COLUMNS`.
-        ValueError
-            If *df* contains multiple distinct values in the ``workload_name``
-            column or the ``schema_name`` column, which are expected to be
-            uniform across the workload.
+            If *df* is missing any of the required columns from
+            :data:`WORKLOAD_SCHEMA_COLUMNS`.
         """
         self._df = df
+        self._workload_name = workload_name
         for col in WORKLOAD_SCHEMA_COLUMNS:
             if col not in df.columns:
                 raise ValueError(
@@ -58,18 +54,6 @@ class Workload:
                     f"WORKLOAD_SCHEMA_COLUMNS."
                 )
 
-        if (
-            len(df["workload_name"].unique()) > 1
-            or len(df["schema_name"].unique()) > 1
-        ):
-            raise ValueError(
-                "All rows in the workload DataFrame must share the same "
-                "workload_name and schema_name, but found multiple: "
-                f"workload_name: {df['workload_name'].unique()}, "
-                f"schema_name: {df['schema_name'].unique()}"
-            )
-        self._workload_name = str(df["workload_name"].iloc[0])
-        self._schema_name = str(df["schema_name"].iloc[0])
         self.set_rel_start_times_from_abs()
 
         self._queries_cache: list[Query] | None = None
@@ -104,11 +88,6 @@ class Workload:
         return self._workload_name
 
     @property
-    def schema_name(self) -> str:
-        """The schema name, taken from the ``schema_name`` column."""
-        return self._schema_name
-
-    @property
     def df(self) -> pd.DataFrame:
         """
         The underlying :class:`~pandas.DataFrame`.
@@ -136,8 +115,7 @@ class Workload:
             result.append(
                 Query(
                     query_id=str(row["query_id"]),
-                    query_text_id=str(row["query_text_id"]),
-                    schema_name=str(row.get("schema_name", "")),
+                    query_text_id=QueryTextId(row["query_text_id"]),
                     repetition_id=str(row.get("repetition_id", "")),
                     rel_start_time_s=float(row.get("rel_start_time_s", -1)),
                 )

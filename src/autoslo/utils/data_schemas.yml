@@ -52,18 +52,12 @@ redset_workload:
 
 
 workload:
-  - name: workload_name
-    type: str
-    description: The name of the workload.
   - name: query_id
     type: str
     description: The unique identifier of the query (within this workload).
   - name: abs_start_time
     type: datetime
     description: The absolute start time of the query.
-  - name: schema_name
-    type: str
-    description: The schema name of the query executed.
   - name: query_text_id
     type: str
     description: The unique identifier of the query text.
