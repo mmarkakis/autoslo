@@ -21,7 +21,7 @@ from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
-from autoslo.model_training.iconq_model_training_checkpoint import (
+from autoslo.models.iconq_model_training_checkpoint import (
     update_checkpoint,
     update_plots,
 )
