@@ -24,7 +24,7 @@ import os
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 
 
 class SloResolver:
@@ -81,17 +81,17 @@ class SloResolver:
     # core API
     # ------------------------------------------------------------------
 
-    def resolve(self, tpcds_temp_and_q_idx: str | None) -> float:
+    def resolve(self, query_text_id: QueryTextId | None) -> float:
         """Return the SLO in seconds for the given query identifier.
 
         Falls back to *default_slo_s* when the template has no override,
-        *tpcds_temp_and_q_idx* is *None*, or its value cannot be parsed
+        *query_text_id* is *None*, or its value cannot be parsed
         (e.g. a float NaN from a DataFrame join).
         """
-        if tpcds_temp_and_q_idx is None or not self._dict:
+        if query_text_id is None or not self._dict:
             return self._default
         try:
-            tid = Query.template_id(tpcds_temp_and_q_idx)
+            tid = int(query_text_id.template_id)
         except (ValueError, AttributeError, TypeError):
             return self._default
         return self._dict.get(tid, self._default)

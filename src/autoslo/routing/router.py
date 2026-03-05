@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+from autoslo.routing.routing_core import RoutingResult
 from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.workload_definition.query import Query
 
@@ -66,6 +67,7 @@ class Router:
         query_id: Any,
         query_text_id: Any,
         start_time_s: float | None = None,
+        exclude_clusters: set[str] | None = None,
     ) -> str:
         """Choose the best cluster for the incoming query.
 
@@ -78,6 +80,9 @@ class Router:
         start_time_s :
             Arrival wall-clock (or simulated) time in seconds.
             Defaults to ``time.time()``.
+        exclude_clusters :
+            Optional set of cluster names to exclude from routing
+            (e.g. draining clusters in the simulator).
 
         Returns
         -------
@@ -91,6 +96,47 @@ class Router:
             query_text_id=str(query_text_id),
             start_time_s=start_time_s,
             state_tracker=self._tracker,
+            exclude_clusters=exclude_clusters,
+        )
+
+    def route_query_with_predictions(
+        self,
+        query_id: Any,
+        query_text_id: Any,
+        start_time_s: float | None = None,
+        exclude_clusters: set[str] | None = None,
+    ) -> RoutingResult:
+        """Route a query and return the full routing result.
+
+        Unlike :meth:`route_query` which returns only a cluster name,
+        this method returns a :class:`RoutingResult` containing the
+        :class:`PlacementScore` (with per-query latency predictions)
+        and a fully-built tracking :class:`Query`.
+
+        Parameters
+        ----------
+        query_id :
+            Unique query identifier.
+        query_text_id :
+            Query-text identifier used for featurisation lookup.
+        start_time_s :
+            Arrival wall-clock (or simulated) time in seconds.
+            Defaults to ``time.time()``.
+        exclude_clusters :
+            Optional set of cluster names to exclude from routing.
+
+        Returns
+        -------
+        RoutingResult
+        """
+        if start_time_s is None:
+            start_time_s = time.time()
+        return self._policy.route_with_details(
+            query_id=str(query_id),
+            query_text_id=str(query_text_id),
+            start_time_s=start_time_s,
+            state_tracker=self._tracker,
+            exclude_clusters=exclude_clusters,
         )
 
     # ------------------------------------------------------------------

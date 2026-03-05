@@ -57,6 +57,21 @@ class PlacementScore:
     (the incoming query plus all active co-runners)."""
 
 
+@dataclass
+class RoutingResult:
+    """Full result of a routing decision.
+
+    Returned by :meth:`Router.route_query_with_predictions` to give
+    callers access to the placement score and a fully-built tracking
+    query (with featurisation, stage-model prediction, and predicted
+    latency already populated).
+    """
+
+    cluster_name: str
+    score: Optional[PlacementScore]
+    tracking_query: Query
+
+
 class RoutingCore:
     """Namespace for routing core functions."""
 
@@ -93,11 +108,11 @@ class RoutingCore:
         individual_violations: list[Union[float, bool]] = [
             (
                 q.slo_violation_amount_s(
-                    slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                    slo_resolver.resolve(q.query_text_id)
                 )
                 if optimize_by_amount
                 else q.violates_slo(
-                    slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                    slo_resolver.resolve(q.query_text_id)
                 )
             )
             for q in snapshot.active_queries
@@ -188,11 +203,11 @@ class RoutingCore:
                 max(
                     0.0,
                     latencies[q.query_id]
-                    - slo_resolver.resolve(q.tpcds_temp_and_q_idx),
+                    - slo_resolver.resolve(q.query_text_id),
                 )
                 if optimize_by_amount
                 else latencies[q.query_id]
-                > slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+                > slo_resolver.resolve(q.query_text_id)
             )
             for q in base_queries
         ]
@@ -319,7 +334,7 @@ class RoutingCore:
 
         min_headroom = float("inf")
         for q in active_queries:
-            slo_s = slo_resolver.resolve(q.tpcds_temp_and_q_idx)
+            slo_s = slo_resolver.resolve(q.query_text_id)
             if slo_s <= 0:
                 continue  # degenerate SLO, skip
             headroom = (slo_s - q.latency_s) / slo_s

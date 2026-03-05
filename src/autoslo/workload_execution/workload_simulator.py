@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
@@ -23,9 +24,10 @@ from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.capacity_controller import CapacityController
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
-from autoslo.models.iconq_model import IconqModel
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.routing.routing_core import ClusterSnapshot, RoutingCore
+from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+from autoslo.routing.model_policy import ModelPolicy
+from autoslo.routing.router import Router
+from autoslo.routing.routing_core import RoutingCore
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.query import Query
@@ -83,7 +85,15 @@ class WorkloadSimulator:
         self._slo_s = slo_s
         self._slo_dict_filename = slo_dict_filename
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
-        self._iconq_model = IconqModel.load(model_id=iconq_model_id)
+
+        # Create the routing policy (loads the IconQ model internally).
+        self._model_policy = ModelPolicy(
+            iconq_model_id=iconq_model_id,
+            default_slo_s=slo_s,
+            slo_overrides=self._slo_resolver.slo_dict,
+            optimize_by_amount=optimize_based_on_slo_violation_amount,
+        )
+        self._iconq_model = self._model_policy.iconq_model  # convenience alias
 
         # Dynamic provisioning parameters.
         self._dynamic_mode = dynamic_cluster_config is not None
@@ -146,17 +156,9 @@ class WorkloadSimulator:
         ]
         self._log_threshold = 10000
 
-        # Set up bookkeeping etc.
-        self._cost_per_second_per_cluster: dict[str, float] = {}
-        self._active_queries_per_cluster: dict[str, list[Query]] = {}
+        # Simulator-specific bookkeeping (not managed by ClusterStateTracker).
         self._completed_queries_per_cluster: dict[str, list[Query]] = {}
-        self._most_recent_billing_window_start_time_per_cluster_s: dict[
-            str, Optional[float]
-        ] = {}
-        self._cached_before_cost: dict[str, float] = {}
-        self._cached_before_slo_violation: dict[str, float] = {}
-        self._before_cache_valid: dict[str, bool] = {}
-        self._neighbors_per_active_query: dict[str, list[Query]] = {}
+        self._cluster_cost_per_second: dict[str, float] = {}
 
         # --- Dynamic provisioning state (always present, possibly unused) ---
         self._provisioner: Optional[SimulatedProvisioner] = None
@@ -166,20 +168,143 @@ class WorkloadSimulator:
         self._current_sim_time_s: float = 0.0
         self._next_tick_time_s: float = 0.0
         # Clusters marked for tear-down that still have active queries.
-        # They remain in _active_queries_per_cluster (queries keep running)
-        # but are excluded from routing and capacity-controller polling.
+        # They remain in the state tracker (queries keep running) but are
+        # excluded from routing and capacity-controller polling.
         self._draining_clusters: set[str] = set()
 
+        # Build the initial cluster set and state tracker.
         if self._dynamic_mode:
             self._blueprint: Optional[Blueprint] = None
-            self._init_dynamic_clusters()
+            # Start with empty tracker; _init_dynamic_clusters adds clusters.
+            self._state_tracker = ClusterStateTracker(
+                cluster_names=[],
+                cost_per_second={},
+                rpu_per_cluster={},
+            )
         else:
             self._blueprint = Blueprint.from_config(blueprint_name)
-            for cluster_name in self._blueprint.cluster_names:
-                cluster = Cluster.from_config(cluster_name)
-                self._activate_cluster_bookkeeping(
-                    cluster_name, cluster.cost_per_second
+            clusters = [
+                Cluster.from_config(cn)
+                for cn in self._blueprint.cluster_names
+            ]
+            self._state_tracker = ClusterStateTracker(
+                cluster_names=[c.name for c in clusters],
+                cost_per_second={
+                    c.name: c.cost_per_second for c in clusters
+                },
+                rpu_per_cluster={c.name: c.rpu for c in clusters},
+            )
+            for c in clusters:
+                self._completed_queries_per_cluster[c.name] = []
+                self._cluster_cost_per_second[c.name] = c.cost_per_second
+
+        # Create the Router (invokes policy.on_attach to wire up RPU lookup).
+        self._router = Router(
+            policy=self._model_policy,
+            state_tracker=self._state_tracker,
+        )
+
+        if self._dynamic_mode:
+            self._init_dynamic_clusters()
+
+    # ------------------------------------------------------------------
+    # Factory: create from YAML config (aligned with WorkloadRunner)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_config(cls, config_path: str | Path) -> "WorkloadSimulator":
+        """Create a :class:`WorkloadSimulator` from a YAML config file.
+
+        The configuration uses the same field names as
+        :class:`~autoslo.workload_execution.workload_runner.WorkloadRunner`
+        where the concepts overlap and adds simulator-specific keys.
+
+        Required keys
+        -------------
+        workload_name : str
+        iconq_model_id : str
+        slo_s : float
+
+        Required (static mode) or optional (dynamic mode)
+        --------------------------------------------------
+        blueprint_name : str
+
+        Optional keys (with defaults)
+        -----------------------------
+        slo_dict_filename : str | None
+        optimize_based_on_slo_violation_amount : bool  (False)
+        slo_violation_rate_threshold : float  (0)
+        slo_violation_amount_threshold_s : float  (0)
+        verbose : bool  (False)
+        export_video : bool  (False)
+        video_frame_duration : float  (1.0)
+        simulator_run_id : str | None
+        experiment_name : str | None
+        overwrite_experiment : bool  (False)
+
+        Dynamic-mode keys (all optional)
+        ---------------------------------
+        dynamic_cluster_config : dict with ``initial_rpus``,
+            ``allowed_rpu_sizes``, ``spin_up_delay_s``
+        eta_crit : float  (0.1)
+        idle_periods_before_tear_down : int  (5)
+        capacity_poll_interval_s : float  (60.0)
+        min_cluster_lifetime_s : float  (1200.0)
+        """
+        path = Path(config_path)
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+
+        # Handle dynamic_cluster_config sub-dict.
+        dcc_raw = cfg.get("dynamic_cluster_config")
+        dcc: Optional[DynamicClusterConfig] = None
+        if dcc_raw is not None:
+            # Convert list RPUs to tuples for the frozen dataclass.
+            if "initial_rpus" in dcc_raw and isinstance(
+                dcc_raw["initial_rpus"], list
+            ):
+                dcc_raw["initial_rpus"] = tuple(dcc_raw["initial_rpus"])
+            if "allowed_rpu_sizes" in dcc_raw and isinstance(
+                dcc_raw["allowed_rpu_sizes"], list
+            ):
+                dcc_raw["allowed_rpu_sizes"] = tuple(
+                    dcc_raw["allowed_rpu_sizes"]
                 )
+            dcc = DynamicClusterConfig(**dcc_raw)
+
+        return cls(
+            workload_name=cfg["workload_name"],
+            iconq_model_id=cfg["iconq_model_id"],
+            blueprint_name=cfg.get("blueprint_name", ""),
+            slo_s=cfg["slo_s"],
+            optimize_based_on_slo_violation_amount=cfg.get(
+                "optimize_based_on_slo_violation_amount", False
+            ),
+            slo_violation_rate_threshold=cfg.get(
+                "slo_violation_rate_threshold", 0
+            ),
+            slo_violation_amount_threshold_s=cfg.get(
+                "slo_violation_amount_threshold_s", 0
+            ),
+            slo_dict_filename=cfg.get("slo_dict_filename"),
+            verbose=cfg.get("verbose", False),
+            export_video=cfg.get("export_video", False),
+            video_frame_duration=cfg.get("video_frame_duration", 1.0),
+            simulator_run_id=cfg.get("simulator_run_id"),
+            experiment_name=cfg.get("experiment_name"),
+            overwrite_experiment=cfg.get("overwrite_experiment", False),
+            dynamic_cluster_config=dcc,
+            eta_crit=cfg.get("eta_crit", 0.1),
+            idle_periods_before_tear_down=cfg.get(
+                "idle_periods_before_tear_down", 5
+            ),
+            capacity_poll_interval_s=cfg.get(
+                "capacity_poll_interval_s", 60.0
+            ),
+            min_cluster_lifetime_s=cfg.get(
+                "min_cluster_lifetime_s", 1200.0
+            ),
+        )
 
     # ------------------------------------------------------------------
     # helper: build/return the output directory path
@@ -252,14 +377,29 @@ class WorkloadSimulator:
         if self._dynamic_mode:
             self._init_dynamic_clusters()
         else:
-            for cluster_name in self._blueprint.cluster_names:
-                self._active_queries_per_cluster[cluster_name] = []
-                self._completed_queries_per_cluster[cluster_name] = []
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    cluster_name
-                ] = None
-                self._before_cache_valid[cluster_name] = False
-            self._neighbors_per_active_query = {}
+            # Re-create the state tracker from scratch (clears active queries,
+            # neighbour history, and billing windows).
+            clusters = [
+                Cluster.from_config(cn)
+                for cn in self._blueprint.cluster_names
+            ]
+            self._state_tracker = ClusterStateTracker(
+                cluster_names=[c.name for c in clusters],
+                cost_per_second={
+                    c.name: c.cost_per_second for c in clusters
+                },
+                rpu_per_cluster={c.name: c.rpu for c in clusters},
+            )
+            self._router = Router(
+                policy=self._model_policy,
+                state_tracker=self._state_tracker,
+            )
+            self._completed_queries_per_cluster = {
+                c.name: [] for c in clusters
+            }
+            self._cluster_cost_per_second = {
+                c.name: c.cost_per_second for c in clusters
+            }
 
     def _log_if_verbose(self, d: dict) -> None:
         """
@@ -328,35 +468,24 @@ class WorkloadSimulator:
     # ------------------------------------------------------------------
 
     def _activate_cluster_bookkeeping(
-        self, cluster_name: str, cost_per_second: float
+        self, cluster: Cluster,
     ) -> None:
         """Add per-cluster bookkeeping for a newly activated cluster."""
-        self._cost_per_second_per_cluster[cluster_name] = cost_per_second
-        self._active_queries_per_cluster[cluster_name] = []
-        self._completed_queries_per_cluster[cluster_name] = []
-        self._most_recent_billing_window_start_time_per_cluster_s[
-            cluster_name
-        ] = None
-        self._cached_before_cost[cluster_name] = 0.0
-        self._cached_before_slo_violation[cluster_name] = 0.0
-        self._before_cache_valid[cluster_name] = False
+        self._state_tracker.add_cluster(cluster)
+        self._completed_queries_per_cluster[cluster.name] = []
+        self._cluster_cost_per_second[cluster.name] = cluster.cost_per_second
 
     def _deactivate_cluster_bookkeeping(self, cluster_name: str) -> None:
-        """Remove a fully-drained cluster from all routing state.
+        """Remove a fully-drained cluster from routing state.
 
-        This should only be called once the cluster has no remaining
-        active queries.  Completed queries are preserved for billing
+        Completed queries and cost info are preserved for billing
         analysis.
         """
         self._draining_clusters.discard(cluster_name)
-        self._active_queries_per_cluster.pop(cluster_name, None)
-        self._cost_per_second_per_cluster.pop(cluster_name, None)
-        self._most_recent_billing_window_start_time_per_cluster_s.pop(
-            cluster_name, None
-        )
-        self._cached_before_cost.pop(cluster_name, None)
-        self._cached_before_slo_violation.pop(cluster_name, None)
-        self._before_cache_valid.pop(cluster_name, None)
+        try:
+            self._state_tracker.remove_cluster(cluster_name)
+        except (KeyError, ValueError):
+            pass  # already removed or still has active queries
 
     def _init_dynamic_clusters(self) -> None:
         """Set up provisioner, controller, and initial clusters for a
@@ -364,16 +493,21 @@ class WorkloadSimulator:
         config = self._dynamic_cluster_config
         assert config is not None
 
-        # Clear any existing per-cluster state.
-        self._cost_per_second_per_cluster.clear()
-        self._active_queries_per_cluster.clear()
+        # Clear simulator-specific state.
         self._completed_queries_per_cluster.clear()
-        self._most_recent_billing_window_start_time_per_cluster_s.clear()
-        self._cached_before_cost.clear()
-        self._cached_before_slo_violation.clear()
-        self._before_cache_valid.clear()
-        self._neighbors_per_active_query.clear()
+        self._cluster_cost_per_second.clear()
         self._draining_clusters.clear()
+
+        # Rebuild state tracker from scratch.
+        self._state_tracker = ClusterStateTracker(
+            cluster_names=[],
+            cost_per_second={},
+            rpu_per_cluster={},
+        )
+        self._router = Router(
+            policy=self._model_policy,
+            state_tracker=self._state_tracker,
+        )
 
         # Provisioner
         self._provisioner = SimulatedProvisioner(
@@ -383,17 +517,13 @@ class WorkloadSimulator:
         # Activate initial clusters immediately (no spin-up delay).
         for rpu in config.initial_rpus:
             cluster = Cluster.new(rpu=rpu)
-            self._activate_cluster_bookkeeping(
-                cluster.name, cluster.cost_per_second
-            )
+            self._activate_cluster_bookkeeping(cluster)
 
-        # Capacity controller (wired to simulator's own state).
-        # Exclude draining clusters so the controller doesn't try to
-        # tear them down again or count their queries for headroom.
+        # Capacity controller (wired to state tracker, excluding draining).
         self._capacity_controller = CapacityController(
             get_active_queries=lambda: {
                 cn: qs
-                for cn, qs in self._active_queries_per_cluster.items()
+                for cn, qs in self._state_tracker.get_all_active_queries().items()
                 if cn not in self._draining_clusters
             },
             slo_resolver=self._slo_resolver,
@@ -409,7 +539,7 @@ class WorkloadSimulator:
 
         # Register all initial clusters with the controller so
         # they are protected by the minimum lifetime.
-        for cn in list(self._active_queries_per_cluster.keys()):
+        for cn in self._state_tracker.cluster_names:
             self._capacity_controller.notify_cluster_ready(cn, 0.0)
 
         # Event queue
@@ -458,7 +588,7 @@ class WorkloadSimulator:
         # Count non-draining clusters to decide if this is the last one.
         routable = [
             cn
-            for cn in self._active_queries_per_cluster
+            for cn in self._state_tracker.cluster_names
             if cn not in self._draining_clusters
         ]
         if len(routable) <= 1:
@@ -474,14 +604,14 @@ class WorkloadSimulator:
                     "cluster_name": cluster_name,
                     "reason": "last_routable_cluster",
                     "num_active_clusters": len(
-                        self._active_queries_per_cluster
+                        self._state_tracker.cluster_names
                     ),
                 }
             )
             return
         assert self._provisioner is not None
         self._provisioner.tear_down(cluster_name, self._current_sim_time_s)
-        active = self._active_queries_per_cluster.get(cluster_name, [])
+        active = self._state_tracker.get_active_queries(cluster_name)
         if active:
             self._draining_clusters.add(cluster_name)
             logger.debug(
@@ -514,9 +644,7 @@ class WorkloadSimulator:
         """Drain cluster-ready events that fire at or before *time_s*."""
         while self._pending_events and self._pending_events[0][0] <= time_s:
             _, _, cluster = heapq.heappop(self._pending_events)
-            self._activate_cluster_bookkeeping(
-                cluster.name, cluster.cost_per_second
-            )
+            self._activate_cluster_bookkeeping(cluster)
             # Notify the capacity controller that the cluster
             # is now ready (decrements pending count and records ready
             # time for minimum-lifetime enforcement).
@@ -537,7 +665,7 @@ class WorkloadSimulator:
                     "cluster_name": cluster.name,
                     "rpu": cluster.rpu,
                     "num_active_clusters": len(
-                        self._active_queries_per_cluster
+                        self._state_tracker.cluster_names
                     ),
                 }
             )
@@ -557,9 +685,10 @@ class WorkloadSimulator:
             self._current_sim_time_s = tick_time
 
             # Compute headroom for logging before the tick.
+            all_aq = self._state_tracker.get_all_active_queries()
             all_active = [
                 q
-                for cn, qs in self._active_queries_per_cluster.items()
+                for cn, qs in all_aq.items()
                 if cn not in self._draining_clusters
                 for q in qs
             ]
@@ -572,8 +701,9 @@ class WorkloadSimulator:
                     "event_type": "capacity_tick",
                     "headroom": headroom,
                     "num_active_queries": len(all_active),
-                    "num_active_clusters": len(self._active_queries_per_cluster)
-                    - len(self._draining_clusters),
+                    "num_active_clusters": len(
+                        self._state_tracker.cluster_names
+                    ) - len(self._draining_clusters),
                 }
             )
 
@@ -630,15 +760,21 @@ class WorkloadSimulator:
                 }
             )
 
-            # Add query to the right cluster.
-            (
-                selected_cluster_name,
-                updated_query,
-                latencies_on_best_cluster_s,
-            ) = self._find_best_cluster_for_query(
-                query,
+            # Route the query via the Router (delegates to ModelPolicy).
+            result = self._router.route_query_with_predictions(
+                query_id=query.query_id,
+                query_text_id=str(query.query_text_id),
+                start_time_s=query.rel_start_time_s,
+                exclude_clusters=(
+                    self._draining_clusters if self._dynamic_mode else None
+                ),
             )
-            self_latency_s = latencies_on_best_cluster_s[query.query_id]
+            assert result.score is not None, (
+                "ModelPolicy must always produce a PlacementScore"
+            )
+            selected_cluster_name = result.cluster_name
+            tq = result.tracking_query
+            self_latency_s = result.score.latencies[query.query_id]
             self._log_if_verbose(
                 {
                     "timestamp": query.rel_start_time_s,
@@ -652,32 +788,24 @@ class WorkloadSimulator:
                     "end_time_s": query.rel_start_time_s + self_latency_s,
                 }
             )
-            current_actives = self._active_queries_per_cluster[
-                selected_cluster_name
-            ]
-            # Initialize this query's neighbor list with all currently active
-            # co-runners, and add it to each of their lists in turn.
-            self._neighbors_per_active_query[updated_query.query_id] = list(
-                current_actives
-            )
-            for active_q in current_actives:
-                self._neighbors_per_active_query[active_q.query_id].append(
-                    updated_query
-                )
-            self._active_queries_per_cluster[selected_cluster_name].append(
-                updated_query
-            )
-            # Invalidate the before-cache for this cluster since its state changed.
-            self._before_cache_valid[selected_cluster_name] = False
+
+            # Register the tracking query with the state tracker.
+            # (Handles neighbour bookkeeping and billing-window start.)
+            self._state_tracker.on_query_start(tq)
+
             seq_num_to_cluster_name[i] = selected_cluster_name
 
-            # Go through the active queries on the best cluster and update their
-            # latencies based on the prediction results.
-            for q in self._active_queries_per_cluster[selected_cluster_name]:
+            # Update co-runner latencies on the chosen cluster using the
+            # model predictions returned by the router.
+            for q in self._state_tracker.get_active_queries(
+                selected_cluster_name
+            ):
                 if q.query_id == query.query_id:
                     continue
                 old_latency_s = q.latency_s
-                predicted_latency_s = latencies_on_best_cluster_s[q.query_id]
+                predicted_latency_s = result.score.latencies.get(
+                    q.query_id, old_latency_s
+                )
                 updated_latency_s = max(old_latency_s, predicted_latency_s)
                 self._log_if_verbose(
                     {
@@ -693,18 +821,6 @@ class WorkloadSimulator:
                     }
                 )
                 q.latency_s = updated_latency_s
-
-            # If we are the start of a new billing window on the cluster, set
-            # the billing window start time.
-            if (
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    selected_cluster_name
-                ]
-                is None
-            ):
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    selected_cluster_name
-                ] = query.rel_start_time_s
 
         all_completed = [
             q for qs in self._completed_queries_per_cluster.values() for q in qs
@@ -736,62 +852,46 @@ class WorkloadSimulator:
             current_time_s: The current time in seconds since the start of the
                 workload. If None, all active queries are considered completed.
         """
-        ended_with_times: list[tuple[Query, float]] = []
         clusters_to_deactivate: list[str] = []
-        for cluster, active_queries in self._active_queries_per_cluster.items():
-            still_active_queries = []
+        for cluster_name in list(self._state_tracker.cluster_names):
+            active_queries = self._state_tracker.get_active_queries(
+                cluster_name
+            )
+            completed: list[tuple[Query, float]] = []
             for query in active_queries:
                 end_time_s = query.rel_start_time_s + query.latency_s
                 if (current_time_s is None) or (end_time_s <= current_time_s):
-                    self._completed_queries_per_cluster[cluster].append(query)
-                    del self._neighbors_per_active_query[query.query_id]
-                    self._log_if_verbose(
-                        {
-                            "timestamp": end_time_s,
-                            "event_type": "completion",
-                            "query_id": query.query_id,
-                            "query_text_id": query.query_text_id.value,
-                            "cluster_name": query.cluster_name,
-                            "old_latency_s": None,
-                            "raw_model_latency_s": None,
-                            "latency_s": query.latency_s,
-                            "end_time_s": end_time_s,
-                        }
-                    )
-                else:
-                    still_active_queries.append(query)
-            self._active_queries_per_cluster[cluster] = still_active_queries
-            # Invalidate the before-cache if active queries changed.
-            if len(still_active_queries) != len(active_queries):
-                self._before_cache_valid[cluster] = False
+                    completed.append((query, end_time_s))
+
+            for query, end_time_s in completed:
+                self._completed_queries_per_cluster[cluster_name].append(query)
+                self._state_tracker.on_query_finish(
+                    query_id=query.query_id,
+                    cluster_name=cluster_name,
+                    current_time_s=end_time_s,
+                )
+                self._log_if_verbose(
+                    {
+                        "timestamp": end_time_s,
+                        "event_type": "completion",
+                        "query_id": query.query_id,
+                        "query_text_id": query.query_text_id.value,
+                        "cluster_name": cluster_name,
+                        "old_latency_s": None,
+                        "raw_model_latency_s": None,
+                        "latency_s": query.latency_s,
+                        "end_time_s": end_time_s,
+                    }
+                )
 
             # If a draining cluster has no more active queries,
             # fully deactivate it.
+            remaining = self._state_tracker.get_active_queries(cluster_name)
             if (
-                cluster in self._draining_clusters
-                and len(still_active_queries) == 0
+                cluster_name in self._draining_clusters
+                and len(remaining) == 0
             ):
-                clusters_to_deactivate.append(cluster)
-
-            billing_window_start = (
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    cluster
-                ]
-            )
-            if (
-                (current_time_s is not None)
-                and (len(still_active_queries) == 0)
-                and (billing_window_start is not None)
-                and (
-                    billing_window_start + Billing.REDSHIFT_BILLING_THRESHOLD_S
-                    < current_time_s
-                )
-            ):
-                # If there are no more active queries on the cluster and the
-                # billing window has passed, reset the billing window start time.
-                self._most_recent_billing_window_start_time_per_cluster_s[
-                    cluster
-                ] = None
+                clusters_to_deactivate.append(cluster_name)
 
         # Deactivate fully-drained clusters (outside the iteration).
         for cn in clusters_to_deactivate:
@@ -802,173 +902,13 @@ class WorkloadSimulator:
                     "event_type": "cluster_deactivated",
                     "cluster_name": cn,
                     "reason": "drain_complete",
-                    "num_active_clusters": len(self._active_queries_per_cluster)
+                    "num_active_clusters": len(
+                        self._state_tracker.cluster_names
+                    )
                     - 1,  # this one is about to be removed
                 }
             )
             self._deactivate_cluster_bookkeeping(cn)
-
-    def _find_best_cluster_for_query(
-        self,
-        query: Query,
-    ) -> tuple[str, Query, dict[str, float]]:
-        """
-        Finds the best cluster to route the query to, based on the projected
-        latency and SLO violation amount.
-
-        Uses :mod:`autoslo.routing.routing_core` for the stateless scoring
-        and selection logic so that the simulator evaluates the same policy
-        as the online router.
-
-        Parameters:
-            query: The query to route.
-
-        Returns:
-            best_cluster: The cluster that was chosen as the best for routing
-                    the query.
-            query: The input query with updated fields reflecting the best
-                cluster choice and latency prediction.
-            latencies_on_best_cluster_s: A dictionary mapping query IDs to their
-                projected latencies on the best cluster.
-        """
-
-        query.featurization = self._iconq_model.iconq_query_featurizer.featurize_from_query_text_id(
-            query.query_text_id
-        )
-
-        before_costs: dict[str, float] = {}
-        before_slo_violations: dict[str, float] = {}
-        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
-        snapshots: dict[str, ClusterSnapshot] = {}
-        stage_latency_predictions: dict[str, float] = {}
-
-        # Single pass over clusters: compute before-state (with caching) and
-        # build neighbor sets.  Skip draining clusters — they should
-        # not receive new queries.
-        routable_clusters = {
-            cn: qs
-            for cn, qs in self._active_queries_per_cluster.items()
-            if cn not in self._draining_clusters
-        }
-        for (
-            cluster_name,
-            active_queries,
-        ) in routable_clusters.items():
-
-            # --- neighbor sets (for model dataset) ---
-            run_to_base_to_neighbors[cluster_name] = {
-                q: self._neighbors_per_active_query[q.query_id] + [query]
-                for q in active_queries
-            }
-            run_to_base_to_neighbors[cluster_name][query] = active_queries + [
-                query
-            ]
-
-            # --- build snapshot for routing_core ---
-            snapshot = ClusterSnapshot(
-                cluster_name=cluster_name,
-                cost_per_second=self._cost_per_second_per_cluster[cluster_name],
-                active_queries=list(active_queries),
-                billing_window_start_s=(
-                    self._most_recent_billing_window_start_time_per_cluster_s[
-                        cluster_name
-                    ]
-                ),
-            )
-            snapshots[cluster_name] = snapshot
-
-            # --- before-state (cached) ---
-            if self._before_cache_valid[cluster_name]:
-                before_costs[cluster_name] = self._cached_before_cost[
-                    cluster_name
-                ]
-                before_slo_violations[cluster_name] = (
-                    self._cached_before_slo_violation[cluster_name]
-                )
-            else:
-                query.cluster_name = cluster_name
-                query.stage_latency_prediction_s = self._iconq_model.stage_model.predict_from_query_text_id(
-                    {query.query_id: query.query_text_id},
-                    cluster_name,
-                )[
-                    query.query_id
-                ].overall_mean_s()
-
-                before_cost, before_slo_violation = (
-                    RoutingCore.compute_before_state(
-                        snapshot=snapshot,
-                        current_time_s=query.rel_start_time_s,
-                        slo_resolver=self._slo_resolver,
-                        optimize_by_amount=self._optimize_based_on_slo_violation_amount,
-                    )
-                )
-                before_costs[cluster_name] = before_cost
-                before_slo_violations[cluster_name] = before_slo_violation
-                self._cached_before_cost[cluster_name] = before_cost
-                self._cached_before_slo_violation[cluster_name] = (
-                    before_slo_violation
-                )
-                self._before_cache_valid[cluster_name] = True
-
-            # Track stage latency prediction for this cluster.
-            stage_latency_predictions[cluster_name] = (
-                query.stage_latency_prediction_s
-            )
-
-        # --- Run the model in one batched call across all clusters ---
-        dataset = ConcurrentQueryDataset.build_from_query_groups(
-            iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
-            run_to_base_to_neighbors=run_to_base_to_neighbors,
-        )
-        all_predictions = self._iconq_model.predict_from_dataset(dataset)
-
-        # --- Score each cluster using routing_core ---
-        scores = []
-        for cluster_name, predictions in all_predictions.items():
-            score = RoutingCore.score_placement(
-                query=query,
-                snapshot=snapshots[cluster_name],
-                predictions=predictions,
-                current_time_s=query.rel_start_time_s,
-                slo_resolver=self._slo_resolver,
-                optimize_by_amount=self._optimize_based_on_slo_violation_amount,
-                before_cost=before_costs[cluster_name],
-                before_slo_violation=before_slo_violations[cluster_name],
-            )
-            scores.append(score)
-
-            self._log_if_verbose(
-                {
-                    "timestamp": query.rel_start_time_s,
-                    "event_type": "cluster_consideration",
-                    "query_id": query.query_id,
-                    "query_text_id": query.query_text_id.value,
-                    "cluster_name": cluster_name,
-                    "old_latency_s": None,
-                    "raw_model_latency_s": None,
-                    "latency_s": None,
-                    "end_time_s": None,
-                    "marginal_slo_violation": score.marginal_slo_violation,
-                    "marginal_cost": score.marginal_cost,
-                }
-            )
-
-        assert scores, "No clusters produced predictions."
-        best = RoutingCore.pick_best(
-            scores,
-            tolerance=self.TOLERANCE_FOR_SLO_VIOLATION_AMOUNT_OPTIMIZATION_S,
-        )
-
-        # Update the query's cluster and stage latency prediction to reflect
-        # the best cluster choice.
-        query.cluster_name = best.cluster_name
-        query.stage_latency_prediction_s = stage_latency_predictions.get(
-            best.cluster_name, query.stage_latency_prediction_s
-        )
-        query.latency_s = best.latencies[query.query_id]
-        query.latency_is_lower_bound = False
-
-        return (best.cluster_name, query, best.latencies)
 
     def write_out_visualization(self) -> None:
         """
@@ -1037,7 +977,7 @@ class WorkloadSimulator:
                 [q.as_interval() for q in completed_queries],
             )
             total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
-            cost_per_second = self._cost_per_second_per_cluster.get(
+            cost_per_second = self._cluster_cost_per_second.get(
                 cluster_name, 0.0
             )
             d[cluster_name] = {

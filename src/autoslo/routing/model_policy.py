@@ -23,9 +23,10 @@ from autoslo.routing.routing_core import (
     ClusterSnapshot,
     PlacementScore,
     RoutingCore,
+    RoutingResult,
 )
 from autoslo.routing.routing_policy import RoutingPolicy
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 
 if TYPE_CHECKING:
     from autoslo.routing.cluster_state_tracker import ClusterStateTracker
@@ -127,19 +128,36 @@ class ModelPolicy(RoutingPolicy):
         query_text_id: str,
         start_time_s: float,
         state_tracker: ClusterStateTracker,
+        exclude_clusters: set[str] | None = None,
     ) -> str:
+        return self.route_with_details(
+            query_id=query_id,
+            query_text_id=query_text_id,
+            start_time_s=start_time_s,
+            state_tracker=state_tracker,
+            exclude_clusters=exclude_clusters,
+        ).cluster_name
+
+    def route_with_details(
+        self,
+        query_id: str,
+        query_text_id: str,
+        start_time_s: float,
+        state_tracker: ClusterStateTracker,
+        exclude_clusters: set[str] | None = None,
+    ) -> RoutingResult:
         query_id = str(query_id)
-        query_text_id = str(query_text_id)
+        qtid = QueryTextId(value=str(query_text_id))
 
         # Build featurisation for the incoming query.
         featurization = (
             self._iconq_model.iconq_query_featurizer
-            .featurize_from_tpcds_temp_and_q_idx(query_text_id)
+            .featurize_from_query_text_id(qtid)
         )
 
         incoming = Query(
             query_id=query_id,
-            query_text_id=query_text_id,
+            query_text_id=qtid,
             rel_start_time_s=start_time_s,
             featurization=featurization,
             latency_s=-1,
@@ -150,6 +168,13 @@ class ModelPolicy(RoutingPolicy):
             state_tracker.build_routing_context(incoming)
         )
         eligible = state_tracker.cluster_names
+        if exclude_clusters:
+            eligible = [cn for cn in eligible if cn not in exclude_clusters]
+            snapshots = {cn: s for cn, s in snapshots.items() if cn in eligible}
+            run_to_base_to_neighbors = {
+                cn: n for cn, n in run_to_base_to_neighbors.items()
+                if cn in eligible
+            }
 
         # -- Stage-model prediction (per cluster) ----------------------------
         stage_latency_predictions: dict[str, float] = {}
@@ -157,8 +182,8 @@ class ModelPolicy(RoutingPolicy):
             incoming.cluster_name = cn
             stage_pred = (
                 self._iconq_model.stage_model
-                .predict_from_tpcds_temp_and_q_idx(
-                    {query_id: query_text_id}, cn
+                .predict_from_query_text_id(
+                    {query_id: qtid}, cn
                 )[query_id]
                 .overall_mean_s()
             )
@@ -208,7 +233,12 @@ class ModelPolicy(RoutingPolicy):
                 "eligible cluster.",
                 query_id,
             )
-            return eligible[0]
+            incoming.cluster_name = eligible[0]
+            return RoutingResult(
+                cluster_name=eligible[0],
+                score=None,
+                tracking_query=incoming,
+            )
 
         best = RoutingCore.pick_best(scores, tolerance=self.TOLERANCE_S)
 
@@ -226,12 +256,18 @@ class ModelPolicy(RoutingPolicy):
                 except Exception:
                     logger.exception("capacity_pressure callback failed")
 
-        # Maintain rolling routing window.
-        best_snapshot = snapshots.get(best.cluster_name)
+        # Finalise the incoming query for the chosen cluster.
+        incoming.cluster_name = best.cluster_name
+        incoming.stage_latency_prediction_s = stage_latency_predictions.get(
+            best.cluster_name, -1
+        )
         if best.latencies:
             incoming.latency_s = best.latencies.get(
                 incoming.query_id, incoming.latency_s
             )
+
+        # Maintain rolling routing window.
+        best_snapshot = snapshots.get(best.cluster_name)
         self._routing_window.append((incoming, best_snapshot))
         cutoff = start_time_s - self._routing_window_s
         while (
@@ -240,7 +276,11 @@ class ModelPolicy(RoutingPolicy):
         ):
             self._routing_window.popleft()
 
-        return best.cluster_name
+        return RoutingResult(
+            cluster_name=best.cluster_name,
+            score=best,
+            tracking_query=incoming,
+        )
 
     # ------------------------------------------------------------------
     # Tracking-query builder
@@ -255,22 +295,22 @@ class ModelPolicy(RoutingPolicy):
     ) -> Query:
         """Build a fully-featurised :class:`Query` for the state tracker."""
         query_id = str(query_id)
-        query_text_id = str(query_text_id)
+        qtid = QueryTextId(value=str(query_text_id))
 
         featurization = (
             self._iconq_model.iconq_query_featurizer
-            .featurize_from_tpcds_temp_and_q_idx(query_text_id)
+            .featurize_from_query_text_id(qtid)
         )
         stage_pred = (
             self._iconq_model.stage_model
-            .predict_from_tpcds_temp_and_q_idx(
-                {query_id: query_text_id}, cluster_name
+            .predict_from_query_text_id(
+                {query_id: qtid}, cluster_name
             )[query_id]
             .overall_mean_s()
         )
         return Query(
             query_id=query_id,
-            query_text_id=query_text_id,
+            query_text_id=qtid,
             rel_start_time_s=start_time_s,
             cluster_name=cluster_name,
             featurization=featurization,

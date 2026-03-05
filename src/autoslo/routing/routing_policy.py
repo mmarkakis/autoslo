@@ -14,8 +14,9 @@ import itertools
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
+from autoslo.routing.routing_core import RoutingResult
 from autoslo.utils.class_with_factory import ClassWithFactory
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 
 if TYPE_CHECKING:
     from autoslo.routing.cluster_state_tracker import ClusterStateTracker
@@ -40,6 +41,7 @@ class RoutingPolicy(ClassWithFactory):
         query_text_id: str,
         start_time_s: float,
         state_tracker: ClusterStateTracker,
+        exclude_clusters: set[str] | None = None,
     ) -> str:
         """Choose the best cluster for the incoming query.
 
@@ -76,10 +78,44 @@ class RoutingPolicy(ClassWithFactory):
         """
         return Query(
             query_id=str(query_id),
-            query_text_id=str(query_text_id),
+            query_text_id=QueryTextId(value=str(query_text_id)),
             rel_start_time_s=start_time_s,
             cluster_name=cluster_name,
             latency_s=-1,
+        )
+
+    def route_with_details(
+        self,
+        query_id: str,
+        query_text_id: str,
+        start_time_s: float,
+        state_tracker: ClusterStateTracker,
+        exclude_clusters: set[str] | None = None,
+    ) -> RoutingResult:
+        """Route with full results including placement score and tracking query.
+
+        The default implementation delegates to :meth:`select_cluster` and
+        returns a :class:`RoutingResult` with *score* set to ``None``.
+        Model-based policies should override this to return the full
+        :class:`PlacementScore`.
+        """
+        cluster = self.select_cluster(
+            query_id=query_id,
+            query_text_id=query_text_id,
+            start_time_s=start_time_s,
+            state_tracker=state_tracker,
+            exclude_clusters=exclude_clusters,
+        )
+        tracking_query = self.build_tracking_query(
+            query_id=query_id,
+            cluster_name=cluster,
+            query_text_id=query_text_id,
+            start_time_s=start_time_s,
+        )
+        return RoutingResult(
+            cluster_name=cluster,
+            score=None,
+            tracking_query=tracking_query,
         )
 
     def on_attach(self, state_tracker: ClusterStateTracker) -> None:
@@ -108,8 +144,11 @@ class RoundRobinPolicy(RoutingPolicy):
         query_text_id: str,
         start_time_s: float,
         state_tracker: ClusterStateTracker,
+        exclude_clusters: set[str] | None = None,
     ) -> str:
         names = state_tracker.cluster_names
+        if exclude_clusters:
+            names = [n for n in names if n not in exclude_clusters]
         if not names:
             raise RuntimeError("No clusters available for routing.")
         if self._cycle is None:
@@ -130,5 +169,6 @@ class FixedPolicy(RoutingPolicy):
         query_text_id: str,
         start_time_s: float,
         state_tracker: ClusterStateTracker,
+        exclude_clusters: set[str] | None = None,
     ) -> str:
         return self._cluster_name
