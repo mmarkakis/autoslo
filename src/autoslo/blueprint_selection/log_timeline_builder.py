@@ -73,6 +73,7 @@ def _snapshot_from_query_dicts(
     total_queries = 0
     violating_queries = 0
     violation_amount = 0.0
+    violation_relative_sum = 0.0
 
     for row in query_rows:
         cluster = row["cluster_name"]
@@ -98,6 +99,10 @@ def _snapshot_from_query_dicts(
             if duration > effective_slo_s:
                 violating_queries += 1
                 violation_amount += duration - effective_slo_s
+            if effective_slo_s > 0:
+                violation_relative_sum += max(
+                    0.0, (duration - effective_slo_s) / effective_slo_s
+                )
 
     # sort each cluster's intervals
     for cluster in intervals_by_cluster:
@@ -117,6 +122,11 @@ def _snapshot_from_query_dicts(
     violation_rate = (
         (violating_queries / total_queries) if total_queries > 0 else 0.0
     )
+    violation_relative = (
+        (violation_relative_sum / total_queries)
+        if total_queries > 0
+        else 0.0
+    )
     return GanttSnapshot(
         label=label,
         intervals_by_cluster=intervals_by_cluster,
@@ -126,6 +136,7 @@ def _snapshot_from_query_dicts(
         cost_per_cluster=cost_per_cluster,
         total_cost=total_cost,
         violation_amount=violation_amount,
+        violation_relative=violation_relative,
     )
 
 

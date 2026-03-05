@@ -12,7 +12,6 @@ SimulatedProvisioner        Instant provisioner for simulation.
 RedshiftServerlessProvisioner   Live AWS provisioner.
 PolicyTuner                 Simulation-based Pareto policy sweep.
 PolicyParams                Frozen policy-parameter pair.
-DynamicClusterConfig        Dynamic cluster environment config.
 SweepResult / SweepEntry    Sweep outputs.
 ScenarioOutcome             Per-scenario cost/violation summary.
 compute_pareto_front        Standalone O(N log N) Pareto extraction.
@@ -28,7 +27,6 @@ from autoslo.capacity.cluster_provisioner import (
 )
 from autoslo.capacity.policy_tuner import (
     VALID_OBJECTIVES,
-    DynamicClusterConfig,
     PolicyParams,
     PolicyTuner,
     ScenarioOutcome,
@@ -42,7 +40,6 @@ from autoslo.capacity.policy_tuner import (
 __all__ = [
     "CapacityController",
     "ClusterProvisioner",
-    "DynamicClusterConfig",
     "PolicyParams",
     "PolicyTuner",
     "ScenarioOutcome",

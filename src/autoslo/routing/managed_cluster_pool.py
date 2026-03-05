@@ -21,6 +21,7 @@ import enum
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from psycopg2.pool import ThreadedConnectionPool
@@ -85,6 +86,26 @@ _EVT_STATS_COLLECTED = "stats_collected"
 _EVT_CLUSTER_REMOVED = "cluster_removed"
 
 
+@dataclass(frozen=True)
+class ManagedClusterPoolConfig:
+    """Configuration describing the dynamic cluster environment.
+
+    Attributes
+    ----------
+    initial_rpus : tuple[int, ...]
+        RPU sizes for clusters available from the start of the workload run.
+    allowed_rpu_sizes : tuple[int, ...]
+        RPU sizes that may be spun up dynamically during the workload run.
+    spin_up_delay_s : float
+        If the run is simulated, the amount of time to elapse between requesting
+        a spin-up and the cluster becoming ready.  Ignored for live execution.
+    """
+
+    initial_rpus: tuple[int, ...] = (8,)
+    allowed_rpu_sizes: tuple[int, ...] = tuple(Cluster.ALL_ALLOWED_RPU_SIZES)
+    spin_up_delay_s: float = 120.0
+
+
 class ManagedClusterPool:
     """Unified, thread-safe cluster pool with query bookkeeping.
 
@@ -107,16 +128,13 @@ class ManagedClusterPool:
     def __init__(
         self,
         provisioner: ClusterProvisioner,
-        initial_rpus: list[int] | None = None,
-        allowed_rpu_sizes: list[int] | None = None,
+        config: ManagedClusterPoolConfig,
         maxconns: int = 1000,
         search_path: str = "public",
     ) -> None:
         self._provisioner = provisioner
         self._allowed_rpu_sizes: list[int] = sorted(
-            allowed_rpu_sizes
-            if allowed_rpu_sizes is not None
-            else Cluster.ALL_ALLOWED_RPU_SIZES
+            list(config.allowed_rpu_sizes)
         )
         self._maxconns = maxconns
         self._search_path = search_path
@@ -135,8 +153,7 @@ class ManagedClusterPool:
         self._run_id: Optional[str] = None
 
         # Spin up initial clusters.
-        if initial_rpus:
-            self._spin_up_initial(initial_rpus)
+        self._spin_up_initial(list(config.initial_rpus))
 
     # ------------------------------------------------------------------
     # Initial spin-up (parallel for live provisioners)
@@ -153,8 +170,7 @@ class ManagedClusterPool:
         # blocks for 2-5 min.  For SimulatedProvisioner it's harmless.
         with ThreadPoolExecutor(max_workers=len(rpus)) as executor:
             futures = [
-                executor.submit(self.request_spin_up, rpu, 0.0)
-                for rpu in rpus
+                executor.submit(self.request_spin_up, rpu, 0.0) for rpu in rpus
             ]
             for f in futures:
                 f.result()  # propagate exceptions
@@ -163,9 +179,7 @@ class ManagedClusterPool:
     # Cluster lifecycle
     # ------------------------------------------------------------------
 
-    def request_spin_up(
-        self, rpu: int, current_time_s: float
-    ) -> str:
+    def request_spin_up(self, rpu: int, current_time_s: float) -> str:
         """Spin up a new cluster.  Returns its name.
 
         The cluster starts as PENDING.  If the provisioner returns a
@@ -178,16 +192,16 @@ class ManagedClusterPool:
 
         with self._lock:
             if cluster.name in self._entries:
-                raise ValueError(
-                    f"Cluster {cluster.name!r} already in pool."
-                )
+                raise ValueError(f"Cluster {cluster.name!r} already in pool.")
             self._entries[cluster.name] = entry
-            self._lifecycle_log.append({
-                "timestamp": current_time_s,
-                "event_type": _EVT_SPIN_UP_REQUESTED,
-                "cluster_name": cluster.name,
-                "rpu": rpu,
-            })
+            self._lifecycle_log.append(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": _EVT_SPIN_UP_REQUESTED,
+                    "cluster_name": cluster.name,
+                    "rpu": rpu,
+                }
+            )
 
         # Auto-promote when the provisioner returned full conn_info
         # (RedshiftServerlessProvisioner blocks until AVAILABLE).
@@ -196,9 +210,7 @@ class ManagedClusterPool:
 
         return cluster.name
 
-    def on_cluster_ready(
-        self, cluster_name: str, ready_time_s: float
-    ) -> None:
+    def on_cluster_ready(self, cluster_name: str, ready_time_s: float) -> None:
         """Transition PENDING → READY.
 
         Creates a connection pool if ``conn_info`` is available.
@@ -212,12 +224,14 @@ class ManagedClusterPool:
                 )
             entry.state = _ClusterState.READY
             entry.ready_at_s = ready_time_s
-            self._lifecycle_log.append({
-                "timestamp": ready_time_s,
-                "event_type": _EVT_CLUSTER_READY,
-                "cluster_name": cluster_name,
-                "rpu": entry.cluster.rpu,
-            })
+            self._lifecycle_log.append(
+                {
+                    "timestamp": ready_time_s,
+                    "event_type": _EVT_CLUSTER_READY,
+                    "cluster_name": cluster_name,
+                    "rpu": entry.cluster.rpu,
+                }
+            )
             # Build connection pool if possible.
             if entry.cluster.conn_info is not None and entry.conn_pool is None:
                 entry.conn_pool = self._make_conn_pool(entry.cluster.conn_info)
@@ -246,7 +260,8 @@ class ManagedClusterPool:
             # Guard: refuse to tear down the last READY cluster.
             if not force:
                 ready_count = sum(
-                    1 for e in self._entries.values()
+                    1
+                    for e in self._entries.values()
                     if e.state == _ClusterState.READY
                 )
                 if ready_count <= 1:
@@ -256,12 +271,14 @@ class ManagedClusterPool:
                     )
 
             entry.state = _ClusterState.DRAINING
-            self._lifecycle_log.append({
-                "timestamp": current_time_s,
-                "event_type": _EVT_TEAR_DOWN_REQUESTED,
-                "cluster_name": cluster_name,
-                "rpu": entry.cluster.rpu,
-            })
+            self._lifecycle_log.append(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": _EVT_TEAR_DOWN_REQUESTED,
+                    "cluster_name": cluster_name,
+                    "rpu": entry.cluster.rpu,
+                }
+            )
             has_active = bool(entry.active_queries)
 
         # If no active queries, proceed to removal immediately.
@@ -299,12 +316,14 @@ class ManagedClusterPool:
                 )
 
         with self._lock:
-            self._lifecycle_log.append({
-                "timestamp": current_time_s,
-                "event_type": _EVT_STATS_COLLECTED,
-                "cluster_name": cluster_name,
-                "rpu": entry.cluster.rpu,
-            })
+            self._lifecycle_log.append(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": _EVT_STATS_COLLECTED,
+                    "cluster_name": cluster_name,
+                    "rpu": entry.cluster.rpu,
+                }
+            )
 
         # Destroy connection pool.
         if entry.conn_pool is not None:
@@ -326,12 +345,14 @@ class ManagedClusterPool:
 
         with self._lock:
             entry.state = _ClusterState.REMOVED
-            self._lifecycle_log.append({
-                "timestamp": current_time_s,
-                "event_type": _EVT_CLUSTER_REMOVED,
-                "cluster_name": cluster_name,
-                "rpu": entry.cluster.rpu,
-            })
+            self._lifecycle_log.append(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": _EVT_CLUSTER_REMOVED,
+                    "cluster_name": cluster_name,
+                    "rpu": entry.cluster.rpu,
+                }
+            )
 
     # ------------------------------------------------------------------
     # Query lifecycle
@@ -414,7 +435,8 @@ class ManagedClusterPool:
         """Names of READY clusters (safe to iterate outside lock)."""
         with self._lock:
             return [
-                cn for cn, e in self._entries.items()
+                cn
+                for cn, e in self._entries.items()
                 if e.state == _ClusterState.READY
             ]
 
@@ -423,7 +445,8 @@ class ManagedClusterPool:
         """Names of DRAINING clusters."""
         with self._lock:
             return {
-                cn for cn, e in self._entries.items()
+                cn
+                for cn, e in self._entries.items()
                 if e.state == _ClusterState.DRAINING
             }
 
@@ -444,7 +467,8 @@ class ManagedClusterPool:
         return self.ready_cluster_names
 
     def build_routing_context(
-        self, incoming: Query,
+        self,
+        incoming: Query,
     ) -> tuple[
         dict[str, ClusterSnapshot],
         dict[str, dict[Query, list[Query]]],
@@ -543,8 +567,7 @@ class ManagedClusterPool:
         (including REMOVED), for billing analysis."""
         with self._lock:
             return {
-                cn: e.cluster.cost_per_second
-                for cn, e in self._entries.items()
+                cn: e.cluster.cost_per_second for cn, e in self._entries.items()
             }
 
     @property
@@ -661,7 +684,8 @@ class ManagedClusterPool:
         # the first reset — alternatively callers pass them explicitly.
         with self._lock:
             initial_rpus = [
-                e.cluster.rpu for e in self._entries.values()
+                e.cluster.rpu
+                for e in self._entries.values()
                 if e.state in (_ClusterState.READY, _ClusterState.PENDING)
             ]
 

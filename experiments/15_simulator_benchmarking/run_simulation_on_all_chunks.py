@@ -5,6 +5,7 @@ from datetime import datetime
 import yaml
 
 import autoslo.utils.paths as pu
+from autoslo.workload_definition.query import SloMetric
 from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
@@ -45,11 +46,10 @@ def main(args):
             "slo_s": args.slo_s,
             "blueprint_max_rpu": args.max_rpu,
             "blueprint_name": blueprint.name,
-            "slo_violation_rate_threshold": args.slo_violation_rate_threshold,
+            "slo_metric": args.slo_metric,
+            "slo_threshold": args.slo_threshold,
             "export_video": args.export_video,
             "video_frame_duration": args.video_frame_duration,
-            "optimize_cumulative_slo_violation_time": args.optimize_cumulative_slo_violation_time,
-            "slo_violation_amount_threshold_s": args.slo_violation_amount_threshold_s,
             "runs": [],
         }
 
@@ -85,9 +85,8 @@ def main(args):
                 iconq_model_id=args.iconq_model_id,
                 blueprint_name=blueprint.name,
                 slo_s=args.slo_s,
-                optimize_based_on_slo_violation_amount=args.optimize_cumulative_slo_violation_time,
-                slo_violation_rate_threshold=args.slo_violation_rate_threshold,
-                slo_violation_amount_threshold_s=args.slo_violation_amount_threshold_s,
+                slo_metric=SloMetric(args.slo_metric),
+                slo_threshold=args.slo_threshold,
                 verbose=True,
                 export_video=args.export_video,
                 video_frame_duration=args.video_frame_duration,
@@ -134,10 +133,17 @@ if __name__ == "__main__":
         default=180.0,
     )
     parser.add_argument(
-        "--slo_violation_rate_threshold",
+        "--slo_metric",
+        type=str,
+        default="relative",
+        choices=["binary", "absolute_s", "relative"],
+        help="SLO violation metric for routing.",
+    )
+    parser.add_argument(
+        "--slo_threshold",
         type=float,
-        help="The threshold for acceptable SLO violation rate.",
-        default=0.05,
+        default=0.0,
+        help="Threshold for the chosen SLO metric.",
     )
     parser.add_argument(
         "--export_video",
@@ -150,18 +156,6 @@ if __name__ == "__main__":
         type=float,
         default=1.0,
         help="Duration of each frame in the exported video, in seconds.",
-    )
-    parser.add_argument(
-        "--optimize_cumulative_slo_violation_time",
-        type=bool,
-        default=True,
-        help="Whether to optimize for cumulative SLO violation in seconds.",
-    )
-    parser.add_argument(
-        "--slo_violation_amount_threshold_s",
-        type=float,
-        help="The threshold for acceptable cumulative SLO violation time in seconds.",
-        default=30.0,
     )
     parser.add_argument(
         "--continue_runs",

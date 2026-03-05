@@ -20,7 +20,7 @@ from autoslo.routing.routing_core import (
     PlacementScore,
     RoutingCore,
 )
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 
 from autoslo.utils.billing import Billing
 
@@ -34,14 +34,14 @@ from intervaltree import Interval
 
 def _q(
     query_id: str,
-    template: str = "1_0",
+    template: str = "ext_tpcds1000#1#0",
     start: float = 0.0,
     latency: float = -1.0,
 ) -> Query:
     """Create a minimal Query for testing."""
     return Query(
         query_id=query_id,
-        tpcds_temp_and_q_idx=template,
+        query_text_id=QueryTextId(template),
         rel_start_time_s=start,
         latency_s=latency,
     )
@@ -76,7 +76,7 @@ class TestComputeBeforeState:
             snap,
             current_time_s=100.0,
             slo_resolver=_resolver(),
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
         )
         assert cost == 0.0
         assert violation == 0.0
@@ -98,7 +98,7 @@ class TestComputeBeforeState:
             snap,
             current_time_s=end_time + 5.0,
             slo_resolver=_resolver(10.0),
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
         )
         assert violation == 0.0
         assert cost == pytest.approx(
@@ -126,7 +126,7 @@ class TestComputeBeforeState:
             snap,
             current_time_s=end_time + 5.0,
             slo_resolver=_resolver(slo_s),
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
         )
         assert violation == pytest.approx(end_time - start_time - slo_s)
 
@@ -148,7 +148,7 @@ class TestComputeBeforeState:
             snap,
             current_time_s=end_time + 5.0,
             slo_resolver=_resolver(slo_s),
-            optimize_by_amount=False,
+            slo_metric=SloMetric.BINARY,
         )
         assert violation == 1.0
 
@@ -169,7 +169,7 @@ class TestComputeBeforeState:
             snap,
             current_time_s=current_time,
             slo_resolver=_resolver(),
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
         )
         assert cost == pytest.approx(
             Billing.billed_s(
@@ -218,7 +218,7 @@ class TestScorePlacement:
             snap,
             current_time_s=now,
             slo_resolver=resolver,
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
         )
         return (
             incoming,
@@ -238,7 +238,7 @@ class TestScorePlacement:
             predictions=predictions,
             current_time_s=incoming.rel_start_time_s,
             slo_resolver=resolver,
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
             before_cost=bc,
             before_slo_violation=bv,
         )
@@ -255,7 +255,7 @@ class TestScorePlacement:
             predictions=predictions,
             current_time_s=incoming.rel_start_time_s,
             slo_resolver=resolver,
-            optimize_by_amount=True,
+            slo_metric=SloMetric.ABSOLUTE_S,
             before_cost=bc,
             before_slo_violation=bv,
         )
@@ -282,7 +282,7 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, optimize_by_amount=True
+            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S
         )
 
         score = RoutingCore.score_placement(
@@ -291,7 +291,7 @@ class TestScorePlacement:
             predictions,
             incoming.rel_start_time_s,
             resolver,
-            True,
+            SloMetric.ABSOLUTE_S,
             bc,
             bv,
         )
@@ -315,7 +315,7 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, optimize_by_amount=True
+            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S
         )
 
         score = RoutingCore.score_placement(
@@ -324,7 +324,7 @@ class TestScorePlacement:
             predictions,
             incoming.rel_start_time_s,
             resolver,
-            True,
+            SloMetric.ABSOLUTE_S,
             bc,
             bv,
         )
@@ -355,7 +355,7 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, optimize_by_amount=True
+            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S
         )
 
         score = RoutingCore.score_placement(
@@ -364,7 +364,7 @@ class TestScorePlacement:
             predictions,
             incoming.rel_start_time_s,
             resolver,
-            False,
+            SloMetric.BINARY,
             bc,
             bv,
         )

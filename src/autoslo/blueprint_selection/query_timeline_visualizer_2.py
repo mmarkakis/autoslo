@@ -12,7 +12,7 @@ from intervaltree import Interval
 from autoslo.blueprints.cluster import Cluster
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, SloMetric
 from autoslo.workload_execution.trace import Trace
 
 
@@ -30,6 +30,7 @@ class GanttSnapshot:
     cost_per_cluster: dict[str, float]
     total_cost: float
     violation_amount: float
+    violation_relative: float
 
 
 class GanttRecorder:
@@ -60,11 +61,13 @@ class GanttRecorder:
         total_queries = 0
         violating_queries = 0
         violation_amount = 0.0
+        violation_relative_sum = 0.0
 
         def _add_intervals(
             queries: Iterable[Query], state: str
         ) -> list[tuple[float, float, dict[str, Any]]]:
             nonlocal total_queries, violating_queries, violation_amount
+            nonlocal violation_relative_sum
 
             intervals: list[tuple[float, float, dict[str, Any]]] = []
             for q in queries:
@@ -88,6 +91,7 @@ class GanttRecorder:
                 )
                 violating_queries += q.violates_slo(slo_s)
                 violation_amount += q.slo_violation_amount_s(slo_s)
+                violation_relative_sum += q.slo_relative_violation(slo_s)
 
             intervals.sort(key=lambda x: (x[0], x[1], x[2].get("query_id", "")))
             return intervals
@@ -123,6 +127,11 @@ class GanttRecorder:
         violation_rate = (
             (violating_queries / total_queries) if total_queries > 0 else 0.0
         )
+        violation_relative = (
+            (violation_relative_sum / total_queries)
+            if total_queries > 0
+            else 0.0
+        )
 
         self.snapshots.append(
             GanttSnapshot(
@@ -134,6 +143,7 @@ class GanttRecorder:
                 total_cost=total_cost,
                 cost_per_cluster=cost_per_cluster,
                 violation_amount=violation_amount,
+                violation_relative=violation_relative,
             )
         )
 
@@ -311,10 +321,9 @@ def render_gantt_scrubber(
     snapshots: list[Any],
     slo_s: float | dict[str, float],
     title: str = "Cluster Query Assignments Over Time",
-    violation_rate_threshold: Optional[float] = None,
+    slo_metric: SloMetric = SloMetric.RELATIVE,
+    slo_threshold: float = 0.0,
     workload_name: Optional[str] = None,
-    violation_amount_threshold: Optional[float] = None,
-    optimize_cumulative_slo_violation_time: bool = False,
     include_animation_frames: bool = False,
 ) -> go.Figure:
     if not snapshots:
@@ -407,10 +416,15 @@ def render_gantt_scrubber(
 
     # Build per-snapshot annotations
     def _ann_for_snap(snap: GanttSnapshot):
-        txt: str
-        if optimize_cumulative_slo_violation_time:
+        # Build the primary text line based on the active metric.
+        if slo_metric is SloMetric.ABSOLUTE_S:
             txt = (
                 f"<b>Cumulative SLO Violation Time:</b> {snap.violation_amount:.1f}s "
+                f"• <b>Cost:</b> ${snap.total_cost:,.2f}"
+            )
+        elif slo_metric is SloMetric.RELATIVE:
+            txt = (
+                f"<b>Mean Relative SLO Violation:</b> {snap.violation_relative*100:.2f}% "
                 f"• <b>Cost:</b> ${snap.total_cost:,.2f}"
             )
         else:
@@ -419,20 +433,19 @@ def render_gantt_scrubber(
                 f"({snap.violating_queries}/{snap.total_queries}) • "
                 f"<b>Cost:</b> ${snap.total_cost:,.2f}"
             )
+
+        # Determine red/green colouring based on the threshold.
         color = Palette.black
-        if (
-            optimize_cumulative_slo_violation_time
-            and violation_amount_threshold is not None
-        ):
+        if slo_threshold is not None:
+            if slo_metric is SloMetric.ABSOLUTE_S:
+                metric_val = snap.violation_amount
+            elif slo_metric is SloMetric.RELATIVE:
+                metric_val = snap.violation_relative
+            else:
+                metric_val = snap.violation_rate
             color = (
                 GanttRecorder.MISSED_COLOR
-                if (snap.violation_amount > violation_amount_threshold)
-                else GanttRecorder.MET_COLOR
-            )
-        elif violation_rate_threshold is not None:
-            color = (
-                GanttRecorder.MISSED_COLOR
-                if (snap.violation_rate > violation_rate_threshold)
+                if metric_val > slo_threshold
                 else GanttRecorder.MET_COLOR
             )
 
@@ -618,12 +631,11 @@ def export_gantt_video(
     frame_duration: float = 1.0,
     title: str = "Cluster Query Assignments Over Time",
     constant_layout: bool = False,
-    violation_rate_threshold: Optional[float] = None,
+    slo_metric: SloMetric = SloMetric.RELATIVE,
+    slo_threshold: float = 0.0,
     workload_name: Optional[str] = None,
     width: int = 1400,
     height: int = 700,
-    violation_amount_threshold: Optional[float] = None,
-    optimize_cumulative_slo_violation_time: bool = False,
 ) -> None:
     """
     Export snapshots as a video where each snapshot is a frame.
@@ -635,12 +647,11 @@ def export_gantt_video(
         frame_duration: Duration each frame is displayed in seconds (default: 1.0)
         title: Title for the Gantt chart
         constant_layout: Whether to use constant layout across snapshots
-        violation_rate_threshold: Optional threshold for highlighting violation rate
+        slo_metric: Which SLO-violation metric to highlight
+        slo_threshold: Threshold for red/green colouring
         workload_name: Optional workload name for subtitle
         width: Video width in pixels (default: 1400)
         height: Video height in pixels (default: 700)
-        violation_amount_threshold: Optional threshold for highlighting violation amount
-        optimize_cumulative_slo_violation_time: Whether to optimize for cumulative SLO violation time
 
     Raises:
         ValueError: If snapshots list is empty or imageio is not installed
@@ -680,9 +691,8 @@ def export_gantt_video(
                 snapshots=[snap],
                 slo_s=slo_s,
                 title=title,
-                violation_rate_threshold=violation_rate_threshold,
-                violation_amount_threshold=violation_amount_threshold,
-                optimize_cumulative_slo_violation_time=optimize_cumulative_slo_violation_time,
+                slo_metric=slo_metric,
+                slo_threshold=slo_threshold,
                 workload_name=workload_name,
             )
 

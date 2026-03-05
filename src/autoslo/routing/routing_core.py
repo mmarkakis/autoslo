@@ -15,14 +15,14 @@ so that they evaluate exactly the same routing policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional
 
 from intervaltree import Interval  # type: ignore[import]
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, SloMetric
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ class RoutingCore:
         snapshot: ClusterSnapshot,
         current_time_s: float,
         slo_resolver: SloResolver,
-        optimize_by_amount: bool,
+        slo_metric: SloMetric,
     ) -> tuple[float, float]:
         """Compute the cost and SLO-violation metric for a cluster *before*
         adding a new query.
@@ -96,25 +96,16 @@ class RoutingCore:
             Wall-clock (or simulated) time of the incoming query's arrival.
         slo_resolver:
             Resolves per-query SLOs.
-        optimize_by_amount:
-            If True, violations are measured in seconds of overshoot.
-            If False, violations are binary (0 or 1) per query.
+        slo_metric:
+            Which SLO-violation metric to optimise on.
 
         Returns
         -------
         (before_cost, before_slo_violation)
         """
         # -- SLO violations -------------------------------------------------
-        individual_violations: list[Union[float, bool]] = [
-            (
-                q.slo_violation_amount_s(
-                    slo_resolver.resolve(q.query_text_id)
-                )
-                if optimize_by_amount
-                else q.violates_slo(
-                    slo_resolver.resolve(q.query_text_id)
-                )
-            )
+        individual_violations: list[float] = [
+            q.slo_violation(slo_resolver.resolve(q.query_text_id), slo_metric)
             for q in snapshot.active_queries
         ]
         before_slo_violation = float(sum(individual_violations))
@@ -146,7 +137,7 @@ class RoutingCore:
         predictions: dict[str, ModelPrediction],
         current_time_s: float,
         slo_resolver: SloResolver,
-        optimize_by_amount: bool,
+        slo_metric: SloMetric,
         before_cost: float,
         before_slo_violation: float,
     ) -> PlacementScore:
@@ -176,8 +167,8 @@ class RoutingCore:
             Arrival time of *query* (simulated or real).
         slo_resolver:
             Resolves per-query SLOs.
-        optimize_by_amount:
-            If True, measure violations in seconds; else binary.
+        slo_metric:
+            Which SLO-violation metric to optimise on.
         before_cost:
             Pre-computed cost of the cluster before adding *query*.
         before_slo_violation:
@@ -198,19 +189,26 @@ class RoutingCore:
             latencies[q.query_id] = max(q.latency_s, pred_s)
 
         # -- After SLO violations ------------------------------------------
-        individual_after_violations: list[Union[float, bool]] = [
-            (
-                max(
-                    0.0,
-                    latencies[q.query_id]
-                    - slo_resolver.resolve(q.query_text_id),
+        # Build temporary Query-like objects with predicted latencies so we
+        # can reuse the unified slo_violation() dispatcher.
+        individual_after_violations: list[float] = []
+        for q in base_queries:
+            slo_s = slo_resolver.resolve(q.query_text_id)
+            predicted_latency = latencies[q.query_id]
+            if slo_metric is SloMetric.BINARY:
+                individual_after_violations.append(
+                    float(predicted_latency > slo_s)
                 )
-                if optimize_by_amount
-                else latencies[q.query_id]
-                > slo_resolver.resolve(q.query_text_id)
-            )
-            for q in base_queries
-        ]
+            elif slo_metric is SloMetric.ABSOLUTE_S:
+                individual_after_violations.append(
+                    max(0.0, predicted_latency - slo_s)
+                )
+            elif slo_metric is SloMetric.RELATIVE:
+                individual_after_violations.append(
+                    max(0.0, (predicted_latency - slo_s) / slo_s)
+                    if slo_s > 0
+                    else 0.0
+                )
         after_slo_violation = float(sum(individual_after_violations))
         marginal_slo_violation = after_slo_violation - before_slo_violation
 
@@ -309,11 +307,9 @@ class RoutingCore:
     ) -> float:
         """Compute the minimum SLO headroom across all active queries.
 
-        Headroom is defined as:
-
-            h(q) = (SLO_q - L_q) / SLO_q
-
-        where L_q is the current (predicted or observed) latency of query q.
+        Headroom is defined as ``1 − relative_violation(q)`` which equals
+        ``(SLO − latency) / SLO`` when the query is within its SLO and
+        becomes negative once it overshoots.
 
         Returns 1.0 when there are no active queries (full headroom).
         Returns ≤ 0 when at least one query is at or past its SLO.
@@ -337,6 +333,8 @@ class RoutingCore:
             slo_s = slo_resolver.resolve(q.query_text_id)
             if slo_s <= 0:
                 continue  # degenerate SLO, skip
+            # headroom = (slo - latency) / slo.  Positive when the query
+            # is within its SLO, zero at the boundary, negative past it.
             headroom = (slo_s - q.latency_s) / slo_s
             if headroom < min_headroom:
                 min_headroom = headroom

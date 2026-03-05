@@ -21,13 +21,15 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.capacity_controller import CapacityController
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
-from autoslo.capacity.policy_tuner import DynamicClusterConfig
-from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+from autoslo.routing.managed_cluster_pool import (
+    ManagedClusterPool,
+    ManagedClusterPoolConfig,
+)
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
 from autoslo.routing.routing_core import RoutingCore
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, SloMetric
 from autoslo.workload_definition.workload import Workload
 
 if TYPE_CHECKING:
@@ -61,9 +63,8 @@ class WorkloadSimulator:
         iconq_model_id: str,
         slo_s: float,
         schema_name: Optional[str] = None,
-        optimize_based_on_slo_violation_amount: bool = False,
-        slo_violation_rate_threshold: float = 0,
-        slo_violation_amount_threshold_s: float = 0,
+        slo_metric: SloMetric = SloMetric.RELATIVE,
+        slo_threshold: float = 0.0,
         slo_dict_filename: Optional[str] = None,
         verbose: bool = True,
         export_video: bool = False,
@@ -71,7 +72,7 @@ class WorkloadSimulator:
         simulator_run_id: Optional[str] = None,
         experiment_name: Optional[str] = None,
         overwrite_experiment: bool = False,
-        dynamic_cluster_config: Optional[DynamicClusterConfig] = None,
+        managed_cluster_pool_config: Optional[ManagedClusterPoolConfig] = None,
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
         capacity_poll_interval_s: float = 60.0,
@@ -88,15 +89,15 @@ class WorkloadSimulator:
             iconq_model_id=iconq_model_id,
             default_slo_s=slo_s,
             slo_overrides=self._slo_resolver.slo_dict,
-            optimize_by_amount=optimize_based_on_slo_violation_amount,
+            slo_metric=slo_metric,
         )
         self._iconq_model = self._model_policy.iconq_model  # convenience alias
 
         # Dynamic provisioning parameters.
         self._dynamic_cluster_config = (
-            dynamic_cluster_config
-            if dynamic_cluster_config is not None
-            else DynamicClusterConfig()
+            managed_cluster_pool_config
+            if managed_cluster_pool_config is not None
+            else ManagedClusterPoolConfig()
         )
         self._cc_eta_crit = eta_crit
         self._cc_idle_periods = idle_periods_before_tear_down
@@ -104,13 +105,8 @@ class WorkloadSimulator:
         # Minimum cluster lifetime
         self._cc_min_cluster_lifetime_s = min_cluster_lifetime_s
 
-        self._optimize_based_on_slo_violation_amount = (
-            optimize_based_on_slo_violation_amount
-        )
-        self._slo_violation_rate_threshold = slo_violation_rate_threshold
-        self._slo_violation_amount_threshold_s = (
-            slo_violation_amount_threshold_s
-        )
+        self._slo_metric = slo_metric
+        self._slo_threshold = slo_threshold
         self._verbose = verbose
         self._export_video = export_video
         self._video_frame_duration = video_frame_duration
@@ -120,7 +116,10 @@ class WorkloadSimulator:
         self._schema_name = schema_name
         self._workload: Workload
         if workload_name.startswith("redset"):
-            from autoslo.workload_definition.redset_workload import RedsetWorkload  # noqa: PLC0415
+            from autoslo.workload_definition.redset_workload import (
+                RedsetWorkload,
+            )  # noqa: PLC0415
+
             self._workload = RedsetWorkload.load(workload_name)
         else:
             workload_path = os.path.join(
@@ -200,9 +199,8 @@ class WorkloadSimulator:
         Optional keys (with defaults)
         -----------------------------
         slo_dict_filename : str | None
-        optimize_based_on_slo_violation_amount : bool  (False)
-        slo_violation_rate_threshold : float  (0)
-        slo_violation_amount_threshold_s : float  (0)
+        slo_metric : str  ("relative")  – one of "binary", "absolute_s", "relative"
+        slo_threshold : float  (0.0)
         verbose : bool  (False)
         export_video : bool  (False)
         video_frame_duration : float  (1.0)
@@ -220,37 +218,34 @@ class WorkloadSimulator:
         with open(path) as f:
             cfg = yaml.safe_load(f)
 
-        # Handle dynamic_cluster_config sub-dict.
-        dcc_raw = cfg.get("dynamic_cluster_config")
-        dcc: Optional[DynamicClusterConfig] = None
-        if dcc_raw is not None:
+        # Handle managed_cluster_pool_config sub-dict.
+        mcp_raw = cfg.get("managed_cluster_pool_config")
+        mcp: Optional[ManagedClusterPoolConfig] = None
+        if mcp_raw is not None:
             # Convert list RPUs to tuples for the frozen dataclass.
-            if "initial_rpus" in dcc_raw and isinstance(
-                dcc_raw["initial_rpus"], list
+            if "initial_rpus" in mcp_raw and isinstance(
+                mcp_raw["initial_rpus"], list
             ):
-                dcc_raw["initial_rpus"] = tuple(dcc_raw["initial_rpus"])
-            if "allowed_rpu_sizes" in dcc_raw and isinstance(
-                dcc_raw["allowed_rpu_sizes"], list
+                mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
+            if "allowed_rpu_sizes" in mcp_raw and isinstance(
+                mcp_raw["allowed_rpu_sizes"], list
             ):
-                dcc_raw["allowed_rpu_sizes"] = tuple(
-                    dcc_raw["allowed_rpu_sizes"]
+                mcp_raw["allowed_rpu_sizes"] = tuple(
+                    mcp_raw["allowed_rpu_sizes"]
                 )
-            dcc = DynamicClusterConfig(**dcc_raw)
+            mcp = ManagedClusterPoolConfig(**mcp_raw)
+
+        # Parse slo_metric string → enum.
+        raw_metric = cfg.get("slo_metric", "relative")
+        slo_metric = SloMetric(raw_metric)
 
         return cls(
             workload_name=cfg["workload_name"],
             iconq_model_id=cfg["iconq_model_id"],
             slo_s=cfg["slo_s"],
             schema_name=cfg.get("schema_name"),
-            optimize_based_on_slo_violation_amount=cfg.get(
-                "optimize_based_on_slo_violation_amount", False
-            ),
-            slo_violation_rate_threshold=cfg.get(
-                "slo_violation_rate_threshold", 0
-            ),
-            slo_violation_amount_threshold_s=cfg.get(
-                "slo_violation_amount_threshold_s", 0
-            ),
+            slo_metric=slo_metric,
+            slo_threshold=cfg.get("slo_threshold", 0.0),
             slo_dict_filename=cfg.get("slo_dict_filename"),
             verbose=cfg.get("verbose", False),
             export_video=cfg.get("export_video", False),
@@ -258,17 +253,13 @@ class WorkloadSimulator:
             simulator_run_id=cfg.get("simulator_run_id"),
             experiment_name=cfg.get("experiment_name"),
             overwrite_experiment=cfg.get("overwrite_experiment", False),
-            dynamic_cluster_config=dcc,
+            managed_cluster_pool_config=mcp,
             eta_crit=cfg.get("eta_crit", 0.1),
             idle_periods_before_tear_down=cfg.get(
                 "idle_periods_before_tear_down", 5
             ),
-            capacity_poll_interval_s=cfg.get(
-                "capacity_poll_interval_s", 60.0
-            ),
-            min_cluster_lifetime_s=cfg.get(
-                "min_cluster_lifetime_s", 1200.0
-            ),
+            capacity_poll_interval_s=cfg.get("capacity_poll_interval_s", 60.0),
+            min_cluster_lifetime_s=cfg.get("min_cluster_lifetime_s", 1200.0),
         )
 
     # ------------------------------------------------------------------
@@ -301,15 +292,8 @@ class WorkloadSimulator:
                 "slo_s": self._slo_s,
                 "slo_dict_filename": self._slo_dict_filename,
                 "slo_dict": self._slo_resolver.slo_dict,
-                "optimize_based_on_slo_violation_amount": (
-                    self._optimize_based_on_slo_violation_amount
-                ),
-                "slo_violation_rate_threshold": (
-                    self._slo_violation_rate_threshold
-                ),
-                "slo_violation_amount_threshold_s": (
-                    self._slo_violation_amount_threshold_s
-                ),
+                "slo_metric": self._slo_metric.value,
+                "slo_threshold": self._slo_threshold,
                 "verbose": self._verbose,
                 "export_video": self._export_video,
                 "video_frame_duration": self._video_frame_duration,
@@ -419,9 +403,12 @@ class WorkloadSimulator:
         # with instant on_cluster_ready to bypass spin-up delay).
         self._pool = ManagedClusterPool(
             provisioner=self._provisioner,
-            initial_rpus=None,
-            allowed_rpu_sizes=list(config.allowed_rpu_sizes),
+            config=ManagedClusterPoolConfig(
+                initial_rpus=(),
+                allowed_rpu_sizes=config.allowed_rpu_sizes,
+            ),
         )
+        assert self._pool is not None  # for mypy
 
         # Activate initial clusters immediately (no spin-up delay).
         for rpu in config.initial_rpus:
@@ -466,9 +453,7 @@ class WorkloadSimulator:
 
     def _on_sim_spin_up(self, reason: str, rpu: int) -> None:
         """Capacity-controller callback: schedule a new cluster."""
-        cluster_name = self._pool.request_spin_up(
-            rpu, self._current_sim_time_s
-        )
+        cluster_name = self._pool.request_spin_up(rpu, self._current_sim_time_s)
         ready_time = (
             self._current_sim_time_s + self._provisioner.spin_up_delay_s
         )
@@ -522,9 +507,7 @@ class WorkloadSimulator:
             return
 
         active = self._pool.get_active_queries(cluster_name)
-        self._pool.request_tear_down(
-            cluster_name, self._current_sim_time_s
-        )
+        self._pool.request_tear_down(cluster_name, self._current_sim_time_s)
 
         if active:
             logger.debug(
@@ -577,9 +560,7 @@ class WorkloadSimulator:
                     "event_type": "cluster_ready",
                     "cluster_name": cluster_name,
                     "rpu": rpu,
-                    "num_active_clusters": len(
-                        self._pool.cluster_names
-                    ),
+                    "num_active_clusters": len(self._pool.cluster_names),
                 }
             )
 
@@ -601,10 +582,7 @@ class WorkloadSimulator:
             all_aq = self._pool.get_all_active_queries()
             draining = self._pool.draining_cluster_names
             all_active = [
-                q
-                for cn, qs in all_aq.items()
-                if cn not in draining
-                for q in qs
+                q for cn, qs in all_aq.items() if cn not in draining for q in qs
             ]
             headroom = RoutingCore.compute_slo_headroom(
                 all_active, self._slo_resolver
@@ -615,9 +593,7 @@ class WorkloadSimulator:
                     "event_type": "capacity_tick",
                     "headroom": headroom,
                     "num_active_queries": len(all_active),
-                    "num_active_clusters": len(
-                        self._pool.cluster_names
-                    ),
+                    "num_active_clusters": len(self._pool.cluster_names),
                 }
             )
 
@@ -686,9 +662,9 @@ class WorkloadSimulator:
                 query_text_id=str(query.query_text_id),
                 start_time_s=query.rel_start_time_s,
             )
-            assert result.score is not None, (
-                "ModelPolicy must always produce a PlacementScore"
-            )
+            assert (
+                result.score is not None
+            ), "ModelPolicy must always produce a PlacementScore"
             selected_cluster_name = result.cluster_name
             tq = result.tracking_query
             self_latency_s = result.score.latencies[query.query_id]
@@ -715,9 +691,7 @@ class WorkloadSimulator:
 
             # Update co-runner latencies on the chosen cluster using the
             # model predictions returned by the router.
-            for q in self._pool.get_active_queries(
-                selected_cluster_name
-            ):
+            for q in self._pool.get_active_queries(selected_cluster_name):
                 if q.query_id == query.query_id:
                     continue
                 old_latency_s = q.latency_s
@@ -775,8 +749,8 @@ class WorkloadSimulator:
         # Snapshot cluster names before processing (pool may auto-remove
         # draining clusters as their last queries finish).
         draining_before = set(self._pool.draining_cluster_names)
-        cluster_names = (
-            list(self._pool.ready_cluster_names) + list(draining_before)
+        cluster_names = list(self._pool.ready_cluster_names) + list(
+            draining_before
         )
 
         for cluster_name in cluster_names:
@@ -812,18 +786,14 @@ class WorkloadSimulator:
         # Detect draining clusters that were auto-removed by the pool.
         draining_after = set(self._pool.draining_cluster_names)
         for cn in draining_before - draining_after:
-            logger.debug(
-                "Draining cluster %s is now empty — deactivated.", cn
-            )
+            logger.debug("Draining cluster %s is now empty — deactivated.", cn)
             self._log_if_verbose(
                 {
                     "timestamp": current_time_s,
                     "event_type": "cluster_deactivated",
                     "cluster_name": cn,
                     "reason": "drain_complete",
-                    "num_active_clusters": len(
-                        self._pool.cluster_names
-                    ),
+                    "num_active_clusters": len(self._pool.cluster_names),
                 }
             )
 
@@ -843,11 +813,8 @@ class WorkloadSimulator:
         fig = render_gantt_scrubber(
             [snapshot],
             slo_s=self._slo_s,
-            violation_rate_threshold=self._slo_violation_rate_threshold,
-            violation_amount_threshold=self._slo_violation_amount_threshold_s,
-            optimize_cumulative_slo_violation_time=(
-                self._optimize_based_on_slo_violation_amount
-            ),
+            slo_metric=self._slo_metric,
+            slo_threshold=self._slo_threshold,
             workload_name=self._workload_name,
         )
 
@@ -863,11 +830,8 @@ class WorkloadSimulator:
                 output_path=video_out_path,
                 frame_duration=self._video_frame_duration,
                 constant_layout=True,
-                violation_rate_threshold=self._slo_violation_rate_threshold,
-                violation_amount_threshold=self._slo_violation_amount_threshold_s,
-                optimize_cumulative_slo_violation_time=(
-                    self._optimize_based_on_slo_violation_amount
-                ),
+                slo_metric=self._slo_metric,
+                slo_threshold=self._slo_threshold,
                 workload_name=self._workload_name,
             )
 
@@ -890,9 +854,7 @@ class WorkloadSimulator:
                 [q.as_interval() for q in completed_queries],
             )
             total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
-            cost_per_second = cost_map.get(
-                cluster_name, 0.0
-            )
+            cost_per_second = cost_map.get(cluster_name, 0.0)
             d[cluster_name] = {
                 "num_completed_queries": len(completed_queries),
                 "num_billed_intervals": len(billed_intervals),
@@ -942,6 +904,7 @@ class WorkloadSimulator:
         # Compute violation stats from the solve log.
         violation_rate = 0.0
         violation_amount_s = 0.0
+        violation_relative_mean = 0.0
         num_queries = 0
         log_path = os.path.join(self._out_dir, "solve_log.parquet")
         if os.path.exists(log_path):
@@ -964,16 +927,24 @@ class WorkloadSimulator:
                 violation_amount_s = float(
                     (durations - per_row_slo).clip(lower=0.0).sum()
                 )
+                # Relative violation: max(0, (latency - slo) / slo) per query.
+                relative_violations = (
+                    (durations - per_row_slo) / per_row_slo
+                ).clip(lower=0.0)
+                violation_relative_mean = float(relative_violations.mean())
 
         run_entry = {
             "run_id": self._run_id,
             "seed": self._seed,
             "slo_s": self._slo_s,
+            "slo_metric": self._slo_metric.value,
+            "slo_threshold": self._slo_threshold,
             "slo_dict_filename": self._slo_dict_filename,
             "slo_dict": self._slo_resolver.slo_dict,
             "violation_rate": round(violation_rate, 6),
-            "total_cost": round(total_cost, 4),
             "violation_amount_s": round(violation_amount_s, 4),
+            "violation_relative_mean": round(violation_relative_mean, 6),
+            "total_cost": round(total_cost, 4),
             "num_queries": num_queries,
             "completed_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         }

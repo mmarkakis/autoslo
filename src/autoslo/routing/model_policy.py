@@ -26,7 +26,7 @@ from autoslo.routing.routing_core import (
     RoutingResult,
 )
 from autoslo.routing.routing_policy import RoutingPolicy
-from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 
 if TYPE_CHECKING:
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
@@ -48,9 +48,9 @@ class ModelPolicy(RoutingPolicy):
         Default latency SLO (seconds) for templates without an override.
     slo_overrides :
         ``{template_id: slo_s}`` dict for per-template SLOs.
-    optimize_by_amount :
-        If *True*, violations are measured in seconds of overshoot;
-        if *False*, violations are binary (0/1) per query.
+    slo_metric :
+        Which SLO-violation metric drives the routing optimiser.
+        See :class:`~autoslo.workload_definition.query.SloMetric`.
     on_capacity_pressure :
         Optional no-arg callback invoked when *every* eligible cluster
         would incur an SLO violation for the incoming query.
@@ -67,7 +67,7 @@ class ModelPolicy(RoutingPolicy):
         iconq_model_id: str,
         default_slo_s: float = 10.0,
         slo_overrides: Optional[dict[int, float]] = None,
-        optimize_by_amount: bool = True,
+        slo_metric: SloMetric = SloMetric.RELATIVE,
         on_capacity_pressure: Optional[Callable[[], None]] = None,
         routing_window_s: float = 120.0,
         *args: Any,
@@ -84,7 +84,7 @@ class ModelPolicy(RoutingPolicy):
             default_slo_s=default_slo_s,
             slo_dict=slo_overrides or {},
         )
-        self._optimize_by_amount = optimize_by_amount
+        self._slo_metric = slo_metric
 
         # Capacity pressure ---------------------------------------------------
         self._on_capacity_pressure = on_capacity_pressure
@@ -203,7 +203,7 @@ class ModelPolicy(RoutingPolicy):
                 snapshot=snap,
                 current_time_s=start_time_s,
                 slo_resolver=self._slo_resolver,
-                optimize_by_amount=self._optimize_by_amount,
+                slo_metric=self._slo_metric,
             )
 
         # -- Batched model prediction across all clusters --------------------
@@ -225,7 +225,7 @@ class ModelPolicy(RoutingPolicy):
                 predictions=predictions,
                 current_time_s=start_time_s,
                 slo_resolver=self._slo_resolver,
-                optimize_by_amount=self._optimize_by_amount,
+                slo_metric=self._slo_metric,
                 before_cost=bc,
                 before_slo_violation=bv,
             )

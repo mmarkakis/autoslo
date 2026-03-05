@@ -1,8 +1,25 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import TypeAlias
 
 from intervaltree import Interval  # type: ignore[import]
+
+
+class SloMetric(Enum):
+    """Which SLO-violation metric to use for routing decisions.
+
+    * ``BINARY``     – 1 if the query violates its SLO, else 0.
+    * ``ABSOLUTE_S`` – seconds of overshoot, ``max(0, latency − SLO)``.
+    * ``RELATIVE``   – relative overshoot, ``max(0, (latency − SLO) / SLO)``.
+
+    All three are always *reported*; this enum selects which one drives
+    the routing optimiser.
+    """
+
+    BINARY = "binary"
+    ABSOLUTE_S = "absolute_s"
+    RELATIVE = "relative"
 
 QueryFeaturization: TypeAlias = list[float]
 
@@ -120,6 +137,30 @@ class Query:
     def slo_violation_amount_s(self, slo_s: float) -> float:
         """Returns the amount of SLO violation in seconds."""
         return max(0.0, self.slo_deviation_amount_s(slo_s))
+
+    def slo_relative_violation(self, slo_s: float) -> float:
+        """Returns the relative SLO violation: ``max(0, (latency − SLO) / SLO)``.
+
+        Returns 0.0 when the query meets or beats its SLO.
+        """
+        if slo_s <= 0:
+            return 0.0
+        return max(0.0, (self.latency_s - slo_s) / slo_s)
+
+    def slo_violation(self, slo_s: float, metric: SloMetric) -> float:
+        """Unified SLO-violation accessor, dispatching on *metric*.
+
+        * ``BINARY``     → ``float(self.violates_slo(slo_s))``
+        * ``ABSOLUTE_S`` → ``self.slo_violation_amount_s(slo_s)``
+        * ``RELATIVE``   → ``self.slo_relative_violation(slo_s)``
+        """
+        if metric is SloMetric.BINARY:
+            return float(self.violates_slo(slo_s))
+        if metric is SloMetric.ABSOLUTE_S:
+            return self.slo_violation_amount_s(slo_s)
+        if metric is SloMetric.RELATIVE:
+            return self.slo_relative_violation(slo_s)
+        raise ValueError(f"Unknown SloMetric: {metric}")
 
     def has_slo_slack(self, slo_s: float) -> bool:
         """Returns whether the query has any SLO slack

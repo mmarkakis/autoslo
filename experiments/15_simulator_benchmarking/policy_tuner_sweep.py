@@ -39,6 +39,7 @@ import pandas as pd
 import yaml
 
 import autoslo.utils.paths as pu
+from autoslo.workload_definition.query import SloMetric
 from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
@@ -321,9 +322,8 @@ def main(args):
         blueprint_name="dynamic",
         slo_s=args.slo_s,
         slo_dict_filename=args.slo_dict_filename,
-        optimize_based_on_slo_violation_amount=args.optimize_cumulative_slo_violation_time,
-        slo_violation_rate_threshold=args.slo_violation_rate_threshold,
-        slo_violation_amount_threshold_s=args.slo_violation_amount_threshold_s,
+        slo_metric=SloMetric(args.slo_metric),
+        slo_threshold=args.slo_threshold,
         verbose=True,
         export_video=False,
         experiment_name=experiment_name,
@@ -433,22 +433,17 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--slo_violation_rate_threshold",
-        type=float,
-        default=0.05,
-        help="Acceptable SLO violation rate threshold.",
+        "--slo_metric",
+        type=str,
+        default="relative",
+        choices=["binary", "absolute_s", "relative"],
+        help="SLO violation metric for routing (binary, absolute_s, relative).",
     )
     parser.add_argument(
-        "--optimize_cumulative_slo_violation_time",
-        type=bool,
-        default=True,
-        help="Optimise for cumulative SLO violation time.",
-    )
-    parser.add_argument(
-        "--slo_violation_amount_threshold_s",
+        "--slo_threshold",
         type=float,
-        default=30.0,
-        help="Acceptable cumulative SLO violation time in seconds.",
+        default=0.0,
+        help="Threshold for the chosen SLO metric.",
     )
 
     # -- Sampling ---------------------------------------------------------
