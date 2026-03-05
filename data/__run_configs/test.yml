@@ -1,0 +1,28 @@
+schema_name: ext_tpcds1000
+workload_name: test_workload
+iconq_model_id: "1771539369"
+slo_s: 30.0
+experiment_name: test_experiment
+
+# Optional overrides (all have sensible defaults)
+verbose: true
+export_video: false
+optimize_based_on_slo_violation_amount: true
+slo_violation_rate_threshold: 0.0
+slo_violation_amount_threshold_s: 0.0
+
+dynamic_cluster_config:
+  initial_rpus:
+    - 16
+    - 16
+  allowed_rpu_sizes:
+    - 4
+    - 8
+    - 16
+    - 32
+  spin_up_delay_s: 120.0
+
+eta_crit: 0.1
+idle_periods_before_tear_down: 5
+capacity_poll_interval_s: 60.0
+min_cluster_lifetime_s: 1200.0

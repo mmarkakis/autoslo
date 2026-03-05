@@ -5,7 +5,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
 import yaml
@@ -27,13 +27,14 @@ from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
 from autoslo.routing.routing_core import RoutingCore
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.query import Query
-from autoslo.workload_definition.redset_workload import (
-    RedsetWorkload,
-    RedsetWorkloadSamplingSpec,
-)
 from autoslo.workload_definition.workload import Workload
+
+if TYPE_CHECKING:
+    from autoslo.workload_definition.redset_workload import (
+        RedsetWorkload,
+        RedsetWorkloadSamplingSpec,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -59,17 +60,18 @@ class WorkloadSimulator:
         workload_name: str,
         iconq_model_id: str,
         slo_s: float,
+        schema_name: Optional[str] = None,
         optimize_based_on_slo_violation_amount: bool = False,
         slo_violation_rate_threshold: float = 0,
         slo_violation_amount_threshold_s: float = 0,
         slo_dict_filename: Optional[str] = None,
-        verbose: bool = False,
+        verbose: bool = True,
         export_video: bool = False,
         video_frame_duration: float = 1.0,
         simulator_run_id: Optional[str] = None,
         experiment_name: Optional[str] = None,
         overwrite_experiment: bool = False,
-        dynamic_cluster_config: DynamicClusterConfig = DynamicClusterConfig(),
+        dynamic_cluster_config: Optional[DynamicClusterConfig] = None,
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
         capacity_poll_interval_s: float = 60.0,
@@ -91,7 +93,11 @@ class WorkloadSimulator:
         self._iconq_model = self._model_policy.iconq_model  # convenience alias
 
         # Dynamic provisioning parameters.
-        self._dynamic_cluster_config = dynamic_cluster_config
+        self._dynamic_cluster_config = (
+            dynamic_cluster_config
+            if dynamic_cluster_config is not None
+            else DynamicClusterConfig()
+        )
         self._cc_eta_crit = eta_crit
         self._cc_idle_periods = idle_periods_before_tear_down
         self._cc_poll_interval_s = capacity_poll_interval_s
@@ -111,11 +117,22 @@ class WorkloadSimulator:
         self._simulator_run_id = simulator_run_id
         self._experiment_name = experiment_name
         self._overwrite_experiment = overwrite_experiment
+        self._schema_name = schema_name
         self._workload: Workload
         if workload_name.startswith("redset"):
+            from autoslo.workload_definition.redset_workload import RedsetWorkload  # noqa: PLC0415
             self._workload = RedsetWorkload.load(workload_name)
         else:
-            self._workload = Chunk.load(workload_name)
+            workload_path = os.path.join(
+                pu.get_workloads_dir(),
+                schema_name or "",
+                f"{workload_name}.parquet",
+            )
+            self._workload = Workload(
+                workload_name,
+                pd.read_parquet(workload_path),
+            )
+        self._workload.set_rel_start_times_from_zero()
 
         self._run_id = simulator_run_id or str(
             int(datetime.now().timestamp() * 1000)
@@ -224,6 +241,7 @@ class WorkloadSimulator:
             workload_name=cfg["workload_name"],
             iconq_model_id=cfg["iconq_model_id"],
             slo_s=cfg["slo_s"],
+            schema_name=cfg.get("schema_name"),
             optimize_based_on_slo_violation_amount=cfg.get(
                 "optimize_based_on_slo_violation_amount", False
             ),
@@ -616,7 +634,10 @@ class WorkloadSimulator:
     # Simulation
     # ------------------------------------------------------------------
 
-    def simulate_one(self, sampling_spec: RedsetWorkloadSamplingSpec) -> None:
+    def simulate_one(
+        self,
+        sampling_spec: "Optional[RedsetWorkloadSamplingSpec]" = None,
+    ) -> None:
         """
         First pass: route queries as they come in, preferring active endpoints
         and minimizing SLO violations.
@@ -628,7 +649,11 @@ class WorkloadSimulator:
         self._seed = getattr(sampling_spec, "seed", None)
         self._write_config_yml()
 
-        queries = self._workload.queries(sampling_spec=sampling_spec)
+        queries = (
+            self._workload.queries(sampling_spec=sampling_spec)  # type: ignore[call-arg]
+            if type(self._workload).__name__ == "RedsetWorkload"
+            else self._workload.queries()
+        )
         print(
             f"Simulating routing of {len(queries)} queries from workload "
             f"{self._workload_name} using Iconq model {self._iconq_model_id}..."
@@ -667,6 +692,7 @@ class WorkloadSimulator:
             selected_cluster_name = result.cluster_name
             tq = result.tracking_query
             self_latency_s = result.score.latencies[query.query_id]
+
             self._log_if_verbose(
                 {
                     "timestamp": query.rel_start_time_s,
@@ -968,3 +994,24 @@ class WorkloadSimulator:
             meta["runs"].append(run_entry)
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run the WorkloadSimulator from a YAML config file.",
+    )
+    parser.add_argument(
+        "config",
+        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    sim = WorkloadSimulator.from_config(args.config)
+    sim.simulate_one()

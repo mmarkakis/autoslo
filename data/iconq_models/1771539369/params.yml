@@ -13,6 +13,7 @@ init_config:
   lstm_hidden_size: 128
   lstm_num_layers: 1
   mdn_num_gaussians: 3
+  schema_name: ext_tpcds1000
   stage_model_id: /home/markakis/chunkbench/data/stage_models/1771538841
   stage_model_init_params: null
   train_on_log_runtime: true

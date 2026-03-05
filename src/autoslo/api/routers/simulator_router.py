@@ -86,7 +86,7 @@ class ExperimentSummary(BaseModel):
 class TimelineInterval(BaseModel):
     cluster_name: str
     query_id: Any
-    tpcds_temp_and_q_idx: Any
+    query_text_id: Any
     start_s: float
     end_s: float
     state: str  # "COMPLETED" | "RUNNING"
@@ -189,7 +189,7 @@ def get_run_timeline(experiment: str, run_id: str):
 
     routing = (
         log[log["event_type"] == "routing"]
-        .set_index("query_id")[["timestamp", "cluster_name", "end_time_s", "tpcds_temp_and_q_idx"]]
+        .set_index("query_id")[["timestamp", "cluster_name", "end_time_s", "query_text_id"]]
     )
     completions = (
         log[log["event_type"] == "completion"]
@@ -230,7 +230,7 @@ def get_run_timeline(experiment: str, run_id: str):
         end_s = float(row["final_end_s"])
         duration = end_s - start_s
         state = str(row["state"])
-        tpcds = row.get("tpcds_temp_and_q_idx")
+        tpcds = row.get("query_text_id")
         row_slo_s = resolver.resolve(tpcds)
         viol = state == "COMPLETED" and duration > row_slo_s
         if viol:
@@ -239,7 +239,7 @@ def get_run_timeline(experiment: str, run_id: str):
             TimelineInterval(
                 cluster_name=str(row["cluster_name"]),
                 query_id=qid,
-                tpcds_temp_and_q_idx=tpcds,
+                query_text_id=tpcds,
                 start_s=start_s,
                 end_s=end_s,
                 state=state,
@@ -332,26 +332,26 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
     log = pd.read_parquet(log_path)
     completions = log[log["event_type"] == "completion"].copy()
 
-    # Join with routing to get tpcds_temp_and_q_idx (completions log lacks it)
+    # Join with routing to get query_text_id (completions log lacks it)
     routing = (
         log[log["event_type"] == "routing"]
-        .set_index("query_id")[["tpcds_temp_and_q_idx", "latency_s"]]
+        .set_index("query_id")[["query_text_id", "latency_s"]]
     )
     # Completions have query_id in the index after set_index; merge on query_id
     completions = completions.set_index("query_id")
     # Use latency_s from completions when available, fall back to routing
     merged = completions[["latency_s"]].join(
-        routing[["tpcds_temp_and_q_idx"]], how="left"
+        routing[["query_text_id"]], how="left"
     )
     merged["latency_s"] = merged["latency_s"].fillna(0.0)
 
     # Extract template IDs
     from autoslo.workload_definition.query import Query
 
-    merged["template_id"] = merged["tpcds_temp_and_q_idx"].map(
+    merged["template_id"] = merged["query_text_id"].map(
         lambda x: Query.template_id(x) if pd.notna(x) and x else -1
     )
-    merged["slo_s_row"] = merged["tpcds_temp_and_q_idx"].map(resolver.resolve)
+    merged["slo_s_row"] = merged["query_text_id"].map(resolver.resolve)
 
     results: list[TemplateStats] = []
     for tid, group in merged.groupby("template_id"):

@@ -79,7 +79,8 @@ class XGBoostModel:
         else:
             self._iconq_query_featurizer_id = iconq_query_featurizer_id
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                *iconq_query_featurizer_id
+                schema_name="ext_tpcds1000",  # TODO: pass schema_name in as a parameter instead of hardcoding
+                timestamp=iconq_query_featurizer_id,
             )
 
         self._train_on_log_runtime = train_on_log_runtime
@@ -148,9 +149,11 @@ class XGBoostModel:
         effective_rpu = 0 if self._ignore_cluster_size else cluster_rpu
 
         for query_id, query_text_id in query_text_ids.items():
-            featurization = self._iconq_query_featurizer.featurize_from_query_text_id(
-                query_text_id
-            ).copy()
+            featurization = (
+                self._iconq_query_featurizer.featurize_from_query_text_id(
+                    query_text_id
+                ).copy()
+            )
             if featurization is None:
                 raise ValueError(
                     f"Query {query_id} could not be featurized using "
@@ -243,6 +246,7 @@ class XGBoostModel:
                     continue
                 cluster_name = trace.cluster_name_from_query_id(query_id)
                 from autoslo.blueprints.cluster import Cluster
+
                 cluster_rpu = (
                     0
                     if self._ignore_cluster_size

@@ -44,6 +44,8 @@ class IconqModelInitConfig:
     A dataclass for the configuration of the Iconq model at initialization.
     """
 
+    schema_name: str  # The schema name.
+
     iconq_query_featurizer_id: Optional[tuple[str, str]] = None
     iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None
     stage_model_id: Optional[str] = None
@@ -227,9 +229,11 @@ class IconqModel:
                 init_config.iconq_query_featurizer_id
             )
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                *init_config.iconq_query_featurizer_id
+                self._init_config.schema_name,
+                init_config.iconq_query_featurizer_id
             )
         self._iconq_interaction_featurizer = IconqInteractionFeaturizer(
+            schema_name=init_config.schema_name,
             iconq_query_featurizer_id=self._iconq_query_featurizer_id,
             ignore_cluster_size=init_config.ignore_cluster_size,
         )

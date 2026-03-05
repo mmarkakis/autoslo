@@ -167,6 +167,11 @@ def list_composite_workloads() -> list[str]:
         d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))
     )
 
+def get_workloads_dir() -> str:
+    """
+    Return the absolute path to the workloads directory.
+    """
+    return os.path.join(get_data_path(), "__workloads")
 
 def get_conn_info_path() -> str:
     """

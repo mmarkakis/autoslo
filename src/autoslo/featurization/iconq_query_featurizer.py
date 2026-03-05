@@ -84,7 +84,7 @@ class IconqQueryFeaturizer:
         self._from_sys_query_explain = from_sys_query_explain
 
         self._featurization_cache: dict[
-            str, IconqQueryFeaturizer.IconqQueryFeaturization
+            QueryTextId, IconqQueryFeaturizer.IconqQueryFeaturization
         ] = {}
         # Lazy numpy cache: populated on first call to
         # featurize_from_query_text_id_as_numpy.
@@ -358,7 +358,7 @@ class IconqQueryFeaturizer:
 
     def featurize_from_query_text_id(
         self,
-        query_text_id: QueryTextId,
+        query_text_id: QueryTextId | str
     ) -> IconqQueryFeaturization:
         """
         Converts the query identified by *query_text_id* into a vectorized
@@ -373,8 +373,10 @@ class IconqQueryFeaturizer:
         Raises:
             ValueError: If *query_text_id* is not in the featurization cache.
         """
+        if isinstance(query_text_id, str):
+            query_text_id = QueryTextId(query_text_id)
 
-        if query_text_id.value in self._featurization_cache:
+        if query_text_id in self._featurization_cache:
             return self._featurization_cache[query_text_id]
 
         raise ValueError(
@@ -750,22 +752,8 @@ class IconqQueryFeaturizer:
 
         # Load featurization cache.
         cache_path = os.path.join(load_dir, "featurizations.pkl")
-        # Temp fix: if pickle file doesn't exist, try loading from yaml file
-        # and immediately dump to pickle for future use.
-        if not os.path.exists(cache_path):
-            print(
-                f"Pickle file not found at {cache_path}, trying to load from yaml file."
-            )
-            yaml_cache_path = os.path.join(load_dir, "featurizations.yml")
-            with open(yaml_cache_path, "r") as f:
-                l = yaml.safe_load(f)
-            precomputed_featurization_cache = {
-                item["query_text_id"]: item["featurization"]
-                for item in l
-            }
-        else:
-            with open(cache_path, "rb") as f:
-                precomputed_featurization_cache = pickle.load(f)
+        with open(cache_path, "rb") as f:
+            precomputed_featurization_cache = pickle.load(f)
 
         featurizer = IconqQueryFeaturizer(
             schema_name=params["schema_name"],

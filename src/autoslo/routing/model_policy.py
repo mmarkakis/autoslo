@@ -108,6 +108,10 @@ class ModelPolicy(RoutingPolicy):
     def iconq_model(self) -> IconqModel:
         return self._iconq_model
 
+    @property
+    def name(self) -> str:
+        return f"ModelPolicy(iconq_model_id={self._iconq_model_id})"
+
     # ------------------------------------------------------------------
     # RoutingPolicy hooks
     # ------------------------------------------------------------------

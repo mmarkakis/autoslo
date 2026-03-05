@@ -19,7 +19,8 @@ class IconqInteractionFeaturizer:
 
     def __init__(
         self,
-        iconq_query_featurizer_id: Optional[tuple[str, str]] = None,
+        schema_name: str,
+        iconq_query_featurizer_id: Optional[str] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
         ignore_cluster_size: bool = False,
     ):
@@ -27,12 +28,11 @@ class IconqInteractionFeaturizer:
         Initializes the IconqInteractionFeaturizer.
 
         Parameters:
+            schema_name: The schema name.
             iconq_query_featurizer_id: The identifier of the
-                IconqQueryFeaturizer to use for featurizing queries, as a
-                ``(schema_name, timestamp)`` tuple returned by
-                :meth:`~IconqQueryFeaturizer.save`. If not provided, must
-                provide iconq_query_featurizer_init_params, with appropriate
-                keys, to initialize a new IconqQueryFeaturizer.
+                IconqQueryFeaturizer to use for featurizing queries. If not 
+                provided, must provide iconq_query_featurizer_init_params, with 
+                appropriate keys, to initialize a new IconqQueryFeaturizer.
             iconq_query_featurizer_init_params: The initialization parameters
                 for the IconqQueryFeaturizer, if iconq_query_featurizer_id is
                 not provided. Must include a key for each required parameter of
@@ -56,10 +56,12 @@ class IconqInteractionFeaturizer:
         else:
             self._iconq_query_featurizer_id = iconq_query_featurizer_id
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                *iconq_query_featurizer_id
+                schema_name,
+                iconq_query_featurizer_id
             )
         self._ignore_cluster_size = ignore_cluster_size
         self._rpu_lookup: Callable[[str], int] | None = None
+        self._schema_name = schema_name
 
     def set_rpu_lookup(self, lookup: Callable[[str], int]) -> None:
         """Override the default RPU lookup used when featurizing.
