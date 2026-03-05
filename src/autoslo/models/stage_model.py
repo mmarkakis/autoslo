@@ -82,18 +82,18 @@ class StageModel:
                 "xgboost_model_train_params must be provided."
             )
 
-        # Memoization cache: (query_text_id, cluster_name) -> ModelPrediction.
+        # Memoization cache: (query_text_id, cluster_rpu) -> ModelPrediction.
         # Both sub-models are deterministic functions of these two inputs, so
         # any repeated call for the same pair is a free dict lookup. The
         # vocabulary is finite (~800 entries), so the cache saturates quickly.
         self._prediction_cache: dict[
-            tuple[QueryTextId, str], ModelPrediction
+            tuple[QueryTextId, int], ModelPrediction
         ] = {}
 
     def predict(
         self,
         query_texts: dict[str, str],
-        cluster_name: str,
+        cluster_rpu: int,
         schema_name: str,
     ) -> dict[str, ModelPrediction]:
         """
@@ -102,7 +102,7 @@ class StageModel:
         Parameters:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
-            cluster_name: The name of the cluster where the queries will be run.
+            cluster_rpu: The RPU size of the target cluster.
             schema_name: The name of the schema the queries belong to.
 
         Returns:
@@ -113,10 +113,10 @@ class StageModel:
             query_id: Trace.extract_query_text_id(query_text, schema_name)
             for query_id, query_text in query_texts.items()
         }
-        return self.predict_from_query_text_id(query_text_ids, cluster_name)
+        return self.predict_from_query_text_id(query_text_ids, cluster_rpu)
 
     def predict_from_query_text_id(
-        self, query_text_ids: dict[str, QueryTextId], cluster_name: str
+        self, query_text_ids: dict[str, QueryTextId], cluster_rpu: int
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given queries, based on their
@@ -125,7 +125,7 @@ class StageModel:
         Parameters:
             query_text_ids: A dictionary mapping query ids to
                 :class:`~autoslo.workload_definition.query.QueryTextId` objects.
-            cluster_name: The name of the cluster where the queries will be run.
+            cluster_rpu: The RPU size of the target cluster.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
@@ -136,7 +136,7 @@ class StageModel:
         # Check memoization cache first; compute only for unseen pairs.
         remaining_query_text_ids: dict[str, QueryTextId] = {}
         for query_id, query_text_id in query_text_ids.items():
-            cached = self._prediction_cache.get((query_text_id, cluster_name))
+            cached = self._prediction_cache.get((query_text_id, cluster_rpu))
             if cached is not None:
                 overall_predictions[query_id] = cached
             else:
@@ -148,14 +148,14 @@ class StageModel:
         # Process cache model first
         cache_predictions = self._cache_model.predict_from_query_text_id(
             remaining_query_text_ids,
-            cluster_name=cluster_name,
+            cluster_rpu=cluster_rpu,
         )
         xgboost_remaining: dict[str, QueryTextId] = {}
         for query_id, prediction in cache_predictions.items():
             if prediction is not None:
                 overall_predictions[query_id] = prediction
                 self._prediction_cache[
-                    (remaining_query_text_ids[query_id], cluster_name)
+                    (remaining_query_text_ids[query_id], cluster_rpu)
                 ] = prediction
             else:
                 xgboost_remaining[query_id] = remaining_query_text_ids[
@@ -166,13 +166,13 @@ class StageModel:
         xgboost_predictions = (
             self._xgboost_model.predict_from_query_text_id(
                 xgboost_remaining,
-                cluster_name=cluster_name,
+                cluster_rpu=cluster_rpu,
             )
         )
         for query_id, prediction in xgboost_predictions.items():
             overall_predictions[query_id] = prediction
             self._prediction_cache[
-                (xgboost_remaining[query_id], cluster_name)
+                (xgboost_remaining[query_id], cluster_rpu)
             ] = prediction
 
         return overall_predictions

@@ -7,7 +7,8 @@ import psycopg2 as pg2
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.blueprints.blueprint import Blueprint
+from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+from autoslo.workload_execution.conn_utils import ConnWithSetup
 
 SYS_QUERY_HISTORY_QUERY = """
     SELECT *
@@ -133,16 +134,26 @@ class RunStatsCollector:
         return df, num_rows
 
     async def collect_stats(self, skip_write_on_mismatch: bool = False):
+        bp_configs = pu.get_blueprint_dicts_from_config()
+        cluster_configs = pu.get_cluster_dicts_from_config()
+
         for run_id, run_params in self.run_params.items():
             print(f"Collecting stats for run {run_id}...")
 
-            blueprint = Blueprint.from_config(
-                blueprint_name=run_params["blueprint_name"]
-            )
-            for cluster in blueprint.clusters:
-                # Open a connection pool to the cluster.
-                conn_pool = cluster.conn_pool(minconn=1, maxconn=1)
-                conn = conn_pool.getconn()
+            bp_name = run_params["blueprint_name"]
+            cluster_names = bp_configs[bp_name]["cluster_names"]
+
+            for cluster_name in cluster_names:
+                # Build connection from config.
+                ci = ClusterConnInfo.from_dict(cluster_configs[cluster_name])
+                conn = ConnWithSetup(
+                    host=ci.host,
+                    port=ci.port,
+                    user=ci.user,
+                    password=ci.password,
+                    dbname=ci.dbname,
+                    search_path="public",
+                )
 
                 # Query sys_query_history and write out the results.
                 sys_query_history_df, sys_query_history_df_len = (
@@ -151,7 +162,7 @@ class RunStatsCollector:
                         SYS_QUERY_HISTORY_QUERY.format(run_id),
                         run_id,
                         "sys_query_history",
-                        cluster.name,
+                        cluster_name,
                     )
                 )
 
@@ -176,33 +187,32 @@ class RunStatsCollector:
                     SYS_QUERY_EXPLAIN_QUERY.format(min_query_id, max_query_id),
                     run_id,
                     "sys_query_explain",
-                    cluster.name,
+                    cluster_name,
                 )
                 await self.run_one_and_write_out(
                     conn,
                     SYS_QUERY_DETAIL_QUERY.format(min_time, max_time),
                     run_id,
                     "sys_query_detail",
-                    cluster.name,
+                    cluster_name,
                 )
                 await self.run_one_and_write_out(
                     conn,
                     SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(min_time, max_time),
                     run_id,
                     "sys_external_query_detail",
-                    cluster.name,
+                    cluster_name,
                 )
                 await self.run_one_and_write_out(
                     conn,
                     SYS_SERVERLESS_USAGE_QUERY.format(min_time, max_time),
                     run_id,
                     "sys_serverless_usage",
-                    cluster.name,
+                    cluster_name,
                 )
 
-                # Release the connection and close the pool.
-                conn_pool.putconn(conn)
-                cluster.destroy_conn_pool()
+                # Close the connection.
+                conn.close()
 
 
 if __name__ == "__main__":

@@ -19,11 +19,10 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     render_gantt_scrubber,
 )
 from autoslo.blueprint_selection.slo_resolver import SloResolver
-from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.capacity_controller import CapacityController
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
-from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
 from autoslo.routing.routing_core import RoutingCore
@@ -151,34 +150,15 @@ class WorkloadSimulator:
         ]
         self._log_threshold = 10000
 
-        # Simulator-specific bookkeeping (not managed by ClusterStateTracker).
-        self._completed_queries_per_cluster: dict[str, list[Query]] = {}
-        self._cluster_cost_per_second: dict[str, float] = {}
-
         # Dynamic provisioning state.
         self._provisioner: Optional[SimulatedProvisioner] = None
+        self._pool: Optional[ManagedClusterPool] = None
         self._capacity_controller: Optional[CapacityController] = None
-        self._pending_events: list[tuple[float, int, Cluster]] = []
+        self._router: Optional[Router] = None
+        self._pending_events: list[tuple[float, int, str]] = []
         self._event_counter: int = 0
         self._current_sim_time_s: float = 0.0
         self._next_tick_time_s: float = 0.0
-        # Clusters marked for tear-down that still have active queries.
-        # They remain in the state tracker (queries keep running) but are
-        # excluded from routing and capacity-controller polling.
-        self._draining_clusters: set[str] = set()
-
-        # Start with an empty tracker; _init_dynamic_clusters adds clusters.
-        self._state_tracker = ClusterStateTracker(
-            cluster_names=[],
-            cost_per_second={},
-            rpu_per_cluster={},
-        )
-
-        # Create the Router (invokes policy.on_attach to wire up RPU lookup).
-        self._router = Router(
-            policy=self._model_policy,
-            state_tracker=self._state_tracker,
-        )
 
         self._init_dynamic_clusters()
 
@@ -408,62 +388,41 @@ class WorkloadSimulator:
     # Dynamic provisioning helpers
     # ------------------------------------------------------------------
 
-    def _activate_cluster_bookkeeping(
-        self, cluster: Cluster,
-    ) -> None:
-        """Add per-cluster bookkeeping for a newly activated cluster."""
-        self._state_tracker.add_cluster(cluster)
-        self._completed_queries_per_cluster[cluster.name] = []
-        self._cluster_cost_per_second[cluster.name] = cluster.cost_per_second
-
-    def _deactivate_cluster_bookkeeping(self, cluster_name: str) -> None:
-        """Remove a fully-drained cluster from routing state.
-
-        Completed queries and cost info are preserved for billing
-        analysis.
-        """
-        self._draining_clusters.discard(cluster_name)
-        try:
-            self._state_tracker.remove_cluster(cluster_name)
-        except (KeyError, ValueError):
-            pass  # already removed or still has active queries
-
     def _init_dynamic_clusters(self) -> None:
-        """Set up provisioner, controller, and initial clusters."""
+        """Set up provisioner, pool, router, controller, and initial clusters."""
         config = self._dynamic_cluster_config
-
-        # Clear simulator-specific state.
-        self._completed_queries_per_cluster.clear()
-        self._cluster_cost_per_second.clear()
-        self._draining_clusters.clear()
-
-        # Rebuild state tracker from scratch.
-        self._state_tracker = ClusterStateTracker(
-            cluster_names=[],
-            cost_per_second={},
-            rpu_per_cluster={},
-        )
-        self._router = Router(
-            policy=self._model_policy,
-            state_tracker=self._state_tracker,
-        )
 
         # Provisioner
         self._provisioner = SimulatedProvisioner(
             spin_up_delay_s=config.spin_up_delay_s
         )
 
+        # Pool (no initial clusters via constructor — we add them below
+        # with instant on_cluster_ready to bypass spin-up delay).
+        self._pool = ManagedClusterPool(
+            provisioner=self._provisioner,
+            initial_rpus=None,
+            allowed_rpu_sizes=list(config.allowed_rpu_sizes),
+        )
+
         # Activate initial clusters immediately (no spin-up delay).
         for rpu in config.initial_rpus:
-            cluster = Cluster.new(rpu=rpu)
-            self._activate_cluster_bookkeeping(cluster)
+            name = self._pool.request_spin_up(rpu, 0.0)
+            self._pool.on_cluster_ready(name, 0.0)
 
-        # Capacity controller (wired to state tracker, excluding draining).
+        # Create the Router (invokes policy.on_attach to wire up RPU lookup).
+        self._router = Router(
+            policy=self._model_policy,
+            pool=self._pool,
+        )
+
+        # Capacity controller (pool excludes draining clusters from routing;
+        # we also exclude them from capacity-controller polling).
         self._capacity_controller = CapacityController(
             get_active_queries=lambda: {
                 cn: qs
-                for cn, qs in self._state_tracker.get_all_active_queries().items()
-                if cn not in self._draining_clusters
+                for cn, qs in self._pool.get_all_active_queries().items()
+                if cn not in self._pool.draining_cluster_names
             },
             slo_resolver=self._slo_resolver,
             on_spin_up=self._on_sim_spin_up,
@@ -478,7 +437,7 @@ class WorkloadSimulator:
 
         # Register all initial clusters with the controller so
         # they are protected by the minimum lifetime.
-        for cn in self._state_tracker.cluster_names:
+        for cn in self._pool.cluster_names:
             self._capacity_controller.notify_cluster_ready(cn, 0.0)
 
         # Event queue
@@ -489,18 +448,20 @@ class WorkloadSimulator:
 
     def _on_sim_spin_up(self, reason: str, rpu: int) -> None:
         """Capacity-controller callback: schedule a new cluster."""
-        cluster = self._provisioner.spin_up(rpu, self._current_sim_time_s)
+        cluster_name = self._pool.request_spin_up(
+            rpu, self._current_sim_time_s
+        )
         ready_time = (
             self._current_sim_time_s + self._provisioner.spin_up_delay_s
         )
         self._event_counter += 1
         heapq.heappush(
             self._pending_events,
-            (ready_time, self._event_counter, cluster),
+            (ready_time, self._event_counter, cluster_name),
         )
         logger.debug(
             "Scheduled cluster %s (%d RPU) ready at t=%.1f",
-            cluster.name,
+            cluster_name,
             rpu,
             ready_time,
         )
@@ -508,7 +469,7 @@ class WorkloadSimulator:
             {
                 "timestamp": self._current_sim_time_s,
                 "event_type": "spin_up_scheduled",
-                "cluster_name": cluster.name,
+                "cluster_name": cluster_name,
                 "rpu": rpu,
                 "reason": reason,
                 "end_time_s": ready_time,
@@ -518,19 +479,14 @@ class WorkloadSimulator:
     def _on_sim_tear_down(self, cluster_name: str) -> None:
         """Capacity-controller callback: begin graceful tear-down.
 
-        The cluster is marked as *draining* — no new queries will be
-        routed to it, but existing active queries are allowed to finish.
-        Once the last active query completes (detected during
-        ``_cleanup_completed_queries_up_to``), the cluster is fully
-        deactivated.
+        Delegates to the pool, which marks the cluster as DRAINING.
+        When the last active query finishes (via ``on_query_finish``),
+        the pool automatically finalises removal.
         """
-        # Count non-draining clusters to decide if this is the last one.
-        routable = [
-            cn
-            for cn in self._state_tracker.cluster_names
-            if cn not in self._draining_clusters
-        ]
-        if len(routable) <= 1:
+        # Pre-check for logging: pool will guard against last-cluster
+        # removal, but we want a specific log entry.
+        ready_names = self._pool.ready_cluster_names
+        if len(ready_names) <= 1:
             logger.debug(
                 "Skipping tear-down of %s — it is the last routable "
                 "cluster.",
@@ -542,17 +498,17 @@ class WorkloadSimulator:
                     "event_type": "tear_down_blocked",
                     "cluster_name": cluster_name,
                     "reason": "last_routable_cluster",
-                    "num_active_clusters": len(
-                        self._state_tracker.cluster_names
-                    ),
+                    "num_active_clusters": len(ready_names),
                 }
             )
             return
-        assert self._provisioner is not None
-        self._provisioner.tear_down(cluster_name, self._current_sim_time_s)
-        active = self._state_tracker.get_active_queries(cluster_name)
+
+        active = self._pool.get_active_queries(cluster_name)
+        self._pool.request_tear_down(
+            cluster_name, self._current_sim_time_s
+        )
+
         if active:
-            self._draining_clusters.add(cluster_name)
             logger.debug(
                 "Cluster %s marked as draining with %d active queries.",
                 cluster_name,
@@ -568,7 +524,6 @@ class WorkloadSimulator:
                 }
             )
         else:
-            self._deactivate_cluster_bookkeeping(cluster_name)
             self._log_if_verbose(
                 {
                     "timestamp": self._current_sim_time_s,
@@ -582,29 +537,30 @@ class WorkloadSimulator:
     def _process_pending_events_up_to(self, time_s: float) -> None:
         """Drain cluster-ready events that fire at or before *time_s*."""
         while self._pending_events and self._pending_events[0][0] <= time_s:
-            _, _, cluster = heapq.heappop(self._pending_events)
-            self._activate_cluster_bookkeeping(cluster)
+            _, _, cluster_name = heapq.heappop(self._pending_events)
+            self._pool.on_cluster_ready(cluster_name, time_s)
+            rpu = self._pool.get_rpu(cluster_name)
             # Notify the capacity controller that the cluster
             # is now ready (decrements pending count and records ready
             # time for minimum-lifetime enforcement).
             if self._capacity_controller is not None:
                 self._capacity_controller.notify_cluster_ready(
-                    cluster.name, time_s
+                    cluster_name, time_s
                 )
             logger.debug(
                 "Cluster %s (%d RPU) became ready at t=%.1f",
-                cluster.name,
-                cluster.rpu,
+                cluster_name,
+                rpu,
                 time_s,
             )
             self._log_if_verbose(
                 {
                     "timestamp": time_s,
                     "event_type": "cluster_ready",
-                    "cluster_name": cluster.name,
-                    "rpu": cluster.rpu,
+                    "cluster_name": cluster_name,
+                    "rpu": rpu,
                     "num_active_clusters": len(
-                        self._state_tracker.cluster_names
+                        self._pool.cluster_names
                     ),
                 }
             )
@@ -624,11 +580,12 @@ class WorkloadSimulator:
             self._current_sim_time_s = tick_time
 
             # Compute headroom for logging before the tick.
-            all_aq = self._state_tracker.get_all_active_queries()
+            all_aq = self._pool.get_all_active_queries()
+            draining = self._pool.draining_cluster_names
             all_active = [
                 q
                 for cn, qs in all_aq.items()
-                if cn not in self._draining_clusters
+                if cn not in draining
                 for q in qs
             ]
             headroom = RoutingCore.compute_slo_headroom(
@@ -641,8 +598,8 @@ class WorkloadSimulator:
                     "headroom": headroom,
                     "num_active_queries": len(all_active),
                     "num_active_clusters": len(
-                        self._state_tracker.cluster_names
-                    ) - len(self._draining_clusters),
+                        self._pool.cluster_names
+                    ),
                 }
             )
 
@@ -698,11 +655,11 @@ class WorkloadSimulator:
             )
 
             # Route the query via the Router (delegates to ModelPolicy).
+            # DRAINING clusters are automatically excluded by the pool.
             result = self._router.route_query_with_predictions(
                 query_id=query.query_id,
                 query_text_id=str(query.query_text_id),
                 start_time_s=query.rel_start_time_s,
-                exclude_clusters=self._draining_clusters,
             )
             assert result.score is not None, (
                 "ModelPolicy must always produce a PlacementScore"
@@ -724,15 +681,15 @@ class WorkloadSimulator:
                 }
             )
 
-            # Register the tracking query with the state tracker.
+            # Register the tracking query with the pool.
             # (Handles neighbour bookkeeping and billing-window start.)
-            self._state_tracker.on_query_start(tq)
+            self._pool.on_query_start(tq)
 
             seq_num_to_cluster_name[i] = selected_cluster_name
 
             # Update co-runner latencies on the chosen cluster using the
             # model predictions returned by the router.
-            for q in self._state_tracker.get_active_queries(
+            for q in self._pool.get_active_queries(
                 selected_cluster_name
             ):
                 if q.query_id == query.query_id:
@@ -758,7 +715,9 @@ class WorkloadSimulator:
                 q.latency_s = updated_latency_s
 
         all_completed = [
-            q for qs in self._completed_queries_per_cluster.values() for q in qs
+            q
+            for qs in self._pool.get_all_completed_queries().values()
+            for q in qs
         ]
         if all_completed:
             workload_end_time_s = max(
@@ -787,11 +746,15 @@ class WorkloadSimulator:
             current_time_s: The current time in seconds since the start of the
                 workload. If None, all active queries are considered completed.
         """
-        clusters_to_deactivate: list[str] = []
-        for cluster_name in list(self._state_tracker.cluster_names):
-            active_queries = self._state_tracker.get_active_queries(
-                cluster_name
-            )
+        # Snapshot cluster names before processing (pool may auto-remove
+        # draining clusters as their last queries finish).
+        draining_before = set(self._pool.draining_cluster_names)
+        cluster_names = (
+            list(self._pool.ready_cluster_names) + list(draining_before)
+        )
+
+        for cluster_name in cluster_names:
+            active_queries = self._pool.get_active_queries(cluster_name)
             completed: list[tuple[Query, float]] = []
             for query in active_queries:
                 end_time_s = query.rel_start_time_s + query.latency_s
@@ -799,8 +762,9 @@ class WorkloadSimulator:
                     completed.append((query, end_time_s))
 
             for query, end_time_s in completed:
-                self._completed_queries_per_cluster[cluster_name].append(query)
-                self._state_tracker.on_query_finish(
+                # Pool handles: active → completed, billing window,
+                # auto-finalization of draining clusters.
+                self._pool.on_query_finish(
                     query_id=query.query_id,
                     cluster_name=cluster_name,
                     current_time_s=end_time_s,
@@ -819,18 +783,12 @@ class WorkloadSimulator:
                     }
                 )
 
-            # If a draining cluster has no more active queries,
-            # fully deactivate it.
-            remaining = self._state_tracker.get_active_queries(cluster_name)
-            if (
-                cluster_name in self._draining_clusters
-                and len(remaining) == 0
-            ):
-                clusters_to_deactivate.append(cluster_name)
-
-        # Deactivate fully-drained clusters (outside the iteration).
-        for cn in clusters_to_deactivate:
-            logger.debug("Draining cluster %s is now empty — deactivating.", cn)
+        # Detect draining clusters that were auto-removed by the pool.
+        draining_after = set(self._pool.draining_cluster_names)
+        for cn in draining_before - draining_after:
+            logger.debug(
+                "Draining cluster %s is now empty — deactivated.", cn
+            )
             self._log_if_verbose(
                 {
                     "timestamp": current_time_s,
@@ -838,12 +796,10 @@ class WorkloadSimulator:
                     "cluster_name": cn,
                     "reason": "drain_complete",
                     "num_active_clusters": len(
-                        self._state_tracker.cluster_names
-                    )
-                    - 1,  # this one is about to be removed
+                        self._pool.cluster_names
+                    ),
                 }
             )
-            self._deactivate_cluster_bookkeeping(cn)
 
     def write_out_visualization(self) -> None:
         """
@@ -896,11 +852,11 @@ class WorkloadSimulator:
 
         d = {}
 
-        cluster_names = sorted(self._completed_queries_per_cluster.keys())
+        all_completed = self._pool.get_all_completed_queries()
+        cost_map = self._pool.cost_per_second_map
+        cluster_names = sorted(all_completed.keys())
         for cluster_name in cluster_names:
-            completed_queries = self._completed_queries_per_cluster[
-                cluster_name
-            ]
+            completed_queries = all_completed[cluster_name]
             if len(completed_queries) == 0:
                 continue
 
@@ -908,7 +864,7 @@ class WorkloadSimulator:
                 [q.as_interval() for q in completed_queries],
             )
             total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
-            cost_per_second = self._cluster_cost_per_second.get(
+            cost_per_second = cost_map.get(
                 cluster_name, 0.0
             )
             d[cluster_name] = {

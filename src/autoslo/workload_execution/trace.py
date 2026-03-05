@@ -395,8 +395,8 @@ class Trace:
             for start, end in zip(df["start_time"], df["end_time"])
         ]
         billed_s = Billing.billed_s(query_intervals=query_intervals)
-        cluster = Cluster.from_config(cluster_name)
-        return billed_s * cluster.cost_per_second
+        rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        return billed_s * Cluster.cost_per_second_for_rpu(rpu)
 
     @property
     def query_ids(self) -> list[str]:

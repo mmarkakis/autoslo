@@ -13,8 +13,8 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprints.cluster_pool import ClusterPool
-from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
+from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 from autoslo.routing.router import Router
 from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.workload_definition.workload import Workload
@@ -74,20 +74,47 @@ class WorkloadRunner:
         initial_rpus = cfg["initial_rpus"]
         if not initial_rpus:
             raise ValueError("'initial_rpus' must list at least one RPU size.")
-        self.cluster_pool = ClusterPool(initial_rpus=initial_rpus)
 
-        # Validate maxconns and set up connection pool map.
+        # Validate maxconns.
         if cfg["maxconns"] < 1:
             raise ValueError("maxconns must be at least 1.")
         self.maxconns = cfg["maxconns"]
-        self.conn_pools = self.cluster_pool.conn_pool_map(
-            maxconn=self.maxconns, search_path=self.schema.search_path
-        )
 
-        # Build state tracker and router.
-        self.state_tracker = ClusterStateTracker.from_cluster_pool(
-            self.cluster_pool
+        # Build the provisioner.
+        prov_cfg = cfg.get("provisioner")
+        if prov_cfg is not None:
+            prov_cfg = dict(prov_cfg)
+            prov_type = prov_cfg.pop("type")
+            if prov_type == "redshift_serverless":
+                from autoslo.capacity.redshift_provisioner import (
+                    RedshiftServerlessProvisioner,
+                )
+                provisioner = RedshiftServerlessProvisioner(**prov_cfg)
+            else:
+                raise ValueError(
+                    f"Unknown provisioner type: {prov_type!r}."
+                )
+        else:
+            # Fallback for testing: simulated provisioner (no live connections).
+            provisioner = SimulatedProvisioner(spin_up_delay_s=0.0)
+
+        # Create the managed pool (provisioner creates clusters +
+        # connection pools).
+        self.pool = ManagedClusterPool(
+            provisioner=provisioner,
+            maxconns=self.maxconns,
+            search_path=self.schema.search_path,
         )
+        for rpu in initial_rpus:
+            name = self.pool.request_spin_up(rpu, 0.0)
+            # If the provisioner returned conn_info the cluster is already
+            # READY (auto-promoted).  Otherwise promote manually.
+            try:
+                self.pool.on_cluster_ready(name, 0.0)
+            except ValueError:
+                pass  # Already READY
+
+        # Build router.
         policy_cfg = dict(cfg["routing_policy"])
         self.routing_policy_config = policy_cfg
         self.routing_policy_name = policy_cfg.pop("type")
@@ -102,7 +129,7 @@ class WorkloadRunner:
         ](**policy_cfg)
         self.router = Router(
             policy=self.routing_policy,
-            state_tracker=self.state_tracker,
+            pool=self.pool,
         )
         self.closed_loop = bool(cfg.get("closed_loop", False))
 
@@ -164,7 +191,9 @@ class WorkloadRunner:
             "num_queries": len(self.workload_df),
             "schema_name": self.schema.name,
             "search_path": self.schema.search_path,
-            "initial_rpus": [c.rpu for c in self.cluster_pool.clusters],
+            "initial_rpus": [
+                self.pool.get_rpu(cn) for cn in self.pool.cluster_names
+            ],
             "routing_policy": self.routing_policy_config,
             "maxconns": self.maxconns,
             "closed_loop": self.closed_loop,
@@ -196,7 +225,7 @@ class WorkloadRunner:
         """
         logging.info(f"Starting query {query_id}")
         start_time = self._ts()
-        conn = self.conn_pools[cluster_name].getconn()
+        conn = self.pool.conn_pool(cluster_name).getconn()
         try:
             with conn.cursor() as cur:
                 edited = f"--{run_id}/{query_id}\n{query_text}"
@@ -215,7 +244,7 @@ class WorkloadRunner:
             logging.exception(f"Query {query_id} failed: {e}")
         finally:
             try:
-                self.conn_pools[cluster_name].putconn(conn)
+                self.pool.conn_pool(cluster_name).putconn(conn)
             except Exception:
                 pass
         end_time = self._ts()
@@ -321,7 +350,7 @@ class WorkloadRunner:
                     "cluster_name": cluster_name,
                 }
             )
-            if cluster_name not in self.conn_pools:
+            if cluster_name not in self.pool.conn_pool_map():
                 print(
                     f"QueryRouter returned unknown cluster name "
                     f"'{cluster_name}' for query {query_id}. Skipping query."

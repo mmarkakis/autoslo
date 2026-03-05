@@ -5,7 +5,7 @@ Abstract base for routing policies and simple built-in implementations.
 
 A :class:`RoutingPolicy` encapsulates *how* a query is assigned to a
 cluster, without owning any per-query bookkeeping.  Bookkeeping lives in
-:class:`~autoslo.routing.cluster_state_tracker.ClusterStateTracker`.
+:class:`~autoslo.routing.managed_cluster_pool.ManagedClusterPool`.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from autoslo.utils.class_with_factory import ClassWithFactory
 from autoslo.workload_definition.query import Query, QueryTextId
 
 if TYPE_CHECKING:
-    from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 
 class RoutingPolicy(ClassWithFactory):
@@ -27,7 +27,7 @@ class RoutingPolicy(ClassWithFactory):
 
     Subclasses must implement :meth:`select_cluster`.  Optionally override
     :meth:`build_tracking_query` to create richer :class:`Query` objects
-    for the state tracker (e.g. with featurisations for model-based
+    for the pool (e.g. with featurisations for model-based
     policies).
     """
 
@@ -40,7 +40,7 @@ class RoutingPolicy(ClassWithFactory):
         query_id: str,
         query_text_id: str,
         start_time_s: float,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
     ) -> str:
         """Choose the best cluster for the incoming query.
@@ -53,7 +53,7 @@ class RoutingPolicy(ClassWithFactory):
             Query-text identifier (used for featurisation lookup).
         start_time_s :
             Arrival time (wall-clock or simulated) in seconds.
-        state_tracker :
+        pool :
             Read-only view of per-cluster bookkeeping.
 
         Returns
@@ -69,8 +69,9 @@ class RoutingPolicy(ClassWithFactory):
         cluster_name: str,
         query_text_id: str,
         start_time_s: float,
+        cluster_rpu: int = 0,
     ) -> Query:
-        """Create a :class:`Query` suitable for the state tracker.
+        """Create a :class:`Query` suitable for the pool.
 
         The default implementation returns a minimal object.  Model-based
         policies should override this to attach featurisations and
@@ -89,7 +90,7 @@ class RoutingPolicy(ClassWithFactory):
         query_id: str,
         query_text_id: str,
         start_time_s: float,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
     ) -> RoutingResult:
         """Route with full results including placement score and tracking query.
@@ -103,7 +104,7 @@ class RoutingPolicy(ClassWithFactory):
             query_id=query_id,
             query_text_id=query_text_id,
             start_time_s=start_time_s,
-            state_tracker=state_tracker,
+            pool=pool,
             exclude_clusters=exclude_clusters,
         )
         tracking_query = self.build_tracking_query(
@@ -111,6 +112,7 @@ class RoutingPolicy(ClassWithFactory):
             cluster_name=cluster,
             query_text_id=query_text_id,
             start_time_s=start_time_s,
+            cluster_rpu=pool.get_rpu(cluster),
         )
         return RoutingResult(
             cluster_name=cluster,
@@ -118,10 +120,10 @@ class RoutingPolicy(ClassWithFactory):
             tracking_query=tracking_query,
         )
 
-    def on_attach(self, state_tracker: ClusterStateTracker) -> None:
+    def on_attach(self, pool: ManagedClusterPool) -> None:
         """Called once when the policy is attached to a Router.
 
-        Override to perform one-time setup that requires the tracker
+        Override to perform one-time setup that requires the pool
         (e.g. injecting an RPU-lookup callback into a featuriser).
         """
 
@@ -143,10 +145,10 @@ class RoundRobinPolicy(RoutingPolicy):
         query_id: str,
         query_text_id: str,
         start_time_s: float,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
     ) -> str:
-        names = state_tracker.cluster_names
+        names = pool.cluster_names
         if exclude_clusters:
             names = [n for n in names if n not in exclude_clusters]
         if not names:
@@ -168,7 +170,7 @@ class FixedPolicy(RoutingPolicy):
         query_id: str,
         query_text_id: str,
         start_time_s: float,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
     ) -> str:
         return self._cluster_name

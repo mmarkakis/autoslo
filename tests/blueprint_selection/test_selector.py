@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from autoslo.blueprint_selection.selector import BlueprintSelector
-from autoslo.blueprints.blueprint import Blueprint
 from autoslo.models.iconq_model import IconqModel
 from autoslo.workload_definition.chunk import Chunk
 

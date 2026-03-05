@@ -29,7 +29,7 @@ from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.workload_definition.query import Query, QueryTextId
 
 if TYPE_CHECKING:
-    from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +112,10 @@ class ModelPolicy(RoutingPolicy):
     # RoutingPolicy hooks
     # ------------------------------------------------------------------
 
-    def on_attach(self, state_tracker: ClusterStateTracker) -> None:
+    def on_attach(self, pool: ManagedClusterPool) -> None:
         """Inject an RPU lookup into the interaction featuriser."""
         self._iconq_model.iconq_interaction_featurizer.set_rpu_lookup(
-            state_tracker.get_rpu
+            pool.get_rpu
         )
 
     # ------------------------------------------------------------------
@@ -127,14 +127,14 @@ class ModelPolicy(RoutingPolicy):
         query_id: str,
         query_text_id: str,
         start_time_s: float,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
     ) -> str:
         return self.route_with_details(
             query_id=query_id,
             query_text_id=query_text_id,
             start_time_s=start_time_s,
-            state_tracker=state_tracker,
+            pool=pool,
             exclude_clusters=exclude_clusters,
         ).cluster_name
 
@@ -143,7 +143,7 @@ class ModelPolicy(RoutingPolicy):
         query_id: str,
         query_text_id: str,
         start_time_s: float,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
     ) -> RoutingResult:
         query_id = str(query_id)
@@ -163,11 +163,11 @@ class ModelPolicy(RoutingPolicy):
             latency_s=-1,
         )
 
-        # Snapshot current state from the tracker.
+        # Snapshot current state from the pool.
         snapshots, run_to_base_to_neighbors = (
-            state_tracker.build_routing_context(incoming)
+            pool.build_routing_context(incoming)
         )
-        eligible = state_tracker.cluster_names
+        eligible = pool.cluster_names
         if exclude_clusters:
             eligible = [cn for cn in eligible if cn not in exclude_clusters]
             snapshots = {cn: s for cn, s in snapshots.items() if cn in eligible}
@@ -183,7 +183,7 @@ class ModelPolicy(RoutingPolicy):
             stage_pred = (
                 self._iconq_model.stage_model
                 .predict_from_query_text_id(
-                    {query_id: qtid}, cn
+                    {query_id: qtid}, pool.get_rpu(cn)
                 )[query_id]
                 .overall_mean_s()
             )
@@ -292,6 +292,7 @@ class ModelPolicy(RoutingPolicy):
         cluster_name: str,
         query_text_id: str,
         start_time_s: float,
+        cluster_rpu: int = 0,
     ) -> Query:
         """Build a fully-featurised :class:`Query` for the state tracker."""
         query_id = str(query_id)
@@ -304,7 +305,7 @@ class ModelPolicy(RoutingPolicy):
         stage_pred = (
             self._iconq_model.stage_model
             .predict_from_query_text_id(
-                {query_id: qtid}, cluster_name
+                {query_id: qtid}, cluster_rpu
             )[query_id]
             .overall_mean_s()
         )
@@ -329,11 +330,11 @@ class ModelPolicy(RoutingPolicy):
         return list(self._routing_window)
 
     def compute_slo_headroom(
-        self, state_tracker: ClusterStateTracker
+        self, pool: ManagedClusterPool
     ) -> float:
         """Compute the minimum SLO headroom across all active queries."""
         all_active: list[Query] = []
-        for qs in state_tracker.get_all_active_queries().values():
+        for qs in pool.get_all_active_queries().values():
             all_active.extend(qs)
         return RoutingCore.compute_slo_headroom(
             all_active, self._slo_resolver

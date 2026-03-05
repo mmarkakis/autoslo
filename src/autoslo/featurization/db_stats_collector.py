@@ -12,7 +12,8 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprints.cluster import Cluster
+from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+from autoslo.workload_execution.conn_utils import ConnWithSetup
 
 TABLE_STATS_QUERY = """
 SELECT
@@ -221,11 +222,17 @@ class DBStatsCollector:
         if os.path.exists(stats_path) and not self.force:
             return
 
-        # Create a cluster and open a connection.
-        cluster = Cluster.from_config(self.cluster_name)
-        conn = cluster.conn_pool(
-            minconn=1, maxconn=1, search_path=self.schema_name
-        ).getconn()
+        # Create a connection from config.
+        cluster_configs = pu.get_cluster_dicts_from_config()
+        ci = ClusterConnInfo.from_dict(cluster_configs[self.cluster_name])
+        conn = ConnWithSetup(
+            host=ci.host,
+            port=ci.port,
+            user=ci.user,
+            password=ci.password,
+            dbname=ci.dbname,
+            search_path=self.schema_name,
+        )
 
         # Run an analyze if requested.
         if self.analyze:

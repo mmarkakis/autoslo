@@ -103,17 +103,17 @@ def test_stage_model_predicts_with_loaded_models(
                 "ml": None,
             }
 
-        def predict_from_tpcds_temp_and_q_idx(
-            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+        def predict_from_query_text_id(
+            self, d: dict, cluster_rpu: int = 0
         ) -> dict[str, ModelPrediction | None]:
             return self.predict(d)
 
     class XGBStub:
         def predict(self, _: dict[str, str]) -> dict[str, ModelPrediction]:
             return {"ml": ModelPrediction(mean_s=[5.0], std_dev_s=[0.5])}
-        
-        def predict_from_tpcds_temp_and_q_idx(
-            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+
+        def predict_from_query_text_id(
+            self, d: dict, cluster_rpu: int = 0
         ) -> dict[str, ModelPrediction]:
             return self.predict(d)
 
@@ -136,7 +136,9 @@ def test_stage_model_predicts_with_loaded_models(
         {
             "cached": _make_query_text("001_001"),
             "ml": _make_query_text("002_001"),
-        }
+        },
+        cluster_rpu=8,
+        schema_name="public",
     )
 
     assert results["cached"].overall_mean_s() == pytest.approx(1.0)
@@ -172,8 +174,8 @@ def test_stage_model_trains_and_saves_new_models(
                 "ml": None,
             }
         
-        def predict_from_tpcds_temp_and_q_idx(
-            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+        def predict_from_query_text_id(
+            self, d: dict, cluster_rpu: int = 0
         ) -> dict[str, ModelPrediction | None]:
             return self.predict(d)
 
@@ -193,9 +195,9 @@ def test_stage_model_trains_and_saves_new_models(
 
         def predict(self, _: dict[str, str]) -> dict[str, ModelPrediction]:
             return {"ml": ModelPrediction(mean_s=[4.0], std_dev_s=[0.4])}
-        
-        def predict_from_tpcds_temp_and_q_idx(
-            self, d: dict[str, stage_module.Trace.TPCDSTempAndQIdx]
+
+        def predict_from_query_text_id(
+            self, d: dict, cluster_rpu: int = 0
         ) -> dict[str, ModelPrediction]:
             return self.predict(d)
 
@@ -222,7 +224,9 @@ def test_stage_model_trains_and_saves_new_models(
         {
             "cached": _make_query_text("001_001"),
             "ml": _make_query_text("002_001"),
-        }
+        },
+        cluster_rpu=8,
+        schema_name="public",
     )
 
     assert cache_instance.trained[0]["run_ids"] == ["run-1"]
@@ -315,7 +319,9 @@ def test_stage_model_end_to_end_with_real_models(
         {
             "cached": _make_query_text("001_001"),
             "ml": _make_query_text("003_007"),
-        }
+        },
+        cluster_rpu=8,
+        schema_name="public",
     )
 
     assert model._cache_model_id is not None

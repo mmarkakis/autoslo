@@ -4,7 +4,7 @@ router.py
 Concrete query router that delegates placement decisions to a
 :class:`~autoslo.routing.routing_policy.RoutingPolicy` and lifecycle
 bookkeeping to a
-:class:`~autoslo.routing.cluster_state_tracker.ClusterStateTracker`.
+:class:`~autoslo.routing.managed_cluster_pool.ManagedClusterPool`.
 
 This is the single entry-point used by
 :class:`~autoslo.workload_execution.query_runner.WorkloadRunner` for all
@@ -17,20 +17,20 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from autoslo.routing.cluster_state_tracker import ClusterStateTracker
+from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 from autoslo.routing.routing_core import RoutingResult
 from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.workload_definition.query import Query
 
 
 class Router:
-    """Thin coordinator between a routing policy and a state tracker.
+    """Thin coordinator between a routing policy and a managed pool.
 
     Parameters
     ----------
     policy :
         Determines *which* cluster each query is sent to.
-    state_tracker :
+    pool :
         Owns the mutable per-cluster bookkeeping that the policy reads
         (via snapshots) and that the lifecycle hooks update.
     """
@@ -38,13 +38,13 @@ class Router:
     def __init__(
         self,
         policy: RoutingPolicy,
-        state_tracker: ClusterStateTracker,
+        pool: ManagedClusterPool,
     ) -> None:
         self._policy = policy
-        self._tracker = state_tracker
-        # Allow the policy to perform one-time setup with the tracker
+        self._pool = pool
+        # Allow the policy to perform one-time setup with the pool
         # (e.g. inject RPU lookup into a featuriser).
-        self._policy.on_attach(self._tracker)
+        self._policy.on_attach(self._pool)
 
     # ------------------------------------------------------------------
     # Properties
@@ -55,8 +55,8 @@ class Router:
         return self._policy
 
     @property
-    def state_tracker(self) -> ClusterStateTracker:
-        return self._tracker
+    def pool(self) -> ManagedClusterPool:
+        return self._pool
 
     # ------------------------------------------------------------------
     # Routing
@@ -95,7 +95,7 @@ class Router:
             query_id=str(query_id),
             query_text_id=str(query_text_id),
             start_time_s=start_time_s,
-            state_tracker=self._tracker,
+            pool=self._pool,
             exclude_clusters=exclude_clusters,
         )
 
@@ -135,7 +135,7 @@ class Router:
             query_id=str(query_id),
             query_text_id=str(query_text_id),
             start_time_s=start_time_s,
-            state_tracker=self._tracker,
+            pool=self._pool,
             exclude_clusters=exclude_clusters,
         )
 
@@ -161,8 +161,9 @@ class Router:
             cluster_name=cluster_name,
             query_text_id=str(query_text_id),
             start_time_s=start_time_s,
+            cluster_rpu=self._pool.get_rpu(cluster_name),
         )
-        self._tracker.on_query_start(query)
+        self._pool.on_query_start(query)
 
     def on_query_finish(
         self,
@@ -173,7 +174,7 @@ class Router:
         """Remove a query from the active set for *cluster_name*."""
         if current_time_s is None:
             current_time_s = time.time()
-        self._tracker.on_query_finish(
+        self._pool.on_query_finish(
             query_id=str(query_id),
             cluster_name=cluster_name,
             current_time_s=current_time_s,

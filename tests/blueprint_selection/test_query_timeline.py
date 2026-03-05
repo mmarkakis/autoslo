@@ -11,6 +11,10 @@ from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.models.iconq_model import IconqModel
+from autoslo.models.model_prediction import ModelPrediction
+from autoslo.models.stage_model import StageModel
+from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 BASE_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -21,7 +25,10 @@ def dt_after(seconds: float) -> datetime:
 
 
 def default_cluster_name() -> str:
-    return Cluster.all_cluster_names()[0]
+    return "cluster_4_default_0"
+
+
+_DUMMY_QTID = QueryTextId("ext_tpcds1000#1#001")
 
 
 class DummyTrace:
@@ -30,15 +37,24 @@ class DummyTrace:
     def __init__(self, specs: list[tuple[str, float, float]]) -> None:
         self.run_id = "dummy-run"
         self.query_ids = [query_id for query_id, _, _ in specs]
-        self.tpcds_temp_and_q_idxs = {
-            query_id: "tmpl" for idx, (query_id, _, _) in enumerate(specs)
-        }
+        self._query_text_ids = {query_id: _DUMMY_QTID for query_id, _, _ in specs}
         self._arrival = {
             query_id: dt_after(start) for query_id, start, _ in specs
         }
         self._completion = {
             query_id: dt_after(end) for query_id, _, end in specs
         }
+        self._seq_nums = {query_id: idx for idx, (query_id, _, _) in enumerate(specs)}
+        self._was_aborted = {query_id: False for query_id, _, _ in specs}
+
+    @property
+    def query_text_ids(self):
+        import pandas as pd
+        return pd.Series(self._query_text_ids)
+
+    @property
+    def seq_nums(self):
+        return self._seq_nums
 
     def arrival_times(self) -> dict[str, datetime]:
         return self._arrival
@@ -46,21 +62,34 @@ class DummyTrace:
     def completion_times(self) -> dict[str, datetime]:
         return self._completion
 
+    def was_aborted(self) -> dict[str, bool]:
+        return self._was_aborted
+
     def cluster_name_from_query_id(self, query_id: str) -> str:
         return default_cluster_name()
 
 
 class DummyIconqQueryFeaturizer:
-    """Lightweight IconqQueryFeaturizer stub for QueryTimeline tests."""
+    """Lightweight IconqQueryFeaturizer stub."""
 
-    def featurize_from_tpcds_temp_and_q_idx(
-        self, tpcds_temp_and_q_idx: tuple[str, int]
-    ) -> list[float]:
+    def featurize_from_query_text_id(self, query_text_id: QueryTextId) -> list[float]:
         return [0.0, 1.5, 2.5]
 
 
+class DummyStageModel:
+    """Lightweight StageModel stub."""
+
+    def predict_from_query_text_id(
+        self, query_text_ids: dict[str, QueryTextId], cluster_rpu: int
+    ) -> dict[str, ModelPrediction]:
+        return {
+            qid: ModelPrediction(mean_s=[5.0])
+            for qid in query_text_ids
+        }
+
+
 class DummyIconqInteractionFeaturizer:
-    """Lightweight IconqInteractionFeaturizer stub for QueryTimeline tests."""
+    """Lightweight IconqInteractionFeaturizer stub."""
 
     def featurize_from_vectors(
         self,
@@ -74,13 +103,23 @@ class DummyIconqInteractionFeaturizer:
         return [0.0, 1.0, 2.0, 3.0]
 
 
+class DummyIconqModel:
+    """Lightweight IconqModel stub providing featurizer/model sub-objects."""
+
+    def __init__(self) -> None:
+        self.iconq_query_featurizer = cast(
+            IconqQueryFeaturizer, DummyIconqQueryFeaturizer()
+        )
+        self.iconq_interaction_featurizer = cast(
+            IconqInteractionFeaturizer, DummyIconqInteractionFeaturizer()
+        )
+        self.stage_model = cast(StageModel, DummyStageModel())
+
+
 def build_timeline(specs: list[tuple[str, float, float]]) -> QueryTimeline:
     trace = cast(Trace, DummyTrace(specs))
-    featurizer = cast(IconqQueryFeaturizer, DummyIconqQueryFeaturizer())
-    interaction_featurizer = cast(
-        IconqInteractionFeaturizer, DummyIconqInteractionFeaturizer()
-    )
-    timeline = QueryTimeline(featurizer, interaction_featurizer)
+    iconq_model = cast(IconqModel, DummyIconqModel())
+    timeline = QueryTimeline(iconq_model, slo_s=10.0)
     timeline.initialize_from_trace(trace)
     return timeline
 

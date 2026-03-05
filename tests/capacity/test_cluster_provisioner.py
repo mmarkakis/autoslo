@@ -118,9 +118,9 @@ class TestClusterNew:
         assert "16" in c.name
         # Should contain a numeric timestamp portion
         parts = c.name.split("_")
-        assert len(parts) >= 3
-        # Last part should be a timestamp (a large integer)
-        assert int(parts[-1]) > 1700000000
+        assert len(parts) >= 4
+        # Third part should be a timestamp (a large integer)
+        assert int(parts[2]) > 1700000000
 
     def test_new_explicit_name(self):
         c = Cluster.new(rpu=8, name="my-cluster")
@@ -133,13 +133,17 @@ class TestClusterNew:
         assert c.cost_per_second == pytest.approx(expected)
 
 
-class TestClusterAttachConnInfo:
+class TestClusterFrozen:
 
-    def test_attach_conn_info(self):
-        from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-
+    def test_frozen_prevents_mutation(self):
+        """Cluster is a frozen dataclass — setting attr raises."""
         c = Cluster.new(rpu=8)
-        assert c.conn_info is None
+        with pytest.raises(AttributeError):
+            c.rpu = 16  # type: ignore[misc]
+
+    def test_conn_info_set_at_construction(self):
+        """Connection info can be provided at construction time."""
+        from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 
         info = ClusterConnInfo(
             host="example.com",
@@ -148,20 +152,5 @@ class TestClusterAttachConnInfo:
             user="admin",
             password="pw",
         )
-        c.attach_conn_info(info)
+        c = Cluster(rpu=8, name="test_8_0_0", conn_info=info)
         assert c.conn_info is info
-
-    def test_attach_conn_info_twice_raises(self):
-        from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-
-        c = Cluster.new(rpu=8)
-        info = ClusterConnInfo(
-            host="example.com",
-            port=5439,
-            dbname="dev",
-            user="admin",
-            password="pw",
-        )
-        c.attach_conn_info(info)
-        with pytest.raises(ValueError, match="already has connection info"):
-            c.attach_conn_info(info)

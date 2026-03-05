@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprints.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
@@ -374,10 +373,9 @@ class IconqModel:
         rpu = x[i][pinch_points[i]][
             self._iconq_interaction_featurizer.rpu_dim_idx
         ].item()
-        cluster_name = Cluster.ordered_cluster_names_per_rpu()[int(rpu)][0]
         pred = self.stage_model.predict_from_query_text_id(
             {query_ids[i]: query_text_ids[i]},
-            cluster_name=cluster_name,
+            cluster_rpu=int(rpu),
         )[query_ids[i]]
         return ModelPrediction(
             mean_s=pred.mean_s,

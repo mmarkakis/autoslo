@@ -14,8 +14,6 @@ from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
-from autoslo.blueprints.cluster import Cluster
-
 
 class XGBoostModel:
     """
@@ -106,7 +104,7 @@ class XGBoostModel:
     def predict(
         self,
         query_texts: dict[str, str],
-        cluster_name: str,
+        cluster_rpu: int,
         schema_name: str,
     ) -> dict[str, ModelPrediction]:
         """
@@ -115,7 +113,7 @@ class XGBoostModel:
         Parameters:
             query_texts: The query texts to predict the runtime of, as a
                 dictionary mapping query ids to query texts.
-            cluster_name: The name of the cluster where the queries will be run.
+            cluster_rpu: The RPU size of the target cluster.
             schema_name: The name of the schema the queries belong to.
 
         Returns:
@@ -126,12 +124,12 @@ class XGBoostModel:
             query_id: Trace.extract_query_text_id(query_text, schema_name)
             for query_id, query_text in query_texts.items()
         }
-        return self.predict_from_query_text_id(query_text_ids, cluster_name)
+        return self.predict_from_query_text_id(query_text_ids, cluster_rpu)
 
     def predict_from_query_text_id(
         self,
         query_text_ids: dict[str, QueryTextId],
-        cluster_name: str,
+        cluster_rpu: int,
     ) -> dict[str, ModelPrediction]:
         """
         Predicts the runtime of the given queries, based on their
@@ -140,18 +138,14 @@ class XGBoostModel:
         Parameters:
             query_text_ids: A dictionary mapping query ids to
                 :class:`~autoslo.workload_definition.query.QueryTextId` objects.
-            cluster_name: The name of the cluster where the queries will be run.
+            cluster_rpu: The RPU size of the target cluster.
 
         Returns:
             A dictionary mapping query ids to ModelPrediction instances,
                 where each element is in seconds.
         """
         predictions: dict[str, ModelPrediction] = {}
-        cluster_rpu = (
-            0
-            if self._ignore_cluster_size
-            else Cluster.rpu_for_cluster_name(cluster_name)
-        )
+        effective_rpu = 0 if self._ignore_cluster_size else cluster_rpu
 
         for query_id, query_text_id in query_text_ids.items():
             featurization = self._iconq_query_featurizer.featurize_from_query_text_id(
@@ -163,7 +157,7 @@ class XGBoostModel:
                     f"IconqQueryFeaturizer "
                     f"{self._iconq_query_featurizer_id}."
                 )
-            featurization.append(cluster_rpu)
+            featurization.append(effective_rpu)
             featurization_array = np.array(featurization).reshape(1, -1)
             raw_prediction = self._model.predict(featurization_array)[0]
             if self._train_on_log_runtime:
@@ -248,6 +242,7 @@ class XGBoostModel:
                 if featurization is None or len(featurization) == 0:
                     continue
                 cluster_name = trace.cluster_name_from_query_id(query_id)
+                from autoslo.blueprints.cluster import Cluster
                 cluster_rpu = (
                     0
                     if self._ignore_cluster_size

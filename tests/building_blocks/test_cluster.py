@@ -3,7 +3,6 @@ import pytest
 from autoslo.blueprints.cluster import Cluster
 
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-from psycopg2.pool import ThreadedConnectionPool
 
 
 def test_default_name_and_attributes():
@@ -26,31 +25,13 @@ def test_custom_name_and_rate():
     assert c.rpu == 4
 
 
-def test_cost_default_duration_one_hour():
+def test_cost_per_second():
     """
-    cost() with no args equals rpu * rate for one hour.
+    cost_per_second returns the correct per-second cost.
     """
     c = Cluster(rpu=4, name="cluster_4rpu")
-    expected = 4 * c.cost_per_rpu_hour * 1.0
-    assert c.cost() == pytest.approx(expected)
-
-
-def test_cost_custom_duration_half_hour():
-    """
-    cost() with 1800s equals half an hour of running cost.
-    """
-    c = Cluster(rpu=8, name="cluster_8rpu")
-    duration_s = 1800.0  # 0.5 hour
-    expected = 8 * c.cost_per_rpu_hour * 0.5
-    assert c.cost(duration_s=duration_s) == pytest.approx(expected)
-
-
-def test_cost_zero_duration_is_zero():
-    """
-    cost(0) returns 0.0.
-    """
-    c = Cluster(rpu=16, name="cluster_16rpu")
-    assert c.cost(duration_s=0.0) == pytest.approx(0.0)
+    expected = 4 * Cluster.US_EAST_1_COST_PER_RPU_HOUR / 3600
+    assert c.cost_per_second == pytest.approx(expected)
 
 
 def test_up_to_32_rpu_sizes_constant():
@@ -68,35 +49,56 @@ def test_missing_name_raises_type_error():
         Cluster(rpu=8)
 
 
-def test_from_config_key_error():
+def test_rpu_for_cluster_name_dynamic():
     """
-    from_config with unknown cluster name raises KeyError.
+    rpu_for_cluster_name parses RPU from dynamic cluster names.
     """
-    with pytest.raises(KeyError):
-        Cluster.from_config("non_existent_cluster")
+    assert Cluster.rpu_for_cluster_name("cluster_8_1234_0") == 8
+    assert Cluster.rpu_for_cluster_name("cluster_32_9999_5") == 32
 
 
-def test_from_dict_creates_cluster():
+def test_rpu_for_cluster_name_invalid():
     """
-    from_dict creates a Cluster instance with correct attributes.
+    rpu_for_cluster_name raises ValueError for unparseable names.
     """
-    cluster_dict = {
-        "rpu": 16,
-        "cluster_name": "test_cluster",
-        "cost_per_rpu_hour": 0.4,
-        "host": "localhost",
-        "port": 5439,
-        "user": "admin",
-        "password": "password",
-        "dbname": "dev",
-    }
-    cluster = Cluster.from_dict(cluster_dict)
-    assert cluster.rpu == 16
-    assert cluster.name == "test_cluster"
-    assert cluster.cost_per_rpu_hour == 0.4
-    assert cluster.conn_info.host == "localhost"
-    assert cluster.conn_info.port == 5439
-    assert cluster.conn_info.user == "admin"
-    assert cluster.conn_info.password == "password"
-    assert cluster.conn_info.dbname == "dev"
+    with pytest.raises(ValueError):
+        Cluster.rpu_for_cluster_name("badname")
+
+
+def test_cost_per_second_for_rpu():
+    """
+    Static utility computes cost_per_second from RPU.
+    """
+    expected = 8 * Cluster.US_EAST_1_COST_PER_RPU_HOUR / 3600
+    assert Cluster.cost_per_second_for_rpu(8) == pytest.approx(expected)
+
+
+def test_frozen_cluster():
+    """
+    Cluster is a frozen dataclass — attribute mutation is forbidden.
+    """
+    c = Cluster(rpu=8, name="cluster_8_0_0")
+    with pytest.raises(AttributeError):
+        c.rpu = 16  # type: ignore[misc]
+
+
+def test_cluster_equality():
+    """
+    Equality compares all fields.
+    """
+    c1 = Cluster(rpu=8, name="a")
+    c2 = Cluster(rpu=8, name="a")
+    c3 = Cluster(rpu=16, name="a")
+    assert c1 == c2
+    assert c1 != c3
+
+
+def test_new_factory():
+    """
+    Cluster.new() creates clusters with auto-generated names.
+    """
+    c = Cluster.new(rpu=8)
+    assert c.rpu == 8
+    assert c.name.startswith("cluster_8_")
+    assert c.conn_info is None
 

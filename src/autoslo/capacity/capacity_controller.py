@@ -22,6 +22,7 @@ import time
 from dataclasses import replace as _dc_replace
 from typing import Any, Callable, Optional
 
+from autoslo.blueprints.cluster import Cluster
 from autoslo.routing.routing_core import ClusterSnapshot, RoutingCore
 from autoslo.workload_definition.query import Query
 
@@ -274,13 +275,13 @@ class CapacityController:
 
         # Try each candidate RPU (ascending) via counterfactual
         # score_placement.
-        from autoslo.blueprints.cluster import Cluster as _Cluster
-
         for rpu in self._allowed_rpu_sizes:
-            hypothetical_cluster = _Cluster.new(rpu=rpu)
+            cluster_name = f"cluster_{rpu}_hypothetical_0"
             fresh_snapshot = ClusterSnapshot(
-                cluster_name=hypothetical_cluster.name,
-                cost_per_second=hypothetical_cluster.cost_per_second,
+                cluster_name=cluster_name,
+                cost_per_second=(
+                    Cluster.US_EAST_1_COST_PER_RPU_HOUR * rpu / 3600
+                ),
                 active_queries=[],
                 billing_window_start_s=None,
             )
@@ -289,14 +290,14 @@ class CapacityController:
                 # Predict latency of q as the sole occupant of the
                 # hypothetical cluster.
                 q_copy = _dc_replace(
-                    q, cluster_name=hypothetical_cluster.name
+                    q, cluster_name=cluster_name
                 )
                 stage_pred = (
                     self._latency_model
                     .stage_model
-                    .predict_from_tpcds_temp_and_q_idx(
-                        {q_copy.query_id: q_copy.tpcds_temp_and_q_idx},
-                        hypothetical_cluster.name,
+                    .predict_from_query_text_id(
+                        {q_copy.query_id: q_copy.query_text_id},
+                        cluster_rpu=rpu,
                     )[q_copy.query_id]
                     .overall_mean_s()
                 )

@@ -12,7 +12,7 @@ from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -86,7 +86,7 @@ class QueryTimeline:
             trace: The Trace containing the query submission events.
         """
 
-        tpcds_temp_and_q_idxs = trace.tpcds_temp_and_q_idxs
+        query_text_ids = trace.query_text_ids
         start_times = trace.arrival_times()
         end_times = trace.completion_times()
         query_ids = trace.query_ids
@@ -99,11 +99,9 @@ class QueryTimeline:
 
         intervals_to_add: dict[str, list[Interval]] = defaultdict(list)
 
-        ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
-
         for query_id in query_ids:
             observed_cluster_name = trace.cluster_name_from_query_id(query_id)
-            temp_and_q_idx = tpcds_temp_and_q_idxs[query_id]
+            query_text_id = query_text_ids[query_id]
             seq_num = seq_nums[query_id]
 
             interval = Interval(
@@ -111,22 +109,23 @@ class QueryTimeline:
                 end=end_times[query_id].timestamp() - reference_timestamp,
                 data={
                     "query_id": query_id,
-                    "tpcds_temp_and_q_idx": temp_and_q_idx,
+                    "query_text_id": query_text_id,
                     "seq_num": int(seq_num),
-                    "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                        temp_and_q_idx
+                    "featurization": self._iconq_query_featurizer.featurize_from_query_text_id(
+                        query_text_id
                     ),
                     "stage_model_predictions_per_rpu": {
                         rpu: (
                             float(
-                                self._stage_model.predict_from_tpcds_temp_and_q_idx(
-                                    {query_id: temp_and_q_idx}, cluster_names[0]
+                                self._stage_model.predict_from_query_text_id(
+                                    {query_id: query_text_id},
+                                    cluster_rpu=rpu,
                                 )[
                                     query_id
                                 ].overall_mean_s()
                             )
                         )
-                        for rpu, cluster_names in ordered_cluster_names_per_rpu.items()
+                        for rpu in Cluster.ALL_ALLOWED_RPU_SIZES
                     },
                     "was_aborted": was_aborted[query_id],
                 },
@@ -283,7 +282,7 @@ class QueryTimeline:
         end_time_s: float,
         query_id: str,
         seq_num: int,
-        tpcds_temp_and_q_idx: Trace.TPCDSTempAndQIdx,
+        query_text_id: QueryTextId,
         was_aborted: bool = False,
     ) -> None:
         """
@@ -295,33 +294,31 @@ class QueryTimeline:
             end_time_s: The end time of the query (in seconds).
             query_id: The ID of the query.
             seq_num: The sequence number of the query.
-            tpcds_temp_and_q_idx: The TPC-DS template and query index tuple.
+            query_text_id: The QueryTextId identifying the query text.
             was_aborted: Whether the query was aborted (i.e., its latency is a
                 lower bound).
         """
-
-        ordered_cluster_names_per_rpu = Cluster.ordered_cluster_names_per_rpu()
 
         interval = Interval(
             begin=start_time_s,
             end=end_time_s,
             data={
                 "query_id": query_id,
-                "tpcds_temp_and_q_idx": tpcds_temp_and_q_idx,
+                "query_text_id": query_text_id,
                 "seq_num": int(seq_num),
-                "featurization": self._iconq_query_featurizer.featurize_from_tpcds_temp_and_q_idx(
-                    tpcds_temp_and_q_idx
+                "featurization": self._iconq_query_featurizer.featurize_from_query_text_id(
+                    query_text_id
                 ),
                 "stage_model_predictions_per_rpu": {
                     rpu: (
                         float(
-                            self._stage_model.predict_from_tpcds_temp_and_q_idx(
-                                {query_id: tpcds_temp_and_q_idx},
-                                cluster_names[0],
+                            self._stage_model.predict_from_query_text_id(
+                                {query_id: query_text_id},
+                                cluster_rpu=rpu,
                             )[query_id].overall_mean_s()
                         )
                     )
-                    for rpu, cluster_names in ordered_cluster_names_per_rpu.items()
+                    for rpu in Cluster.ALL_ALLOWED_RPU_SIZES
                 },
                 "was_aborted": was_aborted,
             },
@@ -466,7 +463,7 @@ class QueryTimeline:
 
         return Query(
             query_id=interval.data["query_id"],
-            tpcds_temp_and_q_idx=interval.data["tpcds_temp_and_q_idx"],
+            query_text_id=interval.data["query_text_id"],
             featurization=interval.data["featurization"],
             rel_start_time_s=interval.begin,
             cluster_name=cluster_name,
@@ -1293,7 +1290,8 @@ class QueryTimeline:
 
         query_intervals = list(self._interval_trees[cluster_name])
         cluster_billed_s = Billing.billed_s(query_intervals=query_intervals)
-        cost_per_second = Cluster.from_config(cluster_name).cost_per_second
+        rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        cost_per_second = Cluster.cost_per_second_for_rpu(rpu)
         cluster_cost = cluster_billed_s * cost_per_second
         return float(cluster_cost)
 

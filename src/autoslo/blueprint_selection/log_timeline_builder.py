@@ -11,6 +11,7 @@ build_scrubber_snapshots_from_log – one GanttSnapshot per query arrival
                                     (implemented but not yet wired to the UI)
 render_run                     – convenience wrapper for notebooks / scripts
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,18 +23,18 @@ import yaml
 from intervaltree import Interval
 
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
-    GanttSnapshot,
     GanttRecorder,
+    GanttSnapshot,
     render_gantt_scrubber,
 )
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_run(run_dir: str | Path) -> tuple[dict, pd.DataFrame]:
     """Load config.yml + solve_log.parquet from a run directory."""
@@ -44,7 +45,12 @@ def _load_run(run_dir: str | Path) -> tuple[dict, pd.DataFrame]:
     return config, log
 
 
-def _color(state: str, duration: float, resolver: SloResolver, tpcds_temp_and_q_idx: str | None = None) -> str:
+def _color(
+    state: str,
+    duration: float,
+    resolver: SloResolver,
+    tpcds_temp_and_q_idx: str | None = None,
+) -> str:
     if state == "RUNNING":
         return Palette.light_gray
     slo_s = resolver.resolve(tpcds_temp_and_q_idx)
@@ -61,7 +67,9 @@ def _snapshot_from_query_dicts(
     Build a GanttSnapshot from a flat list of per-query dicts.  Each dict must
     have: query_id, tpcds_temp_and_q_idx, cluster_name, start_s, end_s, state.
     """
-    intervals_by_cluster: dict[str, list[tuple[float, float, dict[str, Any]]]] = {}
+    intervals_by_cluster: dict[
+        str, list[tuple[float, float, dict[str, Any]]]
+    ] = {}
     total_queries = 0
     violating_queries = 0
     violation_amount = 0.0
@@ -101,14 +109,14 @@ def _snapshot_from_query_dicts(
     cost_per_cluster: dict[str, float] = {}
     total_cost = 0.0
     for cluster, ivs in intervals_by_cluster.items():
-        billed = Billing.billed_s(
-            [Interval(iv[0], iv[1], iv[2]) for iv in ivs]
-        )
+        billed = Billing.billed_s([Interval(iv[0], iv[1], iv[2]) for iv in ivs])
         cost = cost_per_second_per_cluster.get(cluster, 0.0) * billed
         cost_per_cluster[cluster] = cost
         total_cost += cost
 
-    violation_rate = (violating_queries / total_queries) if total_queries > 0 else 0.0
+    violation_rate = (
+        (violating_queries / total_queries) if total_queries > 0 else 0.0
+    )
     return GanttSnapshot(
         label=label,
         intervals_by_cluster=intervals_by_cluster,
@@ -124,20 +132,26 @@ def _snapshot_from_query_dicts(
 def _cost_per_second_from_config(config: dict) -> dict[str, float]:
     """
     Reconstruct cost_per_second_per_cluster from the blueprint stored in config.
-    We import Cluster lazily to avoid loading heavy deps at module level.
+    Reads the blueprint YAML directly — no Blueprint or Cluster.from_config needed.
     """
-    from autoslo.blueprints.blueprint import Blueprint
-    blueprint = Blueprint.from_config(config["blueprint_name"])
+    import autoslo.utils.paths as pu
     from autoslo.blueprints.cluster import Cluster
+
+    bp_configs = pu.get_blueprint_dicts_from_config()
+    bp_name = config["blueprint_name"]
+    cluster_names = bp_configs[bp_name]["cluster_names"]
     return {
-        name: Cluster.from_config(name).cost_per_second
-        for name in blueprint.cluster_names
+        name: Cluster.cost_per_second_for_rpu(
+            Cluster.rpu_for_cluster_name(name)
+        )
+        for name in cluster_names
     }
 
 
 # ---------------------------------------------------------------------------
 # public API
 # ---------------------------------------------------------------------------
+
 
 def build_final_snapshot_from_log(
     log_path: str | Path,
@@ -166,10 +180,9 @@ def build_final_snapshot_from_log(
     cost_per_second = _cost_per_second_from_config(config)
 
     # --- index relevant events by query_id ---
-    routing = (
-        log[log["event_type"] == "routing"]
-        .set_index("query_id")[["timestamp", "cluster_name", "end_time_s", "tpcds_temp_and_q_idx"]]
-    )
+    routing = log[log["event_type"] == "routing"].set_index("query_id")[
+        ["timestamp", "cluster_name", "end_time_s", "tpcds_temp_and_q_idx"]
+    ]
     completions = (
         log[log["event_type"] == "completion"]
         .set_index("query_id")[["end_time_s"]]
@@ -215,7 +228,9 @@ def build_final_snapshot_from_log(
         for qid, row in df.iterrows()
     ]
 
-    return _snapshot_from_query_dicts(rows, resolver, cost_per_second, label="Final")
+    return _snapshot_from_query_dicts(
+        rows, resolver, cost_per_second, label="Final"
+    )
 
 
 def build_scrubber_snapshots_from_log(
@@ -253,12 +268,16 @@ def build_scrubber_snapshots_from_log(
 
     # Index by query_id
     route_map: dict = routings.set_index("query_id").to_dict("index")
-    complete_map: dict = completions.set_index("query_id")[["timestamp", "end_time_s"]].to_dict("index")
+    complete_map: dict = completions.set_index("query_id")[
+        ["timestamp", "end_time_s"]
+    ].to_dict("index")
 
     # last update per query sorted chronologically
     if not updates.empty:
         upd_sorted = updates.sort_values("timestamp")
-        last_upd_map: dict = upd_sorted.groupby("query_id").last().to_dict("index")
+        last_upd_map: dict = (
+            upd_sorted.groupby("query_id").last().to_dict("index")
+        )
     else:
         last_upd_map = {}
 
@@ -269,7 +288,8 @@ def build_scrubber_snapshots_from_log(
         label = f"Q{i+1}: {arrival_row['query_id']}"
 
         routed_qids = [
-            qid for qid, rr in route_map.items()
+            qid
+            for qid, rr in route_map.items()
             if float(rr["timestamp"]) <= current_time
         ]
 
@@ -280,26 +300,36 @@ def build_scrubber_snapshots_from_log(
             tpcds = rr.get("tpcds_temp_and_q_idx", "")
             cluster_name = rr["cluster_name"]
 
-            if qid in complete_map and float(complete_map[qid]["timestamp"]) <= current_time:
+            if (
+                qid in complete_map
+                and float(complete_map[qid]["timestamp"]) <= current_time
+            ):
                 end_s = float(complete_map[qid]["end_time_s"])
                 state = "COMPLETED"
             else:
-                if qid in last_upd_map and float(last_upd_map[qid]["timestamp"]) <= current_time:
+                if (
+                    qid in last_upd_map
+                    and float(last_upd_map[qid]["timestamp"]) <= current_time
+                ):
                     end_s = float(last_upd_map[qid]["end_time_s"])
                 else:
                     end_s = float(rr["end_time_s"])
                 state = "RUNNING"
 
-            rows.append({
-                "query_id": qid,
-                "tpcds_temp_and_q_idx": tpcds,
-                "cluster_name": cluster_name,
-                "start_s": start_s,
-                "end_s": end_s,
-                "state": state,
-            })
+            rows.append(
+                {
+                    "query_id": qid,
+                    "tpcds_temp_and_q_idx": tpcds,
+                    "cluster_name": cluster_name,
+                    "start_s": start_s,
+                    "end_s": end_s,
+                    "state": state,
+                }
+            )
 
-        snap = _snapshot_from_query_dicts(rows, resolver, cost_per_second, label=label)
+        snap = _snapshot_from_query_dicts(
+            rows, resolver, cost_per_second, label=label
+        )
         snapshots.append(snap)
 
     return snapshots

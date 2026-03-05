@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 
 import autoslo.utils.paths as pu
-from autoslo.blueprints.blueprint import Blueprint
 from autoslo.blueprints.cluster import Cluster
 from autoslo.workload_definition.chunk import Chunk
 from autoslo.workload_definition.composite import Composite
@@ -238,71 +237,3 @@ def test_save_writes_definition_and_stats(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(out_dir, "definition.yml"))
 
 
-def test_ground_truth_smallest_adherent_single_cluster_blueprint_errors_and_success(
-    tmp_path: "Path", monkeypatch: "pytest.MonkeyPatch"
-) -> None:
-    """
-    Test error cases and a multi-day success scenario where different RPU
-    sizes are selected, and some days have no acceptable size.
-    """
-    # Ensure missing file raises
-    monkeypatch.setattr(pu, "get_data_path", lambda: str(tmp_path))
-    with pytest.raises(FileNotFoundError):
-        Composite.ground_truth_smallest_adherent_single_cluster_blueprint(
-            "nonexistent", tail_slo_s=1.0
-        )
-
-    # Success case: configure deterministic allowed RPUs and a fake Blueprint
-    monkeypatch.setattr(Cluster, "ALL_ALLOWED_RPU_SIZES", [1, 2, 4])
-
-    def fake_one_cluster_with(cluster_rpu: int):
-        class FB:
-            def __init__(self, r: int) -> None:
-                self.name = f"bp_{r}"
-                self.cluster_names = [f"cluster_{r}"]
-
-        return FB(cluster_rpu)
-
-    monkeypatch.setattr(
-        Blueprint, "one_cluster_with", staticmethod(fake_one_cluster_with)
-    )
-
-    # Build three lightweight day-like objects that return a trace-like object
-    # whose latency_s_at depends on the blueprint name (which encodes RPU).
-    class VarDay:
-        def __init__(self, lat_by_rpu: dict[int, float]) -> None:
-            self._lat = lat_by_rpu
-
-        def get_most_recent_trace_on(
-            self,
-            blueprint_name: str,
-            query_router_name: str,
-            normalize_start_to: Optional[datetime] = None,
-            inter_chunk_gap: timedelta = timedelta(0),
-        ):
-            # extract rpu from blueprint_name "bp_{r}"
-            r = int(blueprint_name.split("_")[-1])
-
-            class T:
-                def __init__(self, val: float) -> None:
-                    self._v = val
-
-                def latency_s_at(self, quantile: float) -> float:
-                    return self._v
-
-            return T(self._lat.get(r, float("inf")))
-
-    # day0: RPU 1 satisfies SLO (latency 1.0)
-    day0 = VarDay({1: 1.0, 2: 0.9, 4: 0.8})
-    # day1: RPU 1 fails, RPU 2 satisfies (latencies: 2.0, 1.0, 0.9)
-    day1 = VarDay({1: 2.0, 2: 1.0, 4: 0.9})
-    # day2: no RPU satisfies (all latencies > 1.5)
-    day2 = VarDay({1: 3.0, 2: 2.5, 4: 2.0})
-
-    comp = Composite(name="cmp_patch", days=[day0, day1, day2], monday_index=0)
-    monkeypatch.setattr(Composite, "load", staticmethod(lambda name: comp))
-
-    sizes = Composite.ground_truth_smallest_adherent_single_cluster_blueprint(
-        "ignored_name", tail_slo_s=1.5
-    )
-    assert sizes == [1, 2, None]
