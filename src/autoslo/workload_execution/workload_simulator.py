@@ -19,7 +19,6 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     render_gantt_scrubber,
 )
 from autoslo.blueprint_selection.slo_resolver import SloResolver
-from autoslo.blueprints.blueprint import Blueprint
 from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.capacity_controller import CapacityController
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
@@ -60,7 +59,6 @@ class WorkloadSimulator:
         self,
         workload_name: str,
         iconq_model_id: str,
-        blueprint_name: str,
         slo_s: float,
         optimize_based_on_slo_violation_amount: bool = False,
         slo_violation_rate_threshold: float = 0,
@@ -72,7 +70,7 @@ class WorkloadSimulator:
         simulator_run_id: Optional[str] = None,
         experiment_name: Optional[str] = None,
         overwrite_experiment: bool = False,
-        dynamic_cluster_config: Optional[DynamicClusterConfig] = None,
+        dynamic_cluster_config: DynamicClusterConfig = DynamicClusterConfig(),
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
         capacity_poll_interval_s: float = 60.0,
@@ -80,8 +78,6 @@ class WorkloadSimulator:
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
-        self._blueprint_name = blueprint_name
-        # Blueprint is loaded conditionally below (static mode only).
         self._slo_s = slo_s
         self._slo_dict_filename = slo_dict_filename
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
@@ -96,7 +92,6 @@ class WorkloadSimulator:
         self._iconq_model = self._model_policy.iconq_model  # convenience alias
 
         # Dynamic provisioning parameters.
-        self._dynamic_mode = dynamic_cluster_config is not None
         self._dynamic_cluster_config = dynamic_cluster_config
         self._cc_eta_crit = eta_crit
         self._cc_idle_periods = idle_periods_before_tear_down
@@ -160,7 +155,7 @@ class WorkloadSimulator:
         self._completed_queries_per_cluster: dict[str, list[Query]] = {}
         self._cluster_cost_per_second: dict[str, float] = {}
 
-        # --- Dynamic provisioning state (always present, possibly unused) ---
+        # Dynamic provisioning state.
         self._provisioner: Optional[SimulatedProvisioner] = None
         self._capacity_controller: Optional[CapacityController] = None
         self._pending_events: list[tuple[float, int, Cluster]] = []
@@ -172,31 +167,12 @@ class WorkloadSimulator:
         # excluded from routing and capacity-controller polling.
         self._draining_clusters: set[str] = set()
 
-        # Build the initial cluster set and state tracker.
-        if self._dynamic_mode:
-            self._blueprint: Optional[Blueprint] = None
-            # Start with empty tracker; _init_dynamic_clusters adds clusters.
-            self._state_tracker = ClusterStateTracker(
-                cluster_names=[],
-                cost_per_second={},
-                rpu_per_cluster={},
-            )
-        else:
-            self._blueprint = Blueprint.from_config(blueprint_name)
-            clusters = [
-                Cluster.from_config(cn)
-                for cn in self._blueprint.cluster_names
-            ]
-            self._state_tracker = ClusterStateTracker(
-                cluster_names=[c.name for c in clusters],
-                cost_per_second={
-                    c.name: c.cost_per_second for c in clusters
-                },
-                rpu_per_cluster={c.name: c.rpu for c in clusters},
-            )
-            for c in clusters:
-                self._completed_queries_per_cluster[c.name] = []
-                self._cluster_cost_per_second[c.name] = c.cost_per_second
+        # Start with an empty tracker; _init_dynamic_clusters adds clusters.
+        self._state_tracker = ClusterStateTracker(
+            cluster_names=[],
+            cost_per_second={},
+            rpu_per_cluster={},
+        )
 
         # Create the Router (invokes policy.on_attach to wire up RPU lookup).
         self._router = Router(
@@ -204,8 +180,7 @@ class WorkloadSimulator:
             state_tracker=self._state_tracker,
         )
 
-        if self._dynamic_mode:
-            self._init_dynamic_clusters()
+        self._init_dynamic_clusters()
 
     # ------------------------------------------------------------------
     # Factory: create from YAML config (aligned with WorkloadRunner)
@@ -225,10 +200,6 @@ class WorkloadSimulator:
         iconq_model_id : str
         slo_s : float
 
-        Required (static mode) or optional (dynamic mode)
-        --------------------------------------------------
-        blueprint_name : str
-
         Optional keys (with defaults)
         -----------------------------
         slo_dict_filename : str | None
@@ -241,9 +212,6 @@ class WorkloadSimulator:
         simulator_run_id : str | None
         experiment_name : str | None
         overwrite_experiment : bool  (False)
-
-        Dynamic-mode keys (all optional)
-        ---------------------------------
         dynamic_cluster_config : dict with ``initial_rpus``,
             ``allowed_rpu_sizes``, ``spin_up_delay_s``
         eta_crit : float  (0.1)
@@ -275,7 +243,6 @@ class WorkloadSimulator:
         return cls(
             workload_name=cfg["workload_name"],
             iconq_model_id=cfg["iconq_model_id"],
-            blueprint_name=cfg.get("blueprint_name", ""),
             slo_s=cfg["slo_s"],
             optimize_based_on_slo_violation_amount=cfg.get(
                 "optimize_based_on_slo_violation_amount", False
@@ -333,7 +300,6 @@ class WorkloadSimulator:
                 "experiment_name": self._experiment_name,
                 "workload_name": self._workload_name,
                 "iconq_model_id": self._iconq_model_id,
-                "blueprint_name": self._blueprint_name,
                 "slo_s": self._slo_s,
                 "slo_dict_filename": self._slo_dict_filename,
                 "slo_dict": self._slo_resolver.slo_dict,
@@ -374,32 +340,7 @@ class WorkloadSimulator:
         self._log_rows = []
 
         # Reset per-run bookkeeping.
-        if self._dynamic_mode:
-            self._init_dynamic_clusters()
-        else:
-            # Re-create the state tracker from scratch (clears active queries,
-            # neighbour history, and billing windows).
-            clusters = [
-                Cluster.from_config(cn)
-                for cn in self._blueprint.cluster_names
-            ]
-            self._state_tracker = ClusterStateTracker(
-                cluster_names=[c.name for c in clusters],
-                cost_per_second={
-                    c.name: c.cost_per_second for c in clusters
-                },
-                rpu_per_cluster={c.name: c.rpu for c in clusters},
-            )
-            self._router = Router(
-                policy=self._model_policy,
-                state_tracker=self._state_tracker,
-            )
-            self._completed_queries_per_cluster = {
-                c.name: [] for c in clusters
-            }
-            self._cluster_cost_per_second = {
-                c.name: c.cost_per_second for c in clusters
-            }
+        self._init_dynamic_clusters()
 
     def _log_if_verbose(self, d: dict) -> None:
         """
@@ -488,10 +429,8 @@ class WorkloadSimulator:
             pass  # already removed or still has active queries
 
     def _init_dynamic_clusters(self) -> None:
-        """Set up provisioner, controller, and initial clusters for a
-        dynamic-provisioning simulation run."""
+        """Set up provisioner, controller, and initial clusters."""
         config = self._dynamic_cluster_config
-        assert config is not None
 
         # Clear simulator-specific state.
         self._completed_queries_per_cluster.clear()
@@ -735,8 +674,7 @@ class WorkloadSimulator:
         queries = self._workload.queries(sampling_spec=sampling_spec)
         print(
             f"Simulating routing of {len(queries)} queries from workload "
-            f"{self._workload_name} using Iconq model {self._iconq_model_id} "
-            f"and blueprint {self._blueprint_name}..."
+            f"{self._workload_name} using Iconq model {self._iconq_model_id}..."
         )
         print(
             f"The first and last relative query start times are {queries[0].rel_start_time_s} and {queries[-1].rel_start_time_s}"
@@ -746,8 +684,7 @@ class WorkloadSimulator:
 
         for i, query in tqdm(enumerate(queries), total=total_queries):
 
-            if self._dynamic_mode:
-                self._advance_simulated_time(query.rel_start_time_s)
+            self._advance_simulated_time(query.rel_start_time_s)
 
             self._cleanup_completed_queries_up_to(query.rel_start_time_s)
 
@@ -765,9 +702,7 @@ class WorkloadSimulator:
                 query_id=query.query_id,
                 query_text_id=str(query.query_text_id),
                 start_time_s=query.rel_start_time_s,
-                exclude_clusters=(
-                    self._draining_clusters if self._dynamic_mode else None
-                ),
+                exclude_clusters=self._draining_clusters,
             )
             assert result.score is not None, (
                 "ModelPolicy must always produce a PlacementScore"
@@ -961,11 +896,7 @@ class WorkloadSimulator:
 
         d = {}
 
-        cluster_names = (
-            self._blueprint.cluster_names
-            if not self._dynamic_mode
-            else sorted(self._completed_queries_per_cluster.keys())
-        )
+        cluster_names = sorted(self._completed_queries_per_cluster.keys())
         for cluster_name in cluster_names:
             completed_queries = self._completed_queries_per_cluster[
                 cluster_name
@@ -1058,7 +989,6 @@ class WorkloadSimulator:
             "slo_s": self._slo_s,
             "slo_dict_filename": self._slo_dict_filename,
             "slo_dict": self._slo_resolver.slo_dict,
-            "blueprint_name": self._blueprint_name,
             "violation_rate": round(violation_rate, 6),
             "total_cost": round(total_cost, 4),
             "violation_amount_s": round(violation_amount_s, 4),
