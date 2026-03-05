@@ -28,7 +28,7 @@ data/iconq_models/**/dataset.pkl
 data/redset_executable_workloads/redbench_*/matching_*/queries.json
 data/redset_executable_workloads/redbench_*/matching_*/workload.csv
 
-
+data/__query_texts/
 
 site/
 docs/reference/
