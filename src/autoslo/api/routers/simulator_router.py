@@ -66,14 +66,17 @@ class RunSummary(BaseModel):
     run_id: str
     seed: int | None = None
     slo_s: float | None = None
+    slo_metric: str | None = None
+    slo_threshold: float | None = None
     slo_dict_filename: str | None = None
     slo_dict: dict | None = None
     blueprint_name: str | None = None
     violation_rate: float | None = None
+    violation_amount_s: float | None = None
+    violation_relative_mean: float | None = None
     violating_queries: int | None = None
     total_queries: int | None = None
     total_cost: float | None = None
-    violation_amount_s: float | None = None
     num_queries: int | None = None
     completed_at: str | None = None
 
@@ -89,20 +92,27 @@ class TimelineInterval(BaseModel):
     query_text_id: Any
     start_s: float
     end_s: float
+    latency_s: float
     state: str  # "COMPLETED" | "RUNNING"
     violates_slo: bool
     slo_s: float
+    violation_amount_s: float
+    violation_relative: float
 
 
 class TimelineData(BaseModel):
     run_id: str
     experiment_name: str | None
     default_slo_s: float
+    slo_metric: str | None
+    slo_threshold: float | None
     slo_dict: dict
     slo_dict_filename: str | None
     total_queries: int
     violating_queries: int
     violation_rate: float
+    violation_amount_s: float
+    violation_relative_mean: float
     total_cost: float
     intervals: list[TimelineInterval]
 
@@ -221,8 +231,14 @@ def get_run_timeline(experiment: str, run_id: str):
         lambda v: "COMPLETED" if pd.notna(v) else "RUNNING"
     )
 
+    slo_metric = config.get("slo_metric")
+    slo_threshold = config.get("slo_threshold")
+
     total_queries = len(df)
     violating_queries = 0
+    sum_violation_amount = 0.0
+    sum_violation_relative = 0.0
+    completed_count = 0
     intervals: list[TimelineInterval] = []
 
     for qid, row in df.iterrows():
@@ -233,6 +249,12 @@ def get_run_timeline(experiment: str, run_id: str):
         tpcds = row.get("query_text_id")
         row_slo_s = resolver.resolve(tpcds)
         viol = state == "COMPLETED" and duration > row_slo_s
+        viol_amount = max(0.0, duration - row_slo_s) if state == "COMPLETED" else 0.0
+        viol_rel = max(0.0, (duration - row_slo_s) / row_slo_s) if (state == "COMPLETED" and row_slo_s > 0) else 0.0
+        if state == "COMPLETED":
+            completed_count += 1
+            sum_violation_amount += viol_amount
+            sum_violation_relative += viol_rel
         if viol:
             violating_queries += 1
         intervals.append(
@@ -242,13 +264,18 @@ def get_run_timeline(experiment: str, run_id: str):
                 query_text_id=tpcds,
                 start_s=start_s,
                 end_s=end_s,
+                latency_s=round(duration, 4),
                 state=state,
                 violates_slo=viol,
                 slo_s=row_slo_s,
+                violation_amount_s=round(viol_amount, 4),
+                violation_relative=round(viol_rel, 6),
             )
         )
 
     violation_rate = violating_queries / total_queries if total_queries > 0 else 0.0
+    agg_violation_amount = round(sum_violation_amount / completed_count, 4) if completed_count > 0 else 0.0
+    agg_violation_relative = round(sum_violation_relative / completed_count, 6) if completed_count > 0 else 0.0
 
     # total cost from billing file
     total_cost = 0.0
@@ -262,11 +289,15 @@ def get_run_timeline(experiment: str, run_id: str):
         run_id=run_id,
         experiment_name=experiment,
         default_slo_s=resolver.default_slo_s,
+        slo_metric=slo_metric,
+        slo_threshold=slo_threshold,
         slo_dict=resolver.slo_dict,
         slo_dict_filename=resolver.slo_dict_filename,
         total_queries=total_queries,
         violating_queries=violating_queries,
         violation_rate=violation_rate,
+        violation_amount_s=agg_violation_amount,
+        violation_relative_mean=agg_violation_relative,
         total_cost=total_cost,
         intervals=intervals,
     )

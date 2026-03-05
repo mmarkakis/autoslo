@@ -8,6 +8,7 @@
  * Props:
  *   intervals  – array of TimelineInterval from the /timeline API
  *   sloS       – SLO in seconds (used for debug; SLO violation already in data)
+ *   sloMetric  – string ("binary" | "absolute_s" | "relative") or null
  */
 import { useMemo } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
@@ -115,12 +116,20 @@ function buildPlotData(intervals) {
         const dur = (iv.end_s - iv.start_s).toFixed(2)
         const violation = iv.violates_slo ? '⚠ SLO violated' : '✓ SLO met'
         const sloLine = iv.slo_s != null ? `SLO: ${Number(iv.slo_s).toFixed(2)}s<br>` : ''
+          // Per-query violation metrics
+        const excessLine = iv.violation_amount_s != null
+          ? `SLO Violation Amount: ${Number(iv.violation_amount_s).toFixed(3)}s<br>`
+          : ''
+        const relLine = iv.violation_relative != null
+          ? `Relative SLO Violation: ${(iv.violation_relative * 100).toFixed(2)}%<br>`
+          : ''
         const tooltip =
-          `<b>Query ${iv.query_id}</b><br>` +
-          (iv.tpcds_temp_and_q_idx != null ? `${iv.tpcds_temp_and_q_idx}<br>` : '') +
+          `<b>Query ID: ${iv.query_id}</b><br>` +
+          `Query text ID: ${iv.query_text_id != null ? `${iv.query_text_id}<br>` : ''}` +
           `Cluster: ${iv.cluster_name}<br>` +
           sloLine +
           `${iv.start_s.toFixed(2)}s → ${iv.end_s.toFixed(2)}s (${dur}s)<br>` +
+          excessLine + relLine +
           `${iv.state} · ${violation}`
 
         const yCtr = (y0 + y1) / 2
@@ -159,7 +168,7 @@ function buildPlotData(intervals) {
   return { shapes, hoverX, hoverY, hoverText, hoverColor, clusterTicks, totalY: yOffset }
 }
 
-export default function GanttChart({ intervals, sloS }) {
+export default function GanttChart({ intervals, sloS, sloMetric }) {
   const { shapes, hoverX, hoverY, hoverText, hoverColor, clusterTicks, totalY } =
     useMemo(() => buildPlotData(intervals), [intervals])
 

@@ -84,6 +84,10 @@
   color: #fc8181 !important;
 }
 
+.rst-neutral {
+  color: #e2e8f0 !important;
+}
+
 .rst-stats-cell {
   cursor: pointer;
   text-align: center;
@@ -94,4 +98,15 @@
 
 .rst-stats-cell:hover {
   opacity: 1;
+}
+
+/* SLO Metric badge */
+.rst-metric-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
