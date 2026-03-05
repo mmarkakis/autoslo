@@ -132,6 +132,7 @@ class TestCapacityControllerTearDown:
             slo_resolver=_resolver(),
             on_tear_down=lambda cn: tear_downs.append(cn),
             idle_periods_before_tear_down=idle_periods_before_tear_down,
+            min_cluster_lifetime_s=0.0,  # opt out of lifetime gate
         )
         for _ in range(2 * idle_periods_before_tear_down):
             ctrl.tick_once()
@@ -149,6 +150,7 @@ class TestCapacityControllerTearDown:
             slo_resolver=_resolver(),
             on_tear_down=lambda cn: tear_downs.append(cn),
             idle_periods_before_tear_down=idle_periods_before_tear_down,
+            min_cluster_lifetime_s=0.0,  # opt out of lifetime gate
         )
         # Tick: c0 is idle each time.
         for _ in range(idle_periods_before_tear_down):
@@ -175,6 +177,7 @@ class TestCapacityControllerTearDown:
             slo_resolver=_resolver(),
             on_tear_down=lambda cn: tear_downs.append(cn),
             idle_periods_before_tear_down=idle_periods_before_tear_down,
+            min_cluster_lifetime_s=0.0,  # opt out of lifetime gate
         )
         for _ in range(2 * idle_periods_before_tear_down):
             ctrl.tick_once()
@@ -194,6 +197,7 @@ class TestCapacityControllerTearDown:
             slo_resolver=_resolver(),
             on_tear_down=lambda cn: tear_downs.append(cn),
             idle_periods_before_tear_down=idle_periods_before_tear_down,
+            min_cluster_lifetime_s=0.0,  # opt out of lifetime gate
         )
         # 4 ticks → should fire at tick 2, reset, fire again at tick 4
         for _ in range(2 * idle_periods_before_tear_down):
@@ -296,3 +300,195 @@ class TestCapacityControllerRPUSelection:
         assert ctrl.allowed_rpu_sizes == [4, 16]
         ctrl.allowed_rpu_sizes = [32, 8]
         assert ctrl.allowed_rpu_sizes == [8, 32]  # sorted
+
+
+# ---------------------------------------------------------------------------
+# Suppress redundant spin-ups while a cluster is pending
+# ---------------------------------------------------------------------------
+
+
+class TestFix2PendingSpinUpSuppression:
+
+    def test_second_tick_suppressed_while_pending(self):
+        """Two consecutive ticks while a cluster is pending → only one
+        on_spin_up call."""
+        active = {"c0": [_q("a", latency=9.5)]}
+        spin_ups: list[tuple[str, int]] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(10.0),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
+            eta_crit=0.2,
+        )
+        # First tick: should fire.
+        ctrl.tick_once()
+        assert len(spin_ups) == 1
+        assert ctrl.pending_count == 1
+
+        # Second tick: pending_count > 0 → suppressed.
+        ctrl.tick_once()
+        assert len(spin_ups) == 1  # still 1
+        assert ctrl.pending_count == 1
+
+    def test_spin_up_unblocked_after_notify(self):
+        """After notify_cluster_ready, the next tick can fire again."""
+        active = {"c0": [_q("a", latency=9.5)]}
+        spin_ups: list[tuple[str, int]] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(10.0),
+            on_spin_up=lambda reason, rpu: spin_ups.append((reason, rpu)),
+            eta_crit=0.2,
+        )
+        ctrl.tick_once()
+        assert len(spin_ups) == 1
+
+        # Simulate the cluster becoming ready.
+        ctrl.notify_cluster_ready("new_cluster", 100.0)
+        assert ctrl.pending_count == 0
+
+        # Next tick should fire again.
+        ctrl.tick_once()
+        assert len(spin_ups) == 2
+
+    def test_pending_count_does_not_go_negative(self):
+        """Calling notify_cluster_ready without a pending spin-up does
+        not make pending_count negative."""
+        ctrl = CapacityController(
+            get_active_queries=lambda: {},
+            slo_resolver=_resolver(),
+        )
+        assert ctrl.pending_count == 0
+        ctrl.notify_cluster_ready("c0", 0.0)
+        assert ctrl.pending_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Minimum cluster lifetime before tear-down
+# ---------------------------------------------------------------------------
+
+
+class TestFix3MinClusterLifetime:
+
+    def test_tear_down_blocked_by_min_lifetime(self):
+        """A cluster idle for enough periods but younger than
+        min_cluster_lifetime_s is NOT torn down."""
+        idle_periods = 2
+        min_lifetime = 600.0  # 10 minutes
+        sim_time = [0.0]
+
+        active: dict[str, list[Query]] = {"c0": []}
+        tear_downs: list[str] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(),
+            on_tear_down=lambda cn: tear_downs.append(cn),
+            idle_periods_before_tear_down=idle_periods,
+            min_cluster_lifetime_s=min_lifetime,
+            get_current_time_s=lambda: sim_time[0],
+        )
+        # Register cluster ready at t=0.
+        ctrl.notify_cluster_ready("c0", 0.0)
+
+        # Tick at t=60 and t=120 — cluster is idle for 2 periods but
+        # only 120s old (< 600s lifetime).
+        sim_time[0] = 60.0
+        ctrl.tick_once()
+        sim_time[0] = 120.0
+        ctrl.tick_once()
+        assert tear_downs == []
+
+    def test_tear_down_allowed_after_min_lifetime(self):
+        """A cluster idle for enough periods AND older than
+        min_cluster_lifetime_s IS torn down."""
+        idle_periods = 2
+        min_lifetime = 600.0
+        sim_time = [0.0]
+
+        active: dict[str, list[Query]] = {"c0": []}
+        tear_downs: list[str] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(),
+            on_tear_down=lambda cn: tear_downs.append(cn),
+            idle_periods_before_tear_down=idle_periods,
+            min_cluster_lifetime_s=min_lifetime,
+            get_current_time_s=lambda: sim_time[0],
+        )
+        ctrl.notify_cluster_ready("c0", 0.0)
+
+        # Advance past the minimum lifetime.
+        sim_time[0] = 660.0
+        ctrl.tick_once()
+        sim_time[0] = 720.0
+        ctrl.tick_once()
+        assert tear_downs == ["c0"]
+
+    def test_initial_clusters_also_protected(self):
+        """Clusters registered at t=0 are protected by the minimum
+        lifetime just like dynamically spun-up clusters."""
+        idle_periods = 1
+        min_lifetime = 300.0
+        sim_time = [0.0]
+
+        active: dict[str, list[Query]] = {"init_c": []}
+        tear_downs: list[str] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(),
+            on_tear_down=lambda cn: tear_downs.append(cn),
+            idle_periods_before_tear_down=idle_periods,
+            min_cluster_lifetime_s=min_lifetime,
+            get_current_time_s=lambda: sim_time[0],
+        )
+        # Register initial cluster (as the simulator does).
+        ctrl.notify_cluster_ready("init_c", 0.0)
+
+        # 1 idle tick at t=60 — idle threshold met but lifetime not.
+        sim_time[0] = 60.0
+        ctrl.tick_once()
+        assert tear_downs == []
+
+        # Advance past lifetime.
+        sim_time[0] = 360.0
+        ctrl.tick_once()
+        assert tear_downs == ["init_c"]
+
+    def test_min_cluster_lifetime_settable(self):
+        ctrl = CapacityController(
+            get_active_queries=lambda: {},
+            slo_resolver=_resolver(),
+            min_cluster_lifetime_s=900.0,
+        )
+        assert ctrl.min_cluster_lifetime_s == 900.0
+        ctrl.min_cluster_lifetime_s = 1800.0
+        assert ctrl.min_cluster_lifetime_s == 1800.0
+
+    def test_unknown_cluster_uses_current_time_as_ready(self):
+        """A cluster not registered via notify_cluster_ready should
+        still be eligible for tear-down (ready_time defaults to now,
+        so age=0 which is < min_lifetime, so it's protected)."""
+        idle_periods = 1
+        min_lifetime = 60.0
+        sim_time = [1000.0]
+
+        active: dict[str, list[Query]] = {"mystery": []}
+        tear_downs: list[str] = []
+
+        ctrl = CapacityController(
+            get_active_queries=lambda: active,
+            slo_resolver=_resolver(),
+            on_tear_down=lambda cn: tear_downs.append(cn),
+            idle_periods_before_tear_down=idle_periods,
+            min_cluster_lifetime_s=min_lifetime,
+            get_current_time_s=lambda: sim_time[0],
+        )
+        # No notify_cluster_ready — ready_time defaults to now (1000).
+        # age = 1000 - 1000 = 0 < 60 → blocked.
+        ctrl.tick_once()
+        assert tear_downs == []

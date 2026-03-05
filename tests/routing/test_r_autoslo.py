@@ -137,6 +137,9 @@ def _make_router(
     router._name = "RAutoSLO(mock)"
     router.TOLERANCE_S = 1e-4
     router._build_patcher = build_patcher  # for cleanup
+    from collections import deque
+    router._routing_window_s = 120.0
+    router._routing_window = deque()
 
     # Fake Blueprint (just needs .cluster_names and .name)
     bp = MagicMock()

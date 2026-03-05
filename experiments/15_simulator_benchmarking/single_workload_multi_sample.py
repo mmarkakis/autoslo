@@ -3,8 +3,8 @@ import os
 from datetime import datetime
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.workload_routing_simulator import (
-    WorkloadRoutingSimulator,
+from autoslo.workload_execution.workload_simulator import (
+    WorkloadSimulator,
 )
 from autoslo.blueprints.blueprint import Blueprint
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
@@ -67,9 +67,10 @@ def main(args):
             f"poll_interval_s={args.capacity_poll_interval_s}"
         )
     print(f"Experiment name: {experiment_name}")
+    
 
     # Create the simulator once and reset it for each sample.
-    simulator = WorkloadRoutingSimulator(
+    simulator = WorkloadSimulator(
         workload_name=args.workload_name,
         iconq_model_id=args.iconq_model_id,
         blueprint_name=blueprint_name,
@@ -82,6 +83,7 @@ def main(args):
         export_video=args.export_video,
         video_frame_duration=args.video_frame_duration,
         experiment_name=experiment_name,
+        overwrite_experiment=args.overwrite_experiment,
         dynamic_cluster_config=dynamic_config,
         eta_crit=args.eta_crit,
         idle_periods_before_tear_down=args.idle_periods_before_tear_down,
@@ -207,6 +209,16 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--overwrite_experiment",
+        action="store_true",
+        help=(
+            "Whether to overwrite an existing experiment with the same name. "
+            "If False and an experiment with the same name exists, a unique "
+            "suffix is appended to the new experiment's name to avoid "
+            "overwriting."
+        ),  
+    )
+    parser.add_argument(
         "--continue_runs",
         action="store_true",
         help="Whether to continue from an existing collection of runs",
@@ -274,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--idle_periods_before_tear_down",
         type=int,
-        default=5,
+        default=15,
         help=(
             "Number of consecutive idle polling periods before a cluster "
             "is torn down (dynamic mode only)."

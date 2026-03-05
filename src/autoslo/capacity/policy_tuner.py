@@ -76,10 +76,19 @@ class PolicyParams:
         SLO headroom threshold for spin-up (Layer 2).
     idle_periods_before_tear_down : int
         Consecutive idle polls before a cluster is torn down (Layer 2).
+    min_cluster_lifetime_s : float
+        Minimum seconds a cluster must be ready before tear-down
+        eligibility.  Default 1200 (20 minutes).
+    min_rpu_override : int | None
+        When set, force the spin-up RPU to this value instead of using
+        adaptive counterfactual selection.  ``None`` (default)
+        enables adaptive selection.
     """
 
     eta_crit: float
     idle_periods_before_tear_down: int
+    min_cluster_lifetime_s: float = 1200.0
+    min_rpu_override: int | None = None
 
 
 @dataclass(frozen=True)
@@ -330,6 +339,8 @@ class PolicyTuner:
     def make_grid(
         eta_crit: Sequence[float],
         idle_periods: Sequence[int],
+        min_cluster_lifetime_s: Sequence[float] = (1200.0,),
+        min_rpu_override: Sequence[int | None] = (None,),
     ) -> list[PolicyParams]:
         """Build the Cartesian product of parameter values.
 
@@ -339,6 +350,10 @@ class PolicyTuner:
             Values of η_crit to try.
         idle_periods : sequence of int
             Values of ``idle_periods_before_tear_down`` to try.
+        min_cluster_lifetime_s : sequence of float
+            Values of minimum cluster lifetime to try.
+        min_rpu_override : sequence of int or None
+            Fixed RPU overrides to try; ``None`` means adaptive.
 
         Returns
         -------
@@ -348,8 +363,12 @@ class PolicyTuner:
             PolicyParams(
                 eta_crit=e,
                 idle_periods_before_tear_down=i,
+                min_cluster_lifetime_s=m,
+                min_rpu_override=r,
             )
-            for e, i in itertools.product(eta_crit, idle_periods)
+            for e, i, m, r in itertools.product(
+                eta_crit, idle_periods, min_cluster_lifetime_s, min_rpu_override
+            )
         ]
 
     # ------------------------------------------------------------------
@@ -379,11 +398,14 @@ class PolicyTuner:
 
         for idx, params in enumerate(self._grid):
             logger.info(
-                "PolicyTuner: evaluating %d / %d — η_crit=%.3f, " "L_down=%d",
+                "PolicyTuner: evaluating %d / %d — η_crit=%.3f, "
+                "L_down=%d, T_min_life=%.0f, rpu_override=%s",
                 idx + 1,
                 total,
                 params.eta_crit,
                 params.idle_periods_before_tear_down,
+                params.min_cluster_lifetime_s,
+                params.min_rpu_override,
             )
             outcome = self._simulate_fn(params)
             entries.append(SweepEntry(params=params, outcome=outcome))

@@ -19,9 +19,10 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from dataclasses import replace as _dc_replace
+from typing import Any, Callable, Optional
 
-from autoslo.routing.routing_core import RoutingCore
+from autoslo.routing.routing_core import ClusterSnapshot, RoutingCore
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,20 @@ class CapacityController:
         RPU sizes available for dynamic spin-up (sorted ascending).
         If *None*, defaults to ``[8]`` (a safe single-size default).
         The controller always picks the **smallest** available RPU.
+    min_cluster_lifetime_s:
+        Minimum wall-clock (or simulated) seconds a cluster must have
+        been ready before it becomes eligible for tear-down.
+        Default 1200 (20 minutes).
+    get_current_time_s:
+        Callable returning the current time in seconds.  Defaults to
+        ``time.time``.  The simulator passes its own clock.  
+    latency_model:
+        An ``IconqModel`` used for counterfactual RPU selection.  When
+        *None*, the controller falls back to the smallest allowed RPU.
+    get_routing_window:
+        Callable returning the recent routing window from the router
+        (list of ``(Query, ClusterSnapshot | None)`` tuples).  Used
+        for counterfactual replay during RPU selection. 
     """
 
     def __init__(
@@ -70,6 +85,10 @@ class CapacityController:
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
         allowed_rpu_sizes: Optional[list[int]] = None,
+        min_cluster_lifetime_s: float = 1200.0,
+        get_current_time_s: Optional[Callable[[], float]] = None,
+        latency_model: Optional[Any] = None,
+        get_routing_window: Optional[Callable[[], list[tuple]]] = None,
     ) -> None:
         self._get_active_queries = get_active_queries
         self._slo_resolver = slo_resolver
@@ -81,6 +100,17 @@ class CapacityController:
         self._allowed_rpu_sizes: list[int] = sorted(
             allowed_rpu_sizes if allowed_rpu_sizes is not None else [8]
         )
+
+        self._min_cluster_lifetime_s = min_cluster_lifetime_s
+        self._get_current_time_s: Callable[[], float] = (
+            get_current_time_s if get_current_time_s is not None else time.time
+        )
+        self._cluster_ready_time_s: dict[str, float] = {}
+
+        self._pending_count: int = 0
+
+        self._latency_model = latency_model
+        self._get_routing_window = get_routing_window
 
         # Idle tracking: cluster_name → consecutive idle polls
         self._idle_counts: dict[str, int] = {}
@@ -100,6 +130,23 @@ class CapacityController:
         """Called (from any thread) when the router cannot find a
         non-violating cluster.  Wakes the controller early."""
         self._pressure_event.set()
+
+    # ------------------------------------------------------------------
+    # Cluster-ready notification
+    # ------------------------------------------------------------------
+
+    def notify_cluster_ready(
+        self, cluster_name: str, ready_time_s: float
+    ) -> None:
+        """Inform the controller that a cluster has become ready.
+
+        This serves two purposes:
+        - Decrements ``_pending_count`` so the next spin-up is
+          unblocked.
+        - Records the ready time for minimum-lifetime enforcement.
+        """
+        self._pending_count = max(0, self._pending_count - 1)
+        self._cluster_ready_time_s[cluster_name] = ready_time_s
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -172,6 +219,97 @@ class CapacityController:
     def allowed_rpu_sizes(self, value: list[int]) -> None:
         self._allowed_rpu_sizes = sorted(value)
 
+    @property
+    def min_cluster_lifetime_s(self) -> float:
+        return self._min_cluster_lifetime_s
+
+    @min_cluster_lifetime_s.setter
+    def min_cluster_lifetime_s(self, value: float) -> None:
+        self._min_cluster_lifetime_s = value
+
+    @property
+    def pending_count(self) -> int:
+        return self._pending_count
+
+    # ------------------------------------------------------------------
+    # RPU-aware spin-up size selection
+    # ------------------------------------------------------------------
+
+    def _select_rpu(self) -> int:
+        """Choose the RPU size for a new cluster via counterfactual
+        routing replay.
+
+        For each candidate RPU (ascending), construct a hypothetical
+        empty cluster of that size and ask whether the pressure-causing
+        queries in the recent routing window would have met their SLOs
+        if routed there.  Returns the smallest RPU that clears all
+        violations, or the largest available RPU if none suffices.
+
+        Falls back to ``self._allowed_rpu_sizes[0]`` (smallest) when
+        no latency model or routing window is available.
+        """
+        # Fall back to smallest RPU when model is unavailable.
+        if (
+            self._latency_model is None
+            or self._get_routing_window is None
+        ):
+            return self._allowed_rpu_sizes[0]
+
+        window = self._get_routing_window()
+        if not window:
+            return self._allowed_rpu_sizes[0]
+
+        # Identify pressure queries — those whose predicted
+        # latency exceeded their SLO in the recent window.
+        pressure_queries: list[Query] = []
+        for query, _snapshot in window:
+            slo_s = self._slo_resolver.resolve(query)
+            predicted = getattr(query, "latency_s", None)
+            if predicted is not None and predicted > slo_s:
+                pressure_queries.append(query)
+
+        if not pressure_queries:
+            # No SLO violations in the window — use smallest RPU.
+            return self._allowed_rpu_sizes[0]
+
+        # Try each candidate RPU (ascending) via counterfactual
+        # score_placement.
+        from autoslo.blueprints.cluster import Cluster as _Cluster
+
+        for rpu in self._allowed_rpu_sizes:
+            hypothetical_cluster = _Cluster.new(rpu=rpu)
+            fresh_snapshot = ClusterSnapshot(
+                cluster_name=hypothetical_cluster.name,
+                cost_per_second=hypothetical_cluster.cost_per_second,
+                active_queries=[],
+                billing_window_start_s=None,
+            )
+            all_feasible = True
+            for q in pressure_queries:
+                # Predict latency of q as the sole occupant of the
+                # hypothetical cluster.
+                q_copy = _dc_replace(
+                    q, cluster_name=hypothetical_cluster.name
+                )
+                stage_pred = (
+                    self._latency_model
+                    .stage_model
+                    .predict_from_tpcds_temp_and_q_idx(
+                        {q_copy.query_id: q_copy.tpcds_temp_and_q_idx},
+                        hypothetical_cluster.name,
+                    )[q_copy.query_id]
+                    .overall_mean_s()
+                )
+                slo_s = self._slo_resolver.resolve(q_copy)
+                if stage_pred > slo_s:
+                    all_feasible = False
+                    break
+            if all_feasible:
+                return rpu
+
+        # No candidate RPU is sufficient — pick the largest.
+        return self._allowed_rpu_sizes[-1]
+
     # ------------------------------------------------------------------
     # Core loop
     # ------------------------------------------------------------------
@@ -214,19 +352,26 @@ class CapacityController:
         )
 
         # -- Spin-up decision ------------------------------------------------
-        if headroom <= self._eta_crit or pressure_fired:
+        # Suppress redundant spin-ups while a cluster is pending.
+        if (headroom <= self._eta_crit or pressure_fired) and self._pending_count == 0:
             reason = (
                 f"headroom={headroom:.4f}<=η_crit={self._eta_crit:.4f}"
                 if headroom <= self._eta_crit
                 else "capacity_pressure_signal"
             )
-            rpu = self._allowed_rpu_sizes[0]  # smallest available
+            # RPU-aware spin-up size selection via counterfactual
+            # routing replay (falls back to smallest RPU when no model).
+            rpu = self._select_rpu()
             logger.info("Spin-up triggered: %s (rpu=%d)", reason, rpu)
+            # Increment pending count before the callback.
+            self._pending_count += 1
             if self._on_spin_up is not None:
                 try:
                     self._on_spin_up(reason, rpu)
                 except Exception:
                     logger.exception("on_spin_up callback failed")
+                    # Roll back pending count on failure.
+                    self._pending_count = max(0, self._pending_count - 1)
 
         # -- Per-cluster idle tracking / tear-down ---------------------------
         for cn, qs in active_map.items():
@@ -236,6 +381,20 @@ class CapacityController:
                     self._idle_counts[cn]
                     >= self._idle_periods_before_tear_down
                 ):
+                    # Enforce minimum cluster lifetime before tear-down.
+                    now = self._get_current_time_s()
+                    ready_time = self._cluster_ready_time_s.get(cn, now)
+                    age_s = now - ready_time
+                    if age_s < self._min_cluster_lifetime_s:
+                        logger.debug(
+                            "Tear-down deferred for cluster %s (age=%.0fs "
+                            "< min_lifetime=%.0fs).",
+                            cn,
+                            age_s,
+                            self._min_cluster_lifetime_s,
+                        )
+                        continue
+
                     logger.info(
                         "Tear-down triggered for cluster %s (idle for %d "
                         "periods).",

@@ -1,6 +1,6 @@
 """
 Tests for dynamic provisioning in
-:class:`~autoslo.blueprint_selection.workload_routing_simulator.WorkloadRoutingSimulator`.
+:class:`~autoslo.blueprint_selection.workload_routing_simulator.WorkloadSimulator`.
 
 These tests exercise the event-loop machinery (cluster activation,
 deactivation, capacity-controller integration, and pending-event
@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from autoslo.blueprints.cluster import Cluster
-from autoslo.blueprint_selection.workload_routing_simulator import (
-    WorkloadRoutingSimulator,
+from autoslo.workload_execution.workload_simulator import (
+    WorkloadSimulator,
 )
 
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
@@ -51,7 +51,8 @@ def _make_dynamic_simulator(
     idle_periods_before_tear_down: int = 5,
     capacity_poll_interval_s: float = 60.0,
     slo_s: float = 10.0,
-) -> WorkloadRoutingSimulator:
+    min_cluster_lifetime_s: float = 1200.0,
+) -> WorkloadSimulator:
     """Build a simulator in dynamic mode with mocked heavy deps."""
     config = DynamicClusterConfig(
         initial_rpus=initial_rpus,
@@ -75,14 +76,14 @@ def _make_dynamic_simulator(
             return_value=mock_workload,
         ),
         patch(
-            "autoslo.blueprint_selection.workload_routing_simulator.WorkloadRoutingSimulator._make_out_dir",
+            "autoslo.blueprint_selection.workload_routing_simulator.WorkloadSimulator._make_out_dir",
             return_value="/tmp/test_sim_out",
         ),
         patch(
-            "autoslo.blueprint_selection.workload_routing_simulator.WorkloadRoutingSimulator._write_config_yml",
+            "autoslo.blueprint_selection.workload_routing_simulator.WorkloadSimulator._write_config_yml",
         ),
     ):
-        sim = WorkloadRoutingSimulator(
+        sim = WorkloadSimulator(
             workload_name="test_wl",
             iconq_model_id="test_model",
             blueprint_name="dynamic",
@@ -91,6 +92,7 @@ def _make_dynamic_simulator(
             eta_crit=eta_crit,
             idle_periods_before_tear_down=idle_periods_before_tear_down,
             capacity_poll_interval_s=capacity_poll_interval_s,
+            min_cluster_lifetime_s=min_cluster_lifetime_s,
         )
     return sim
 
@@ -317,7 +319,15 @@ class TestAdvanceSimulatedTime:
         assert len(sim._provisioner.spun_up) >= 1
 
     def test_multiple_ticks(self):
-        """Multiple ticks should fire across a long time span."""
+        """Multiple ticks fire across a long time span.
+
+        Pending-count suppression means only one spin-up is
+        in-flight at a time.  With spin_up_delay=120s:
+          t=60  → spin-up fires (pending=1, cluster ready at t=180)
+          t=120 → suppressed (still pending)
+          t=180 → cluster becomes ready (pending→0), tick fires again
+        So exactly 2 spin-ups are expected within a 200s window.
+        """
         sim = _make_dynamic_simulator(
             initial_rpus=(8,),
             capacity_poll_interval_s=60.0,
@@ -331,8 +341,10 @@ class TestAdvanceSimulatedTime:
         sim._neighbors_per_active_query["q1"] = []
 
         sim._advance_simulated_time(200.0)
-        # Ticks at t=60, 120, 180.  Each triggers spin-up.
-        assert len(sim._provisioner.spun_up) >= 3
+        # Pending-count gate limits bursting; at least 1 spin-up
+        # fires, and no more than 2 within this 200s window.
+        spun = len(sim._provisioner.spun_up)
+        assert 1 <= spun <= 2
 
     def test_spin_up_cluster_becomes_ready(self):
         """A cluster scheduled via spin-up should become ready after delay."""
@@ -355,13 +367,19 @@ class TestAdvanceSimulatedTime:
         assert len(sim._active_queries_per_cluster) > initial_count
 
     def test_tear_down_after_idle_periods(self):
-        """A cluster idle for enough ticks should be torn down."""
+        """A cluster idle for enough ticks should be torn down.
+
+        Pass min_cluster_lifetime_s=0.0 to opt out of the
+        lifetime guard so the idle-period logic can be tested in
+        isolation.
+        """
         sim = _make_dynamic_simulator(
             initial_rpus=(8, 16),
             capacity_poll_interval_s=10.0,
             idle_periods_before_tear_down=3,
             eta_crit=-1.0,  # no spin-ups (headroom always > eta_crit)
             slo_s=10.0,
+            min_cluster_lifetime_s=0.0,  # Opt out of lifetime gate
         )
         assert len(sim._active_queries_per_cluster) == 2
 
@@ -472,13 +490,19 @@ class TestDraining:
 
     def test_end_to_end_drain_via_advance_simulated_time(self):
         """Full integration: idle cluster is marked draining, then
-        deactivated once its queries finish."""
+        deactivated once its queries finish.
+
+        Pass min_cluster_lifetime_s=0.0 to opt out of the
+        lifetime guard so the idle-period tear-down logic is tested
+        in isolation.
+        """
         sim = _make_dynamic_simulator(
             initial_rpus=(8, 16),
             capacity_poll_interval_s=10.0,
             idle_periods_before_tear_down=2,
             eta_crit=-1.0,  # no spin-ups
             slo_s=10.0,
+            min_cluster_lifetime_s=0.0,  # Opt out of lifetime gate
         )
         names = list(sim._active_queries_per_cluster.keys())
         target = names[0]
