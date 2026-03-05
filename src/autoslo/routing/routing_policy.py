@@ -140,6 +140,10 @@ class RoundRobinPolicy(RoutingPolicy):
         super().__init__(*args, **kwargs)
         self._cycle: itertools.cycle[str] | None = None
 
+    @property
+    def name(self):
+        return "RoundRobinPolicy"
+
     def select_cluster(
         self,
         query_id: str,
@@ -157,20 +161,3 @@ class RoundRobinPolicy(RoutingPolicy):
             self._cycle = itertools.cycle(names)
         return next(self._cycle)
 
-
-class FixedPolicy(RoutingPolicy):
-    """Always route to a single pre-configured cluster."""
-
-    def __init__(self, cluster_name: str, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._cluster_name = cluster_name
-
-    def select_cluster(
-        self,
-        query_id: str,
-        query_text_id: str,
-        start_time_s: float,
-        pool: ManagedClusterPool,
-        exclude_clusters: set[str] | None = None,
-    ) -> str:
-        return self._cluster_name

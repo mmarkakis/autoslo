@@ -21,15 +21,24 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.capacity_controller import CapacityController
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
+from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
-from autoslo.routing.routing_core import RoutingCore
+from autoslo.routing.routing_core import (
+    PlacementScore,
+    RoutingCore,
+    RoutingResult,
+)
+from autoslo.routing.routing_policy import (
+    RoundRobinPolicy,
+    RoutingPolicy,
+)
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.query import Query, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 from autoslo.workload_definition.workload import Workload
 
 if TYPE_CHECKING:
@@ -60,9 +69,10 @@ class WorkloadSimulator:
     def __init__(
         self,
         workload_name: str,
-        iconq_model_id: str,
+        routing_policy: RoutingPolicy,
         slo_s: float,
-        schema_name: Optional[str] = None,
+        schema_name: str,
+        iconq_model_id: str,
         slo_metric: SloMetric = SloMetric.RELATIVE,
         slo_threshold: float = 0.0,
         slo_dict_filename: Optional[str] = None,
@@ -80,18 +90,13 @@ class WorkloadSimulator:
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
+        self._iconq_model = IconqModel.load(iconq_model_id)
         self._slo_s = slo_s
         self._slo_dict_filename = slo_dict_filename
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
-        # Create the routing policy (loads the IconQ model internally).
-        self._model_policy = ModelPolicy(
-            iconq_model_id=iconq_model_id,
-            default_slo_s=slo_s,
-            slo_overrides=self._slo_resolver.slo_dict,
-            slo_metric=slo_metric,
-        )
-        self._iconq_model = self._model_policy.iconq_model  # convenience alias
+        # Store the routing policy (caller is responsible for constructing it).
+        self._routing_policy = routing_policy
 
         # Dynamic provisioning parameters.
         self._dynamic_cluster_config = (
@@ -186,43 +191,76 @@ class WorkloadSimulator:
     def from_config(cls, config_path: str | Path) -> "WorkloadSimulator":
         """Create a :class:`WorkloadSimulator` from a YAML config file.
 
-        The configuration uses the same field names as
-        :class:`~autoslo.workload_execution.workload_runner.WorkloadRunner`
-        where the concepts overlap and adds simulator-specific keys.
+        The config may use *nested sections* (preferred) or a flat key layout
+        (legacy, still supported for backward-compat).
 
-        Required keys
-        -------------
-        workload_name : str
-        iconq_model_id : str
-        slo_s : float
-
-        Optional keys (with defaults)
-        -----------------------------
-        slo_dict_filename : str | None
-        slo_metric : str  ("relative")  – one of "binary", "absolute_s", "relative"
-        slo_threshold : float  (0.0)
-        verbose : bool  (False)
-        export_video : bool  (False)
-        video_frame_duration : float  (1.0)
-        simulator_run_id : str | None
-        experiment_name : str | None
-        overwrite_experiment : bool  (False)
-        dynamic_cluster_config : dict with ``initial_rpus``,
-            ``allowed_rpu_sizes``, ``spin_up_delay_s``
-        eta_crit : float  (0.1)
-        idle_periods_before_tear_down : int  (5)
-        capacity_poll_interval_s : float  (60.0)
-        min_cluster_lifetime_s : float  (1200.0)
+        Nested sections
+        ---------------
+        basic_config        : workload_name, schema_name, experiment_name,
+                              simulator_run_id, overwrite_experiment,
+                              iconq_model_id
+        slo_config          : slo_s, slo_metric, slo_threshold, slo_dict_filename
+        routing_config      : routing_policy  ("model" | "round_robin"),
+        managed_cluster_pool_config : initial_rpus, allowed_rpu_sizes,
+                                spin_up_delay_s
+        autoscaling_config  : eta_crit, idle_periods_before_tear_down,
+                              capacity_poll_interval_s, min_cluster_lifetime_s
+        output_config       : verbose, export_video, video_frame_duration
         """
         path = Path(config_path)
         with open(path) as f:
             cfg = yaml.safe_load(f)
 
-        # Handle managed_cluster_pool_config sub-dict.
-        mcp_raw = cfg.get("managed_cluster_pool_config")
+        # Helper: read from named section first, fall back to root-level key.
+        def _s(section_key: str, key: str, default=None):
+            section = cfg.get(section_key)
+            if section and key in section:
+                return section[key]
+            return cfg.get(key, default)
+
+        # ── basic ────────────────────────────────────────────────────────────
+        workload_name: str = _s("basic_config", "workload_name")
+        schema_name: Optional[str] = _s("basic_config", "schema_name")
+        experiment_name: Optional[str] = _s("basic_config", "experiment_name")
+        simulator_run_id: Optional[str] = _s("basic_config", "simulator_run_id")
+        overwrite_experiment: bool = _s(
+            "basic_config", "overwrite_experiment", False
+        )
+        iconq_model_id: Optional[str] = _s("basic_config", "iconq_model_id")
+
+        # ── SLO ──────────────────────────────────────────────────────────────
+        slo_s: float = _s("slo_config", "slo_s", 10.0)
+        raw_metric: str = _s("slo_config", "slo_metric", "relative")
+        slo_metric = SloMetric(raw_metric)
+        slo_threshold: float = _s("slo_config", "slo_threshold", 0.0)
+        slo_dict_filename: Optional[str] = _s("slo_config", "slo_dict_filename")
+
+        # ── routing policy ───────────────────────────────────────────────────
+        routing_cfg: dict = cfg.get("routing_config") or {}
+        policy_type: str = routing_cfg.get(
+            "routing_policy", cfg.get("routing_policy", "model")
+        )
+        slo_resolver = SloResolver(slo_s, slo_dict_filename)
+
+        if policy_type == "model":
+            routing_policy: RoutingPolicy = ModelPolicy(
+                iconq_model_id=iconq_model_id,
+                default_slo_s=slo_s,
+                slo_overrides=slo_resolver.slo_dict,
+                slo_metric=slo_metric,
+            )
+        elif policy_type == "round_robin":
+            routing_policy = RoundRobinPolicy()
+        else:
+            raise ValueError(
+                f"Unknown routing_policy {policy_type!r}. "
+                "Expected one of: 'model', 'round_robin'."
+            )
+
+        # ── cluster pool ─────────────────────────────────────────────────────
+        mcp_raw: Optional[dict] = cfg.get("managed_cluster_pool_config")
         mcp: Optional[ManagedClusterPoolConfig] = None
         if mcp_raw is not None:
-            # Convert list RPUs to tuples for the frozen dataclass.
             if "initial_rpus" in mcp_raw and isinstance(
                 mcp_raw["initial_rpus"], list
             ):
@@ -235,32 +273,90 @@ class WorkloadSimulator:
                 )
             mcp = ManagedClusterPoolConfig(**mcp_raw)
 
-        # Parse slo_metric string → enum.
-        raw_metric = cfg.get("slo_metric", "relative")
-        slo_metric = SloMetric(raw_metric)
+        # ── autoscaling ───────────────────────────────────────────────────────
+        eta_crit: float = _s("autoscaling_config", "eta_crit", 0.1)
+        idle_periods: int = _s(
+            "autoscaling_config", "idle_periods_before_tear_down", 5
+        )
+        poll_s: float = _s(
+            "autoscaling_config", "capacity_poll_interval_s", 60.0
+        )
+        min_lifetime_s: float = _s(
+            "autoscaling_config", "min_cluster_lifetime_s", 1200.0
+        )
+
+        # ── output ────────────────────────────────────────────────────────────
+        verbose: bool = _s("output_config", "verbose", False)
+        export_video: bool = _s("output_config", "export_video", False)
+        video_frame_duration: float = _s(
+            "output_config", "video_frame_duration", 1.0
+        )
 
         return cls(
-            workload_name=cfg["workload_name"],
-            iconq_model_id=cfg["iconq_model_id"],
-            slo_s=cfg["slo_s"],
-            schema_name=cfg.get("schema_name"),
+            workload_name=workload_name,
+            routing_policy=routing_policy,
+            slo_s=slo_s,
+            schema_name=schema_name,
+            iconq_model_id=iconq_model_id,
             slo_metric=slo_metric,
-            slo_threshold=cfg.get("slo_threshold", 0.0),
-            slo_dict_filename=cfg.get("slo_dict_filename"),
-            verbose=cfg.get("verbose", False),
-            export_video=cfg.get("export_video", False),
-            video_frame_duration=cfg.get("video_frame_duration", 1.0),
-            simulator_run_id=cfg.get("simulator_run_id"),
-            experiment_name=cfg.get("experiment_name"),
-            overwrite_experiment=cfg.get("overwrite_experiment", False),
+            slo_threshold=slo_threshold,
+            slo_dict_filename=slo_dict_filename,
+            verbose=verbose,
+            export_video=export_video,
+            video_frame_duration=video_frame_duration,
+            simulator_run_id=simulator_run_id,
+            experiment_name=experiment_name,
+            overwrite_experiment=overwrite_experiment,
             managed_cluster_pool_config=mcp,
-            eta_crit=cfg.get("eta_crit", 0.1),
-            idle_periods_before_tear_down=cfg.get(
-                "idle_periods_before_tear_down", 5
-            ),
-            capacity_poll_interval_s=cfg.get("capacity_poll_interval_s", 60.0),
-            min_cluster_lifetime_s=cfg.get("min_cluster_lifetime_s", 1200.0),
+            eta_crit=eta_crit,
+            idle_periods_before_tear_down=idle_periods,
+            capacity_poll_interval_s=poll_s,
+            min_cluster_lifetime_s=min_lifetime_s,
         )
+
+    # ------------------------------------------------------------------
+    # Post-routing scoring (for non-model policies)
+    # ------------------------------------------------------------------
+
+    def _score_with_model(
+        self,
+        query_id: str,
+        query_text_id: QueryTextId,
+        cluster_name: str,
+        start_time_s: float,
+    ) -> tuple[Optional[PlacementScore], Optional[Query]]:
+        """Score a routing decision post-hoc using the scoring model.
+
+        Called when the routing policy returned a :class:`RoutingResult` with
+        ``score=None`` (e.g. :class:`RoundRobinPolicy`).
+        Delegates to :meth:`RoutingCore.score_query_on_clusters` for the single
+        chosen cluster.
+
+        Returns ``(PlacementScore, featurised_tracking_query)`` on success, or
+        ``(None, None)`` if any step fails (cluster not in pool, no predictions).
+        """
+        scores, incoming, _ = RoutingCore.score_query_on_clusters(
+            iconq_model=self._iconq_model,
+            pool=self._pool,
+            query_id=query_id,
+            query_text_id=query_text_id,
+            start_time_s=start_time_s,
+            slo_resolver=self._slo_resolver,
+            slo_metric=self._slo_metric,
+            cluster_names=[cluster_name],
+        )
+        score = scores.get(cluster_name)
+        if score is None:
+            logger.warning(
+                "_score_with_model: no score produced for cluster %s; skipping.",
+                cluster_name,
+            )
+            return None, None
+        incoming.cluster_name = cluster_name
+        incoming.latency_s = score.latencies.get(
+            query_id, incoming.stage_latency_prediction_s or -1
+        )
+        return score, incoming
 
     # ------------------------------------------------------------------
     # helper: build/return the output directory path
@@ -288,6 +384,7 @@ class WorkloadSimulator:
                 "run_id": self._run_id,
                 "experiment_name": self._experiment_name,
                 "workload_name": self._workload_name,
+                "routing_policy_type": type(self._routing_policy).__name__,
                 "iconq_model_id": self._iconq_model_id,
                 "slo_s": self._slo_s,
                 "slo_dict_filename": self._slo_dict_filename,
@@ -417,9 +514,18 @@ class WorkloadSimulator:
 
         # Create the Router (invokes policy.on_attach to wire up RPU lookup).
         self._router = Router(
-            policy=self._model_policy,
+            policy=self._routing_policy,
             pool=self._pool,
         )
+
+        # If we have a standalone scoring model (not attached via the policy),
+        # wire up the RPU lookup so interaction featurisation works correctly.
+        if self._iconq_model is not None and not isinstance(
+            self._routing_policy, ModelPolicy
+        ):
+            self._iconq_model.iconq_interaction_featurizer.set_rpu_lookup(
+                self._pool.get_rpu
+            )
 
         # Capacity controller (pool excludes draining clusters from routing;
         # we also exclude them from capacity-controller polling).
@@ -632,7 +738,13 @@ class WorkloadSimulator:
         )
         print(
             f"Simulating routing of {len(queries)} queries from workload "
-            f"{self._workload_name} using Iconq model {self._iconq_model_id}..."
+            f"{self._workload_name} using {type(self._routing_policy).__name__}"
+            + (
+                f" (model {self._iconq_model_id})"
+                if self._iconq_model_id
+                else ""
+            )
+            + "..."
         )
         print(
             f"The first and last relative query start times are {queries[0].rel_start_time_s} and {queries[-1].rel_start_time_s}"
@@ -655,16 +767,32 @@ class WorkloadSimulator:
                 }
             )
 
-            # Route the query via the Router (delegates to ModelPolicy).
+            # Route the query via the Router (delegates to policy).
             # DRAINING clusters are automatically excluded by the pool.
             result = self._router.route_query_with_predictions(
                 query_id=query.query_id,
                 query_text_id=str(query.query_text_id),
                 start_time_s=query.rel_start_time_s,
             )
-            assert (
-                result.score is not None
-            ), "ModelPolicy must always produce a PlacementScore"
+
+            # If the policy did not produce a PlacementScore (e.g. RoundRobinPolicy),
+            # score the chosen cluster post-hoc using the scoring
+            # model so that latency predictions and co-runner updates are still
+            # tracked correctly.
+            if result.score is None and self._iconq_model is not None:
+                computed_score, enriched_tq = self._score_with_model(
+                    query_id=query.query_id,
+                    query_text_id=query.query_text_id,
+                    cluster_name=result.cluster_name,
+                    start_time_s=query.rel_start_time_s,
+                )
+                if computed_score is not None:
+                    result = RoutingResult(
+                        cluster_name=result.cluster_name,
+                        score=computed_score,
+                        tracking_query=enriched_tq,
+                    )
+
             selected_cluster_name = result.cluster_name
             tq = result.tracking_query
             self_latency_s = result.score.latencies[query.query_id]
@@ -690,7 +818,7 @@ class WorkloadSimulator:
             seq_num_to_cluster_name[i] = selected_cluster_name
 
             # Update co-runner latencies on the chosen cluster using the
-            # model predictions returned by the router.
+            # model predictions.
             for q in self._pool.get_active_queries(selected_cluster_name):
                 if q.query_id == query.query_id:
                     continue

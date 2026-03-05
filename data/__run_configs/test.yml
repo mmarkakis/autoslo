@@ -1,13 +1,15 @@
 ### Basic Configuration
-schema_name: ext_tpcds1000
-workload_name: test_workload
-iconq_model_id: "1771539369"
-experiment_name: test_experiment
+basic_config:
+  schema_name: ext_tpcds1000
+  workload_name: test_workload
+  experiment_name: test_experiment
+  iconq_model_id: "1771539369"
 
-### SLO configuration
-slo_s: 30.0
-slo_metric: relative
-slo_threshold: 1
+### SLO Configuration
+slo_config:
+  slo_s: 30.0
+  slo_metric: relative
+  slo_threshold: 1
 
 ### Cluster Pool Configuration
 managed_cluster_pool_config:
@@ -21,12 +23,19 @@ managed_cluster_pool_config:
     - 32
   spin_up_delay_s: 120.0
 
-### Autoscaling configuration
-eta_crit: 0.1
-idle_periods_before_tear_down: 5
-capacity_poll_interval_s: 60.0
-min_cluster_lifetime_s: 1200.0
+### Query Routing Configuration
+routing_config:
+  routing_policy: model
+  
 
-### Output configuration
-verbose: true
-export_video: false
+### Autoscaling Configuration
+autoscaling_config:
+  eta_crit: 0.1
+  idle_periods_before_tear_down: 5
+  capacity_poll_interval_s: 60.0
+  min_cluster_lifetime_s: 1200.0
+
+### Output Configuration
+output_config:
+  verbose: true
+  export_video: false

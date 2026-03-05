@@ -15,9 +15,13 @@ so that they evaluate exactly the same routing policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from intervaltree import Interval  # type: ignore[import]
+
+if TYPE_CHECKING:
+    from autoslo.models.iconq_model import IconqModel
+    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.models.model_prediction import ModelPrediction
@@ -295,6 +299,151 @@ class RoutingCore:
             ):
                 best = candidate
         return best
+
+    # --------------------------------------------------------------------------
+    # Full-pipeline placement scoring (featurise → snapshot → score)
+    # --------------------------------------------------------------------------
+
+    @staticmethod
+    def score_query_on_clusters(
+        iconq_model: "IconqModel",
+        pool: "ManagedClusterPool",
+        query_id: str,
+        query_text_id: QueryTextId,
+        start_time_s: float,
+        slo_resolver: SloResolver,
+        slo_metric: SloMetric,
+        cluster_names: list[str] | None = None,
+    ) -> tuple[dict[str, "PlacementScore"], Query, dict[str, float]]:
+        """Featurise a query and score it against a set of the pool's clusters.
+
+        This is the shared core used by both
+        :meth:`~autoslo.routing.model_policy.ModelPolicy.route_with_details`
+        and
+        :meth:`~autoslo.workload_execution.workload_simulator.WorkloadSimulator._score_with_model`.
+        Centralising the featurise → snapshot → stage-predict → before-state
+        → batched-predict → score pipeline here keeps both callers thin and
+        guarantees they use exactly the same arithmetic.
+
+        Parameters
+        ----------
+        iconq_model:
+            Loaded :class:`~autoslo.models.iconq_model.IconqModel`.
+        pool:
+            Live cluster pool.
+        query_id:
+            Unique string identifier for the incoming query.
+        query_text_id:
+            Template identifier for the incoming query.
+        start_time_s:
+            Arrival time (simulated or real) in seconds.
+        slo_resolver:
+            Resolves per-template SLOs.
+        slo_metric:
+            Which SLO-violation metric drives scoring.
+        cluster_names:
+            Restrict scoring to these cluster names.  If *None*, score all
+            READY clusters currently in the pool.
+
+        Returns
+        -------
+        (scores, incoming, stage_preds)
+            scores      : ``{cluster_name: PlacementScore}`` for every cluster
+                          that produced valid model predictions.
+            incoming    : Featurised :class:`Query` (``cluster_name`` and
+                          ``stage_latency_prediction_s`` reflect the last
+                          iterated cluster; callers should update these and
+                          ``latency_s`` for the chosen cluster before storing).
+            stage_preds : ``{cluster_name: stage_pred_s}`` for every scored
+                          cluster, useful for finalising the tracking query.
+        """
+        # ConcurrentQueryDataset lives in nn/, which does not import
+        # routing_core — safe to import here at runtime.
+        from autoslo.nn.concurrent_query_dataset import (  # noqa: PLC0415
+            ConcurrentQueryDataset,
+        )
+
+        eligible: list[str] = (
+            list(cluster_names)
+            if cluster_names is not None
+            else list(pool.cluster_names)
+        )
+
+        # -- Featurise the incoming query ----------------------------------
+        featurization = (
+            iconq_model.iconq_query_featurizer
+            .featurize_from_query_text_id(query_text_id)
+        )
+        incoming = Query(
+            query_id=query_id,
+            query_text_id=query_text_id,
+            rel_start_time_s=start_time_s,
+            featurization=featurization,
+            latency_s=-1,
+        )
+
+        # -- Atomic pool snapshot (all READY clusters, filtered below) -----
+        snapshots, run_to_base_to_neighbors = pool.build_routing_context(incoming)
+        snapshots = {cn: s for cn, s in snapshots.items() if cn in eligible}
+        run_to_base_to_neighbors = {
+            cn: n
+            for cn, n in run_to_base_to_neighbors.items()
+            if cn in eligible
+        }
+
+        # -- Stage-model predictions (RPU-dependent, per cluster) ----------
+        stage_preds: dict[str, float] = {}
+        for cn in eligible:
+            if cn not in snapshots:
+                continue
+            incoming.cluster_name = cn
+            sp = (
+                iconq_model.stage_model
+                .predict_from_query_text_id({query_id: query_text_id}, pool.get_rpu(cn))
+                [query_id].overall_mean_s()
+            )
+            incoming.stage_latency_prediction_s = sp
+            stage_preds[cn] = sp
+
+        # -- Before-state per cluster -------------------------------------
+        before: dict[str, tuple[float, float]] = {}
+        for cn, snap in snapshots.items():
+            incoming.cluster_name = cn
+            incoming.stage_latency_prediction_s = stage_preds[cn]
+            before[cn] = RoutingCore.compute_before_state(
+                snapshot=snap,
+                current_time_s=start_time_s,
+                slo_resolver=slo_resolver,
+                slo_metric=slo_metric,
+            )
+
+        # -- Batched model predictions ------------------------------------
+        dataset = ConcurrentQueryDataset.build_from_query_groups(
+            iconq_interaction_featurizer=iconq_model.iconq_interaction_featurizer,
+            run_to_base_to_neighbors=run_to_base_to_neighbors,
+        )
+        all_predictions = iconq_model.predict_from_dataset(dataset)
+
+        # -- Score each cluster ------------------------------------------
+        scores: dict[str, PlacementScore] = {}
+        for cn, predictions in all_predictions.items():
+            if cn not in before or cn not in snapshots:
+                continue
+            bc, bv = before[cn]
+            incoming.cluster_name = cn
+            incoming.stage_latency_prediction_s = stage_preds[cn]
+            scores[cn] = RoutingCore.score_placement(
+                query=incoming,
+                snapshot=snapshots[cn],
+                predictions=predictions,
+                current_time_s=start_time_s,
+                slo_resolver=slo_resolver,
+                slo_metric=slo_metric,
+                before_cost=bc,
+                before_slo_violation=bv,
+            )
+
+        return scores, incoming, stage_preds
 
     # --------------------------------------------------------------------------
     # SLO headroom

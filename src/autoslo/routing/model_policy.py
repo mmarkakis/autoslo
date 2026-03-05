@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.models.iconq_model import IconqModel
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.routing.routing_core import (
     ClusterSnapshot,
     PlacementScore,
@@ -153,83 +152,20 @@ class ModelPolicy(RoutingPolicy):
         query_id = str(query_id)
         qtid = QueryTextId(value=str(query_text_id))
 
-        # Build featurisation for the incoming query.
-        featurization = (
-            self._iconq_model.iconq_query_featurizer
-            .featurize_from_query_text_id(qtid)
-        )
-
-        incoming = Query(
-            query_id=query_id,
-            query_text_id=qtid,
-            rel_start_time_s=start_time_s,
-            featurization=featurization,
-            latency_s=-1,
-        )
-
-        # Snapshot current state from the pool.
-        snapshots, run_to_base_to_neighbors = (
-            pool.build_routing_context(incoming)
-        )
         eligible = pool.cluster_names
         if exclude_clusters:
             eligible = [cn for cn in eligible if cn not in exclude_clusters]
-            snapshots = {cn: s for cn, s in snapshots.items() if cn in eligible}
-            run_to_base_to_neighbors = {
-                cn: n for cn, n in run_to_base_to_neighbors.items()
-                if cn in eligible
-            }
 
-        # -- Stage-model prediction (per cluster) ----------------------------
-        stage_latency_predictions: dict[str, float] = {}
-        for cn in eligible:
-            incoming.cluster_name = cn
-            stage_pred = (
-                self._iconq_model.stage_model
-                .predict_from_query_text_id(
-                    {query_id: qtid}, pool.get_rpu(cn)
-                )[query_id]
-                .overall_mean_s()
-            )
-            incoming.stage_latency_prediction_s = stage_pred
-            stage_latency_predictions[cn] = stage_pred
-
-        # -- Before-state per cluster ----------------------------------------
-        before: dict[str, tuple[float, float]] = {}
-        for cn, snap in snapshots.items():
-            incoming.cluster_name = cn
-            incoming.stage_latency_prediction_s = stage_latency_predictions[cn]
-            before[cn] = RoutingCore.compute_before_state(
-                snapshot=snap,
-                current_time_s=start_time_s,
-                slo_resolver=self._slo_resolver,
-                slo_metric=self._slo_metric,
-            )
-
-        # -- Batched model prediction across all clusters --------------------
-        dataset = ConcurrentQueryDataset.build_from_query_groups(
-            iconq_interaction_featurizer=(
-                self._iconq_model.iconq_interaction_featurizer
-            ),
-            run_to_base_to_neighbors=run_to_base_to_neighbors,
+        scores, incoming, stage_preds = RoutingCore.score_query_on_clusters(
+            iconq_model=self._iconq_model,
+            pool=pool,
+            query_id=query_id,
+            query_text_id=qtid,
+            start_time_s=start_time_s,
+            slo_resolver=self._slo_resolver,
+            slo_metric=self._slo_metric,
+            cluster_names=eligible,
         )
-        all_predictions = self._iconq_model.predict_from_dataset(dataset)
-
-        # -- Score each cluster ----------------------------------------------
-        scores: list[PlacementScore] = []
-        for cn, predictions in all_predictions.items():
-            bc, bv = before[cn]
-            score = RoutingCore.score_placement(
-                query=incoming,
-                snapshot=snapshots[cn],
-                predictions=predictions,
-                current_time_s=start_time_s,
-                slo_resolver=self._slo_resolver,
-                slo_metric=self._slo_metric,
-                before_cost=bc,
-                before_slo_violation=bv,
-            )
-            scores.append(score)
 
         if not scores:
             logger.warning(
@@ -244,14 +180,15 @@ class ModelPolicy(RoutingPolicy):
                 tracking_query=incoming,
             )
 
-        best = RoutingCore.pick_best(scores, tolerance=self.TOLERANCE_S)
+        score_list = list(scores.values())
+        best = RoutingCore.pick_best(score_list, tolerance=self.TOLERANCE_S)
 
         # Emit capacity-pressure signal if every cluster would violate SLO.
-        if all(s.marginal_slo_violation > 0 for s in scores):
+        if all(s.marginal_slo_violation > 0 for s in score_list):
             logger.info(
                 "Capacity pressure: all %d clusters have positive marginal "
                 "SLO violation for query %s.",
-                len(scores),
+                len(score_list),
                 query_id,
             )
             if self._on_capacity_pressure is not None:
@@ -262,17 +199,14 @@ class ModelPolicy(RoutingPolicy):
 
         # Finalise the incoming query for the chosen cluster.
         incoming.cluster_name = best.cluster_name
-        incoming.stage_latency_prediction_s = stage_latency_predictions.get(
-            best.cluster_name, -1
-        )
+        incoming.stage_latency_prediction_s = stage_preds.get(best.cluster_name, -1)
         if best.latencies:
             incoming.latency_s = best.latencies.get(
                 incoming.query_id, incoming.latency_s
             )
 
         # Maintain rolling routing window.
-        best_snapshot = snapshots.get(best.cluster_name)
-        self._routing_window.append((incoming, best_snapshot))
+        self._routing_window.append((incoming, None))
         cutoff = start_time_s - self._routing_window_s
         while (
             self._routing_window
