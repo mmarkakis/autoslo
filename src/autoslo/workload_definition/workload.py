@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-
+from rich.table import Table
+from rich import print
 from autoslo.workload_definition.query import Query, QueryTextId
 
 # Columns that every workload file is expected to provide.
@@ -171,3 +172,42 @@ class Workload:
         """
         self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
         self._queries_cache = None
+
+    def print_summary(self) -> None:
+        """Print a summary of the workload using rich."""
+        self.print_summary_from_df(self._df)
+
+    @staticmethod
+    def print_summary_from_df(workload_df):
+        """Print a summary of the workload DataFrame using rich."""
+        stats_table = Table(title="Workload Summary")
+
+        stats_table.add_column("Stat", style="cyan", no_wrap=True)
+        stats_table.add_column("Value", style="magenta")
+        stats_table.add_row("Total Queries", str(len(workload_df)))
+        num_unique_templates = (
+            workload_df["query_text_id"]
+            .apply(lambda x: QueryTextId(x).template_id)
+            .nunique()
+        )
+        stats_table.add_row("Unique Query Templates", str(num_unique_templates))
+        stats_table.add_row(
+            "Unique Template+Query Index",
+            str(workload_df["query_text_id"].nunique()),
+        )
+        stats_table.add_row(
+            "Time Range",
+            f"{workload_df['abs_start_time'].min()} to {workload_df['abs_start_time'].max()}",
+        )
+        stats_table.add_row(
+            "Mean Inter-Arrival Time (seconds)",
+            str(workload_df["abs_start_time"].diff().dt.total_seconds().mean()),
+        )
+        num_unique_days_with_queries = (
+            workload_df["abs_start_time"].dt.normalize().nunique()
+        )
+        stats_table.add_row(
+            "Mean Queries per Day",
+            str(len(workload_df) / num_unique_days_with_queries),
+        )
+        print(stats_table)
