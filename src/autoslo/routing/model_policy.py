@@ -6,20 +6,17 @@ Model-based routing policy using :mod:`autoslo.routing.routing_core`.
 This policy replaces the scoring logic that lived inside ``RAutoSLO``.
 All mutable bookkeeping (active queries, neighbours, billing windows) is
 delegated to a :class:`ClusterStateTracker`; this class owns only the
-**IconQ model**, **SLO resolver**, and the rolling **routing window**
-(which is policy-specific state, not per-cluster bookkeeping).
+**IconQ model** and **SLO resolver**.
 """
 
 from __future__ import annotations
 
 import logging
-from collections import deque
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.routing_core import (
-    ClusterSnapshot,
     PlacementScore,
     RoutingCore,
     RoutingResult,
@@ -50,12 +47,6 @@ class ModelPolicy(RoutingPolicy):
     slo_metric :
         Which SLO-violation metric drives the routing optimiser.
         See :class:`~autoslo.workload_definition.query.SloMetric`.
-    on_capacity_pressure :
-        Optional no-arg callback invoked when *every* eligible cluster
-        would incur an SLO violation for the incoming query.
-    routing_window_s :
-        Duration (seconds) of the rolling routing-decision window
-        retained for counterfactual RPU selection.
     """
 
     # SLO-violation tolerance for the lexicographic comparison (seconds).
@@ -67,8 +58,6 @@ class ModelPolicy(RoutingPolicy):
         default_slo_s: float = 10.0,
         slo_overrides: Optional[dict[int, float]] = None,
         slo_metric: SloMetric = SloMetric.RELATIVE,
-        on_capacity_pressure: Optional[Callable[[], None]] = None,
-        routing_window_s: float = 120.0,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -85,22 +74,13 @@ class ModelPolicy(RoutingPolicy):
         )
         self._slo_metric = slo_metric
 
-        # Capacity pressure ---------------------------------------------------
-        self._on_capacity_pressure = on_capacity_pressure
-
-        # Rolling routing window ----------------------------------------------
-        self._routing_window_s = routing_window_s
-        self._routing_window: deque[tuple[Query, ClusterSnapshot | None]] = (
-            deque()
-        )
-
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
 
     @property
     def slo_resolver(self) -> SloResolver:
-        """Expose the resolver for the capacity controller."""
+        """Expose the resolver for autoscaling policies."""
         return self._slo_resolver
 
     @property
@@ -183,20 +163,6 @@ class ModelPolicy(RoutingPolicy):
         score_list = list(scores.values())
         best = RoutingCore.pick_best(score_list, tolerance=self.TOLERANCE_S)
 
-        # Emit capacity-pressure signal if every cluster would violate SLO.
-        if all(s.marginal_slo_violation > 0 for s in score_list):
-            logger.info(
-                "Capacity pressure: all %d clusters have positive marginal "
-                "SLO violation for query %s.",
-                len(score_list),
-                query_id,
-            )
-            if self._on_capacity_pressure is not None:
-                try:
-                    self._on_capacity_pressure()
-                except Exception:
-                    logger.exception("capacity_pressure callback failed")
-
         # Finalise the incoming query for the chosen cluster.
         incoming.cluster_name = best.cluster_name
         incoming.stage_latency_prediction_s = stage_preds.get(best.cluster_name, -1)
@@ -204,15 +170,6 @@ class ModelPolicy(RoutingPolicy):
             incoming.latency_s = best.latencies.get(
                 incoming.query_id, incoming.latency_s
             )
-
-        # Maintain rolling routing window.
-        self._routing_window.append((incoming, None))
-        cutoff = start_time_s - self._routing_window_s
-        while (
-            self._routing_window
-            and self._routing_window[0][0].rel_start_time_s < cutoff
-        ):
-            self._routing_window.popleft()
 
         return RoutingResult(
             cluster_name=best.cluster_name,
@@ -255,25 +212,4 @@ class ModelPolicy(RoutingPolicy):
             featurization=featurization,
             stage_latency_prediction_s=stage_pred,
             latency_s=stage_pred,
-        )
-
-    # ------------------------------------------------------------------
-    # Introspection
-    # ------------------------------------------------------------------
-
-    def get_routing_window(
-        self,
-    ) -> list[tuple[Query, ClusterSnapshot | None]]:
-        """Return a copy of the recent routing-decision window."""
-        return list(self._routing_window)
-
-    def compute_slo_headroom(
-        self, pool: ManagedClusterPool
-    ) -> float:
-        """Compute the minimum SLO headroom across all active queries."""
-        all_active: list[Query] = []
-        for qs in pool.get_all_active_queries().values():
-            all_active.extend(qs)
-        return RoutingCore.compute_slo_headroom(
-            all_active, self._slo_resolver
         )

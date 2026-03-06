@@ -6,7 +6,12 @@ cluster provisioning.
 
 Public API
 ----------
-CapacityController          Background autoscaler (spin-up / tear-down).
+Autoscaler                  Thin coordinator that delegates to a policy.
+AutoscalingPolicy           ABC for pluggable autoscaling strategies.
+AutoscalingAction           Dataclass returned by policy event handlers.
+SpinUpRequest / TearDownRequest  Individual scaling directives.
+NoOpPolicy                  Policy that never scales.
+HeadroomPolicy              SLO-headroom-based policy (default).
 ClusterProvisioner          ABC for cluster lifecycle operations.
 SimulatedProvisioner        Instant provisioner for simulation.
 RedshiftServerlessProvisioner   Live AWS provisioner.
@@ -20,11 +25,19 @@ print_pareto_summary        Rich / plain-text table of Pareto-optimal entries.
 VALID_OBJECTIVES            Recognised objective names.
 """
 
-from autoslo.capacity.capacity_controller import CapacityController
+from autoslo.capacity.autoscaler import Autoscaler
+from autoslo.capacity.autoscaling_policy import (
+    AutoscalingAction,
+    AutoscalingPolicy,
+    NoOpPolicy,
+    SpinUpRequest,
+    TearDownRequest,
+)
 from autoslo.capacity.cluster_provisioner import (
     ClusterProvisioner,
     SimulatedProvisioner,
 )
+from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.capacity.policy_tuner import (
     VALID_OBJECTIVES,
     PolicyParams,
@@ -38,14 +51,20 @@ from autoslo.capacity.policy_tuner import (
 )
 
 __all__ = [
-    "CapacityController",
+    "Autoscaler",
+    "AutoscalingAction",
+    "AutoscalingPolicy",
     "ClusterProvisioner",
+    "HeadroomPolicy",
+    "NoOpPolicy",
     "PolicyParams",
     "PolicyTuner",
     "ScenarioOutcome",
     "SimulatedProvisioner",
+    "SpinUpRequest",
     "SweepEntry",
     "SweepResult",
+    "TearDownRequest",
     "VALID_OBJECTIVES",
     "compute_pareto_front",
     "plot_pareto_front",

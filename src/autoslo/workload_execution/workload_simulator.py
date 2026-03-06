@@ -19,8 +19,10 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     render_gantt_scrubber,
 )
 from autoslo.blueprint_selection.slo_resolver import SloResolver
-from autoslo.capacity.capacity_controller import CapacityController
+from autoslo.capacity.autoscaler import Autoscaler
+from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, NoOpPolicy
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
+from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.managed_cluster_pool import (
     ManagedClusterPool,
@@ -83,10 +85,8 @@ class WorkloadSimulator:
         experiment_name: Optional[str] = None,
         overwrite_experiment: bool = False,
         managed_cluster_pool_config: Optional[ManagedClusterPoolConfig] = None,
-        eta_crit: float = 0.1,
-        idle_periods_before_tear_down: int = 5,
+        autoscaling_policy: Optional[AutoscalingPolicy] = None,
         capacity_poll_interval_s: float = 60.0,
-        min_cluster_lifetime_s: float = 1200.0,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -104,11 +104,8 @@ class WorkloadSimulator:
             if managed_cluster_pool_config is not None
             else ManagedClusterPoolConfig()
         )
-        self._cc_eta_crit = eta_crit
-        self._cc_idle_periods = idle_periods_before_tear_down
+        self._autoscaling_policy = autoscaling_policy
         self._cc_poll_interval_s = capacity_poll_interval_s
-        # Minimum cluster lifetime
-        self._cc_min_cluster_lifetime_s = min_cluster_lifetime_s
 
         self._slo_metric = slo_metric
         self._slo_threshold = slo_threshold
@@ -174,7 +171,7 @@ class WorkloadSimulator:
         # Dynamic provisioning state.
         self._provisioner: Optional[SimulatedProvisioner] = None
         self._pool: Optional[ManagedClusterPool] = None
-        self._capacity_controller: Optional[CapacityController] = None
+        self._autoscaler: Optional[Autoscaler] = None
         self._router: Optional[Router] = None
         self._pending_events: list[tuple[float, int, str]] = []
         self._event_counter: int = 0
@@ -203,7 +200,8 @@ class WorkloadSimulator:
         routing_config      : routing_policy  ("model" | "round_robin"),
         managed_cluster_pool_config : initial_rpus, allowed_rpu_sizes,
                                 spin_up_delay_s
-        autoscaling_config  : eta_crit, idle_periods_before_tear_down,
+        autoscaling_config  : autoscaling_policy ("headroom" | "noop"),
+                              eta_crit, idle_periods_before_tear_down,
                               capacity_poll_interval_s, min_cluster_lifetime_s
         output_config       : verbose, export_video, video_frame_duration
         """
@@ -274,16 +272,48 @@ class WorkloadSimulator:
             mcp = ManagedClusterPoolConfig(**mcp_raw)
 
         # ── autoscaling ───────────────────────────────────────────────────────
-        eta_crit: float = _s("autoscaling_config", "eta_crit", 0.1)
-        idle_periods: int = _s(
-            "autoscaling_config", "idle_periods_before_tear_down", 5
+        autoscaling_policy_type: str = _s(
+            "autoscaling_config", "autoscaling_policy", "headroom"
         )
         poll_s: float = _s(
             "autoscaling_config", "capacity_poll_interval_s", 60.0
         )
-        min_lifetime_s: float = _s(
-            "autoscaling_config", "min_cluster_lifetime_s", 1200.0
+        allowed_rpus: list[int] = list(
+            mcp.allowed_rpu_sizes
+            if mcp is not None
+            else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
+
+        if autoscaling_policy_type == "headroom":
+            autoscaling_policy: AutoscalingPolicy = HeadroomPolicy(
+                slo_resolver=slo_resolver,
+                slo_metric=slo_metric,
+                eta_crit=float(
+                    _s("autoscaling_config", "eta_crit", 0.1)
+                ),
+                idle_periods_before_tear_down=int(
+                    _s(
+                        "autoscaling_config",
+                        "idle_periods_before_tear_down",
+                        5,
+                    )
+                ),
+                min_cluster_lifetime_s=float(
+                    _s(
+                        "autoscaling_config",
+                        "min_cluster_lifetime_s",
+                        1200.0,
+                    )
+                ),
+                allowed_rpu_sizes=allowed_rpus,
+            )
+        elif autoscaling_policy_type == "noop":
+            autoscaling_policy = NoOpPolicy()
+        else:
+            raise ValueError(
+                f"Unknown autoscaling_policy {autoscaling_policy_type!r}. "
+                "Expected one of: 'headroom', 'noop'."
+            )
 
         # ── output ────────────────────────────────────────────────────────────
         verbose: bool = _s("output_config", "verbose", False)
@@ -308,10 +338,8 @@ class WorkloadSimulator:
             experiment_name=experiment_name,
             overwrite_experiment=overwrite_experiment,
             managed_cluster_pool_config=mcp,
-            eta_crit=eta_crit,
-            idle_periods_before_tear_down=idle_periods,
+            autoscaling_policy=autoscaling_policy,
             capacity_poll_interval_s=poll_s,
-            min_cluster_lifetime_s=min_lifetime_s,
         )
 
     # ------------------------------------------------------------------
@@ -527,29 +555,30 @@ class WorkloadSimulator:
                 self._pool.get_rpu
             )
 
-        # Capacity controller (pool excludes draining clusters from routing;
-        # we also exclude them from capacity-controller polling).
-        self._capacity_controller = CapacityController(
-            get_active_queries=lambda: {
-                cn: qs
-                for cn, qs in self._pool.get_all_active_queries().items()
-                if cn not in self._pool.draining_cluster_names
-            },
-            slo_resolver=self._slo_resolver,
+        # Autoscaler (replaces CapacityController).
+        # If no policy was provided, default to HeadroomPolicy.
+        if self._autoscaling_policy is None:
+            policy = HeadroomPolicy(
+                slo_resolver=self._slo_resolver,
+                slo_metric=self._slo_metric,
+                allowed_rpu_sizes=list(config.allowed_rpu_sizes),
+            )
+        else:
+            policy = self._autoscaling_policy
+
+        self._autoscaler = Autoscaler(
+            policy=policy,
+            pool=self._pool,
             on_spin_up=self._on_sim_spin_up,
             on_tear_down=self._on_sim_tear_down,
-            poll_interval_s=self._cc_poll_interval_s,
-            eta_crit=self._cc_eta_crit,
-            idle_periods_before_tear_down=self._cc_idle_periods,
-            allowed_rpu_sizes=list(config.allowed_rpu_sizes),
-            min_cluster_lifetime_s=self._cc_min_cluster_lifetime_s,
-            get_current_time_s=lambda: self._current_sim_time_s,
         )
 
-        # Register all initial clusters with the controller so
+        # Register all initial clusters with the autoscaler so
         # they are protected by the minimum lifetime.
         for cn in self._pool.cluster_names:
-            self._capacity_controller.notify_cluster_ready(cn, 0.0)
+            self._autoscaler.notify_cluster_ready(
+                cn, self._pool.get_rpu(cn), 0.0
+            )
 
         # Event queue
         self._pending_events = []
@@ -647,12 +676,12 @@ class WorkloadSimulator:
             _, _, cluster_name = heapq.heappop(self._pending_events)
             self._pool.on_cluster_ready(cluster_name, time_s)
             rpu = self._pool.get_rpu(cluster_name)
-            # Notify the capacity controller that the cluster
-            # is now ready (decrements pending count and records ready
-            # time for minimum-lifetime enforcement).
-            if self._capacity_controller is not None:
-                self._capacity_controller.notify_cluster_ready(
-                    cluster_name, time_s
+            # Notify the autoscaler that the cluster is now ready
+            # (decrements pending count and records ready time for
+            # minimum-lifetime enforcement).
+            if self._autoscaler is not None:
+                self._autoscaler.notify_cluster_ready(
+                    cluster_name, rpu, time_s
                 )
             logger.debug(
                 "Cluster %s (%d RPU) became ready at t=%.1f",
@@ -703,7 +732,7 @@ class WorkloadSimulator:
                 }
             )
 
-            self._capacity_controller.tick_once()
+            self._autoscaler.on_time_advance(tick_time)
             self._next_tick_time_s += self._cc_poll_interval_s
             # Process events spawned by this tick (e.g. delay=0 spin-ups).
             self._process_pending_events_up_to(tick_time)
@@ -792,6 +821,12 @@ class WorkloadSimulator:
                         score=computed_score,
                         tracking_query=enriched_tq,
                     )
+
+            # Feed routing result to the autoscaler.
+            if self._autoscaler is not None:
+                self._autoscaler.on_routing_result(
+                    result, query.rel_start_time_s
+                )
 
             selected_cluster_name = result.cluster_name
             tq = result.tracking_query
@@ -897,6 +932,11 @@ class WorkloadSimulator:
                     cluster_name=cluster_name,
                     current_time_s=end_time_s,
                 )
+                # Feed query-completion event to the autoscaler.
+                if self._autoscaler is not None:
+                    self._autoscaler.on_query_complete(
+                        query.query_id, cluster_name, end_time_s
+                    )
                 self._log_if_verbose(
                     {
                         "timestamp": end_time_s,

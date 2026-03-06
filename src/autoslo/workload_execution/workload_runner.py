@@ -13,6 +13,8 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
+from autoslo.capacity.autoscaler import Autoscaler
+from autoslo.capacity.autoscaling_policy import NoOpPolicy
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 from autoslo.routing.router import Router
@@ -132,6 +134,34 @@ class WorkloadRunner:
             pool=self.pool,
         )
         self.closed_loop = bool(cfg.get("closed_loop", False))
+
+        # Build autoscaler (defaults to NoOpPolicy — no dynamic scaling).
+        self.autoscaler = Autoscaler(
+            policy=NoOpPolicy(),
+            pool=self.pool,
+            on_spin_up=self._on_live_spin_up,
+            on_tear_down=self._on_live_tear_down,
+        )
+
+    # ------------------------------------------------------------------
+    # Autoscaler callbacks
+    # ------------------------------------------------------------------
+
+    def _on_live_spin_up(self, reason: str, rpu: int) -> None:
+        """Autoscaler callback: spin up a new cluster."""
+        name = self.pool.request_spin_up(rpu, self._ts())
+        logging.info(
+            "Autoscaler spin-up: %s (rpu=%d, cluster=%s)", reason, rpu, name
+        )
+
+    def _on_live_tear_down(self, cluster_name: str) -> None:
+        """Autoscaler callback: tear down a cluster."""
+        self.pool.request_tear_down(cluster_name, self._ts())
+        logging.info("Autoscaler tear-down: %s", cluster_name)
+
+    # ------------------------------------------------------------------
+    # Timestamps
+    # ------------------------------------------------------------------
 
     def _ts(self, cast_to_int: bool = False) -> Union[int, float]:
         """
@@ -298,9 +328,14 @@ class WorkloadRunner:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, fn)
         finally:
+            now = self._ts()
             self.router.on_query_finish(
                 query_id=query_id,
                 cluster_name=cluster_name,
+                current_time_s=now,
+            )
+            self.autoscaler.on_query_complete(
+                query_id, cluster_name, now
             )
 
     async def run(self) -> str:
@@ -337,11 +372,16 @@ class WorkloadRunner:
                 continue
 
             route_start_timestamp = self._async_ts()
-            cluster_name = self.router.route_query(
+            result = self.router.route_query_with_predictions(
                 query_id=query_id,
                 query_text_id=query_text_id,
             )
+            cluster_name = result.cluster_name
             route_end_timestamp = self._async_ts()
+
+            # Feed routing result to the autoscaler.
+            self.autoscaler.on_routing_result(result, self._ts())
+
             route_info.append(
                 {
                     "query_seq_num": query_id,

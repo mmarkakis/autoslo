@@ -5,7 +5,7 @@ Abstract interface and simulated implementation for cluster lifecycle.
 
 The provisioner handles the *infra* side of spin-up / tear-down: actually
 creating or destroying a cluster.  The *decision* of when to spin up or
-tear down lives in :class:`~autoslo.capacity.capacity_controller.CapacityController`.
+tear down lives in :class:`~autoslo.capacity.autoscaler.Autoscaler`.
 
 Two concrete implementations:
 
