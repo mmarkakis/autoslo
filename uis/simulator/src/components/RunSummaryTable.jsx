@@ -27,6 +27,7 @@ export default function RunSummaryTable({
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(null)
     const [statsRunId, setStatsRunId] = useState(null)
+    const [statsRunMetric, setStatsRunMetric] = useState(null)
 
     useEffect(() => {
         if (!experimentName) return
@@ -66,16 +67,18 @@ export default function RunSummaryTable({
                                 <th>#</th>
                                 <th>Run ID</th>
                                 <th>Seed</th>
-                                <th>Metric</th>
-                                <th>Queries</th>
-                                <th>Violations</th>
-                                <th>Viol. Rate</th>
-                                <th>Viol. Amt (s)</th>
-                                <th>Viol. Rel.</th>
-                                <th>Total Cost</th>
-                                <th>SLO (s)</th>
+
+                                <th>Num Queries</th>
+                                <th>Total Cost</th>   
+
+                                <th>SLO Metric Optimized</th>
                                 <th>Threshold</th>
-                                <th>Stats</th>
+
+                                <th>SLO Viol. Rate</th>
+                                <th>Total SLO Viol. Amount (s)</th>
+                                <th>Mean Relative SLO Viol.</th>
+                                
+                                <th>Per-Template Stats</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -102,6 +105,9 @@ export default function RunSummaryTable({
                                     <td className="rst-index">{idx}</td>
                                     <td className="rst-run-id">{run.run_id}</td>
                                     <td>{run.seed ?? '—'}</td>
+                                    <td>{run.num_queries ?? '—'}</td>
+                                    <td>{run.total_cost != null ? `$${FMT(run.total_cost)}` : '—'}</td>
+
                                     <td>
                                         {metric ? (
                                             <span
@@ -112,20 +118,20 @@ export default function RunSummaryTable({
                                             </span>
                                         ) : '—'}
                                     </td>
-                                    <td>{run.total_queries ?? '—'}</td>
-                                    <td>{run.violating_queries ?? '—'}</td>
+                                    <td>{threshold != null ? FMT(threshold, 4) : '—'}</td>
+
                                     <td className={metricCellClass('binary')}>
                                         {run.violation_rate != null ? PCT(run.violation_rate) : '—'}
                                     </td>
                                     <td className={metricCellClass('absolute_s')}>{run.violation_amount_s != null ? FMT(run.violation_amount_s, 3) : '—'}</td>
                                     <td className={metricCellClass('relative')}>{run.violation_relative_mean != null ? PCT(run.violation_relative_mean) : '—'}</td>
-                                    <td>{run.total_cost != null ? `$${FMT(run.total_cost)}` : '—'}</td>
-                                    <td>{run.slo_s ?? '—'}</td>
-                                    <td>{threshold != null ? FMT(threshold, 4) : '—'}</td>
+                                    
+                                    
                                     <td
                                         onClick={(e) => {
                                             e.stopPropagation()
                                             setStatsRunId(run.run_id)
+                                            setStatsRunMetric(run.slo_metric ?? null)
                                         }}
                                         className="rst-stats-cell"
                                         title="View per-template stats"
@@ -144,7 +150,8 @@ export default function RunSummaryTable({
                 <TemplateStatsModal
                     experimentName={experimentName}
                     runId={statsRunId}
-                    onClose={() => setStatsRunId(null)}
+                    sloMetric={statsRunMetric}
+                    onClose={() => { setStatsRunId(null); setStatsRunMetric(null) }}
                 />
             )}
         </>

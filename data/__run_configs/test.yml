@@ -3,6 +3,7 @@ basic_config:
   schema_name: ext_tpcds1000
   workload_name: test_workload
   experiment_name: test_experiment
+  overwrite_experiment: true
   iconq_model_id: "1771539369"
 
 ### SLO Configuration

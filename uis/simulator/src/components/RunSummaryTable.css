@@ -110,3 +110,15 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+
+/* Add vertical lines after specific columns */
+.rst-table th:nth-child(3),
+.rst-table th:nth-child(5),
+.rst-table th:nth-child(7),
+.rst-table th:nth-child(10),
+.rst-table td:nth-child(3),
+.rst-table td:nth-child(5),
+.rst-table td:nth-child(7),
+.rst-table td:nth-child(10) {
+  border-right: 1px solid #2d3748;
+}

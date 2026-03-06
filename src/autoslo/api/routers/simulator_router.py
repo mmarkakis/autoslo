@@ -34,6 +34,8 @@ from pydantic import BaseModel
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 
+from autoslo.workload_definition.query import QueryTextId
+
 router = APIRouter()
 
 
@@ -119,14 +121,14 @@ class TimelineData(BaseModel):
 
 class TemplateStats(BaseModel):
     template_id: int
-    slo_s: float
     occurrences: int
-    compliant: int
-    compliance_rate: float
-    avg_latency_s: float
+    slo_s: float
     p50_latency_s: float
+    p90_latency_s: float
     p95_latency_s: float
-    avg_excess_s: float
+    violation_rate: float
+    total_violation_amount_s: float
+    mean_relative_violation: float
 
 
 # ---------------------------------------------------------------------------
@@ -336,11 +338,11 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
     Return per-template compliance statistics for the specified run.
 
     For each template ID seen in the completion events of the solve log, returns:
-    - occurrences       : number of completed queries for that template
-    - compliant         : queries whose latency ≤ per-template SLO
-    - compliance_rate   : compliant / occurrences
-    - avg/p50/p95 latency
-    - avg_excess_s      : average(max(0, latency - slo_s)) across all queries
+    - occurrences              : number of completed queries for that template
+    - p50/p90/p95_latency_s    : latency percentiles
+    - violation_rate           : fraction of queries that violated SLO
+    - total_violation_amount_s : sum of (latency - slo) for all violations
+    - mean_relative_violation  : average of (latency - slo) / slo for all queries
     """
     import numpy as np
 
@@ -380,7 +382,7 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
     from autoslo.workload_definition.query import Query
 
     merged["template_id"] = merged["query_text_id"].map(
-        lambda x: Query.template_id(x) if pd.notna(x) and x else -1
+        lambda x: QueryTextId(x).template_id if pd.notna(x) and x else -1
     )
     merged["slo_s_row"] = merged["query_text_id"].map(resolver.resolve)
 
@@ -391,19 +393,22 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
         lats = group["latency_s"].to_numpy(dtype=float)
         slo_val = float(group["slo_s_row"].iloc[0])
         n = len(lats)
-        compliant = int((lats <= slo_val).sum())
+        violations = lats > slo_val
+        num_violations = int(violations.sum())
         excess = np.maximum(0.0, lats - slo_val)
+        relative_violations = np.maximum(0.0, (lats - slo_val) / slo_val)
+        
         results.append(
             TemplateStats(
                 template_id=int(tid),  # type: ignore[arg-type]
-                slo_s=slo_val,
                 occurrences=n,
-                compliant=compliant,
-                compliance_rate=round(compliant / n, 6) if n > 0 else 0.0,
-                avg_latency_s=round(float(np.mean(lats)), 4),
+                slo_s=round(slo_val, 4),
                 p50_latency_s=round(float(np.percentile(lats, 50)), 4),
+                p90_latency_s=round(float(np.percentile(lats, 90)), 4),
                 p95_latency_s=round(float(np.percentile(lats, 95)), 4),
-                avg_excess_s=round(float(np.mean(excess)), 4),
+                violation_rate=round(num_violations / n, 6) if n > 0 else 0.0,
+                total_violation_amount_s=round(float(np.sum(excess)), 4),
+                mean_relative_violation=round(float(np.mean(relative_violations)), 6),
             )
         )
 

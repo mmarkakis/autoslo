@@ -6,27 +6,43 @@ const PCT = (v) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`)
 
 const COLS = [
   { key: 'template_id',    label: 'Template',     sortNum: true  },
-  { key: 'slo_s',          label: 'SLO (s)',      sortNum: true  },
   { key: 'occurrences',    label: 'Count',        sortNum: true  },
-  { key: 'compliance_rate',label: 'Compliance',   sortNum: true  },
-  { key: 'avg_latency_s',  label: 'Avg lat (s)',  sortNum: true  },
-  { key: 'p50_latency_s',  label: 'p50 (s)',      sortNum: true  },
-  { key: 'p95_latency_s',  label: 'p95 (s)',      sortNum: true  },
-  { key: 'avg_excess_s',   label: 'Avg excess (s)',sortNum: true },
+  { key: 'p50_latency_s',  label: 'p50',          sortNum: true, group: 'latency'  },
+  { key: 'p90_latency_s',  label: 'p90',          sortNum: true, group: 'latency'  },
+  { key: 'p95_latency_s',  label: 'p95',          sortNum: true, group: 'latency'  },
+  { key: 'violation_rate', label: 'SLO Viol. Rate', sortNum: true },
+  { key: 'total_violation_amount_s', label: 'Total Viol. Amount (s)', sortNum: true },
+  { key: 'mean_relative_violation', label: 'Mean Rel. Viol.', sortNum: true },
 ]
 
-function complianceClass(rate) {
-  if (rate == null) return ''
-  if (rate >= 0.95) return 'tsm-good'
-  if (rate >= 0.80) return 'tsm-warn'
+const METRIC_COL = {
+  binary:     'violation_rate',
+  absolute_s: 'total_violation_amount_s',
+  relative:   'mean_relative_violation',
+}
+
+function violationClass(value, colKey, activeCol) {
+  if (value == null || colKey !== activeCol) return ''
+  // For rate: good ≤5%, warn ≤20%, bad >20%
+  // For total amount / mean relative: use same numeric thresholds scaled by ~same feel
+  if (colKey === 'violation_rate') {
+    if (value <= 0.05) return 'tsm-good'
+    if (value <= 0.20) return 'tsm-warn'
+    return 'tsm-bad'
+  }
+  // absolute_s and relative: good=0, warn=small, bad=larger
+  if (value === 0) return 'tsm-good'
+  if (value <= 0.05) return 'tsm-warn'
   return 'tsm-bad'
 }
 
 export default function TemplateStatsModal({
   experimentName,
   runId,
+  sloMetric,
   onClose,
 }) {
+  const activeCol = METRIC_COL[sloMetric] ?? null
   const [rows, setRows] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -68,10 +84,21 @@ export default function TemplateStatsModal({
   // Summary aggregates
   const summary = rows && rows.length > 0 ? (() => {
     const totalOcc = rows.reduce((s, r) => s + r.occurrences, 0)
-    const totalComp = rows.reduce((s, r) => s + r.compliant, 0)
-    const avgLat = rows.reduce((s, r) => s + r.avg_latency_s * r.occurrences, 0) / totalOcc
-    const avgExcess = rows.reduce((s, r) => s + r.avg_excess_s * r.occurrences, 0) / totalOcc
-    return { totalOcc, compRate: totalComp / totalOcc, avgLat, avgExcess }
+    const totalViolations = rows.reduce((s, r) => s + r.violation_rate * r.occurrences, 0)
+    const totalViolAmount = rows.reduce((s, r) => s + r.total_violation_amount_s, 0)
+    const avgRelViol = rows.reduce((s, r) => s + r.mean_relative_violation * r.occurrences, 0) / totalOcc
+    const p50Lat = rows.reduce((s, r) => s + r.p50_latency_s * r.occurrences, 0) / totalOcc
+    const p90Lat = rows.reduce((s, r) => s + r.p90_latency_s * r.occurrences, 0) / totalOcc
+    const p95Lat = rows.reduce((s, r) => s + r.p95_latency_s * r.occurrences, 0) / totalOcc
+    return { 
+      totalOcc, 
+      violRate: totalViolations / totalOcc, 
+      totalViolAmount,
+      avgRelViol,
+      p50Lat,
+      p90Lat,
+      p95Lat
+    }
   })() : null
 
   // Close on backdrop click
@@ -83,7 +110,7 @@ export default function TemplateStatsModal({
     <div className="tsm-backdrop" onClick={handleBackdropClick}>
       <div className="tsm-modal" role="dialog" aria-modal="true">
         <div className="tsm-header">
-          <span className="tsm-title">Per-template stats — run {runId}</span>
+          <span className="tsm-title">Per-Template Stats — Run {runId}</span>
           <button className="tsm-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
@@ -94,46 +121,81 @@ export default function TemplateStatsModal({
             <div className="tsm-scroll">
               <table className="tsm-table">
                 <thead>
-                  <tr>
-                    {COLS.map(({ key, label }) => (
-                      <th
-                        key={key}
-                        className={sortKey === key ? 'tsm-sorted' : ''}
-                        onClick={() => handleSort(key)}
-                      >
-                        {label}{sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''}
-                      </th>
-                    ))}
+                  {/* Row 1: top-level groups */}
+                  <tr className="tsm-hdr-top">
+                    <th rowSpan={2} className={sortKey === 'template_id' ? 'tsm-sorted' : ''} onClick={() => handleSort('template_id')}>
+                      Template{sortKey === 'template_id' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th rowSpan={2} className={sortKey === 'occurrences' ? 'tsm-sorted' : ''} onClick={() => handleSort('occurrences')}>
+                      Count{sortKey === 'occurrences' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th rowSpan={2} className={sortKey === 'slo_s' ? 'tsm-sorted' : ''} onClick={() => handleSort('slo_s')}>
+                      SLO (s){sortKey === 'slo_s' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th colSpan={3} className="tsm-latency-group">Latency (s)</th>
+                    <th colSpan={3} className="tsm-violation-group">SLO Violation</th>
+                  </tr>
+                  {/* Row 2: sub-columns */}
+                  <tr className="tsm-hdr-sub">
+                    <th className={sortKey === 'p50_latency_s' ? 'tsm-sorted' : ''} onClick={() => handleSort('p50_latency_s')}>
+                      p50{sortKey === 'p50_latency_s' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th className={sortKey === 'p90_latency_s' ? 'tsm-sorted' : ''} onClick={() => handleSort('p90_latency_s')}>
+                      p90{sortKey === 'p90_latency_s' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th className={sortKey === 'p95_latency_s' ? 'tsm-sorted' : ''} onClick={() => handleSort('p95_latency_s')}>
+                      p95{sortKey === 'p95_latency_s' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th className={sortKey === 'violation_rate' ? 'tsm-sorted' : ''} onClick={() => handleSort('violation_rate')}>
+                      Rate{sortKey === 'violation_rate' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th className={sortKey === 'total_violation_amount_s' ? 'tsm-sorted' : ''} onClick={() => handleSort('total_violation_amount_s')}>
+                      Total Amount (s){sortKey === 'total_violation_amount_s' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
+                    <th className={sortKey === 'mean_relative_violation' ? 'tsm-sorted' : ''} onClick={() => handleSort('mean_relative_violation')}>
+                      Mean Relative{sortKey === 'mean_relative_violation' ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {sorted.map((row) => (
                     <tr key={row.template_id}>
                       <td>{row.template_id}</td>
-                      <td>{FMT(row.slo_s)}</td>
                       <td>{row.occurrences}</td>
-                      <td className={complianceClass(row.compliance_rate)}>
-                        {PCT(row.compliance_rate)}
-                      </td>
-                      <td>{FMT(row.avg_latency_s)}</td>
+                      <td>{FMT(row.slo_s)}</td>
                       <td>{FMT(row.p50_latency_s)}</td>
+                      <td>{FMT(row.p90_latency_s)}</td>
                       <td>{FMT(row.p95_latency_s)}</td>
-                      <td>{FMT(row.avg_excess_s)}</td>
+                      <td className={violationClass(row.violation_rate, 'violation_rate', activeCol)}>
+                        {PCT(row.violation_rate)}
+                      </td>
+                      <td className={violationClass(row.total_violation_amount_s, 'total_violation_amount_s', activeCol)}>
+                        {FMT(row.total_violation_amount_s)}
+                      </td>
+                      <td className={violationClass(row.mean_relative_violation, 'mean_relative_violation', activeCol)}>
+                        {PCT(row.mean_relative_violation)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
                 {summary && (
                   <tfoot>
                     <tr className="tsm-summary-row">
-                      <td colSpan={2}><em>All templates</em></td>
+                      <td><em>All templates</em></td>
                       <td>{summary.totalOcc}</td>
-                      <td className={complianceClass(summary.compRate)}>
-                        {PCT(summary.compRate)}
+                      <td></td>
+                      <td></td>
+                      <td></td>
+                      <td></td>
+                      <td className={violationClass(summary.violRate, 'violation_rate', activeCol)}>
+                        {PCT(summary.violRate)}
                       </td>
-                      <td>{FMT(summary.avgLat)}</td>
-                      <td>—</td>
-                      <td>—</td>
-                      <td>{FMT(summary.avgExcess)}</td>
+                      <td className={violationClass(summary.totalViolAmount, 'total_violation_amount_s', activeCol)}>
+                        {FMT(summary.totalViolAmount)}
+                      </td>
+                      <td className={violationClass(summary.avgRelViol, 'mean_relative_violation', activeCol)}>
+                        {PCT(summary.avgRelViol)}
+                      </td>
                     </tr>
                   </tfoot>
                 )}

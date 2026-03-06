@@ -46,4 +46,8 @@ stop_pid "Backend" "${BACKEND_PID:-}"
 stop_pid "Frontend" "${FRONTEND_PID:-}"
 
 rm -f "$PID_FILE"
+
+# Also remove the logs
+rm -rf "$ROOT/.simulator-ui-meta/*.log"
+
 echo "Cleanup complete."

@@ -16,7 +16,7 @@
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  max-width: 900px;
+  max-width: 1000px;
   width: calc(100vw - 4rem);
   max-height: calc(100vh - 6rem);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -89,7 +89,6 @@
 
 .tsm-table th {
   position: sticky;
-  top: 0;
   background: #1a202c;
   padding: 0.5rem 0.75rem;
   text-align: right;
@@ -99,9 +98,47 @@
   cursor: pointer;
   user-select: none;
   border-bottom: 1px solid #2d3748;
+  z-index: 11;
 }
 
-.tsm-table th:first-child {
+/* Top header row sticks to top, sub-row sticks below it */
+.tsm-hdr-top th { top: 0; }
+.tsm-hdr-sub th { top: 2rem; }
+
+/* Full-width separator between header and body */
+.tsm-hdr-sub th {
+  border-bottom: 2px solid #4a5568;
+}
+/* rowspan=2 standalone cells share the same bottom as the sub-row */
+.tsm-hdr-top th:not(.tsm-latency-group):not(.tsm-violation-group) {
+  border-bottom: 2px solid #4a5568;
+}
+
+/* Group label spanning latency columns */
+.tsm-hdr-top .tsm-latency-group,
+.tsm-hdr-top .tsm-violation-group {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #718096;
+  padding-bottom: 0.25rem;
+  cursor: default;
+  border-bottom: none;
+}
+
+.tsm-hdr-top .tsm-violation-group {
+  color: #a08070;
+}
+
+/* Sub-headers are smaller */
+.tsm-hdr-sub th {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding-top: 0.2rem;
+  padding-bottom: 0.4rem;
+}
+
+.tsm-hdr-top th:first-child {
   text-align: left;
 }
 
@@ -111,6 +148,20 @@
 
 .tsm-table th.tsm-sorted {
   color: #63b3ed;
+}
+
+/* Latency column tint */
+.tsm-table td:nth-child(4),
+.tsm-table td:nth-child(5),
+.tsm-table td:nth-child(6) {
+  background: rgba(99, 179, 237, 0.04);
+}
+
+/* Violation column tint */
+.tsm-table td:nth-child(7),
+.tsm-table td:nth-child(8),
+.tsm-table td:nth-child(9) {
+  background: rgba(252, 129, 129, 0.04);
 }
 
 .tsm-table td {
@@ -128,7 +179,7 @@
   background: #2d3748;
 }
 
-/* compliance coloring */
+/* violation rate coloring */
 .tsm-good  { color: #68d391; font-weight: 600; }
 .tsm-warn  { color: #f6ad55; font-weight: 600; }
 .tsm-bad   { color: #fc8181; font-weight: 600; }
@@ -143,4 +194,17 @@
 .tsm-summary-row td {
   border-bottom: none;
   color: #a0aec0;
+}
+
+
+/* Column group separators — after SLO (col 3) and after p95 (col 6) */
+.tsm-table td:nth-child(3),
+.tsm-table td:nth-child(6) {
+  border-right: 1px solid #2d3748;
+}
+.tsm-hdr-top th:nth-child(3) {
+  border-right: 1px solid #2d3748;
+}
+.tsm-hdr-sub th:nth-child(3) {
+  border-right: 1px solid #2d3748;
 }

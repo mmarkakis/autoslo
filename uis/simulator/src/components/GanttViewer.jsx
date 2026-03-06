@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import GanttChart from './GanttChart.jsx'
+import TemplateStatsModal from './TemplateStatsModal.jsx'
 
 const METRIC_LABELS = {
   binary: 'Binary',
@@ -23,6 +24,7 @@ export default function GanttViewer({ experimentName, runId }) {
   const [timeline, setTimeline] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [showTemplateStats, setShowTemplateStats] = useState(false)
 
   useEffect(() => {
     if (!experimentName || !runId) return
@@ -76,24 +78,18 @@ export default function GanttViewer({ experimentName, runId }) {
   const SEP = <span style={{ color: '#4a5568' }}> &nbsp;·&nbsp; </span>
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ marginBottom: '0.5rem' }}>
-        {/* Line 1: queries + cost */}
-        <span style={ROW}>
-          Num Queries: <span style={{ color: '#cbd5e0' }}>{timeline.total_queries}</span>
-          {SEP}
-          Total Cost: <span style={{ color: '#cbd5e0' }}>${Number(timeline.total_cost).toFixed(2)}</span>
-        </span>
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ marginBottom: '0.5rem' }}>
+          {/* Line 1: queries + cost + template stats button */}
+          <span style={ROW}>
+            Num Queries: <span style={{ color: '#cbd5e0' }}>{timeline.total_queries}</span>
+            {SEP}
+            Total Cost: <span style={{ color: '#cbd5e0' }}>${Number(timeline.total_cost).toFixed(2)}</span>
+            
+          </span>
 
-        {/* Line 2: default SLO + template overrides */}
-        <span style={ROW}>
-          Default SLO: <span style={{ color: '#cbd5e0' }}>{timeline.default_slo_s}s</span>
-          {timeline.slo_dict && Object.keys(timeline.slo_dict).length > 0 && (
-            <>{SEP}<span style={{ color: '#a0aec0' }}>{Object.keys(timeline.slo_dict).length} template overrides</span></>
-          )}
-        </span>
-
-        {/* Line 3: metric badge + threshold */}
+        {/* Line 2: metric badge + threshold */}
         <span style={{ ...ROW, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
           <span>SLO Metric Optimized:</span>
           {metricLabel ? (
@@ -116,31 +112,74 @@ export default function GanttViewer({ experimentName, runId }) {
           )}
         </span>
 
+
+
+
         {/* Line 4: all three violation metrics; active one is green/red, others white */}
         <span style={ROW}>
-          SLO Violation Rate{' '}
+          SLO Viol. Rate{' '}
           <span style={{ color: metricCellColor('binary') }}>
             {(timeline.violation_rate * 100).toFixed(1)}%
           </span>
           {SEP}
-          Avg SLO Violation Amount{' '}
+          Total SLO Viol. Amount{' '}
           <span style={{ color: metricCellColor('absolute_s') }}>
-            {Number(timeline.violation_amount_s).toFixed(3)}s
+            {(Number(timeline.violation_amount_s) * timeline.total_queries).toFixed(3)}s
           </span>
           {SEP}
-          Avg Relative SLO Violation{' '}
+          Mean Relative SLO Viol.{' '}
           <span style={{ color: metricCellColor('relative') }}>
             {(timeline.violation_relative_mean * 100).toFixed(2)}%
           </span>
         </span>
+
+
+        {/* Line 2: default SLO + template overrides */}
+        <span style={ROW}>
+          
+            <button
+              onClick={() => setShowTemplateStats(true)}
+              style={{
+                background: 'none',
+                border: '1px solid #4a5568',
+                borderRadius: '4px',
+                color: '#a0aec0',
+                cursor: 'pointer',
+                padding: '0.1rem 0.5rem',
+                fontSize: '0.75rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#63b3ed'
+                e.currentTarget.style.color = '#63b3ed'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#4a5568'
+                e.currentTarget.style.color = '#a0aec0'
+              }}
+              title="View per-template statistics"
+            >
+              📊 Per-Template Stats
+            </button>
+          </span>
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <GanttChart
-          intervals={timeline.intervals}
-          sloS={timeline.default_slo_s}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <GanttChart
+            intervals={timeline.intervals}
+            sloS={timeline.default_slo_s}
+            sloMetric={metric}
+          />
+        </div>
+      </div>
+
+      {showTemplateStats && (
+        <TemplateStatsModal
+          experimentName={experimentName}
+          runId={runId}
           sloMetric={metric}
+          onClose={() => setShowTemplateStats(false)}
         />
-      </div>
-    </div>
+      )}
+    </>
   )
 }
