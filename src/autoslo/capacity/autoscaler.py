@@ -21,11 +21,13 @@ from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
 )
 from autoslo.routing.routing_core import RoutingResult
+from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
 
 if TYPE_CHECKING:
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 logger = logging.getLogger(__name__)
+_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
 class Autoscaler:
@@ -57,6 +59,7 @@ class Autoscaler:
         self._pool = pool
         self._on_spin_up = on_spin_up
         self._on_tear_down = on_tear_down
+        self._last_event_time_s: float = 0.0
         # Attach policy to pool (like Router calls policy.on_attach).
         self._policy.on_attach(pool)
 
@@ -73,16 +76,23 @@ class Autoscaler:
     # ------------------------------------------------------------------
 
     def on_routing_result(
-        self, result: RoutingResult, current_time_s: float
+        self,
+        result: RoutingResult,
+        current_time_s: float,
+        current_latencies: dict[str, float] | None = None,
     ) -> None:
         """Forward a routing result to the policy and execute actions."""
-        action = self._policy.on_routing_result(result, current_time_s)
+        self._last_event_time_s = current_time_s
+        action = self._policy.on_routing_result(
+            result, current_time_s, current_latencies
+        )
         self._execute(action)
 
     def on_query_complete(
         self, query_id: str, cluster_name: str, current_time_s: float
     ) -> None:
         """Forward a query-completion event and execute actions."""
+        self._last_event_time_s = current_time_s
         action = self._policy.on_query_complete(
             query_id, cluster_name, current_time_s
         )
@@ -90,6 +100,7 @@ class Autoscaler:
 
     def on_time_advance(self, current_time_s: float) -> None:
         """Forward a time-advance tick and execute actions."""
+        self._last_event_time_s = current_time_s
         action = self._policy.on_time_advance(current_time_s)
         self._execute(action)
 
@@ -108,6 +119,14 @@ class Autoscaler:
         for req in action.spin_ups:
             try:
                 self._on_spin_up(req.reason, req.rpu)
+                if _has_structured():
+                    emit_structured({
+                        "timestamp": self._last_event_time_s,
+                        "event_type": "autoscaler_spin_up",
+                        "source": "autoscaler",
+                        "rpu": req.rpu,
+                        "reason": req.reason,
+                    })
             except Exception:
                 logger.exception(
                     "on_spin_up callback failed (rpu=%d)", req.rpu
@@ -115,6 +134,14 @@ class Autoscaler:
         for req in action.tear_downs:
             try:
                 self._on_tear_down(req.cluster_name)
+                if _has_structured():
+                    emit_structured({
+                        "timestamp": self._last_event_time_s,
+                        "event_type": "autoscaler_tear_down",
+                        "source": "autoscaler",
+                        "cluster_name": req.cluster_name,
+                        "reason": req.reason,
+                    })
             except Exception:
                 logger.exception(
                     "on_tear_down callback failed (cluster=%s)",

@@ -23,10 +23,14 @@ if TYPE_CHECKING:
     from autoslo.models.iconq_model import IconqModel
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.blueprint_selection.slo_resolver import (
+    SloResolver,
+    slo_violation as _slo_violation,
+    query_interval as _query_interval,
+)
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.query import Query, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +71,17 @@ class RoutingResult:
 
     Returned by :meth:`Router.route_query_with_predictions` to give
     callers access to the placement score and a fully-built tracking
-    query (with featurisation, stage-model prediction, and predicted
-    latency already populated).
+    query (with featurisation already populated).
+
+    The chosen cluster's per-query predictions are stored as independent
+    fields on this object rather than being baked into the Query.
     """
 
     cluster_name: str
     score: Optional[PlacementScore]
-    tracking_query: Query
+    query: Query
+    stage_prediction_s: float = -1
+    predicted_latency_s: float = -1
 
 
 class RoutingCore:
@@ -88,6 +96,7 @@ class RoutingCore:
         current_time_s: float,
         slo_resolver: SloResolver,
         slo_metric: SloMetric,
+        latencies: dict[str, float],
     ) -> tuple[float, float]:
         """Compute the cost and SLO-violation metric for a cluster *before*
         adding a new query.
@@ -102,6 +111,8 @@ class RoutingCore:
             Resolves per-query SLOs.
         slo_metric:
             Which SLO-violation metric to optimise on.
+        latencies:
+            ``{query_id: predicted_latency_s}`` for the currently-active queries.
 
         Returns
         -------
@@ -109,14 +120,19 @@ class RoutingCore:
         """
         # -- SLO violations -------------------------------------------------
         individual_violations: list[float] = [
-            q.slo_violation(slo_resolver.resolve(q.query_text_id), slo_metric)
+            _slo_violation(
+                latencies.get(q.query_id, -1.0),
+                slo_resolver.resolve(q.query_text_id),
+                slo_metric,
+            )
             for q in snapshot.active_queries
         ]
         before_slo_violation = float(sum(individual_violations))
 
         # -- Billing cost ---------------------------------------------------
         before_query_intervals = [
-            q.as_interval() for q in snapshot.active_queries
+            _query_interval(q.rel_start_time_s, latencies.get(q.query_id, 0.0), q.query_id)
+            for q in snapshot.active_queries
         ]
         if snapshot.billing_window_start_s is not None:
             before_query_intervals.append(
@@ -144,18 +160,10 @@ class RoutingCore:
         slo_metric: SloMetric,
         before_cost: float,
         before_slo_violation: float,
+        current_latencies: dict[str, float],
     ) -> PlacementScore:
         """Score a hypothetical placement of *query* onto the cluster described
         by *snapshot*, given the latency *predictions* returned by the model.
-
-        This is a corrected extraction of the scoring logic from
-        ``WorkloadSimulator._find_best_cluster_for_query``.  The original
-        code had a misalignment: ``latencies_after`` carried an extra element at
-        index 0 (the incoming query's raw prediction) that shifted the
-        ``zip(keys, latencies_after)`` used for billing intervals and the final
-        latency map, causing each query to receive the *previous* query's
-        predicted latency.  This version fixes the alignment by computing one
-        latency per base query with no extra element.
 
         Parameters
         ----------
@@ -166,7 +174,6 @@ class RoutingCore:
         predictions:
             ``{query_id: ModelPrediction}`` for every query in the candidate
             group (all active queries on this cluster + the incoming query).
-            Keyed by query ID.
         current_time_s:
             Arrival time of *query* (simulated or real).
         slo_resolver:
@@ -177,6 +184,10 @@ class RoutingCore:
             Pre-computed cost of the cluster before adding *query*.
         before_slo_violation:
             Pre-computed SLO violation of the cluster before adding *query*.
+        current_latencies:
+            ``{query_id: predicted_latency_s}`` for currently-active queries.
+            The incoming query may or may not have an entry; if absent, the
+            model prediction alone is used.
 
         Returns
         -------
@@ -186,33 +197,22 @@ class RoutingCore:
         base_queries = list(snapshot.active_queries) + [query]
 
         # For each base query, predicted latency = max(current, model prediction).
-        # For the incoming query, latency_s is -1, so it just gets the prediction.
+        # For the incoming query, current_latencies won't have an entry so it
+        # just gets the prediction.
         latencies: dict[str, float] = {}
         for q in base_queries:
             pred_s = predictions[q.query_id].overall_mean_s()
-            latencies[q.query_id] = max(q.latency_s, pred_s)
+            current = current_latencies.get(q.query_id, -1.0)
+            latencies[q.query_id] = max(current, pred_s)
 
         # -- After SLO violations ------------------------------------------
-        # Build temporary Query-like objects with predicted latencies so we
-        # can reuse the unified slo_violation() dispatcher.
         individual_after_violations: list[float] = []
         for q in base_queries:
             slo_s = slo_resolver.resolve(q.query_text_id)
             predicted_latency = latencies[q.query_id]
-            if slo_metric is SloMetric.BINARY:
-                individual_after_violations.append(
-                    float(predicted_latency > slo_s)
-                )
-            elif slo_metric is SloMetric.ABSOLUTE_S:
-                individual_after_violations.append(
-                    max(0.0, predicted_latency - slo_s)
-                )
-            elif slo_metric is SloMetric.RELATIVE:
-                individual_after_violations.append(
-                    max(0.0, (predicted_latency - slo_s) / slo_s)
-                    if slo_s > 0
-                    else 0.0
-                )
+            individual_after_violations.append(
+                _slo_violation(predicted_latency, slo_s, slo_metric)
+            )
         after_slo_violation = float(sum(individual_after_violations))
         marginal_slo_violation = after_slo_violation - before_slo_violation
 
@@ -313,6 +313,7 @@ class RoutingCore:
         start_time_s: float,
         slo_resolver: SloResolver,
         slo_metric: SloMetric,
+        current_latencies: dict[str, float],
         cluster_names: list[str] | None = None,
     ) -> tuple[dict[str, "PlacementScore"], Query, dict[str, float]]:
         """Featurise a query and score it against a set of the pool's clusters.
@@ -341,6 +342,10 @@ class RoutingCore:
             Resolves per-template SLOs.
         slo_metric:
             Which SLO-violation metric drives scoring.
+        current_latencies:
+            ``{query_id: predicted_latency_s}`` for all currently-active
+            queries across the pool.  Used in ``compute_before_state`` and
+            ``score_placement``.
         cluster_names:
             Restrict scoring to these cluster names.  If *None*, score all
             READY clusters currently in the pool.
@@ -350,12 +355,10 @@ class RoutingCore:
         (scores, incoming, stage_preds)
             scores      : ``{cluster_name: PlacementScore}`` for every cluster
                           that produced valid model predictions.
-            incoming    : Featurised :class:`Query` (``cluster_name`` and
-                          ``stage_latency_prediction_s`` reflect the last
-                          iterated cluster; callers should update these and
-                          ``latency_s`` for the chosen cluster before storing).
+            incoming    : Frozen :class:`Query` with ``stage_predictions_per_rpu``
+                          populated for all unique RPUs across eligible clusters.
             stage_preds : ``{cluster_name: stage_pred_s}`` for every scored
-                          cluster, useful for finalising the tracking query.
+                          cluster.
         """
         # ConcurrentQueryDataset lives in nn/, which does not import
         # routing_core — safe to import here at runtime.
@@ -374,53 +377,57 @@ class RoutingCore:
             iconq_model.iconq_query_featurizer
             .featurize_from_query_text_id(query_text_id)
         )
+
+        # -- Stage-model predictions (one per unique RPU) ------------------
+        stage_predictions_per_rpu: dict[int, float] = {}
+        stage_preds: dict[str, float] = {}
+        for cn in eligible:
+            rpu = pool.get_rpu(cn)
+            if rpu not in stage_predictions_per_rpu:
+                sp = (
+                    iconq_model.stage_model
+                    .predict_from_query_text_id(
+                        {query_id: query_text_id}, rpu
+                    )[query_id].overall_mean_s()
+                )
+                stage_predictions_per_rpu[rpu] = sp
+            stage_preds[cn] = stage_predictions_per_rpu[rpu]
+
+        # -- Build *frozen* incoming Query ---------------------------------
         incoming = Query(
             query_id=query_id,
             query_text_id=query_text_id,
             rel_start_time_s=start_time_s,
             featurization=featurization,
-            latency_s=-1,
+            stage_predictions_per_rpu=stage_predictions_per_rpu,
         )
 
-        # -- Atomic pool snapshot (all READY clusters, filtered below) -----
-        snapshots, run_to_base_to_neighbors = pool.build_routing_context(incoming)
+        # -- Atomic pool snapshot ------------------------------------------
+        snapshots, cluster_to_base_to_neighbors = pool.build_routing_context(
+            incoming
+        )
         snapshots = {cn: s for cn, s in snapshots.items() if cn in eligible}
-        run_to_base_to_neighbors = {
+        cluster_to_base_to_neighbors = {
             cn: n
-            for cn, n in run_to_base_to_neighbors.items()
+            for cn, n in cluster_to_base_to_neighbors.items()
             if cn in eligible
         }
-
-        # -- Stage-model predictions (RPU-dependent, per cluster) ----------
-        stage_preds: dict[str, float] = {}
-        for cn in eligible:
-            if cn not in snapshots:
-                continue
-            incoming.cluster_name = cn
-            sp = (
-                iconq_model.stage_model
-                .predict_from_query_text_id({query_id: query_text_id}, pool.get_rpu(cn))
-                [query_id].overall_mean_s()
-            )
-            incoming.stage_latency_prediction_s = sp
-            stage_preds[cn] = sp
 
         # -- Before-state per cluster -------------------------------------
         before: dict[str, tuple[float, float]] = {}
         for cn, snap in snapshots.items():
-            incoming.cluster_name = cn
-            incoming.stage_latency_prediction_s = stage_preds[cn]
             before[cn] = RoutingCore.compute_before_state(
                 snapshot=snap,
                 current_time_s=start_time_s,
                 slo_resolver=slo_resolver,
                 slo_metric=slo_metric,
+                latencies=current_latencies,
             )
 
         # -- Batched model predictions ------------------------------------
         dataset = ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=iconq_model.iconq_interaction_featurizer,
-            run_to_base_to_neighbors=run_to_base_to_neighbors,
+            cluster_to_base_to_neighbors=cluster_to_base_to_neighbors,
         )
         all_predictions = iconq_model.predict_from_dataset(dataset)
 
@@ -430,8 +437,6 @@ class RoutingCore:
             if cn not in before or cn not in snapshots:
                 continue
             bc, bv = before[cn]
-            incoming.cluster_name = cn
-            incoming.stage_latency_prediction_s = stage_preds[cn]
             scores[cn] = RoutingCore.score_placement(
                 query=incoming,
                 snapshot=snapshots[cn],
@@ -441,6 +446,7 @@ class RoutingCore:
                 slo_metric=slo_metric,
                 before_cost=bc,
                 before_slo_violation=bv,
+                current_latencies=current_latencies,
             )
 
         return scores, incoming, stage_preds
@@ -453,6 +459,7 @@ class RoutingCore:
     def compute_slo_headroom(
         active_queries: list[Query],
         slo_resolver: SloResolver,
+        latencies: dict[str, float],
     ) -> float:
         """Compute the minimum SLO headroom across all active queries.
 
@@ -466,9 +473,11 @@ class RoutingCore:
         Parameters
         ----------
         active_queries:
-            Currently running queries with their latest latency estimates.
+            Currently running queries.
         slo_resolver:
             Resolves per-query SLOs.
+        latencies:
+            ``{query_id: predicted_latency_s}`` for the active queries.
 
         Returns
         -------
@@ -482,9 +491,8 @@ class RoutingCore:
             slo_s = slo_resolver.resolve(q.query_text_id)
             if slo_s <= 0:
                 continue  # degenerate SLO, skip
-            # headroom = (slo - latency) / slo.  Positive when the query
-            # is within its SLO, zero at the boundary, negative past it.
-            headroom = (slo_s - q.latency_s) / slo_s
+            lat = latencies.get(q.query_id, -1.0)
+            headroom = (slo_s - lat) / slo_s
             if headroom < min_headroom:
                 min_headroom = headroom
 

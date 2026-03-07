@@ -33,16 +33,12 @@ from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 def _make_query(
     query_id: str = "q1",
     template_id: int = 1,
-    latency_s: float = 5.0,
-    slo_s: float | None = None,
     rel_start_time_s: float = 0.0,
 ) -> Query:
     """Create a minimal Query for testing."""
     return Query(
         query_id=query_id,
         query_text_id=QueryTextId(f"public#{template_id}#0"),
-        latency_s=latency_s,
-        slo_s=slo_s,
         rel_start_time_s=rel_start_time_s,
     )
 
@@ -69,7 +65,7 @@ def _make_result(
     return RoutingResult(
         cluster_name=cluster,
         score=score,
-        tracking_query=query or _make_query(),
+        query=query or _make_query(),
     )
 
 
@@ -134,7 +130,8 @@ class TestHeadroomSpinUp:
 
     def test_spin_up_on_low_headroom(self):
         """Pool has a query with latency 9.5 / SLO 10 → headroom 0.05 < 0.1."""
-        q = _make_query(latency_s=9.5)
+        q = _make_query()
+        latencies = {q.query_id: 9.5}
         pool = _mock_pool(active_queries={"c0": [q]})
         result = _make_result(violation=0.0, query=q)
 
@@ -142,13 +139,14 @@ class TestHeadroomSpinUp:
         policy.on_attach(pool)
         policy.on_cluster_ready("c0", 8, 0.0)
 
-        action = policy.on_routing_result(result, current_time_s=0.0)
+        action = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
         assert len(action.spin_ups) == 1
         assert action.spin_ups[0].rpu in (8, 32)
 
     def test_spin_up_on_capacity_pressure(self):
         """Marginal SLO violation > 0 ⇒ pressure ⇒ spin-up."""
-        q = _make_query(latency_s=1.0)  # low latency → high headroom
+        q = _make_query()  # low latency → high headroom
+        latencies = {q.query_id: 1.0}
         pool = _mock_pool(active_queries={"c0": [q]})
         result = _make_result(violation=0.5, query=q)
 
@@ -156,12 +154,13 @@ class TestHeadroomSpinUp:
         policy.on_attach(pool)
         policy.on_cluster_ready("c0", 8, 0.0)
 
-        action = policy.on_routing_result(result, current_time_s=0.0)
+        action = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
         assert len(action.spin_ups) == 1
 
     def test_no_spin_up_when_headroom_sufficient(self):
         """Healthy headroom and no pressure ⇒ no spin-up."""
-        q = _make_query(latency_s=1.0)  # headroom = 0.9
+        q = _make_query()  # headroom = 0.9
+        latencies = {q.query_id: 1.0}
         pool = _mock_pool(active_queries={"c0": [q]})
         result = _make_result(violation=0.0, query=q)
 
@@ -169,13 +168,14 @@ class TestHeadroomSpinUp:
         policy.on_attach(pool)
         policy.on_cluster_ready("c0", 8, 0.0)
 
-        action = policy.on_routing_result(result, current_time_s=0.0)
+        action = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
         assert action.spin_ups == []
         assert action.tear_downs == []
 
     def test_no_double_spin_up(self):
         """While a spin-up is pending, no second spin-up is triggered."""
-        q = _make_query(latency_s=9.5)
+        q = _make_query()
+        latencies = {q.query_id: 9.5}
         pool = _mock_pool(active_queries={"c0": [q]})
         result = _make_result(violation=0.0, query=q)
 
@@ -184,17 +184,18 @@ class TestHeadroomSpinUp:
         policy.on_cluster_ready("c0", 8, 0.0)
 
         # First spin-up
-        a1 = policy.on_routing_result(result, current_time_s=0.0)
+        a1 = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
         assert len(a1.spin_ups) == 1
         assert policy.pending_count == 1
 
         # Second request — should NOT spin up
-        a2 = policy.on_routing_result(result, current_time_s=1.0)
+        a2 = policy.on_routing_result(result, current_time_s=1.0, current_latencies=latencies)
         assert a2.spin_ups == []
 
     def test_spin_up_unblocked_after_cluster_ready(self):
         """After on_cluster_ready, pending_count returns to 0."""
-        q = _make_query(latency_s=9.5)
+        q = _make_query()
+        latencies = {q.query_id: 9.5}
         pool = _mock_pool(active_queries={"c0": [q]})
         result = _make_result(violation=0.0, query=q)
 
@@ -203,7 +204,7 @@ class TestHeadroomSpinUp:
         policy.on_cluster_ready("c0", 8, 0.0)
 
         # First spin-up
-        a1 = policy.on_routing_result(result, current_time_s=0.0)
+        a1 = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
         assert len(a1.spin_ups) == 1
 
         # New cluster ready
@@ -211,7 +212,7 @@ class TestHeadroomSpinUp:
         assert policy.pending_count == 0
 
         # Second spin-up now allowed
-        a2 = policy.on_routing_result(result, current_time_s=200.0)
+        a2 = policy.on_routing_result(result, current_time_s=200.0, current_latencies=latencies)
         assert len(a2.spin_ups) == 1
 
     def test_no_active_queries_high_headroom(self):
@@ -289,7 +290,7 @@ class TestHeadroomTearDown:
 
     def test_active_cluster_not_torn_down(self):
         """Cluster with active queries never accumulates idle periods."""
-        q = _make_query(latency_s=5.0)
+        q = _make_query()
         pool = _mock_pool(active_queries={"c0": [q]})
 
         policy = self._policy(idle_periods=1, min_lifetime=0.0)

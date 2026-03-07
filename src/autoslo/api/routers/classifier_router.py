@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 import autoslo.utils.paths as pu
 from autoslo.forecasting.arrival_classifier import ArrivalClassifier
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 
 router = APIRouter()
 
@@ -154,8 +154,8 @@ def _aggregate_to_buckets(
         return [], {}, MIN_BUCKET_SIZE_S
 
     # Find time range
-    min_time = min(q.start_time_s for q in queries)
-    max_time = max(q.start_time_s for q in queries)
+    min_time = min(q.rel_start_time_s for q in queries)
+    max_time = max(q.rel_start_time_s for q in queries)
 
     # Compute bucket size if not provided
     if bucket_size_s is None:
@@ -176,10 +176,10 @@ def _aggregate_to_buckets(
 
     # Count queries per bucket
     for query in queries:
-        bucket = (query.start_time_s // bucket_size_s) * bucket_size_s
+        bucket = (query.rel_start_time_s // bucket_size_s) * bucket_size_s
         if bucket in aggregate_counts:
             aggregate_counts[bucket] += 1
-            template_id = _extract_template_id(query.tpcds_temp_and_q_idx)
+            template_id = int(query.query_text_id.template_id)
             template_counts[template_id][bucket] += 1
 
     # Convert to response format
@@ -330,8 +330,8 @@ def _parse_queries_from_parquet(file_path: str) -> list[Query]:
 
         query = Query(
             query_id=query_id,
-            start_time_s=start_time,
-            tpcds_temp_and_q_idx=template_str,
+            query_text_id=QueryTextId(f"unknown#{template_str.replace('_', '#')}"),
+            rel_start_time_s=start_time,
         )
         queries.append(query)
 
@@ -350,7 +350,7 @@ def _run_classification(queries: list[Query]) -> dict[str, Any]:
     # Build template query counts for summary
     template_query_counts: dict[int, int] = defaultdict(int)
     for query in queries:
-        tid = _extract_template_id(query.tpcds_temp_and_q_idx)
+        tid = int(query.query_text_id.template_id)
         template_query_counts[tid] += 1
 
     classifications = [
@@ -500,7 +500,7 @@ async def load_parquet_file(path: str, bucket_size_s: int | None = None) -> Load
         raise HTTPException(status_code=400, detail="No queries found in file")
 
     # Get unique template IDs
-    template_ids = sorted(set(_extract_template_id(q.tpcds_temp_and_q_idx) for q in queries))
+    template_ids = sorted(set(int(q.query_text_id.template_id) for q in queries))
 
     # Aggregate to buckets (with optional custom bucket size)
     aggregate_buckets, _, bucket_size = _aggregate_to_buckets(queries, bucket_size_s)
@@ -596,7 +596,7 @@ async def get_template_buckets(template_id: int, path: str) -> TemplateBuckets:
     # Filter queries for this template
     template_queries = [
         q for q in queries
-        if _extract_template_id(q.tpcds_temp_and_q_idx) == template_id
+        if int(q.query_text_id.template_id) == template_id
     ]
 
     if not template_queries:
@@ -606,8 +606,8 @@ async def get_template_buckets(template_id: int, path: str) -> TemplateBuckets:
         )
 
     # Aggregate just this template's queries but use the full time range
-    min_time = min(q.start_time_s for q in queries)
-    max_time = max(q.start_time_s for q in queries)
+    min_time = min(q.rel_start_time_s for q in queries)
+    max_time = max(q.rel_start_time_s for q in queries)
 
     bucket_starts = []
     current = (min_time // bucket_size_s) * bucket_size_s
@@ -617,7 +617,7 @@ async def get_template_buckets(template_id: int, path: str) -> TemplateBuckets:
 
     counts: dict[float, int] = {b: 0 for b in bucket_starts}
     for q in template_queries:
-        bucket = (q.start_time_s // bucket_size_s) * bucket_size_s
+        bucket = (q.rel_start_time_s // bucket_size_s) * bucket_size_s
         if bucket in counts:
             counts[bucket] += 1
 
@@ -657,8 +657,8 @@ async def classify_arrivals(arrivals: list[ArrivalPoint]):
     for a in arrivals:
         query = Query(
             query_id=a.query_id,
-            start_time_s=a.start_time_s,
-            tpcds_temp_and_q_idx=f"{a.template_id}_0",
+            query_text_id=QueryTextId(f"unknown#{a.template_id}#0"),
+            rel_start_time_s=a.start_time_s,
         )
         queries.append(query)
 

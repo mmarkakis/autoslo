@@ -12,7 +12,7 @@ GET /api/simulator/experiments/{name}
     Return the full experiment_meta.json for the named experiment.
 
 GET /api/simulator/runs/{experiment}/{run_id}/timeline
-    Return a TimelineData response built from the run's solve_log.parquet.
+    Return a TimelineData response built from the run's structured_log.parquet.
 
 GET /api/simulator/runs/{experiment}/{run_id}/log
     Return the raw solve log as a JSON array (enables future scrubber).
@@ -20,6 +20,7 @@ GET /api/simulator/runs/{experiment}/{run_id}/log
 GET /api/simulator/runs/{experiment}/{run_id}/config
     Return the run's config.yml as a dict.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,6 +44,7 @@ router = APIRouter()
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _simulator_runs_dir() -> str:
     return os.path.join(pu.get_data_path(), "simulator_runs")
 
@@ -63,6 +65,7 @@ def _require_file(path: str, label: str) -> None:
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
+
 
 class RunSummary(BaseModel):
     run_id: str
@@ -135,6 +138,7 @@ class TemplateStats(BaseModel):
 # routes
 # ---------------------------------------------------------------------------
 
+
 @router.get("/simulator/experiments", response_model=list[str])
 def list_experiments():
     """
@@ -148,7 +152,9 @@ def list_experiments():
     names = []
     for entry in sorted(os.listdir(base)):
         meta_path = os.path.join(base, entry, "experiment_meta.json")
-        if os.path.isdir(os.path.join(base, entry)) and os.path.exists(meta_path):
+        if os.path.isdir(os.path.join(base, entry)) and os.path.exists(
+            meta_path
+        ):
             names.append(entry)
     return names
 
@@ -180,11 +186,11 @@ def get_run_timeline(experiment: str, run_id: str):
     rendering — no pre-computed Plotly shapes are included.
     """
     rdir = _run_dir(experiment, run_id)
-    log_path = os.path.join(rdir, "solve_log.parquet")
+    log_path = os.path.join(rdir, "structured_log.parquet")
     config_path = os.path.join(rdir, "config.yml")
     billing_path = os.path.join(rdir, "billing_interval_analysis.yml")
 
-    _require_file(log_path, f"solve_log for run '{run_id}'")
+    _require_file(log_path, f"structured log for run '{run_id}'")
     _require_file(config_path, f"config for run '{run_id}'")
 
     with open(config_path) as f:
@@ -199,10 +205,9 @@ def get_run_timeline(experiment: str, run_id: str):
     # --- reconstruct timeline from log ---
     log = pd.read_parquet(log_path)
 
-    routing = (
-        log[log["event_type"] == "routing"]
-        .set_index("query_id")[["timestamp", "cluster_name", "end_time_s", "query_text_id"]]
-    )
+    routing = log[log["event_type"] == "routing"].set_index("query_id")[
+        ["timestamp", "cluster_name", "end_time_s", "query_text_id"]
+    ]
     completions = (
         log[log["event_type"] == "completion"]
         .set_index("query_id")[["end_time_s"]]
@@ -251,8 +256,14 @@ def get_run_timeline(experiment: str, run_id: str):
         tpcds = row.get("query_text_id")
         row_slo_s = resolver.resolve(tpcds)
         viol = state == "COMPLETED" and duration > row_slo_s
-        viol_amount = max(0.0, duration - row_slo_s) if state == "COMPLETED" else 0.0
-        viol_rel = max(0.0, (duration - row_slo_s) / row_slo_s) if (state == "COMPLETED" and row_slo_s > 0) else 0.0
+        viol_amount = (
+            max(0.0, duration - row_slo_s) if state == "COMPLETED" else 0.0
+        )
+        viol_rel = (
+            max(0.0, (duration - row_slo_s) / row_slo_s)
+            if (state == "COMPLETED" and row_slo_s > 0)
+            else 0.0
+        )
         if state == "COMPLETED":
             completed_count += 1
             sum_violation_amount += viol_amount
@@ -275,9 +286,19 @@ def get_run_timeline(experiment: str, run_id: str):
             )
         )
 
-    violation_rate = violating_queries / total_queries if total_queries > 0 else 0.0
-    agg_violation_amount = round(sum_violation_amount / completed_count, 4) if completed_count > 0 else 0.0
-    agg_violation_relative = round(sum_violation_relative / completed_count, 6) if completed_count > 0 else 0.0
+    violation_rate = (
+        violating_queries / total_queries if total_queries > 0 else 0.0
+    )
+    agg_violation_amount = (
+        round(sum_violation_amount / completed_count, 4)
+        if completed_count > 0
+        else 0.0
+    )
+    agg_violation_relative = (
+        round(sum_violation_relative / completed_count, 6)
+        if completed_count > 0
+        else 0.0
+    )
 
     # total cost from billing file
     total_cost = 0.0
@@ -312,8 +333,10 @@ def get_run_log(experiment: str, run_id: str) -> list[dict]:
     This endpoint is provided to enable a future browser-side scrubber without
     requiring any further backend changes.
     """
-    log_path = os.path.join(_run_dir(experiment, run_id), "solve_log.parquet")
-    _require_file(log_path, f"solve_log for run '{run_id}'")
+    log_path = os.path.join(
+        _run_dir(experiment, run_id), "structured_log.parquet"
+    )
+    _require_file(log_path, f"structured log for run '{run_id}'")
     df = pd.read_parquet(log_path)
     return df.where(pd.notna(df), None).to_dict(orient="records")
 
@@ -347,10 +370,10 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
     import numpy as np
 
     rdir = _run_dir(experiment, run_id)
-    log_path = os.path.join(rdir, "solve_log.parquet")
+    log_path = os.path.join(rdir, "structured_log.parquet")
     config_path = os.path.join(rdir, "config.yml")
 
-    _require_file(log_path, f"solve_log for run '{run_id}'")
+    _require_file(log_path, f"structured log for run '{run_id}'")
     _require_file(config_path, f"config for run '{run_id}'")
 
     with open(config_path) as f:
@@ -366,10 +389,9 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
     completions = log[log["event_type"] == "completion"].copy()
 
     # Join with routing to get query_text_id (completions log lacks it)
-    routing = (
-        log[log["event_type"] == "routing"]
-        .set_index("query_id")[["query_text_id", "latency_s"]]
-    )
+    routing = log[log["event_type"] == "routing"].set_index("query_id")[
+        ["query_text_id", "latency_s"]
+    ]
     # Completions have query_id in the index after set_index; merge on query_id
     completions = completions.set_index("query_id")
     # Use latency_s from completions when available, fall back to routing
@@ -397,7 +419,7 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
         num_violations = int(violations.sum())
         excess = np.maximum(0.0, lats - slo_val)
         relative_violations = np.maximum(0.0, (lats - slo_val) / slo_val)
-        
+
         results.append(
             TemplateStats(
                 template_id=int(tid),  # type: ignore[arg-type]
@@ -408,7 +430,9 @@ def get_run_template_stats(experiment: str, run_id: str) -> list[TemplateStats]:
                 p95_latency_s=round(float(np.percentile(lats, 95)), 4),
                 violation_rate=round(num_violations / n, 6) if n > 0 else 0.0,
                 total_violation_amount_s=round(float(np.sum(excess)), 4),
-                mean_relative_violation=round(float(np.mean(relative_violations)), 6),
+                mean_relative_violation=round(
+                    float(np.mean(relative_violations)), 6
+                ),
             )
         )
 

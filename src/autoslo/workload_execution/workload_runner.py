@@ -19,6 +19,11 @@ from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 from autoslo.routing.router import Router
 from autoslo.routing.routing_policy import RoutingPolicy
+from autoslo.utils.structured_log import (
+    StructuredLogHandler,
+    emit_structured,
+    setup_structured_logging,
+)
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
@@ -213,6 +218,9 @@ class WorkloadRunner:
         # Prevent propagation to ancestor loggers (which might print to console).
         logger.propagate = False
         logging.info(f"Run directory created at {run_dir}")
+
+        # Set up structured logging for this run.
+        self._structured_handler = setup_structured_logging(out_dir=run_dir)
 
         # Dump the parameters of the run into a YAML file.
         d = {
@@ -446,6 +454,10 @@ class WorkloadRunner:
         route_info_df.to_parquet(
             os.path.join(run_dir, "query_routing_timings.parquet"), index=False
         )
+
+        # Finalize structured log (consolidate shards).
+        if hasattr(self, "_structured_handler") and self._structured_handler is not None:
+            self._structured_handler.finalize()
 
         return run_id
 

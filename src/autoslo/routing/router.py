@@ -14,13 +14,18 @@ plugged-in policy.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 from autoslo.routing.routing_core import RoutingResult
 from autoslo.routing.routing_policy import RoutingPolicy
+from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
 from autoslo.workload_definition.query import Query
+
+logger = logging.getLogger(__name__)
+_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
 class Router:
@@ -91,13 +96,23 @@ class Router:
         """
         if start_time_s is None:
             start_time_s = time.time()
-        return self._policy.select_cluster(
+        cluster_name = self._policy.select_cluster(
             query_id=str(query_id),
             query_text_id=str(query_text_id),
             start_time_s=start_time_s,
             pool=self._pool,
             exclude_clusters=exclude_clusters,
         )
+        if _has_structured():
+            emit_structured({
+                "timestamp": start_time_s,
+                "event_type": "routing",
+                "source": "router",
+                "query_id": str(query_id),
+                "query_text_id": str(query_text_id),
+                "cluster_name": cluster_name,
+            })
+        return cluster_name
 
     def route_query_with_predictions(
         self,
@@ -131,13 +146,14 @@ class Router:
         """
         if start_time_s is None:
             start_time_s = time.time()
-        return self._policy.route_with_details(
+        result = self._policy.route_with_details(
             query_id=str(query_id),
             query_text_id=str(query_text_id),
             start_time_s=start_time_s,
             pool=self._pool,
             exclude_clusters=exclude_clusters,
         )
+        return result
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (called by WorkloadRunner)
@@ -163,7 +179,16 @@ class Router:
             start_time_s=start_time_s,
             cluster_rpu=self._pool.get_rpu(cluster_name),
         )
-        self._pool.on_query_start(query)
+        self._pool.on_query_start(query, cluster_name)
+        if _has_structured():
+            emit_structured({
+                "timestamp": start_time_s,
+                "event_type": "query_start",
+                "source": "router",
+                "query_id": str(query_id),
+                "query_text_id": str(query_text_id),
+                "cluster_name": cluster_name,
+            })
 
     def on_query_finish(
         self,
@@ -179,3 +204,11 @@ class Router:
             cluster_name=cluster_name,
             current_time_s=current_time_s,
         )
+        if _has_structured():
+            emit_structured({
+                "timestamp": current_time_s,
+                "event_type": "query_finish",
+                "source": "router",
+                "query_id": str(query_id),
+                "cluster_name": cluster_name,
+            })

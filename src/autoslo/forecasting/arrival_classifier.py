@@ -20,7 +20,7 @@ class ArrivalClassifier:
 
         self._queries_per_template: dict[int, list[Query]] = defaultdict(list)
         for query in self._queries:
-            template_id = Query.template_id(query.tpcds_temp_and_q_idx)
+            template_id = int(query.query_text_id.template_id)
             self._queries_per_template[template_id].append(query)
         self._template_classification: dict[int, str] = {
             template_id: "unclassified"

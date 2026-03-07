@@ -21,7 +21,7 @@ from autoslo.workload_execution.workload_simulator import (
 )
 
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 
 
 # ---------------------------------------------------------------------------
@@ -33,13 +33,11 @@ def _q(
     qid: str,
     template: str = "1_0",
     start: float = 0.0,
-    latency: float = 5.0,
 ) -> Query:
     return Query(
         query_id=qid,
-        tpcds_temp_and_q_idx=template,
+        query_text_id=QueryTextId(f"unknown#{template.replace('_', '#')}"),
         rel_start_time_s=start,
-        latency_s=latency,
     )
 
 
@@ -68,19 +66,19 @@ def _make_dynamic_simulator(
 
     with (
         patch(
-            "autoslo.blueprint_selection.workload_routing_simulator.IconqModel.load",
+            "autoslo.workload_execution.workload_simulator.IconqModel.load",
             return_value=mock_model,
         ),
         patch(
-            "autoslo.blueprint_selection.workload_routing_simulator.Chunk.load",
+            "autoslo.workload_execution.workload_simulator.Chunk.load",
             return_value=mock_workload,
         ),
         patch(
-            "autoslo.blueprint_selection.workload_routing_simulator.WorkloadSimulator._make_out_dir",
+            "autoslo.workload_execution.workload_simulator.WorkloadSimulator._make_out_dir",
             return_value="/tmp/test_sim_out",
         ),
         patch(
-            "autoslo.blueprint_selection.workload_routing_simulator.WorkloadSimulator._write_config_yml",
+            "autoslo.workload_execution.workload_simulator.WorkloadSimulator._write_config_yml",
         ),
     ):
         sim = WorkloadSimulator(
@@ -203,7 +201,8 @@ class TestCapacityControllerIntegration:
         target = names[0]
 
         # Give the target cluster an active query.
-        q = _q("q1", latency=500.0)
+        q = _q("q1")
+        sim._predicted_latencies[q.query_id] = 500.0
         sim._active_queries_per_cluster[target].append(q)
         sim._neighbors_per_active_query["q1"] = []
 
@@ -231,7 +230,8 @@ class TestCapacityControllerIntegration:
 
         # Mark first two clusters as draining.
         for cn in names[:2]:
-            q = _q(f"q_{cn}", latency=999.0)
+            q = _q(f"q_{cn}")
+            sim._predicted_latencies[q.query_id] = 999.0
             sim._active_queries_per_cluster[cn].append(q)
             sim._neighbors_per_active_query[q.query_id] = []
             sim._on_sim_tear_down(cn)
@@ -310,7 +310,8 @@ class TestAdvanceSimulatedTime:
         # Add an active query so headroom is computed.
         cn = list(sim._active_queries_per_cluster.keys())[0]
         # Use a long latency so the query is still active at t=60.
-        q = _q("q1", latency=500.0)
+        q = _q("q1")
+        sim._predicted_latencies[q.query_id] = 500.0
         sim._active_queries_per_cluster[cn].append(q)
         sim._neighbors_per_active_query["q1"] = []
 
@@ -335,8 +336,8 @@ class TestAdvanceSimulatedTime:
             slo_s=10.0,
         )
         cn = list(sim._active_queries_per_cluster.keys())[0]
-        q = _q("q1", latency=5.0, start=0.0)
-        q.latency_s = 500.0  # stays active the whole time
+        q = _q("q1", start=0.0)
+        sim._predicted_latencies[q.query_id] = 500.0  # stays active the whole time
         sim._active_queries_per_cluster[cn].append(q)
         sim._neighbors_per_active_query["q1"] = []
 
@@ -357,8 +358,8 @@ class TestAdvanceSimulatedTime:
         )
         initial_count = len(sim._active_queries_per_cluster)
         cn = list(sim._active_queries_per_cluster.keys())[0]
-        q = _q("q1", latency=5.0)
-        q.latency_s = 500.0
+        q = _q("q1")
+        sim._predicted_latencies[q.query_id] = 500.0
         sim._active_queries_per_cluster[cn].append(q)
         sim._neighbors_per_active_query["q1"] = []
 
@@ -437,7 +438,8 @@ class TestDraining:
         target = names[0]
 
         # Mark target as draining with an active query.
-        q = _q("q1", latency=999.0)
+        q = _q("q1")
+        sim._predicted_latencies[q.query_id] = 999.0
         sim._active_queries_per_cluster[target].append(q)
         sim._neighbors_per_active_query["q1"] = []
         sim._draining_clusters.add(target)
@@ -471,7 +473,8 @@ class TestDraining:
         target = names[0]
 
         # Add a query that ends at t=10.
-        q = _q("q1", start=0.0, latency=10.0)
+        q = _q("q1", start=0.0)
+        sim._predicted_latencies[q.query_id] = 10.0
         sim._active_queries_per_cluster[target].append(q)
         sim._neighbors_per_active_query["q1"] = []
         sim._draining_clusters.add(target)
@@ -509,7 +512,8 @@ class TestDraining:
         other = names[1]
 
         # Put a long-running query on the target cluster.
-        q = _q("q_long", start=0.0, latency=100.0)
+        q = _q("q_long", start=0.0)
+        sim._predicted_latencies[q.query_id] = 100.0
         sim._active_queries_per_cluster[target].append(q)
         sim._neighbors_per_active_query["q_long"] = []
 

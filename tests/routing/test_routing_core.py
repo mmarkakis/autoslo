@@ -36,14 +36,12 @@ def _q(
     query_id: str,
     template: str = "ext_tpcds1000#1#0",
     start: float = 0.0,
-    latency: float = -1.0,
 ) -> Query:
     """Create a minimal Query for testing."""
     return Query(
         query_id=query_id,
         query_text_id=QueryTextId(template),
         rel_start_time_s=start,
-        latency_s=latency,
     )
 
 
@@ -77,6 +75,7 @@ class TestComputeBeforeState:
             current_time_s=100.0,
             slo_resolver=_resolver(),
             slo_metric=SloMetric.ABSOLUTE_S,
+            latencies={},
         )
         assert cost == 0.0
         assert violation == 0.0
@@ -87,7 +86,8 @@ class TestComputeBeforeState:
         end_time = 5.0
         cost_per_second = 2.0
 
-        q = _q("a", start=start_time, latency=end_time - start_time)
+        q = _q("a", start=start_time)
+        latencies = {"a": end_time - start_time}
         snap = ClusterSnapshot(
             cluster_name="c0",
             cost_per_second=cost_per_second,
@@ -99,6 +99,7 @@ class TestComputeBeforeState:
             current_time_s=end_time + 5.0,
             slo_resolver=_resolver(10.0),
             slo_metric=SloMetric.ABSOLUTE_S,
+            latencies=latencies,
         )
         assert violation == 0.0
         assert cost == pytest.approx(
@@ -114,8 +115,9 @@ class TestComputeBeforeState:
         slo_s = 10.0
 
         q = _q(
-            "a", start=start_time, latency=end_time - start_time
+            "a", start=start_time
         )  # SLO=10 → 2s violation
+        latencies = {"a": end_time - start_time}
         snap = ClusterSnapshot(
             cluster_name="c0",
             cost_per_second=cost_per_second,
@@ -127,6 +129,7 @@ class TestComputeBeforeState:
             current_time_s=end_time + 5.0,
             slo_resolver=_resolver(slo_s),
             slo_metric=SloMetric.ABSOLUTE_S,
+            latencies=latencies,
         )
         assert violation == pytest.approx(end_time - start_time - slo_s)
 
@@ -137,7 +140,8 @@ class TestComputeBeforeState:
         cost_per_second = 1.0
         slo_s = 10.0
 
-        q = _q("a", start=start_time, latency=end_time - start_time)
+        q = _q("a", start=start_time)
+        latencies = {"a": end_time - start_time}
         snap = ClusterSnapshot(
             cluster_name="c0",
             cost_per_second=cost_per_second,
@@ -149,6 +153,7 @@ class TestComputeBeforeState:
             current_time_s=end_time + 5.0,
             slo_resolver=_resolver(slo_s),
             slo_metric=SloMetric.BINARY,
+            latencies=latencies,
         )
         assert violation == 1.0
 
@@ -170,6 +175,7 @@ class TestComputeBeforeState:
             current_time_s=current_time,
             slo_resolver=_resolver(),
             slo_metric=SloMetric.ABSOLUTE_S,
+            latencies={},
         )
         assert cost == pytest.approx(
             Billing.billed_s(
@@ -195,9 +201,10 @@ class TestScorePlacement:
         now = 4.0
         cost_per_second = 1.0
 
-        q_a = _q("a", start=start_time_ab, latency=a_pred)
-        q_b = _q("b", start=start_time_ab, latency=b_pred)
-        incoming = _q("new", start=now, latency=-1.0)
+        q_a = _q("a", start=start_time_ab)
+        q_b = _q("b", start=start_time_ab)
+        incoming = _q("new", start=now)
+        latencies = {"a": a_pred, "b": b_pred}
 
         snap = ClusterSnapshot(
             cluster_name="c0",
@@ -219,6 +226,7 @@ class TestScorePlacement:
             current_time_s=now,
             slo_resolver=resolver,
             slo_metric=SloMetric.ABSOLUTE_S,
+            latencies=latencies,
         )
         return (
             incoming,
@@ -227,11 +235,12 @@ class TestScorePlacement:
             resolver,
             before_cost,
             before_violation,
+            latencies,
         )
 
     def test_no_violation_placement(self):
         """All predictions under SLO → marginal SLO violation = 0."""
-        incoming, snap, predictions, resolver, bc, bv = self._base_scenario()
+        incoming, snap, predictions, resolver, bc, bv, latencies = self._base_scenario()
         score = RoutingCore.score_placement(
             query=incoming,
             snapshot=snap,
@@ -241,6 +250,7 @@ class TestScorePlacement:
             slo_metric=SloMetric.ABSOLUTE_S,
             before_cost=bc,
             before_slo_violation=bv,
+            current_latencies=latencies,
         )
         assert score.marginal_slo_violation == pytest.approx(0.0)
         assert score.cluster_name == "c0"
@@ -248,7 +258,7 @@ class TestScorePlacement:
     def test_latency_alignment(self):
         """Each query's latency in the result should match its OWN prediction,
         not a shifted neighbor's prediction — verifying the misalignment fix."""
-        incoming, snap, predictions, resolver, bc, bv = self._base_scenario()
+        incoming, snap, predictions, resolver, bc, bv, latencies = self._base_scenario()
         score = RoutingCore.score_placement(
             query=incoming,
             snapshot=snap,
@@ -258,6 +268,7 @@ class TestScorePlacement:
             slo_metric=SloMetric.ABSOLUTE_S,
             before_cost=bc,
             before_slo_violation=bv,
+            current_latencies=latencies,
         )
         for q in ["a", "b", "new"]:
             assert q in score.latencies
@@ -272,7 +283,7 @@ class TestScorePlacement:
         arrival_time_s = 5.0
         cost_per_second = 1.0
 
-        incoming = _q("new", start=arrival_time_s, latency=-1.0)
+        incoming = _q("new", start=arrival_time_s)
         snap = ClusterSnapshot(
             cluster_name="c0",
             cost_per_second=cost_per_second,
@@ -282,7 +293,7 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S
+            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S, latencies={}
         )
 
         score = RoutingCore.score_placement(
@@ -294,6 +305,7 @@ class TestScorePlacement:
             SloMetric.ABSOLUTE_S,
             bc,
             bv,
+            current_latencies={},
         )
         assert score.marginal_slo_violation == pytest.approx(latency_s - slo_s)
         assert score.latencies["new"] == pytest.approx(latency_s)
@@ -305,7 +317,7 @@ class TestScorePlacement:
         arrival_time_s = 5.0
         cost_per_second = 1.0
 
-        incoming = _q("new", start=arrival_time_s, latency=-1.0)
+        incoming = _q("new", start=arrival_time_s)
         snap = ClusterSnapshot(
             cluster_name="c0",
             cost_per_second=cost_per_second,
@@ -315,7 +327,7 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S
+            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S, latencies={}
         )
 
         score = RoutingCore.score_placement(
@@ -327,6 +339,7 @@ class TestScorePlacement:
             SloMetric.ABSOLUTE_S,
             bc,
             bv,
+            current_latencies={},
         )
 
         assert score.marginal_cost == pytest.approx(
@@ -345,7 +358,7 @@ class TestScorePlacement:
         arrival_time_s = 5.0
         cost_per_second = 1.0
 
-        incoming = _q("new", start=arrival_time_s, latency=-1.0)
+        incoming = _q("new", start=arrival_time_s)
         snap = ClusterSnapshot(
             cluster_name="c0",
             cost_per_second=cost_per_second,
@@ -355,7 +368,7 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S
+            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S, latencies={}
         )
 
         score = RoutingCore.score_placement(
@@ -367,6 +380,7 @@ class TestScorePlacement:
             SloMetric.BINARY,
             bc,
             bv,
+            current_latencies={},
         )
         assert score.marginal_slo_violation == pytest.approx(1.0)
 
@@ -453,29 +467,29 @@ class TestComputeSloHeadroom:
 
     def test_no_queries(self):
         """No active queries → full headroom (1.0)."""
-        assert RoutingCore.compute_slo_headroom([], _resolver()) == 1.0
+        assert RoutingCore.compute_slo_headroom([], _resolver(), latencies={}) == 1.0
 
     def test_half_headroom(self):
         """Latency at 50% of SLO → headroom = 0.5."""
         slo_s = 10.0
         factor = 0.5
-        q = _q("a", start=0.0, latency=slo_s * factor)
-        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s))
+        q = _q("a", start=0.0)
+        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s), latencies={"a": slo_s * factor})
         assert h == pytest.approx(1.0 - factor)
 
     def test_at_slo(self):
         """Latency equals SLO → headroom = 0."""
         slo_s = 10.0
-        q = _q("a", start=0.0, latency=slo_s)
-        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s))
+        q = _q("a", start=0.0)
+        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s), latencies={"a": slo_s})
         assert h == pytest.approx(0.0)
 
     def test_violated(self):
         """Latency exceeds SLO → headroom < 0."""
         slo_s = 10.0
         factor = 1.5
-        q = _q("a", start=0.0, latency=slo_s * factor)
-        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s))
+        q = _q("a", start=0.0)
+        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s), latencies={"a": slo_s * factor})
         assert h < 0.0
         assert h == pytest.approx(1.0 - factor)
 
@@ -484,9 +498,12 @@ class TestComputeSloHeadroom:
         slo_s = 10.0
         small_factor = 0.2
         large_factor = 0.8
-        q1 = _q("a", start=0.0, latency=slo_s * small_factor)
-        q2 = _q("b", start=0.0, latency=slo_s * large_factor)
-        h = RoutingCore.compute_slo_headroom([q1, q2], _resolver(slo_s))
+        q1 = _q("a", start=0.0)
+        q2 = _q("b", start=0.0)
+        h = RoutingCore.compute_slo_headroom(
+            [q1, q2], _resolver(slo_s),
+            latencies={"a": slo_s * small_factor, "b": slo_s * large_factor},
+        )
         assert h == pytest.approx(1.0 - large_factor)
 
 

@@ -7,18 +7,28 @@ import pandas as pd
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import QueryTextId
+
+
+def _template_id(temp_and_q_idx: str) -> int:
+    """Extract template ID from 'template_querynum' string."""
+    return int(temp_and_q_idx.split("_")[0])
+
+
+def _idx_in_template(temp_and_q_idx: str) -> int:
+    """Extract query index from 'template_querynum' string."""
+    return int(temp_and_q_idx.split("_")[1])
 
 
 def read_in_query_texts(
-    temp_and_q_idxs: list[Query.TPCDSTempAndQIdx],
-) -> dict[Query.TPCDSTempAndQIdx, str]:
+    temp_and_q_idxs: list[str],
+) -> dict[str, str]:
 
-    query_texts_dict: dict[Query.TPCDSTempAndQIdx, str] = {}
+    query_texts_dict: dict[str, str] = {}
 
     for temp_and_q_idx in temp_and_q_idxs:
-        template_id = Query.template_id(temp_and_q_idx)
-        query_num = Query.idx_in_template(temp_and_q_idx)
+        template_id = _template_id(temp_and_q_idx)
+        query_num = _idx_in_template(temp_and_q_idx)
         template_str = f"query{template_id:03d}"
         query_path = os.path.join(
             pu.QUERIES_PATH,
@@ -116,11 +126,11 @@ def main(args) -> None:
         df["arrival_timestamp"] - df["arrival_timestamp"].min()
     ).dt.total_seconds()
     df["tpcds_temp_and_q_idx"] = df["temp_option_idx"].map(column_dict.get)
-    df["query_template"] = df["tpcds_temp_and_q_idx"].apply(Query.template_id)
+    df["query_template"] = df["tpcds_temp_and_q_idx"].apply(_template_id)
     df["query_num_within_template"] = df["tpcds_temp_and_q_idx"].apply(
-        Query.idx_in_template
+        _idx_in_template
     )
-    query_texts: dict[Query.TPCDSTempAndQIdx, str] = read_in_query_texts(
+    query_texts: dict[str, str] = read_in_query_texts(
         list(df["tpcds_temp_and_q_idx"].unique())
     )
     df["query_text"] = df["tpcds_temp_and_q_idx"].map(query_texts)

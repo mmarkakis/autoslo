@@ -447,14 +447,12 @@ class QueryTimeline:
 
     @staticmethod
     def _query_from_interval(
-        cluster_name: str,
         interval: Interval,
     ) -> Query:
         """
-        Create a Query instance from the given cluster name and Interval.
+        Create a Query instance from the given Interval.
 
         Parameters:
-            cluster_name: The name of the cluster where the query executes.
             interval: The Interval representing the query.
 
         Returns:
@@ -466,12 +464,9 @@ class QueryTimeline:
             query_text_id=interval.data["query_text_id"],
             featurization=interval.data["featurization"],
             rel_start_time_s=interval.begin,
-            cluster_name=cluster_name,
-            stage_latency_prediction_s=interval.data[
+            stage_predictions_per_rpu=interval.data[
                 "stage_model_predictions_per_rpu"
-            ][Cluster.rpu_for_cluster_name(cluster_name)],
-            latency_s=interval.end - interval.begin,
-            latency_is_lower_bound=interval.data.get("was_aborted", False),
+            ],
         )
 
     def get_dataset(
@@ -479,7 +474,6 @@ class QueryTimeline:
         start_time_s: float = -float("inf"),
         end_time_s: float = float("inf"),
         use_log_runtime: bool = True,
-        run_id: Optional[str] = None,
         cluster_name: Optional[str] = None,
         use_fixed_window_radius_s: Optional[float] = None,
         use_fixed_window_max_neighbors_per_side: Optional[int] = None,
@@ -492,7 +486,6 @@ class QueryTimeline:
             end_time_s: The end time of the window (in seconds).
             use_log_runtime: Whether to use the natural log of the runtime as
                 the target variable, or the runtime itself.
-            run_id: The run ID associated with this dataset, if any.
             cluster_name: If provided, only include queries from this cluster.
             use_fixed_window_radius_s: If provided, include neighbors within
                 this time radius (in seconds) around each query, regardless of
@@ -507,12 +500,12 @@ class QueryTimeline:
             A ConcurrentQueryDataset representing the timeline.
         """
         # For each cluster, build the dataset
-        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = (
+        cluster_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = (
             defaultdict(dict)
         )
+        targets: dict[str, float] = {}
+        is_lower_bound: dict[str, bool] = {}
 
-        if run_id is None:
-            run_id = "default_run_id"
         included_clusters = (
             [cluster_name] if cluster_name is not None else self.active_clusters
         )
@@ -532,23 +525,25 @@ class QueryTimeline:
 
             for base_iv, neighbor_ivs in query_neighbor_mapping.items():
                 base_query = self._query_from_interval(
-                    cluster_name=cluster_name_local,
                     interval=base_iv,
                 )
                 neighbors = [
                     self._query_from_interval(
-                        cluster_name=cluster_name_local,
                         interval=neighbor_iv,
                     )
                     for neighbor_iv in neighbor_ivs
                 ]
 
-                run_to_base_to_neighbors[run_id][base_query] = neighbors
+                cluster_to_base_to_neighbors[cluster_name_local][base_query] = neighbors
+                targets[base_query.query_id] = base_iv.end - base_iv.begin
+                is_lower_bound[base_query.query_id] = base_iv.data.get("was_aborted", False)
 
         return ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=self._iconq_interaction_featurizer,
-            run_to_base_to_neighbors=run_to_base_to_neighbors,
+            cluster_to_base_to_neighbors=cluster_to_base_to_neighbors,
             use_log_runtime=use_log_runtime,
+            targets=targets,
+            is_lower_bound=is_lower_bound,
         )
 
     @staticmethod

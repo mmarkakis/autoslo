@@ -358,10 +358,10 @@ class ManagedClusterPool:
     # Query lifecycle
     # ------------------------------------------------------------------
 
-    def on_query_start(self, query: Query) -> None:
-        """Register *query* as actively running on ``query.cluster_name``."""
+    def on_query_start(self, query: Query, cluster_name: str) -> None:
+        """Register *query* as actively running on *cluster_name*."""
         with self._lock:
-            cn = query.cluster_name
+            cn = cluster_name
             entry = self._entries[cn]
             qid = query.query_id
 
@@ -476,6 +476,8 @@ class ManagedClusterPool:
         """Atomic snapshot for routing (READY clusters only).
 
         Identical semantics to ``ClusterStateTracker.build_routing_context``.
+        The outer dict key **is** the cluster name — ``incoming``
+        is never mutated.
         """
         with self._lock:
             snapshots: dict[str, ClusterSnapshot] = {}

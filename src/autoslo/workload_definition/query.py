@@ -3,8 +3,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TypeAlias
 
-from intervaltree import Interval  # type: ignore[import]
-
 
 class SloMetric(Enum):
     """Which SLO-violation metric to use for routing decisions.
@@ -53,14 +51,14 @@ class QueryTextId:
 
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)
 class Query:
-    """Class representing a single query in a workload.
+    """Immutable identity + precomputed features for a single query.
 
-    A ``Query`` corresponds to one row in the ``workload`` data schema: it
-    carries the query's identity fields (``query_id``, ``query_text_id``,
-    ``schema_name``, ``repetition_id``) as well as optional execution-time
-    fields populated after a run (latency, featurization, …).
+    Execution-context fields (cluster placement, predicted/actual latency,
+    censored-loss flag) live outside this class — in ``RoutingResult``, in the
+    simulator's latency tracker, or as explicit parameters to the dataset
+    builder.
     """
 
     query_id: str
@@ -73,100 +71,52 @@ class Query:
 
     featurization: QueryFeaturization = field(default_factory=list)
 
-    abs_start_time: datetime = datetime.fromtimestamp(-1, tz=timezone.utc)
+    abs_start_time: datetime = field(
+        default_factory=lambda: datetime.fromtimestamp(-1, tz=timezone.utc)
+    )
     rel_start_time_s: float = -1
 
     repetition_id: str = ""
     """Identifies repeated instances of the same query text within a workload."""
 
-    cluster_name: str = ""
-    stage_latency_prediction_s: float = -1
+    stage_predictions_per_rpu: dict[int, float] = field(default_factory=dict)
+    """Pre-computed stage-model predictions keyed by RPU size.
 
-    latency_s: float = -1
-    latency_is_lower_bound: bool = False
-
-    slo_s: float | None = None
-    """Per-query SLO in seconds.
-
-    When set, the query carries its own SLO so callers do not need a separate
-    ``SloResolver``.  ``None`` means "use the resolver / external SLO".
+    Populated once at query construction time (routing or trace replay).
+    The dataset builder / featuriser picks the relevant entry using the
+    cluster's RPU.
     """
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.query_id)
-    
-    def __eq__(self, other):
+
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Query):
             return NotImplemented
         return self.query_id == other.query_id
 
-    def __post_init__(self):
-        if (self.abs_start_time.timestamp() < 0) and (
-            self.rel_start_time_s < 0
-        ):
+    def __post_init__(self) -> None:
+        if self.abs_start_time.timestamp() < 0 and self.rel_start_time_s < 0:
             raise ValueError(
                 "At least one form of start time must be provided."
             )
-        elif self.abs_start_time.timestamp() < 0:
-            self.abs_start_time = datetime.fromtimestamp(
-                self.rel_start_time_s, tz=timezone.utc
+        # frozen=True forbids direct assignment; use object.__setattr__
+        if self.abs_start_time.timestamp() < 0:
+            object.__setattr__(
+                self,
+                "abs_start_time",
+                datetime.fromtimestamp(self.rel_start_time_s, tz=timezone.utc),
             )
         elif self.rel_start_time_s < 0:
-            self.rel_start_time_s = self.abs_start_time.timestamp()
+            object.__setattr__(
+                self,
+                "rel_start_time_s",
+                self.abs_start_time.timestamp(),
+            )
 
-    def as_interval(self) -> Interval:
-        """Returns the execution interval of the query as an Interval object."""
-        return Interval(
-            begin=self.rel_start_time_s,
-            end=self.rel_start_time_s + self.latency_s,
-            data={"query_id": self.query_id},
-        )
+    def stage_prediction_for_cluster(self, cluster_name: str) -> float:
+        """Convenience: look up the stage prediction for a named cluster."""
+        from autoslo.workload_definition.cluster import Cluster
 
-    def slo_deviation_amount_s(self, slo_s: float) -> float:
-        """Returns the amount of deviation from the SLO in seconds.
-
-        This is positive if the query violates the SLO,
-        negative if it has SLO slack, and 0 if it meets the SLO exactly.
-        """
-        return self.latency_s - slo_s
-
-    def violates_slo(self, slo_s: float) -> bool:
-        """Returns whether the query violates the SLO."""
-        return self.slo_deviation_amount_s(slo_s) > 0
-
-    def slo_violation_amount_s(self, slo_s: float) -> float:
-        """Returns the amount of SLO violation in seconds."""
-        return max(0.0, self.slo_deviation_amount_s(slo_s))
-
-    def slo_relative_violation(self, slo_s: float) -> float:
-        """Returns the relative SLO violation: ``max(0, (latency − SLO) / SLO)``.
-
-        Returns 0.0 when the query meets or beats its SLO.
-        """
-        if slo_s <= 0:
-            return 0.0
-        return max(0.0, (self.latency_s - slo_s) / slo_s)
-
-    def slo_violation(self, slo_s: float, metric: SloMetric) -> float:
-        """Unified SLO-violation accessor, dispatching on *metric*.
-
-        * ``BINARY``     → ``float(self.violates_slo(slo_s))``
-        * ``ABSOLUTE_S`` → ``self.slo_violation_amount_s(slo_s)``
-        * ``RELATIVE``   → ``self.slo_relative_violation(slo_s)``
-        """
-        if metric is SloMetric.BINARY:
-            return float(self.violates_slo(slo_s))
-        if metric is SloMetric.ABSOLUTE_S:
-            return self.slo_violation_amount_s(slo_s)
-        if metric is SloMetric.RELATIVE:
-            return self.slo_relative_violation(slo_s)
-        raise ValueError(f"Unknown SloMetric: {metric}")
-
-    def has_slo_slack(self, slo_s: float) -> bool:
-        """Returns whether the query has any SLO slack
-        (i.e. does not violate the SLO)."""
-        return self.slo_deviation_amount_s(slo_s) < 0
-
-    def slo_slack_amount_s(self, slo_s: float) -> float:
-        """Returns the amount of SLO slack in seconds."""
-        return max(0.0, -self.slo_deviation_amount_s(slo_s))
+        rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        return self.stage_predictions_per_rpu.get(rpu, -1.0)

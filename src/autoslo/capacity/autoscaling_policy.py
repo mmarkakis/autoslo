@@ -93,6 +93,7 @@ class AutoscalingPolicy(ClassWithFactory):
         self,
         result: RoutingResult,
         current_time_s: float,
+        current_latencies: dict[str, float] | None = None,
     ) -> AutoscalingAction:
         """Called after each routing decision.  May return any action."""
         ...
@@ -166,6 +167,7 @@ class NoOpPolicy(AutoscalingPolicy):
         self,
         result: RoutingResult,
         current_time_s: float,
+        current_latencies: dict[str, float] | None = None,
     ) -> AutoscalingAction:
         return AutoscalingAction()
 

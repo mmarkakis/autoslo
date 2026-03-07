@@ -14,6 +14,7 @@ render_run                     – convenience wrapper for notebooks / scripts
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -37,11 +38,11 @@ from autoslo.utils.colors import Palette
 
 
 def _load_run(run_dir: str | Path) -> tuple[dict, pd.DataFrame]:
-    """Load config.yml + solve_log.parquet from a run directory."""
+    """Load config.yml + the structured/solve log from a run directory."""
     run_dir = Path(run_dir)
     with open(run_dir / "config.yml") as f:
         config = yaml.safe_load(f)
-    log = pd.read_parquet(run_dir / "solve_log.parquet")
+    log = pd.read_parquet(os.path.join(run_dir, "structured_log.parquet"))
     return config, log
 
 
@@ -352,18 +353,18 @@ def render_run(
     **kwargs: Any,
 ) -> go.Figure:
     """
-    Load config.yml + solve_log.parquet from run_dir and render a Gantt figure.
+    Load config.yml + the structured/solve log from run_dir and render a Gantt figure.
 
     Parameters
     ----------
     run_dir : path to a simulator run directory (must contain config.yml and
-              solve_log.parquet).
+              structured_log.parquet).
     scrubber : if True, call build_scrubber_snapshots_from_log (one step per
                arrival); if False (default), show only the final-state Gantt.
     **kwargs : forwarded to render_gantt_scrubber.
     """
     config, _ = _load_run(run_dir)
-    log_path = Path(run_dir) / "solve_log.parquet"
+    log_path = os.path.join(run_dir, "structured_log.parquet")
 
     if scrubber:
         snapshots = build_scrubber_snapshots_from_log(log_path, config)

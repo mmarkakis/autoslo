@@ -23,11 +23,13 @@ from autoslo.routing.routing_core import (
 )
 from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
 
 if TYPE_CHECKING:
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 logger = logging.getLogger(__name__)
+_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
 class ModelPolicy(RoutingPolicy):
@@ -128,6 +130,7 @@ class ModelPolicy(RoutingPolicy):
         start_time_s: float,
         pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
+        current_latencies: dict[str, float] | None = None,
     ) -> RoutingResult:
         query_id = str(query_id)
         qtid = QueryTextId(value=str(query_text_id))
@@ -144,8 +147,31 @@ class ModelPolicy(RoutingPolicy):
             start_time_s=start_time_s,
             slo_resolver=self._slo_resolver,
             slo_metric=self._slo_metric,
+            current_latencies=current_latencies or {},
             cluster_names=eligible,
         )
+
+        # Create structured log records for the scores.
+        if _has_structured():
+            for cluster_name, score in scores.items():
+                record = {
+                    "timestamp": start_time_s,
+                    "source": self.name,
+                    "event_type": "routing_score",
+                    "query_id": query_id,
+                    "cluster_name": score.cluster_name,
+                    "end_time_s": (
+                        start_time_s
+                        + (
+                            score.latencies.get(query_id)
+                            if score.latencies
+                            else -1
+                        )
+                    ),
+                    "marginal_slo_violation": score.marginal_slo_violation,
+                    "marginal_cost": score.marginal_cost,
+                }
+                emit_structured(record)
 
         if not scores:
             logger.warning(
@@ -153,28 +179,27 @@ class ModelPolicy(RoutingPolicy):
                 "eligible cluster.",
                 query_id,
             )
-            incoming.cluster_name = eligible[0]
             return RoutingResult(
                 cluster_name=eligible[0],
                 score=None,
-                tracking_query=incoming,
+                query=incoming,
             )
 
         score_list = list(scores.values())
         best = RoutingCore.pick_best(score_list, tolerance=self.TOLERANCE_S)
 
-        # Finalise the incoming query for the chosen cluster.
-        incoming.cluster_name = best.cluster_name
-        incoming.stage_latency_prediction_s = stage_preds.get(best.cluster_name, -1)
-        if best.latencies:
-            incoming.latency_s = best.latencies.get(
-                incoming.query_id, incoming.latency_s
-            )
+        predicted_latency = (
+            best.latencies.get(incoming.query_id, -1.0)
+            if best.latencies
+            else -1.0
+        )
 
         return RoutingResult(
             cluster_name=best.cluster_name,
             score=best,
-            tracking_query=incoming,
+            query=incoming,
+            stage_prediction_s=stage_preds.get(best.cluster_name, -1.0),
+            predicted_latency_s=predicted_latency,
         )
 
     # ------------------------------------------------------------------
@@ -193,23 +218,16 @@ class ModelPolicy(RoutingPolicy):
         query_id = str(query_id)
         qtid = QueryTextId(value=str(query_text_id))
 
-        featurization = (
-            self._iconq_model.iconq_query_featurizer
-            .featurize_from_query_text_id(qtid)
+        featurization = self._iconq_model.iconq_query_featurizer.featurize_from_query_text_id(
+            qtid
         )
-        stage_pred = (
-            self._iconq_model.stage_model
-            .predict_from_query_text_id(
-                {query_id: qtid}, cluster_rpu
-            )[query_id]
-            .overall_mean_s()
-        )
+        stage_pred = self._iconq_model.stage_model.predict_from_query_text_id(
+            {query_id: qtid}, cluster_rpu
+        )[query_id].overall_mean_s()
         return Query(
             query_id=query_id,
             query_text_id=qtid,
             rel_start_time_s=start_time_s,
-            cluster_name=cluster_name,
             featurization=featurization,
-            stage_latency_prediction_s=stage_pred,
-            latency_s=stage_pred,
+            stage_predictions_per_rpu={cluster_rpu: stage_pred},
         )

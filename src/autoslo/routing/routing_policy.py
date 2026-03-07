@@ -81,8 +81,6 @@ class RoutingPolicy(ClassWithFactory):
             query_id=str(query_id),
             query_text_id=QueryTextId(value=str(query_text_id)),
             rel_start_time_s=start_time_s,
-            cluster_name=cluster_name,
-            latency_s=-1,
         )
 
     def route_with_details(
@@ -92,6 +90,7 @@ class RoutingPolicy(ClassWithFactory):
         start_time_s: float,
         pool: ManagedClusterPool,
         exclude_clusters: set[str] | None = None,
+        current_latencies: dict[str, float] | None = None,
     ) -> RoutingResult:
         """Route with full results including placement score and tracking query.
 
@@ -107,7 +106,7 @@ class RoutingPolicy(ClassWithFactory):
             pool=pool,
             exclude_clusters=exclude_clusters,
         )
-        tracking_query = self.build_tracking_query(
+        query = self.build_tracking_query(
             query_id=query_id,
             cluster_name=cluster,
             query_text_id=query_text_id,
@@ -117,7 +116,7 @@ class RoutingPolicy(ClassWithFactory):
         return RoutingResult(
             cluster_name=cluster,
             score=None,
-            tracking_query=tracking_query,
+            query=query,
         )
 
     def on_attach(self, pool: ManagedClusterPool) -> None:

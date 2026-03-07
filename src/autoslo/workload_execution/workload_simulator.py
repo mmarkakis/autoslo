@@ -35,11 +35,13 @@ from autoslo.routing.routing_core import (
     RoutingCore,
     RoutingResult,
 )
-from autoslo.routing.routing_policy import (
-    RoundRobinPolicy,
-    RoutingPolicy,
-)
+from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
 from autoslo.utils.billing import Billing
+from autoslo.utils.structured_log import (
+    StructuredLogHandler,
+    emit_structured,
+    setup_structured_logging,
+)
 from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 from autoslo.workload_definition.workload import Workload
 
@@ -145,28 +147,12 @@ class WorkloadSimulator:
         self._out_dir = self._make_out_dir(self._run_id)
         self._write_config_yml()
 
-        # Set up logging if verbose is enabled.
-        self._log_idx = 0
-        self._log_rows: list[dict[str, Any]] = []
-        self._log_columns = [
-            "timestamp",
-            "event_type",
-            "query_id",
-            "query_text_id",
-            "cluster_name",
-            "old_latency_s",
-            "raw_model_latency_s",
-            "latency_s",
-            "end_time_s",
-            "marginal_slo_violation",
-            "marginal_cost",
-            "rpu",
-            "reason",
-            "num_active_queries",
-            "num_active_clusters",
-            "headroom",
-        ]
-        self._log_threshold = 10000
+        # Set up structured logging handler.
+        self._structured_handler: Optional[StructuredLogHandler] = None
+        if self._verbose:
+            self._structured_handler = setup_structured_logging(
+                out_dir=self._out_dir,
+            )
 
         # Dynamic provisioning state.
         self._provisioner: Optional[SimulatedProvisioner] = None
@@ -177,6 +163,13 @@ class WorkloadSimulator:
         self._event_counter: int = 0
         self._current_sim_time_s: float = 0.0
         self._next_tick_time_s: float = 0.0
+
+        # External latency tracking (replaces mutation of Query.latency_s).
+        self._predicted_latencies: dict[str, float] = {}
+        """query_id → current best latency estimate (monotonically increasing)."""
+
+        self._query_to_cluster_name: dict[str, str] = {}
+        """query_id → cluster_name for queries currently tracked."""
 
         self._init_dynamic_clusters()
 
@@ -288,9 +281,7 @@ class WorkloadSimulator:
             autoscaling_policy: AutoscalingPolicy = HeadroomPolicy(
                 slo_resolver=slo_resolver,
                 slo_metric=slo_metric,
-                eta_crit=float(
-                    _s("autoscaling_config", "eta_crit", 0.1)
-                ),
+                eta_crit=float(_s("autoscaling_config", "eta_crit", 0.1)),
                 idle_periods_before_tear_down=int(
                     _s(
                         "autoscaling_config",
@@ -306,6 +297,9 @@ class WorkloadSimulator:
                     )
                 ),
                 allowed_rpu_sizes=allowed_rpus,
+                iconq_model=(
+                    IconqModel.load(iconq_model_id) if iconq_model_id else None
+                ),
             )
         elif autoscaling_policy_type == "noop":
             autoscaling_policy = NoOpPolicy()
@@ -371,6 +365,7 @@ class WorkloadSimulator:
             start_time_s=start_time_s,
             slo_resolver=self._slo_resolver,
             slo_metric=self._slo_metric,
+            current_latencies=self._predicted_latencies,
             cluster_names=[cluster_name],
         )
         score = scores.get(cluster_name)
@@ -380,10 +375,6 @@ class WorkloadSimulator:
                 cluster_name,
             )
             return None, None
-        incoming.cluster_name = cluster_name
-        incoming.latency_s = score.latencies.get(
-            query_id, incoming.stage_latency_prediction_s or -1
-        )
         return score, incoming
 
     # ------------------------------------------------------------------
@@ -442,74 +433,30 @@ class WorkloadSimulator:
         self._out_dir = self._make_out_dir(self._run_id)
         self._write_config_yml()
 
-        # Reset logging.
-        self._log_idx = 0
-        self._log_rows = []
+        # Reset structured logging.
+        if self._structured_handler is not None:
+            self._structured_handler.reset(out_dir=self._out_dir)
+        elif self._verbose:
+            self._structured_handler = setup_structured_logging(
+                out_dir=self._out_dir,
+            )
 
         # Reset per-run bookkeeping.
         self._init_dynamic_clusters()
 
     def _log_if_verbose(self, d: dict) -> None:
-        """
-        Create the specified log entry if verbose is enabled,
-        and write out to a parquet file if the number of log entries reaches
-        the threshold.
+        """Emit a structured log record (if verbose logging is enabled).
+
+        Adds ``source='simulator'`` automatically if not already set.
 
         Parameters:
-            d: A dictionary containing the log entry data. The keys should match
-                the columns specified in self._log_columns.
+            d: A dictionary containing the log entry data. Must include at
+                least ``timestamp`` and ``event_type``.
         """
-
         if not self._verbose:
             return
-
-        self._log_rows.append(d)
-
-        if len(self._log_rows) >= self._log_threshold:
-            self._log_df = pd.DataFrame(
-                self._log_rows, columns=self._log_columns
-            )
-            log_filename = os.path.join(
-                self._out_dir, f"solve_log_{self._log_idx}.parquet"
-            )
-            self._log_df.to_parquet(log_filename)
-            self._log_idx += 1
-            self._log_rows = []
-
-    def finalize_log(self) -> None:
-        """
-        Write out any remaining log entries and consolidate all log files into
-        one, deleting the individual log files afterwards to save space.
-        """
-
-        if not self._verbose:
-            return
-
-        # Write out remaining log rows if any.
-        if len(self._log_rows) > 0:
-            self._log_df = pd.DataFrame(
-                self._log_rows, columns=self._log_columns
-            )
-            log_filename = os.path.join(
-                self._out_dir, f"solve_log_{self._log_idx}.parquet"
-            )
-            self._log_df.to_parquet(log_filename)
-            self._log_idx += 1
-            self._log_rows = []
-
-        # Consolidate log files into one.
-        all_log_dfs = []
-        for idx in range(self._log_idx):
-            log_filename = os.path.join(
-                self._out_dir, f"solve_log_{idx}.parquet"
-            )
-            df = pd.read_parquet(log_filename)
-            all_log_dfs.append(df)
-            os.remove(log_filename)
-        if len(all_log_dfs) > 0:
-            full_log_df = pd.concat(all_log_dfs, ignore_index=True)
-            full_log_out_path = os.path.join(self._out_dir, "solve_log.parquet")
-            full_log_df.to_parquet(full_log_out_path, index=False)
+        d.setdefault("source", "simulator")
+        emit_structured(d)
 
     # ------------------------------------------------------------------
     # Dynamic provisioning helpers
@@ -680,9 +627,7 @@ class WorkloadSimulator:
             # (decrements pending count and records ready time for
             # minimum-lifetime enforcement).
             if self._autoscaler is not None:
-                self._autoscaler.notify_cluster_ready(
-                    cluster_name, rpu, time_s
-                )
+                self._autoscaler.notify_cluster_ready(cluster_name, rpu, time_s)
             logger.debug(
                 "Cluster %s (%d RPU) became ready at t=%.1f",
                 cluster_name,
@@ -720,7 +665,7 @@ class WorkloadSimulator:
                 q for cn, qs in all_aq.items() if cn not in draining for q in qs
             ]
             headroom = RoutingCore.compute_slo_headroom(
-                all_active, self._slo_resolver
+                all_active, self._slo_resolver, self._predicted_latencies
             )
             self._log_if_verbose(
                 {
@@ -819,18 +764,22 @@ class WorkloadSimulator:
                     result = RoutingResult(
                         cluster_name=result.cluster_name,
                         score=computed_score,
-                        tracking_query=enriched_tq,
+                        query=enriched_tq,
                     )
 
             # Feed routing result to the autoscaler.
             if self._autoscaler is not None:
                 self._autoscaler.on_routing_result(
-                    result, query.rel_start_time_s
+                    result, query.rel_start_time_s, self._predicted_latencies
                 )
 
             selected_cluster_name = result.cluster_name
-            tq = result.tracking_query
+            tq = result.query
             self_latency_s = result.score.latencies[query.query_id]
+
+            # Store predicted latency and cluster mapping.
+            self._predicted_latencies[query.query_id] = self_latency_s
+            self._query_to_cluster_name[query.query_id] = selected_cluster_name
 
             self._log_if_verbose(
                 {
@@ -848,7 +797,7 @@ class WorkloadSimulator:
 
             # Register the tracking query with the pool.
             # (Handles neighbour bookkeeping and billing-window start.)
-            self._pool.on_query_start(tq)
+            self._pool.on_query_start(tq, selected_cluster_name)
 
             seq_num_to_cluster_name[i] = selected_cluster_name
 
@@ -857,7 +806,7 @@ class WorkloadSimulator:
             for q in self._pool.get_active_queries(selected_cluster_name):
                 if q.query_id == query.query_id:
                     continue
-                old_latency_s = q.latency_s
+                old_latency_s = self._predicted_latencies.get(q.query_id, -1.0)
                 predicted_latency_s = result.score.latencies.get(
                     q.query_id, old_latency_s
                 )
@@ -875,7 +824,7 @@ class WorkloadSimulator:
                         "end_time_s": q.rel_start_time_s + updated_latency_s,
                     }
                 )
-                q.latency_s = updated_latency_s
+                self._predicted_latencies[q.query_id] = updated_latency_s
 
         all_completed = [
             q
@@ -884,12 +833,14 @@ class WorkloadSimulator:
         ]
         if all_completed:
             workload_end_time_s = max(
-                q.rel_start_time_s + q.latency_s for q in all_completed
+                q.rel_start_time_s + self._predicted_latencies.get(q.query_id, 0.0)
+                for q in all_completed
             )
 
         self._cleanup_completed_queries_up_to()
         self.write_out_billing_interval_analysis()
-        self.finalize_log()
+        if self._structured_handler is not None:
+            self._structured_handler.finalize()
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         with open(mapping_out_path, "w") as f:
@@ -920,7 +871,7 @@ class WorkloadSimulator:
             active_queries = self._pool.get_active_queries(cluster_name)
             completed: list[tuple[Query, float]] = []
             for query in active_queries:
-                end_time_s = query.rel_start_time_s + query.latency_s
+                end_time_s = query.rel_start_time_s + self._predicted_latencies.get(query.query_id, 0.0)
                 if (current_time_s is None) or (end_time_s <= current_time_s):
                     completed.append((query, end_time_s))
 
@@ -946,7 +897,7 @@ class WorkloadSimulator:
                         "cluster_name": cluster_name,
                         "old_latency_s": None,
                         "raw_model_latency_s": None,
-                        "latency_s": query.latency_s,
+                        "latency_s": self._predicted_latencies.get(query.query_id, -1.0),
                         "end_time_s": end_time_s,
                     }
                 )
@@ -968,10 +919,10 @@ class WorkloadSimulator:
     def write_out_visualization(self) -> None:
         """
         Write out an HTML visualization of the query assignment, built from the
-        solve log (no longer driven by in-memory snapshots).
+        structured log (no longer driven by in-memory snapshots).
         Optionally also exports a video if export_video flag is set.
         """
-        log_path = os.path.join(self._out_dir, "solve_log.parquet")
+        log_path = os.path.join(self._out_dir, "structured_log.parquet")
         with open(os.path.join(self._out_dir, "config.yml")) as f:
             config = yaml.safe_load(f)
 
@@ -1018,8 +969,17 @@ class WorkloadSimulator:
             if len(completed_queries) == 0:
                 continue
 
+            from autoslo.blueprint_selection.slo_resolver import query_interval as _qi  # noqa: PLC0415
+
             billed_intervals = Billing.billed_intervals(
-                [q.as_interval() for q in completed_queries],
+                [
+                    _qi(
+                        q.rel_start_time_s,
+                        self._predicted_latencies.get(q.query_id, 0.0),
+                        q.query_id,
+                    )
+                    for q in completed_queries
+                ],
             )
             total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
             cost_per_second = cost_map.get(cluster_name, 0.0)
@@ -1074,7 +1034,7 @@ class WorkloadSimulator:
         violation_amount_s = 0.0
         violation_relative_mean = 0.0
         num_queries = 0
-        log_path = os.path.join(self._out_dir, "solve_log.parquet")
+        log_path = os.path.join(self._out_dir, "structured_log.parquet")
         if os.path.exists(log_path):
             import pandas as _pd
 

@@ -13,8 +13,13 @@ def _build_dataset() -> ConcurrentQueryDataset:
     ]
     pinch_points = torch.tensor([1, 2, 0], dtype=torch.long)
     y = torch.tensor([0.5, 1.0, -1.5], dtype=torch.float32)
-    query_ids = torch.tensor([10, 20, 30], dtype=torch.long)
-    return ConcurrentQueryDataset(x, pinch_points, y, query_ids)
+    query_ids = ["q10", "q20", "q30"]
+    query_text_id = ["qt10", "qt20", "qt30"]
+    run_ids = ["run1", "run1", "run1"]
+    y_is_lower_bound = torch.tensor([False, False, True], dtype=torch.bool)
+    return ConcurrentQueryDataset(
+        x, pinch_points, y, query_ids, query_text_id, run_ids, y_is_lower_bound
+    )
 
 
 def test_dataset_len_returns_target_count():
@@ -30,7 +35,10 @@ def test_dataset_getitem_returns_expected_tensors():
     assert torch.allclose(sample[0], torch.ones((2, INPUT_SIZE)))
     assert sample[1].item() == 2
     assert torch.isclose(sample[2], torch.tensor(1.0, dtype=torch.float32))
-    assert sample[3].item() == 20
+    assert sample[3] == "q20"
+    assert sample[4] == "qt20"
+    assert sample[5] == "run1"
+    assert sample[6].item() is False
 
 
 def test_collate_and_pad_orders_and_pads_batch():
@@ -43,6 +51,9 @@ def test_collate_and_pad_orders_and_pads_batch():
         pinch_points,
         targets,
         query_ids,
+        query_text_ids,
+        run_ids,
+        y_is_lower_bound,
     ) = ConcurrentQueryDataset.collate_and_pad(batch)
     assert padded_x.shape == (3, 3, INPUT_SIZE)
     assert torch.equal(
@@ -55,12 +66,12 @@ def test_collate_and_pad_orders_and_pads_batch():
     )
     expected_targets = torch.tensor([-1.5, 1.0, 0.5], dtype=torch.float32)
     assert torch.allclose(targets, expected_targets)
+    assert query_ids == ["q30", "q20", "q10"]
+    assert query_text_ids == ["qt30", "qt20", "qt10"]
+    assert run_ids == ["run1", "run1", "run1"]
     assert torch.equal(
-        query_ids,
-        torch.tensor(
-            [30, 20, 10],
-            dtype=torch.long,
-        ),
+        y_is_lower_bound,
+        torch.tensor([True, False, False], dtype=torch.bool),
     )
     assert torch.allclose(
         padded_x[0, :3],

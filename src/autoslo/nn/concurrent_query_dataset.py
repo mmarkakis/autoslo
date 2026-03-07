@@ -242,7 +242,9 @@ class ConcurrentQueryDataset(Dataset):
     @staticmethod
     def build_from_query_groups(
         iconq_interaction_featurizer: IconqInteractionFeaturizer,
-        run_to_base_to_neighbors: dict[str, dict[Query, list[Query]]],
+        cluster_to_base_to_neighbors: dict[str, dict[Query, list[Query]]],
+        targets: dict[str, float] | None = None,
+        is_lower_bound: dict[str, bool] | None = None,
         use_log_runtime: bool = True,
     ) -> "ConcurrentQueryDataset":
         """
@@ -254,8 +256,14 @@ class ConcurrentQueryDataset(Dataset):
         Parameters:
             iconq_interaction_featurizer: The featurizer to use for constructing
                 interaction features between queries.
-            run_to_base_to_neighbors: A dictionary mapping run IDs to dictionaries
-                that map base queries to their list of neighboring queries.
+            cluster_to_base_to_neighbors: A dictionary mapping cluster names to
+                dictionaries that map base queries to their list of neighboring
+                queries.
+            targets: Optional mapping of query_id → actual latency (the *y*
+                value).  When *None* (inference), *y* defaults to 0.0.
+            is_lower_bound: Optional mapping of query_id → whether the target
+                is a censored (lower-bound) observation.  When *None*, defaults
+                to False.
             use_log_runtime: Whether to use log(runtime) as the target variable.
            
         Returns:
@@ -263,7 +271,7 @@ class ConcurrentQueryDataset(Dataset):
         """
 
         # If empty, return empty dataset
-        if len(run_to_base_to_neighbors) == 0:
+        if len(cluster_to_base_to_neighbors) == 0:
             return ConcurrentQueryDataset(
                 x=[],
                 pinch_points=torch.tensor([], dtype=torch.int8),
@@ -283,7 +291,12 @@ class ConcurrentQueryDataset(Dataset):
         run_ids_out = []
         y_is_lower_bound_out = []
 
-        for run_id, base_to_neighbors in run_to_base_to_neighbors.items():
+        for cluster_name, base_to_neighbors in cluster_to_base_to_neighbors.items():
+            # Derive RPU once per cluster for stage-prediction lookup.
+            rpu = iconq_interaction_featurizer._get_rpu(cluster_name)
+
+            def _stage_pred(q: Query) -> float:
+                return q.stage_predictions_per_rpu.get(rpu, -1.0)
 
             # Fast path: if every base query maps to the same neighbor list
             # (identity check), the full group is all-vs-all. Build all
@@ -298,7 +311,7 @@ class ConcurrentQueryDataset(Dataset):
                     (
                         q.query_text_id,
                         q.rel_start_time_s,
-                        q.stage_latency_prediction_s,
+                        _stage_pred(q),
                     )
                     for q in shared_neighbors
                 ]
@@ -308,7 +321,6 @@ class ConcurrentQueryDataset(Dataset):
                 base_idx_in_neighbors = [
                     neighbor_pos[id(q)] for q in base_query_list
                 ]
-                cluster_name = base_query_list[0].cluster_name
                 arrays, pinch_indices = (
                     iconq_interaction_featurizer
                     .featurize_all_vs_all_to_numpy(
@@ -320,8 +332,8 @@ class ConcurrentQueryDataset(Dataset):
                     base_query_list, base_idx_in_neighbors
                 ):
                     x.append(torch.from_numpy(arrays[base_idx]))
-                    if base_query.latency_s is not None:
-                        latency = base_query.latency_s
+                    if targets is not None and base_query.query_id in targets:
+                        latency = targets[base_query.query_id]
                         floored_latency = max(latency, 0.001)
                         y.append(
                             floored_latency
@@ -335,14 +347,13 @@ class ConcurrentQueryDataset(Dataset):
                     query_text_id_out.append(
                         base_query.query_text_id
                     )
-                    run_ids_out.append(
-                        run_id if run_id is not None else "unknown"
-                    )
-                    y_is_lower_bound_out.append(
-                        base_query.latency_is_lower_bound
-                        if (base_query.latency_is_lower_bound is not None)
+                    run_ids_out.append(cluster_name)
+                    lb = (
+                        is_lower_bound.get(base_query.query_id, False)
+                        if is_lower_bound is not None
                         else False
                     )
+                    y_is_lower_bound_out.append(lb)
                 continue
 
             # General path: distinct neighbor lists per base query.
@@ -355,7 +366,7 @@ class ConcurrentQueryDataset(Dataset):
                     (
                         base_query.rel_start_time_s,
                         base_query.query_text_id,
-                        base_query.stage_latency_prediction_s,
+                        _stage_pred(base_query),
                         True,  # is_self
                     )
                 ]
@@ -364,22 +375,22 @@ class ConcurrentQueryDataset(Dataset):
                         qb_entries.append((
                             neighbor.rel_start_time_s,
                             neighbor.query_text_id,
-                            neighbor.stage_latency_prediction_s,
+                            _stage_pred(neighbor),
                             False,  # is_self
                         ))
 
                 arr, pinch_idx = (
                     iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
-                        cluster_name=base_query.cluster_name,
+                        cluster_name=cluster_name,
                         qa_query_text_id=base_query.query_text_id,
                         qa_start_time_s=base_query.rel_start_time_s,
-                        qa_latency_prediction=base_query.stage_latency_prediction_s,
+                        qa_latency_prediction=_stage_pred(base_query),
                         qb_entries=qb_entries,
                     )
                 )
                 x.append(torch.from_numpy(arr))
-                if base_query.latency_s is not None:
-                    latency = base_query.latency_s
+                if targets is not None and base_query.query_id in targets:
+                    latency = targets[base_query.query_id]
                     floored_latency = max(latency, 0.001)
                     y.append(
                         floored_latency
@@ -391,12 +402,13 @@ class ConcurrentQueryDataset(Dataset):
                 pinch_points.append(pinch_idx)
                 query_ids_out.append(base_query.query_id)
                 query_text_id_out.append(base_query.query_text_id)
-                run_ids_out.append(run_id if run_id is not None else "unknown")
-                y_is_lower_bound_out.append(
-                    base_query.latency_is_lower_bound
-                    if (base_query.latency_is_lower_bound is not None)
+                run_ids_out.append(cluster_name)
+                lb = (
+                    is_lower_bound.get(base_query.query_id, False)
+                    if is_lower_bound is not None
                     else False
                 )
+                y_is_lower_bound_out.append(lb)
 
         # Convert to tensors
         x_tensorized = x

@@ -9,6 +9,12 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from intervaltree import Interval
 
+from autoslo.blueprint_selection.slo_resolver import (
+    query_interval,
+    slo_relative_violation,
+    slo_violation_amount_s,
+    violates_slo,
+)
 from autoslo.blueprints.cluster import Cluster
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
@@ -49,10 +55,13 @@ class GanttRecorder:
         active_queries_per_cluster: dict[str, list[Query]],
         label: str,
         slo_s: float,
+        latencies: dict[str, float] | None = None,
     ) -> None:
         """
         Capture state to later draw the gantt chart.
         """
+        if latencies is None:
+            latencies = {}
 
         intervals_by_cluster: dict[
             str, list[tuple[float, float, dict[str, Any]]]
@@ -72,13 +81,14 @@ class GanttRecorder:
             intervals: list[tuple[float, float, dict[str, Any]]] = []
             for q in queries:
                 total_queries += 1
-                ref_interval = q.as_interval()
+                lat = latencies.get(q.query_id, 0.0)
+                ref_interval = query_interval(q.rel_start_time_s, lat, q.query_id)
                 color = (
                     self.RUNNING_COLOR
                     if state == "RUNNING"
                     else (
                         self.MISSED_COLOR
-                        if q.violates_slo(slo_s)
+                        if violates_slo(lat, slo_s)
                         else self.MET_COLOR
                     )
                 )
@@ -89,9 +99,9 @@ class GanttRecorder:
                         ref_interval.data | {"state": state, "color": color},
                     )
                 )
-                violating_queries += q.violates_slo(slo_s)
-                violation_amount += q.slo_violation_amount_s(slo_s)
-                violation_relative_sum += q.slo_relative_violation(slo_s)
+                violating_queries += violates_slo(lat, slo_s)
+                violation_amount += slo_violation_amount_s(lat, slo_s)
+                violation_relative_sum += slo_relative_violation(lat, slo_s)
 
             intervals.sort(key=lambda x: (x[0], x[1], x[2].get("query_id", "")))
             return intervals

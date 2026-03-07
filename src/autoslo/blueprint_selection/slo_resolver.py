@@ -24,7 +24,7 @@ import os
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.workload_definition.query import QueryTextId, SloMetric
 
 
 class SloResolver:
@@ -116,3 +116,66 @@ class SloResolver:
     def has_overrides(self) -> bool:
         """True when at least one per-template override is present."""
         return bool(self._dict)
+
+
+# -----------------------------------------------------------------------
+# Free SLO helper functions (previously methods on Query)
+# -----------------------------------------------------------------------
+
+
+def slo_deviation_s(latency_s: float, slo_s: float) -> float:
+    """Positive = violation, negative = slack."""
+    return latency_s - slo_s
+
+
+def violates_slo(latency_s: float, slo_s: float) -> bool:
+    """Return whether the latency exceeds the SLO."""
+    return slo_deviation_s(latency_s, slo_s) > 0
+
+
+def slo_violation_amount_s(latency_s: float, slo_s: float) -> float:
+    """Return the amount of SLO violation in seconds (≥ 0)."""
+    return max(0.0, slo_deviation_s(latency_s, slo_s))
+
+
+def slo_relative_violation(latency_s: float, slo_s: float) -> float:
+    """Return ``max(0, (latency − SLO) / SLO)``."""
+    if slo_s <= 0:
+        return 0.0
+    return max(0.0, (latency_s - slo_s) / slo_s)
+
+
+def slo_violation(
+    latency_s: float, slo_s: float, metric: SloMetric
+) -> float:
+    """Unified SLO-violation accessor dispatching on *metric*."""
+    if metric is SloMetric.BINARY:
+        return float(violates_slo(latency_s, slo_s))
+    if metric is SloMetric.ABSOLUTE_S:
+        return slo_violation_amount_s(latency_s, slo_s)
+    if metric is SloMetric.RELATIVE:
+        return slo_relative_violation(latency_s, slo_s)
+    raise ValueError(f"Unknown SloMetric: {metric}")
+
+
+def has_slo_slack(latency_s: float, slo_s: float) -> bool:
+    """Return whether the latency has any SLO slack."""
+    return slo_deviation_s(latency_s, slo_s) < 0
+
+
+def slo_slack_amount_s(latency_s: float, slo_s: float) -> float:
+    """Return the amount of SLO slack in seconds (≥ 0)."""
+    return max(0.0, -slo_deviation_s(latency_s, slo_s))
+
+
+def query_interval(
+    rel_start_time_s: float, latency_s: float, query_id: str
+) -> "Interval":
+    """Build an execution interval for a query."""
+    from intervaltree import Interval  # type: ignore[import]
+
+    return Interval(
+        begin=rel_start_time_s,
+        end=rel_start_time_s + latency_s,
+        data={"query_id": query_id},
+    )
