@@ -39,7 +39,6 @@ from autoslo.capacity.autoscaling_policy import (
 )
 from autoslo.routing.routing_core import (
     ClusterSnapshot,
-    RoutingCore,
     RoutingResult,
 )
 from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
@@ -80,6 +79,11 @@ class HeadroomPolicy(AutoscalingPolicy):
     routing_window_s :
         Duration (seconds) of the rolling routing-decision window
         retained for counterfactual RPU selection.
+    min_window_observations :
+        Minimum number of routing results in the (post-reset) window
+        before the headroom trigger is trusted.  Prevents spurious
+        spin-ups from a single unlucky query right after a cluster
+        comes online.  Default 3.
     """
 
     def __init__(
@@ -92,6 +96,7 @@ class HeadroomPolicy(AutoscalingPolicy):
         allowed_rpu_sizes: Optional[list[int]] = None,
         iconq_model: Optional["IconqModel"] = None,
         routing_window_s: float = 120.0,
+        min_window_observations: int = 3,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -106,14 +111,15 @@ class HeadroomPolicy(AutoscalingPolicy):
         )
         self._iconq_model = iconq_model
         self._routing_window_s = routing_window_s
+        self._min_window_observations = min_window_observations
 
         # Internal mutable state (reset by on_attach).
         self._idle_counts: dict[str, int] = {}
         self._pending_count: int = 0
         self._cluster_ready_time_s: dict[str, float] = {}
-        self._routing_window: deque[tuple[Query, float, ClusterSnapshot | None]] = (
-            deque()
-        )
+        self._routing_window: deque[
+            tuple[Query, float, float, ClusterSnapshot | None]
+        ] = deque()
 
     # ------------------------------------------------------------------
     # Properties (tunable by Layer 3 / PolicyTuner)
@@ -188,6 +194,10 @@ class HeadroomPolicy(AutoscalingPolicy):
         """
         self._pending_count = max(0, self._pending_count - 1)
         self._cluster_ready_time_s[cluster_name] = ready_time_s
+        # Reset the routing window so that future spin-up decisions
+        # are based only on evidence gathered *after* this cluster
+        # is available to absorb load.
+        self._routing_window.clear()
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -211,25 +221,29 @@ class HeadroomPolicy(AutoscalingPolicy):
         selection.
         """
         # -- Maintain routing window -----------------------------------
-        self._routing_window.append((result.query, result.predicted_latency_s, None))
-        cutoff = current_time_s - self._routing_window_s
-        while (
-            self._routing_window
-            and self._routing_window[0][0].rel_start_time_s < cutoff
-        ):
-            self._routing_window.popleft()
+        # Only accumulate when no spin-up is pending.  While a cluster
+        # is spinning up we freeze the window; it will be cleared when
+        # on_cluster_ready fires, so that all future evidence is
+        # gathered *after* the new cluster can absorb load.
+        if self._pending_count == 0:
+            self._routing_window.append(
+                (result.query, result.predicted_latency_s, current_time_s, None)
+            )
+            cutoff = current_time_s - self._routing_window_s
+            while (
+                self._routing_window
+                and self._routing_window[0][2] < cutoff
+            ):
+                self._routing_window.popleft()
 
-        # -- Compute headroom across all active queries ----------------
-        all_queries: list[Query] = []
-        active_map = self._pool.get_all_active_queries()
-        draining = self._pool.draining_cluster_names
-        for cn, qs in active_map.items():
-            if cn not in draining:
-                all_queries.extend(qs)
-        latencies = current_latencies if current_latencies is not None else {}
-        headroom = RoutingCore.compute_slo_headroom(
-            all_queries, self._slo_resolver, latencies
-        )
+        window_size = len(self._routing_window)
+
+        # -- Compute window-based headroom -----------------------------
+        # Headroom is derived exclusively from queries in the
+        # (post-reset) routing window.  This avoids stale signals from
+        # queries that were routed before the most recent cluster came
+        # online.
+        window_headroom = self._compute_window_headroom()
 
         # -- Detect capacity pressure ----------------------------------
         # If the best score still has positive marginal violation, then
@@ -245,24 +259,34 @@ class HeadroomPolicy(AutoscalingPolicy):
                     "timestamp": current_time_s,
                     "event_type": "headroom_check",
                     "source": "headroom_policy",
-                    "headroom": headroom,
+                    "window_headroom": window_headroom,
+                    "window_size": window_size,
                     "eta_crit": self._eta_crit,
                     "capacity_pressure": pressure,
-                    "num_active_queries": len(all_queries),
-                    "num_active_clusters": len(
-                        [cn for cn in active_map if cn not in draining]
-                    ),
                     "pending_count": self._pending_count,
                 }
             )
 
         # -- Spin-up decision ------------------------------------------
+        # Headroom trigger requires enough post-reset observations to
+        # be trustworthy.  The pressure trigger only requires that the
+        # current routing decision was made after the most recent
+        # cluster became available (i.e. at least one entry in the
+        # fresh window).
+        headroom_trigger = (
+            window_size >= self._min_window_observations
+            and window_headroom <= self._eta_crit
+        )
+        pressure_trigger = window_size >= 1 and pressure
+
         if (
-            headroom <= self._eta_crit or pressure
+            headroom_trigger or pressure_trigger
         ) and self._pending_count == 0:
             reason = (
-                f"headroom={headroom:.4f}<=η_crit={self._eta_crit:.4f}"
-                if headroom <= self._eta_crit
+                f"window_headroom={window_headroom:.4f}"
+                f"<=η_crit={self._eta_crit:.4f}"
+                f" (window_size={window_size})"
+                if headroom_trigger
                 else "capacity_pressure_signal"
             )
             rpu = self._select_rpu(current_time_s)
@@ -341,6 +365,34 @@ class HeadroomPolicy(AutoscalingPolicy):
         return AutoscalingAction(tear_downs=tear_downs)
 
     # ------------------------------------------------------------------
+    # Window-based headroom
+    # ------------------------------------------------------------------
+
+    def _compute_window_headroom(self) -> float:
+        """Compute the minimum SLO headroom across the routing window.
+
+        Mirrors the semantics of ``RoutingCore.compute_slo_headroom``
+        but operates on the ``(Query, predicted_latency_s, ...)``
+        tuples stored in the routing window rather than the live
+        active-query set.
+
+        Returns 1.0 (full headroom) when the window is empty.
+        """
+        if not self._routing_window:
+            return 1.0
+
+        min_headroom = float("inf")
+        for query, predicted_latency, _routed_at, _snapshot in self._routing_window:
+            slo_s = self._slo_resolver.resolve(query.query_text_id)
+            if slo_s <= 0:
+                continue
+            headroom = (slo_s - predicted_latency) / slo_s
+            if headroom < min_headroom:
+                min_headroom = headroom
+
+        return min_headroom if min_headroom != float("inf") else 1.0
+
+    # ------------------------------------------------------------------
     # RPU selection
     # ------------------------------------------------------------------
 
@@ -382,7 +434,7 @@ class HeadroomPolicy(AutoscalingPolicy):
         # Identify pressure queries — those whose predicted latency
         # exceeded their SLO in the recent window.
         pressure_queries: list[Query] = []
-        for query, predicted_latency, _snapshot in self._routing_window:
+        for query, predicted_latency, _routed_at, _snapshot in self._routing_window:
             slo_s = self._slo_resolver.resolve(query.query_text_id)
             if predicted_latency > 0 and predicted_latency > slo_s:
                 pressure_queries.append(query)
@@ -416,6 +468,9 @@ class HeadroomPolicy(AutoscalingPolicy):
 
     def get_routing_window(
         self,
-    ) -> list[tuple[Query, float, ClusterSnapshot | None]]:
-        """Return a copy of the recent routing-decision window."""
+    ) -> list[tuple[Query, float, float, ClusterSnapshot | None]]:
+        """Return a copy of the recent routing-decision window.
+
+        Each entry is ``(query, predicted_latency_s, routed_at_s, snapshot)``.
+        """
         return list(self._routing_window)

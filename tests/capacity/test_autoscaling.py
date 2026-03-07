@@ -60,12 +60,14 @@ def _make_result(
     cluster: str = "c0",
     violation: float = 0.0,
     query: Query | None = None,
+    predicted_latency_s: float = -1.0,
 ) -> RoutingResult:
     score = _make_score(cluster=cluster, violation=violation)
     return RoutingResult(
         cluster_name=cluster,
         score=score,
         query=query or _make_query(),
+        predicted_latency_s=predicted_latency_s,
     )
 
 
@@ -129,103 +131,164 @@ class TestHeadroomSpinUp:
         )
 
     def test_spin_up_on_low_headroom(self):
-        """Pool has a query with latency 9.5 / SLO 10 → headroom 0.05 < 0.1."""
-        q = _make_query()
-        latencies = {q.query_id: 9.5}
-        pool = _mock_pool(active_queries={"c0": [q]})
-        result = _make_result(violation=0.0, query=q)
+        """Window has queries with latency 9.5 / SLO 10 → headroom 0.05 < 0.1."""
+        pool = _mock_pool(active_queries={"c0": []})
 
-        policy = self._policy()
+        policy = self._policy(min_window_observations=1)
         policy.on_attach(pool)
         policy.on_cluster_ready("c0", 8, 0.0)
 
-        action = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
+        result = _make_result(violation=0.0, predicted_latency_s=9.5)
+        action = policy.on_routing_result(result, current_time_s=0.0)
         assert len(action.spin_ups) == 1
         assert action.spin_ups[0].rpu in (8, 32)
 
     def test_spin_up_on_capacity_pressure(self):
         """Marginal SLO violation > 0 ⇒ pressure ⇒ spin-up."""
-        q = _make_query()  # low latency → high headroom
-        latencies = {q.query_id: 1.0}
-        pool = _mock_pool(active_queries={"c0": [q]})
-        result = _make_result(violation=0.5, query=q)
+        pool = _mock_pool(active_queries={"c0": []})
+        result = _make_result(violation=0.5, predicted_latency_s=1.0)
 
         policy = self._policy(eta_crit=0.001)  # very low threshold
         policy.on_attach(pool)
         policy.on_cluster_ready("c0", 8, 0.0)
 
-        action = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
+        # Pressure needs window_size >= 1 (one post-ready routing).
+        action = policy.on_routing_result(result, current_time_s=0.0)
         assert len(action.spin_ups) == 1
 
     def test_no_spin_up_when_headroom_sufficient(self):
         """Healthy headroom and no pressure ⇒ no spin-up."""
-        q = _make_query()  # headroom = 0.9
-        latencies = {q.query_id: 1.0}
-        pool = _mock_pool(active_queries={"c0": [q]})
-        result = _make_result(violation=0.0, query=q)
-
-        policy = self._policy()
-        policy.on_attach(pool)
-        policy.on_cluster_ready("c0", 8, 0.0)
-
-        action = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
-        assert action.spin_ups == []
-        assert action.tear_downs == []
-
-    def test_no_double_spin_up(self):
-        """While a spin-up is pending, no second spin-up is triggered."""
-        q = _make_query()
-        latencies = {q.query_id: 9.5}
-        pool = _mock_pool(active_queries={"c0": [q]})
-        result = _make_result(violation=0.0, query=q)
-
-        policy = self._policy()
-        policy.on_attach(pool)
-        policy.on_cluster_ready("c0", 8, 0.0)
-
-        # First spin-up
-        a1 = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
-        assert len(a1.spin_ups) == 1
-        assert policy.pending_count == 1
-
-        # Second request — should NOT spin up
-        a2 = policy.on_routing_result(result, current_time_s=1.0, current_latencies=latencies)
-        assert a2.spin_ups == []
-
-    def test_spin_up_unblocked_after_cluster_ready(self):
-        """After on_cluster_ready, pending_count returns to 0."""
-        q = _make_query()
-        latencies = {q.query_id: 9.5}
-        pool = _mock_pool(active_queries={"c0": [q]})
-        result = _make_result(violation=0.0, query=q)
-
-        policy = self._policy()
-        policy.on_attach(pool)
-        policy.on_cluster_ready("c0", 8, 0.0)
-
-        # First spin-up
-        a1 = policy.on_routing_result(result, current_time_s=0.0, current_latencies=latencies)
-        assert len(a1.spin_ups) == 1
-
-        # New cluster ready
-        policy.on_cluster_ready("c1", 8, 100.0)
-        assert policy.pending_count == 0
-
-        # Second spin-up now allowed
-        a2 = policy.on_routing_result(result, current_time_s=200.0, current_latencies=latencies)
-        assert len(a2.spin_ups) == 1
-
-    def test_no_active_queries_high_headroom(self):
-        """Empty pool → headroom defaults to 1.0 → no spin-up."""
         pool = _mock_pool(active_queries={"c0": []})
-        result = _make_result(violation=0.0)
+        result = _make_result(violation=0.0, predicted_latency_s=1.0)
 
-        policy = self._policy()
+        policy = self._policy(min_window_observations=1)
         policy.on_attach(pool)
         policy.on_cluster_ready("c0", 8, 0.0)
 
         action = policy.on_routing_result(result, current_time_s=0.0)
         assert action.spin_ups == []
+        assert action.tear_downs == []
+
+    def test_no_double_spin_up(self):
+        """While a spin-up is pending, no second spin-up is triggered."""
+        pool = _mock_pool(active_queries={"c0": []})
+        result = _make_result(violation=0.0, predicted_latency_s=9.5)
+
+        policy = self._policy(min_window_observations=1)
+        policy.on_attach(pool)
+        policy.on_cluster_ready("c0", 8, 0.0)
+
+        # First spin-up
+        a1 = policy.on_routing_result(result, current_time_s=0.0)
+        assert len(a1.spin_ups) == 1
+        assert policy.pending_count == 1
+
+        # Second request — should NOT spin up (window frozen)
+        a2 = policy.on_routing_result(result, current_time_s=1.0)
+        assert a2.spin_ups == []
+
+    def test_spin_up_unblocked_after_cluster_ready(self):
+        """After on_cluster_ready, window resets; fresh evidence can trigger."""
+        pool = _mock_pool(active_queries={"c0": []})
+        result = _make_result(violation=0.0, predicted_latency_s=9.5)
+
+        policy = self._policy(min_window_observations=1)
+        policy.on_attach(pool)
+        policy.on_cluster_ready("c0", 8, 0.0)
+
+        # First spin-up
+        a1 = policy.on_routing_result(result, current_time_s=0.0)
+        assert len(a1.spin_ups) == 1
+
+        # New cluster ready — window clears, pending drops to 0
+        policy.on_cluster_ready("c1", 8, 100.0)
+        assert policy.pending_count == 0
+        assert policy.get_routing_window() == []  # window was cleared
+
+        # Second spin-up requires fresh evidence in the new window
+        a2 = policy.on_routing_result(result, current_time_s=200.0)
+        assert len(a2.spin_ups) == 1
+
+    def test_no_active_queries_high_headroom(self):
+        """Empty window → headroom defaults to 1.0 → no spin-up."""
+        pool = _mock_pool(active_queries={"c0": []})
+        result = _make_result(violation=0.0, predicted_latency_s=1.0)
+
+        policy = self._policy(min_window_observations=1)
+        policy.on_attach(pool)
+        policy.on_cluster_ready("c0", 8, 0.0)
+
+        action = policy.on_routing_result(result, current_time_s=0.0)
+        assert action.spin_ups == []
+
+    def test_no_spurious_spin_up_right_after_cluster_ready(self):
+        """The core scenario: right after cluster_ready, the window is empty
+        so neither headroom nor pressure can trigger a second spin-up, even
+        though the underlying system is still stressed."""
+        pool = _mock_pool(active_queries={"c0": []})
+
+        policy = self._policy(min_window_observations=3)
+        policy.on_attach(pool)
+        policy.on_cluster_ready("c0", 8, 0.0)
+
+        # Build up 3 bad routing results → triggers spin-up.
+        bad = _make_result(violation=0.0, predicted_latency_s=9.5)
+        policy.on_routing_result(bad, current_time_s=1.0)
+        policy.on_routing_result(bad, current_time_s=2.0)
+        a = policy.on_routing_result(bad, current_time_s=3.0)
+        assert len(a.spin_ups) == 1
+        assert policy.pending_count == 1
+
+        # New cluster comes online — window clears.
+        policy.on_cluster_ready("c1", 8, 100.0)
+        assert policy.pending_count == 0
+
+        # Immediately send a bad routing result.  Because the window has
+        # only 1 entry (< min_window_observations=3), headroom alone
+        # cannot trigger.  Pressure is also gated (violation=0).
+        a2 = policy.on_routing_result(bad, current_time_s=100.1)
+        assert a2.spin_ups == []
+
+        # Two more bad results → window reaches 3 → now it fires.
+        policy.on_routing_result(bad, current_time_s=100.2)
+        a3 = policy.on_routing_result(bad, current_time_s=100.3)
+        assert len(a3.spin_ups) == 1
+
+    def test_pressure_fires_after_single_post_ready_routing(self):
+        """Pressure (marginal_slo_violation > 0) fires with just 1 entry
+        in the fresh window, since it represents acute routing failure."""
+        pool = _mock_pool(active_queries={"c0": []})
+        pressure_result = _make_result(
+            violation=0.5, predicted_latency_s=1.0,
+        )
+
+        policy = self._policy(eta_crit=0.001, min_window_observations=5)
+        policy.on_attach(pool)
+        policy.on_cluster_ready("c0", 8, 0.0)
+
+        # Single routing with pressure → fires despite min_window=5.
+        action = policy.on_routing_result(
+            pressure_result, current_time_s=0.0,
+        )
+        assert len(action.spin_ups) == 1
+
+    def test_window_frozen_while_pending(self):
+        """Routing results while a spin-up is pending do NOT grow the window."""
+        pool = _mock_pool(active_queries={"c0": []})
+
+        policy = self._policy(min_window_observations=1)
+        policy.on_attach(pool)
+        policy.on_cluster_ready("c0", 8, 0.0)
+
+        bad = _make_result(violation=0.0, predicted_latency_s=9.5)
+        a1 = policy.on_routing_result(bad, current_time_s=0.0)
+        assert len(a1.spin_ups) == 1
+        window_size_at_trigger = len(policy.get_routing_window())
+
+        # More routing while pending — window should not grow.
+        for t in range(1, 10):
+            policy.on_routing_result(bad, current_time_s=float(t))
+        assert len(policy.get_routing_window()) == window_size_at_trigger
 
 
 # ===================================================================
