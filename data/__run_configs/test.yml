@@ -4,6 +4,7 @@ basic_config:
   workload_name: test_workload
   experiment_name: test_experiment
   overwrite_experiment: true
+  simulator_run_id: test_run
   iconq_model_id: "1771539369"
 
 ### SLO Configuration
@@ -31,6 +32,7 @@ routing_config:
 
 ### Autoscaling Configuration
 autoscaling_config:
+  autoscaling_policy: headroom
   eta_crit: 0.1
   idle_periods_before_tear_down: 5
   capacity_poll_interval_s: 60.0

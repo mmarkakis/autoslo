@@ -37,4 +37,6 @@ docs/assets/
 
 uis/**/node_modules/
 .classifier-ui-meta/
+.simulator-ui-meta/
+docs/*.md
 
