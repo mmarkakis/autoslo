@@ -20,6 +20,7 @@ from __future__ import annotations
 import enum
 import logging
 import threading
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -455,6 +456,23 @@ class ManagedClusterPool:
         """Names of all clusters that were ever registered."""
         with self._lock:
             return list(self._entries.keys())
+
+    @property
+    def cluster_rpu_multiset(self) -> dict[int, int]:
+        """RPU → count for READY + PENDING clusters.
+
+        Used by :meth:`Autoscaler.reconcile_checkpoints_up_to` to
+        compute the gap between desired and current capacity.
+        Returns a plain dict usable as a :class:`collections.Counter`.
+        """
+
+        with self._lock:
+            rpus = [
+                e.cluster.rpu
+                for e in self._entries.values()
+                if e.state in (_ClusterState.READY, _ClusterState.PENDING)
+            ]
+        return dict(Counter(rpus))
 
     # Backward-compat alias used by RoutingPolicy (same as CST).
     @property

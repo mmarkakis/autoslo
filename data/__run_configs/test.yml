@@ -37,6 +37,11 @@ autoscaling_config:
   idle_periods_before_tear_down: 5
   capacity_poll_interval_s: 60.0
   min_cluster_lifetime_s: 1200.0
+  # capacity_checkpoints:
+  #   - time_s: 180.0
+  #     min_rpus: [4, 32, 32]
+  #   - time_s: 480.0
+  #     min_rpus: [4, 32, 64]
 
 ### Output Configuration
 output_config:

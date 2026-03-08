@@ -14,11 +14,13 @@ callbacks.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import TYPE_CHECKING, Callable
 
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingAction,
     AutoscalingPolicy,
+    CapacityCheckpoint,
 )
 from autoslo.routing.routing_core import RoutingResult
 from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
@@ -54,12 +56,20 @@ class Autoscaler:
         pool: "ManagedClusterPool",
         on_spin_up: Callable[[str, int], None],
         on_tear_down: Callable[[str], None],
+        capacity_checkpoints: list[CapacityCheckpoint] | None = None,
     ) -> None:
         self._policy = policy
         self._pool = pool
         self._on_spin_up = on_spin_up
         self._on_tear_down = on_tear_down
         self._last_event_time_s: float = 0.0
+
+        # Capacity checkpoints — sorted by trigger time.
+        self._checkpoints: list[CapacityCheckpoint] = sorted(
+            capacity_checkpoints or [], key=lambda cp: cp.time_s
+        )
+        self._next_checkpoint_idx: int = 0
+
         # Attach policy to pool (like Router calls policy.on_attach).
         self._policy.on_attach(pool)
 
@@ -70,6 +80,11 @@ class Autoscaler:
     @property
     def policy(self) -> AutoscalingPolicy:
         return self._policy
+
+    @property
+    def checkpoints(self) -> list[CapacityCheckpoint]:
+        """The capacity checkpoints (sorted by trigger time)."""
+        return list(self._checkpoints)
 
     # ------------------------------------------------------------------
     # Event dispatch
@@ -109,6 +124,79 @@ class Autoscaler:
     ) -> None:
         """Inform the policy that a pending cluster has become READY."""
         self._policy.on_cluster_ready(cluster_name, rpu, ready_time_s)
+
+    # ------------------------------------------------------------------
+    # Capacity checkpoints
+    # ------------------------------------------------------------------
+
+    def reconcile_checkpoints_up_to(self, current_time_s: float) -> None:
+        """Process all capacity checkpoints with ``time_s <= current_time_s``.
+
+        For each checkpoint, computes the gap between the desired RPU
+        multiset and the current (READY + PENDING) clusters, then fires
+        spin-ups for the difference through the standard ``_on_spin_up``
+        callback.
+        """
+        while (
+            self._next_checkpoint_idx < len(self._checkpoints)
+            and self._checkpoints[self._next_checkpoint_idx].time_s
+            <= current_time_s
+        ):
+            cp = self._checkpoints[self._next_checkpoint_idx]
+            self._next_checkpoint_idx += 1
+            self._reconcile_one(cp, current_time_s)
+
+    def _reconcile_one(
+        self, cp: CapacityCheckpoint, current_time_s: float
+    ) -> None:
+        """Reconcile a single checkpoint against the live pool state."""
+        current = Counter(self._pool.cluster_rpu_multiset)
+        desired = Counter(cp.min_rpus)
+        gap = desired - current  # keeps only positive differences
+
+        if _has_structured():
+            emit_structured({
+                "timestamp": current_time_s,
+                "event_type": "capacity_checkpoint_reconciled",
+                "source": "autoscaler",
+                "checkpoint_time_s": cp.time_s,
+                "desired_rpus": list(cp.min_rpus),
+                "current_rpus": sorted(current.elements()),
+                "gap_spin_ups": dict(gap) if gap else {},
+            })
+
+        if not gap:
+            logger.info(
+                "Checkpoint t=%.1f: already satisfied (current %s).",
+                cp.time_s,
+                dict(current),
+            )
+            return
+
+        logger.info(
+            "Checkpoint t=%.1f: gap %s — spinning up.",
+            cp.time_s,
+            dict(gap),
+        )
+        self._last_event_time_s = current_time_s
+        for rpu, count in sorted(gap.items()):
+            for _ in range(count):
+                try:
+                    self._on_spin_up(
+                        f"capacity_checkpoint@t={cp.time_s}", rpu
+                    )
+                    if _has_structured():
+                        emit_structured({
+                            "timestamp": current_time_s,
+                            "event_type": "autoscaler_spin_up",
+                            "source": "autoscaler",
+                            "rpu": rpu,
+                            "reason": f"capacity_checkpoint@t={cp.time_s}",
+                        })
+                except Exception:
+                    logger.exception(
+                        "Checkpoint spin-up failed (rpu=%d)", rpu
+                    )
 
     # ------------------------------------------------------------------
     # Action execution

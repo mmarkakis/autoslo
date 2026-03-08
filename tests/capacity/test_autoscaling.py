@@ -16,6 +16,7 @@ from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingAction,
     AutoscalingPolicy,
+    CapacityCheckpoint,
     NoOpPolicy,
     SpinUpRequest,
     TearDownRequest,
@@ -75,6 +76,7 @@ def _mock_pool(
     active_queries: dict[str, list[Query]] | None = None,
     draining: set[str] | None = None,
     cluster_names: list[str] | None = None,
+    cluster_rpu_multiset: dict[int, int] | None = None,
 ) -> MagicMock:
     pool = MagicMock()
     active = active_queries or {}
@@ -82,6 +84,7 @@ def _mock_pool(
     pool.draining_cluster_names = draining or set()
     pool.ready_cluster_names = cluster_names or list(active.keys())
     pool.cluster_names = cluster_names or list(active.keys())
+    pool.cluster_rpu_multiset = cluster_rpu_multiset or {}
     return pool
 
 
@@ -583,3 +586,141 @@ class TestDataTypes:
         )
         assert len(action.spin_ups) == 1
         assert len(action.tear_downs) == 1
+
+    def test_capacity_checkpoint_frozen(self):
+        cp = CapacityCheckpoint(time_s=180.0, min_rpus=(4, 32, 32))
+        assert cp.time_s == 180.0
+        assert cp.min_rpus == (4, 32, 32)
+        with pytest.raises(AttributeError):
+            cp.time_s = 999.0  # type: ignore[misc]
+
+
+# ===================================================================
+# CapacityCheckpoints (Autoscaler reconciliation)
+# ===================================================================
+
+
+class TestCapacityCheckpoints:
+    """Tests for the Autoscaler's capacity checkpoint reconciliation."""
+
+    def _make_scaler(
+        self,
+        checkpoints: list[CapacityCheckpoint],
+        cluster_rpu_multiset: dict[int, int] | None = None,
+    ) -> tuple[Autoscaler, MagicMock, MagicMock]:
+        pool = _mock_pool(
+            active_queries={"c0": []},
+            cluster_rpu_multiset=cluster_rpu_multiset or {},
+        )
+        spin_up = MagicMock()
+        tear_down = MagicMock()
+        scaler = Autoscaler(
+            policy=NoOpPolicy(),
+            pool=pool,
+            on_spin_up=spin_up,
+            on_tear_down=tear_down,
+            capacity_checkpoints=checkpoints,
+        )
+        return scaler, spin_up, pool
+
+    def test_no_checkpoints_is_noop(self):
+        scaler, spin_up, _ = self._make_scaler([])
+        scaler.reconcile_checkpoints_up_to(999.0)
+        spin_up.assert_not_called()
+
+    def test_checkpoint_already_satisfied(self):
+        """Pool already has the desired RPU set — no spin-ups."""
+        cp = CapacityCheckpoint(time_s=100.0, min_rpus=(4, 32))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp], cluster_rpu_multiset={4: 1, 32: 1}
+        )
+        scaler.reconcile_checkpoints_up_to(100.0)
+        spin_up.assert_not_called()
+
+    def test_checkpoint_spins_up_gap(self):
+        """Pool has {4, 32} but checkpoint wants {4, 32, 32} — gap is one 32."""
+        cp = CapacityCheckpoint(time_s=100.0, min_rpus=(4, 32, 32))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp], cluster_rpu_multiset={4: 1, 32: 1}
+        )
+        scaler.reconcile_checkpoints_up_to(100.0)
+        spin_up.assert_called_once()
+        reason, rpu = spin_up.call_args[0]
+        assert rpu == 32
+        assert "capacity_checkpoint" in reason
+
+    def test_checkpoint_multiple_gaps(self):
+        """Need 2x32 + 1x64, have nothing."""
+        cp = CapacityCheckpoint(time_s=50.0, min_rpus=(32, 32, 64))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp], cluster_rpu_multiset={}
+        )
+        scaler.reconcile_checkpoints_up_to(50.0)
+        assert spin_up.call_count == 3
+        rpus_requested = sorted([c[0][1] for c in spin_up.call_args_list])
+        assert rpus_requested == [32, 32, 64]
+
+    def test_checkpoint_not_triggered_before_time(self):
+        """Checkpoint at t=200 is not triggered by reconcile at t=100."""
+        cp = CapacityCheckpoint(time_s=200.0, min_rpus=(4, 32, 32))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp], cluster_rpu_multiset={4: 1, 32: 1}
+        )
+        scaler.reconcile_checkpoints_up_to(100.0)
+        spin_up.assert_not_called()
+        # Now advance past 200 — should trigger.
+        scaler.reconcile_checkpoints_up_to(200.0)
+        spin_up.assert_called_once()
+
+    def test_multiple_checkpoints_in_order(self):
+        """Two checkpoints at different times, both triggered in one call."""
+        cp1 = CapacityCheckpoint(time_s=100.0, min_rpus=(8,))
+        cp2 = CapacityCheckpoint(time_s=200.0, min_rpus=(8, 32))
+        scaler, spin_up, pool = self._make_scaler(
+            [cp1, cp2], cluster_rpu_multiset={}
+        )
+        # After cp1 fires, the pool still reports {} (we'd need to
+        # update the mock dynamically for full fidelity, but the
+        # Autoscaler correctly processes them in order).
+        scaler.reconcile_checkpoints_up_to(250.0)
+        # cp1 gap: {8: 1}. cp2 gap: {8: 1, 32: 1} (pool still empty in mock).
+        assert spin_up.call_count == 3
+
+    def test_checkpoints_idempotent(self):
+        """Calling reconcile twice at the same time doesn't re-trigger."""
+        cp = CapacityCheckpoint(time_s=100.0, min_rpus=(4, 32, 32))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp], cluster_rpu_multiset={4: 1, 32: 1}
+        )
+        scaler.reconcile_checkpoints_up_to(100.0)
+        spin_up.assert_called_once()
+        spin_up.reset_mock()
+        scaler.reconcile_checkpoints_up_to(100.0)
+        spin_up.assert_not_called()
+
+    def test_checkpoints_sorted_regardless_of_input_order(self):
+        """Even if checkpoints are given out of order, earlier one fires first."""
+        cp_late = CapacityCheckpoint(time_s=300.0, min_rpus=(64,))
+        cp_early = CapacityCheckpoint(time_s=100.0, min_rpus=(32,))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp_late, cp_early], cluster_rpu_multiset={}
+        )
+        scaler.reconcile_checkpoints_up_to(150.0)
+        # Only cp_early should have fired.
+        spin_up.assert_called_once()
+        _, rpu = spin_up.call_args[0]
+        assert rpu == 32
+
+    def test_checkpoint_excess_capacity_no_action(self):
+        """Pool has MORE than desired — no spin-ups."""
+        cp = CapacityCheckpoint(time_s=100.0, min_rpus=(4,))
+        scaler, spin_up, _ = self._make_scaler(
+            [cp], cluster_rpu_multiset={4: 2, 32: 1}
+        )
+        scaler.reconcile_checkpoints_up_to(100.0)
+        spin_up.assert_not_called()
+
+    def test_checkpoints_property(self):
+        cp = CapacityCheckpoint(time_s=100.0, min_rpus=(4, 32))
+        scaler, _, _ = self._make_scaler([cp])
+        assert scaler.checkpoints == [cp]

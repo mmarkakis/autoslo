@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
-from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, NoOpPolicy
+from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, CapacityCheckpoint, NoOpPolicy
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.models.iconq_model import IconqModel
@@ -62,6 +62,7 @@ class WorkloadRunner:
         maxconns: int = 1000,
         closed_loop: bool = False,
         config_path: Optional[str | Path] = None,
+        capacity_checkpoints: list[CapacityCheckpoint] | None = None,
     ):
         self.config_path = Path(config_path) if config_path else None
         self.workload_name = workload_name
@@ -148,7 +149,24 @@ class WorkloadRunner:
             pool=self.pool,
             on_spin_up=self._on_live_spin_up,
             on_tear_down=self._on_live_tear_down,
+            capacity_checkpoints=capacity_checkpoints,
         )
+
+    # ------------------------------------------------------------------
+    # Async checkpoint reconciliation (live runner)
+    # ------------------------------------------------------------------
+
+    async def _reconcile_checkpoint_async(
+        self,
+        checkpoint: CapacityCheckpoint,
+        async_reference_ts: float,
+    ) -> None:
+        """Wait until *checkpoint.time_s* elapses, then reconcile."""
+        target = async_reference_ts + checkpoint.time_s
+        delay = target - self._async_ts()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        self.autoscaler.reconcile_checkpoints_up_to(checkpoint.time_s)
 
     # ------------------------------------------------------------------
     # Factory: create from YAML config (aligned with WorkloadSimulator)
@@ -314,6 +332,18 @@ class WorkloadRunner:
         maxconns: int = int(runner_cfg.get("maxconns", 1000))
         closed_loop: bool = bool(runner_cfg.get("closed_loop", False))
 
+        # ── capacity checkpoints ─────────────────────────────────────────
+        raw_checkpoints: list[dict] = _s(
+            "autoscaling_config", "capacity_checkpoints", []
+        ) or []
+        capacity_checkpoints = [
+            CapacityCheckpoint(
+                time_s=float(cp["time_s"]),
+                min_rpus=tuple(cp["min_rpus"]),
+            )
+            for cp in raw_checkpoints
+        ]
+
         return cls(
             workload_name=workload_name,
             routing_policy=routing_policy,
@@ -324,6 +354,7 @@ class WorkloadRunner:
             maxconns=maxconns,
             closed_loop=closed_loop,
             config_path=config_path,
+            capacity_checkpoints=capacity_checkpoints,
         )
 
     # ------------------------------------------------------------------
@@ -576,6 +607,13 @@ class WorkloadRunner:
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
 
         tasks = []
+
+        # Schedule capacity checkpoint reconciliations.
+        for cp in self.autoscaler.checkpoints:
+            tasks.append(
+                self._reconcile_checkpoint_async(cp, async_reference_ts)
+            )
+
         self._pbar = tqdm(total=len(self.workload_df), desc="Queries", unit="q")
 
         route_info = []

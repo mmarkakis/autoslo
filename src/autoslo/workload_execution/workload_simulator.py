@@ -20,7 +20,7 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
 )
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
-from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, NoOpPolicy
+from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, CapacityCheckpoint, NoOpPolicy
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.models.iconq_model import IconqModel
@@ -89,6 +89,7 @@ class WorkloadSimulator:
         managed_cluster_pool_config: Optional[ManagedClusterPoolConfig] = None,
         autoscaling_policy: Optional[AutoscalingPolicy] = None,
         capacity_poll_interval_s: float = 60.0,
+        capacity_checkpoints: list[CapacityCheckpoint] | None = None,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -108,6 +109,7 @@ class WorkloadSimulator:
         )
         self._autoscaling_policy = autoscaling_policy
         self._cc_poll_interval_s = capacity_poll_interval_s
+        self._capacity_checkpoints = capacity_checkpoints or []
 
         self._slo_metric = slo_metric
         self._slo_threshold = slo_threshold
@@ -316,6 +318,18 @@ class WorkloadSimulator:
             "output_config", "video_frame_duration", 1.0
         )
 
+        # ── capacity checkpoints ─────────────────────────────────────────────
+        raw_checkpoints: list[dict] = _s(
+            "autoscaling_config", "capacity_checkpoints", []
+        ) or []
+        capacity_checkpoints = [
+            CapacityCheckpoint(
+                time_s=float(cp["time_s"]),
+                min_rpus=tuple(cp["min_rpus"]),
+            )
+            for cp in raw_checkpoints
+        ]
+
         return cls(
             workload_name=workload_name,
             routing_policy=routing_policy,
@@ -334,6 +348,7 @@ class WorkloadSimulator:
             managed_cluster_pool_config=mcp,
             autoscaling_policy=autoscaling_policy,
             capacity_poll_interval_s=poll_s,
+            capacity_checkpoints=capacity_checkpoints,
         )
 
     # ------------------------------------------------------------------
@@ -518,6 +533,7 @@ class WorkloadSimulator:
             pool=self._pool,
             on_spin_up=self._on_sim_spin_up,
             on_tear_down=self._on_sim_tear_down,
+            capacity_checkpoints=self._capacity_checkpoints,
         )
 
         # Register all initial clusters with the autoscaler so
@@ -658,6 +674,9 @@ class WorkloadSimulator:
             self._cleanup_completed_queries_up_to(tick_time)
             self._current_sim_time_s = tick_time
 
+            # Process capacity checkpoints that fire at or before this tick.
+            self._autoscaler.reconcile_checkpoints_up_to(tick_time)
+
             # Compute headroom for logging before the tick.
             all_aq = self._pool.get_all_active_queries()
             draining = self._pool.draining_cluster_names
@@ -684,6 +703,8 @@ class WorkloadSimulator:
 
         # Remaining events up to target.
         self._process_pending_events_up_to(target_time_s)
+        # Process any remaining checkpoints between last tick and target.
+        self._autoscaler.reconcile_checkpoints_up_to(target_time_s)
         self._current_sim_time_s = target_time_s
 
     # ------------------------------------------------------------------
