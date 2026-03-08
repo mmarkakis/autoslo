@@ -146,13 +146,15 @@ class RunStatsCollector:
             for cluster_name in cluster_names:
                 # Build connection from config.
                 ci = ClusterConnInfo.from_dict(cluster_configs[cluster_name])
-                conn = ConnWithSetup(
+                conn = pg2.connect(
                     host=ci.host,
                     port=ci.port,
                     user=ci.user,
                     password=ci.password,
                     dbname=ci.dbname,
-                    search_path="public",
+                    connection_factory=lambda dsn, **kw: ConnWithSetup(
+                        dsn, search_path="public", **kw
+                    ),
                 )
 
                 # Query sys_query_history and write out the results.

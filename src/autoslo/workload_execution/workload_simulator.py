@@ -90,6 +90,9 @@ class WorkloadSimulator:
         autoscaling_policy: Optional[AutoscalingPolicy] = None,
         capacity_poll_interval_s: float = 60.0,
         capacity_checkpoints: list[CapacityCheckpoint] | None = None,
+        abs_start_time_start: str | None = None,
+        abs_start_time_end: str | None = None,
+        rescale_factor: float | None = None,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -128,16 +131,15 @@ class WorkloadSimulator:
 
             self._workload = RedsetWorkload.load(workload_name)
         else:
-            workload_path = os.path.join(
-                pu.get_workloads_dir(),
-                schema_name or "",
-                f"{workload_name}.parquet",
-            )
             self._workload = Workload(
-                workload_name,
-                pd.read_parquet(workload_path),
+                workload_name= workload_name,
+                schema_name=schema_name,
             )
+        if abs_start_time_start is not None or abs_start_time_end is not None:
+            self._workload.slice_by_abs_time(abs_start_time_start, abs_start_time_end)
         self._workload.set_rel_start_times_from_zero()
+        if rescale_factor is not None:
+            self._workload.rescale_rel_start_times(rescale_factor)
 
         self._run_id = simulator_run_id or str(
             int(datetime.now().timestamp() * 1000)
@@ -183,12 +185,11 @@ class WorkloadSimulator:
     def from_config(cls, config_path: str | Path) -> "WorkloadSimulator":
         """Create a :class:`WorkloadSimulator` from a YAML config file.
 
-        The config may use *nested sections* (preferred) or a flat key layout
-        (legacy, still supported for backward-compat).
-
         Nested sections
         ---------------
-        basic_config        : workload_name, schema_name, experiment_name,
+        workload_config     : workload_name, abs_start_time_start,
+                              abs_start_time_end, rescale_factor
+        basic_config        : schema_name, experiment_name,
                               simulator_run_id, overwrite_experiment,
                               iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold, slo_dict_filename
@@ -212,7 +213,6 @@ class WorkloadSimulator:
             return cfg.get(key, default)
 
         # ── basic ────────────────────────────────────────────────────────────
-        workload_name: str = _s("basic_config", "workload_name")
         schema_name: Optional[str] = _s("basic_config", "schema_name")
         experiment_name: Optional[str] = _s("basic_config", "experiment_name")
         simulator_run_id: Optional[str] = _s("basic_config", "simulator_run_id")
@@ -220,6 +220,16 @@ class WorkloadSimulator:
             "basic_config", "overwrite_experiment", False
         )
         iconq_model_id: Optional[str] = _s("basic_config", "iconq_model_id")
+
+        # ── workload ─────────────────────────────────────────────────────
+        wl_cfg: dict = cfg.get("workload_config") or {}
+        workload_name: str = wl_cfg["workload_name"]
+        abs_start_time_start: str | None = wl_cfg.get("abs_start_time_start")
+        abs_start_time_end: str | None = wl_cfg.get("abs_start_time_end")
+        rescale_factor_raw = wl_cfg.get("rescale_factor")
+        rescale_factor: float | None = (
+            float(rescale_factor_raw) if rescale_factor_raw is not None else None
+        )
 
         # ── SLO ──────────────────────────────────────────────────────────────
         slo_s: float = _s("slo_config", "slo_s", 10.0)
@@ -349,6 +359,9 @@ class WorkloadSimulator:
             autoscaling_policy=autoscaling_policy,
             capacity_poll_interval_s=poll_s,
             capacity_checkpoints=capacity_checkpoints,
+            abs_start_time_start=abs_start_time_start,
+            abs_start_time_end=abs_start_time_end,
+            rescale_factor=rescale_factor,
         )
 
     # ------------------------------------------------------------------

@@ -8,6 +8,7 @@ from functools import partial
 from pathlib import Path
 from typing import Optional, Union
 
+import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
@@ -29,6 +30,17 @@ from autoslo.routing.managed_cluster_pool import (
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
 from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
+import psycopg2
+
+from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+from autoslo.workload_execution.conn_utils import ConnWithSetup
+from autoslo.workload_execution.run_stats_collector import (
+    SYS_QUERY_HISTORY_QUERY,
+    SYS_QUERY_EXPLAIN_QUERY,
+    SYS_QUERY_DETAIL_QUERY,
+    SYS_EXTERNAL_QUERY_DETAIL_QUERY,
+    SYS_SERVERLESS_USAGE_QUERY,
+)
 from autoslo.utils.structured_log import (
     LOGGER_NAME,
     emit_structured,
@@ -67,38 +79,24 @@ class WorkloadRunner:
         config_path: Optional[str | Path] = None,
         capacity_checkpoints: list[CapacityCheckpoint] | None = None,
         capacity_poll_interval_s: float = 60.0,
+        abs_start_time_start: str | None = None,
+        abs_start_time_end: str | None = None,
+        rescale_factor: float | None = None,
     ):
         self.config_path = Path(config_path) if config_path else None
         self.workload_name = workload_name
         self.closed_loop = closed_loop
         self.maxconns = maxconns
 
-        # Load workload.
-        if workload_name.startswith("benchmarking_workload_"):
-            workload_path = os.path.join(
-                pu.get_data_path(),
-                "benchmarking_workloads",
-                f"{workload_name}.parquet",
-            )
-        elif workload_name.startswith("interference_"):
-            workload_path = os.path.join(
-                pu.get_data_path(),
-                "interference_workloads",
-                f"{workload_name}.parquet",
-            )
-        else:
-            workload_path = os.path.join(
-                pu.get_data_path(),
-                "chunks",
-                f"{workload_name}",
-                "chunk_workload.parquet",
-            )
-        if not os.path.exists(workload_path):
-            raise FileNotFoundError(
-                f"Workload file {workload_path} does not exist."
-            )
-        self.workload = Workload.load(workload_path)
+        # Load workload, then apply optional slicing / time compression.
+        self.workload = Workload(
+            workload_name=workload_name, schema_name=schema_name
+        )
+        if abs_start_time_start is not None or abs_start_time_end is not None:
+            self.workload.slice_by_abs_time(abs_start_time_start, abs_start_time_end)
         self.workload.set_rel_start_times_from_zero()
+        if rescale_factor is not None:
+            self.workload.rescale_rel_start_times(rescale_factor)
         self.workload_df = self.workload.df
         self.schema = Schema.load(
             schema_name or self.workload.schema_name,
@@ -186,7 +184,9 @@ class WorkloadRunner:
 
         Sections
         --------
-        basic_config        : workload_name, schema_name, iconq_model_id
+        workload_config     : workload_name, abs_start_time_start,
+                              abs_start_time_end, rescale_factor
+        basic_config        : schema_name, iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold,
                               slo_dict_filename
         routing_config      : routing_policy ("model" | "round_robin")
@@ -210,9 +210,18 @@ class WorkloadRunner:
             return cfg.get(key, default)
 
         # ── basic ────────────────────────────────────────────────────────
-        workload_name: str = _s("basic_config", "workload_name")
         schema_name: Optional[str] = _s("basic_config", "schema_name")
         iconq_model_id: Optional[str] = _s("basic_config", "iconq_model_id")
+
+        # ── workload ─────────────────────────────────────────────────────
+        wl_cfg: dict = cfg.get("workload_config") or {}
+        workload_name: str = wl_cfg["workload_name"]
+        abs_start_time_start: str | None = wl_cfg.get("abs_start_time_start")
+        abs_start_time_end: str | None = wl_cfg.get("abs_start_time_end")
+        rescale_factor_raw = wl_cfg.get("rescale_factor")
+        rescale_factor: float | None = (
+            float(rescale_factor_raw) if rescale_factor_raw is not None else None
+        )
 
         # ── SLO ──────────────────────────────────────────────────────────
         slo_s: float = _s("slo_config", "slo_s", 10.0)
@@ -358,6 +367,9 @@ class WorkloadRunner:
             config_path=config_path,
             capacity_checkpoints=capacity_checkpoints,
             capacity_poll_interval_s=poll_s,
+            abs_start_time_start=abs_start_time_start,
+            abs_start_time_end=abs_start_time_end,
+            rescale_factor=rescale_factor,
         )
 
     # ------------------------------------------------------------------
@@ -375,6 +387,143 @@ class WorkloadRunner:
         """Autoscaler callback: tear down a cluster."""
         self.pool.request_tear_down(cluster_name, self._ts())
         logging.info("Autoscaler tear-down: %s", cluster_name)
+
+    # ------------------------------------------------------------------
+    # End-of-run stats collection
+    # ------------------------------------------------------------------
+
+    def _collect_cluster_stats(
+        self,
+        cluster_name: str,
+        conn_info: ClusterConnInfo,
+        run_id: str,
+    ) -> None:
+        """Stats-collector callback invoked during cluster tear-down.
+
+        Opens a fresh connection to *cluster_name*, queries the five
+        Redshift system tables used by :class:`RunStatsCollector`, and
+        writes each result as a Parquet file in the current run
+        directory.
+
+        This method is synchronous and may block for a significant
+        amount of time (system tables can take minutes to flush).  It
+        is invoked by :meth:`ManagedClusterPool._finalize_removal`
+        while the cluster is still alive.
+        """
+        logging.info(
+            "Collecting stats for cluster %s (run %s) ...",
+            cluster_name,
+            run_id,
+        )
+        try:
+            conn = psycopg2.connect(
+                host=conn_info.host,
+                port=conn_info.port,
+                user=conn_info.user,
+                password=conn_info.password,
+                dbname=conn_info.dbname,
+                connection_factory=lambda dsn, **kw: ConnWithSetup(
+                    dsn, search_path="public", **kw
+                ),
+            )
+        except Exception:
+            logging.exception(
+                "Failed to connect to %s for stats collection.",
+                cluster_name,
+            )
+            return
+
+        try:
+            # 1. sys_query_history — anchor table.
+            history_df = self._query_to_parquet(
+                conn,
+                SYS_QUERY_HISTORY_QUERY.format(run_id),
+                "sys_query_history",
+                cluster_name,
+            )
+            if history_df is None or history_df.empty:
+                logging.warning(
+                    "No sys_query_history rows for cluster %s, run %s. "
+                    "Skipping remaining system tables.",
+                    cluster_name,
+                    run_id,
+                )
+                return
+
+            # Derive query-id and time ranges for the remaining tables.
+            min_qid = int(history_df["query_id"].min())
+            max_qid = int(history_df["query_id"].max())
+            min_time = history_df["start_time"].min() - pd.Timedelta(
+                minutes=1
+            )
+            max_time = history_df["end_time"].max() + pd.Timedelta(minutes=3)
+
+            # 2–5. remaining system tables.
+            for query_sql, table_name in [
+                (
+                    SYS_QUERY_EXPLAIN_QUERY.format(min_qid, max_qid),
+                    "sys_query_explain",
+                ),
+                (
+                    SYS_QUERY_DETAIL_QUERY.format(min_time, max_time),
+                    "sys_query_detail",
+                ),
+                (
+                    SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(
+                        min_time, max_time
+                    ),
+                    "sys_external_query_detail",
+                ),
+                (
+                    SYS_SERVERLESS_USAGE_QUERY.format(min_time, max_time),
+                    "sys_serverless_usage",
+                ),
+            ]:
+                self._query_to_parquet(
+                    conn, query_sql, table_name, cluster_name
+                )
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        logging.info(
+            "Stats collection complete for cluster %s.", cluster_name
+        )
+
+    def _query_to_parquet(
+        self,
+        conn,
+        query: str,
+        table_name: str,
+        cluster_name: str,
+    ) -> Optional[pd.DataFrame]:
+        """Execute *query*, write result as Parquet, return the DataFrame."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
+                cols = (
+                    [desc[0] for desc in cur.description]
+                    if cur.description
+                    else []
+                )
+            df = pd.DataFrame(rows, columns=cols)
+            out_path = os.path.join(
+                self._run_dir,
+                f"{table_name}+{cluster_name}.parquet",
+            )
+            df.to_parquet(out_path, index=False)
+            logging.info("Wrote %d rows to %s", len(df), out_path)
+            return df
+        except Exception:
+            logging.exception(
+                "Failed to query %s for cluster %s.",
+                table_name,
+                cluster_name,
+            )
+            return None
 
     # ------------------------------------------------------------------
     # Timestamps
@@ -640,9 +789,7 @@ class WorkloadRunner:
     # Periodic autoscaler tick (mirrors simulator's capacity_poll_interval)
     # ------------------------------------------------------------------
 
-    async def _autoscaler_tick_loop(
-        self, async_reference_ts: float
-    ) -> None:
+    async def _autoscaler_tick_loop(self, async_reference_ts: float) -> None:
         """Periodically call ``autoscaler.on_time_advance``.
 
         Ensures that idle-period tear-downs and other time-based policies
@@ -667,7 +814,13 @@ class WorkloadRunner:
             The ID of the run.
         """
         run_id, run_dir = self._setup_run_directory()
+        self._run_dir = run_dir
         print(f"Run started with ID {run_id}.")
+
+        # Register the stats-collection callback so that each cluster's
+        # system tables are captured before the provisioner tears it down.
+        self.pool.set_stats_collector(self._collect_cluster_stats, run_id)
+
         if _has_structured():
             emit_structured(
                 {
@@ -682,7 +835,9 @@ class WorkloadRunner:
                 }
             )
 
-        async_reference_ts = self._async_ts()
+        # Add a 30-second buffer between the reference timestamp and the first 
+        # query's scheduled start time for setup.
+        async_reference_ts = self._async_ts() + 30 
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
 
         tasks: list[asyncio.Task] = []
@@ -707,14 +862,13 @@ class WorkloadRunner:
             for _, row in self.workload_df.iterrows():
                 query_id = row["query_id"]
                 query_text_id = str(row["query_text_id"])
-                schema_name = str(row.get("schema_name", ""))
                 rel_start_time_s = row["rel_start_time_s"]
 
                 # Resolve the SQL text from the registry (not timing-sensitive).
-                query_text = QueryTextRegistry.get(schema_name, query_text_id)
+                query_text = QueryTextRegistry.get(self.schema.name, query_text_id)
                 if query_text is None:
                     logging.warning(
-                        f"No query text found for schema '{schema_name}', "
+                        f"No query text found for schema '{self.schema.name}', "
                         f"query_text_id '{query_text_id}'. Skipping query {query_id}."
                     )
                     continue
@@ -754,12 +908,27 @@ class WorkloadRunner:
 
             self._pbar.close()
 
-            # Graceful cleanup: close all connection pools so that
-            # in-progress Redshift connections are released.
-            try:
-                self.pool.destroy_all_conn_pools()
-            except Exception:
-                logging.exception("Error destroying connection pools.")
+            # Graceful cleanup: tear down every remaining READY cluster.
+            # request_tear_down → _finalize_removal is synchronous and
+            # may block (stats collection + provisioner API call), so
+            # we dispatch each call via the default thread-pool executor.
+            loop = asyncio.get_running_loop()
+            remaining = list(self.pool.ready_cluster_names)
+            for cn in remaining:
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        partial(
+                            self.pool.request_tear_down,
+                            cn,
+                            self._ts(),
+                            force=True,
+                        ),
+                    )
+                except Exception:
+                    logging.exception(
+                        "Failed to tear down cluster %s.", cn
+                    )
 
         logging.info(f"Run finished at {self._ts()}.")
 

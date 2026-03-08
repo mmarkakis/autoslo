@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
-from rich.table import Table
 from rich import print
+from rich.table import Table
+
+import autoslo.utils.paths as pu
 from autoslo.workload_definition.query import Query, QueryTextId
 
 # Columns that every workload file is expected to provide.
@@ -29,16 +32,14 @@ class Workload:
     not need to call ``super().__init__()``.
     """
 
-    def __init__(self, workload_name: str, df: pd.DataFrame) -> None:
+    def __init__(self, workload_name: str, schema_name: str) -> None:
         """
         Parameters
         ----------
         workload_name:
             The name of the workload.
-        df:
-            A :class:`~pandas.DataFrame` matching the ``workload`` schema.
-            Pass ``None`` only when constructing a subclass that supplies its
-            own data.
+        schema_name:
+            The name of the schema.
 
         Raises
         ------
@@ -46,10 +47,18 @@ class Workload:
             If *df* is missing any of the required columns from
             :data:`WORKLOAD_SCHEMA_COLUMNS`.
         """
-        self._df = df
         self._workload_name = workload_name
+        self._schema_name = schema_name
+        path = os.path.join(
+            pu.get_data_path(),
+            "__workloads",
+            schema_name,
+            f"{workload_name}.parquet",
+        )
+
+        self._df = pd.read_parquet(path)
         for col in WORKLOAD_SCHEMA_COLUMNS:
-            if col not in df.columns:
+            if col not in self._df.columns:
                 raise ValueError(
                     f"DataFrame is missing required column {col!r} from "
                     f"WORKLOAD_SCHEMA_COLUMNS."
@@ -58,26 +67,6 @@ class Workload:
         self.set_rel_start_times_from_abs()
 
         self._queries_cache: list[Query] | None = None
-
-    # ------------------------------------------------------------------
-    # Construction helpers
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def load(cls, path: str | Path) -> "Workload":
-        """Load a workload from a Parquet file that follows the workload schema.
-
-        Parameters
-        ----------
-        path:
-            Absolute or relative path to the Parquet file.
-
-        Returns
-        -------
-        Workload
-            A :class:`Workload` instance backed by the file's contents.
-        """
-        return cls(pd.read_parquet(path))
 
     # ------------------------------------------------------------------
     # Core interface
@@ -171,6 +160,52 @@ class Workload:
             The constant factor by which to multiply all relative start times.
         """
         self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
+        self._queries_cache = None
+
+    def slice_by_abs_time(
+        self,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> None:
+        """
+        Filter the workload to only include queries whose ``abs_start_time``
+        falls within [*start*, *end*] (both bounds inclusive and optional).
+
+        Timestamps are parsed with :func:`pandas.Timestamp` and compared
+        against the ``abs_start_time`` column.  If the column is
+        timezone-aware and the supplied string has no timezone, UTC is
+        assumed.  The DataFrame index is reset after filtering.
+
+        This is a mutating operation; ``rel_start_time_s`` values are *not*
+        updated — call :meth:`set_rel_start_times_from_zero` afterwards if
+        you want them rebased to the new first query.
+
+        Parameters
+        ----------
+        start:
+            ISO 8601 string for the lower bound (inclusive).  ``None`` means
+            no lower bound.
+        end:
+            ISO 8601 string for the upper bound (inclusive).  ``None`` means
+            no upper bound.
+        """
+        tz = self._df["abs_start_time"].dt.tz
+
+        def _parse(ts_str: str) -> pd.Timestamp:
+            ts = pd.Timestamp(ts_str)
+            if tz is not None and ts.tzinfo is None:
+                ts = ts.tz_localize(tz)
+            elif tz is None and ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            return ts
+
+        mask = pd.Series(True, index=self._df.index)
+        if start is not None:
+            mask &= self._df["abs_start_time"] >= _parse(start)
+        if end is not None:
+            mask &= self._df["abs_start_time"] <= _parse(end)
+
+        self._df = self._df[mask].reset_index(drop=True)
         self._queries_cache = None
 
     def print_summary(self) -> None:
