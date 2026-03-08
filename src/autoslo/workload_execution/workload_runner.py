@@ -31,7 +31,6 @@ from autoslo.routing.router import Router
 from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
 from autoslo.utils.structured_log import (
     LOGGER_NAME,
-    StructuredLogHandler,
     emit_structured,
     setup_structured_logging,
 )
@@ -67,6 +66,7 @@ class WorkloadRunner:
         closed_loop: bool = False,
         config_path: Optional[str | Path] = None,
         capacity_checkpoints: list[CapacityCheckpoint] | None = None,
+        capacity_poll_interval_s: float = 60.0,
     ):
         self.config_path = Path(config_path) if config_path else None
         self.workload_name = workload_name
@@ -154,6 +154,7 @@ class WorkloadRunner:
             on_tear_down=self._on_live_tear_down,
             capacity_checkpoints=capacity_checkpoints,
         )
+        self._capacity_poll_interval_s = capacity_poll_interval_s
 
     # ------------------------------------------------------------------
     # Async checkpoint reconciliation (live runner)
@@ -341,6 +342,10 @@ class WorkloadRunner:
             for cp in raw_checkpoints
         ]
 
+        poll_s: float = float(
+            _s("autoscaling_config", "capacity_poll_interval_s", 60.0)
+        )
+
         return cls(
             workload_name=workload_name,
             routing_policy=routing_policy,
@@ -352,6 +357,7 @@ class WorkloadRunner:
             closed_loop=closed_loop,
             config_path=config_path,
             capacity_checkpoints=capacity_checkpoints,
+            capacity_poll_interval_s=poll_s,
         )
 
     # ------------------------------------------------------------------
@@ -376,7 +382,9 @@ class WorkloadRunner:
 
     def _ts(self, cast_to_int: bool = False) -> Union[int, float]:
         """
-        Get the current timestamp.
+        Return the current UTC wall-clock time.
+
+        All timing in the runner uses wall-clock time for consistency.
 
         Parameters:
             cast_to_int: If True, return the timestamp as an integer (seconds
@@ -389,10 +397,15 @@ class WorkloadRunner:
         return base
 
     def _async_ts(self) -> float:
+        """Return the current wall-clock time (UTC, fractional seconds).
+
+        This deliberately uses the **same clock** as :meth:`_ts` (wall-clock
+        UTC) rather than the event-loop monotonic clock.  Mixing two clocks
+        (``loop.time()`` vs ``datetime.now()``) leads to meaningless deltas
+        when NTP adjustments occur.  The trade-off is that a large clock jump
+        could distort scheduling, but in practice NTP steps are sub-second.
         """
-        Get the current timestamp in an async-compatible way.
-        """
-        return asyncio.get_event_loop().time()
+        return datetime.now(tz=timezone.utc).timestamp()
 
     def _setup_run_directory(self):
         """
@@ -411,9 +424,13 @@ class WorkloadRunner:
         log_file_path = os.path.join(run_dir, "run.log")
         logger = logging.getLogger()
         logger.setLevel(logging.INFO)
-        # Remove any existing handlers to avoid duplicate outputs or console handlers.
+        # Remove file handlers from previous runs but keep any console
+        # handlers that were set up by the caller (e.g. basicConfig in
+        # __main__).  This avoids silently swallowing log output when
+        # the runner is embedded in a larger script.
         for h in list(logger.handlers):
-            logger.removeHandler(h)
+            if isinstance(h, logging.FileHandler):
+                logger.removeHandler(h)
         file_handler = logging.FileHandler(log_file_path)
         file_handler.setLevel(logging.INFO)
         formatter = logging.Formatter(
@@ -619,6 +636,29 @@ class WorkloadRunner:
             )
             self.autoscaler.on_query_complete(query_id, cluster_name, now)
 
+    # ------------------------------------------------------------------
+    # Periodic autoscaler tick (mirrors simulator's capacity_poll_interval)
+    # ------------------------------------------------------------------
+
+    async def _autoscaler_tick_loop(
+        self, async_reference_ts: float
+    ) -> None:
+        """Periodically call ``autoscaler.on_time_advance``.
+
+        Ensures that idle-period tear-downs and other time-based policies
+        fire even when no queries are arriving or completing.
+
+        The loop runs until cancelled (via ``asyncio.Task.cancel``).
+        """
+        next_tick_rel = self._capacity_poll_interval_s
+        while True:
+            target = async_reference_ts + next_tick_rel
+            delay = target - self._async_ts()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self.autoscaler.on_time_advance(self._ts())
+            next_tick_rel += self._capacity_poll_interval_s
+
     async def run(self) -> str:
         """
         Run the queries from the workload file.
@@ -645,55 +685,82 @@ class WorkloadRunner:
         async_reference_ts = self._async_ts()
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
 
-        tasks = []
+        tasks: list[asyncio.Task] = []
 
         # Schedule capacity checkpoint reconciliations.
         for cp in self.autoscaler.checkpoints:
             tasks.append(
-                self._reconcile_checkpoint_async(cp, async_reference_ts)
+                asyncio.ensure_future(
+                    self._reconcile_checkpoint_async(cp, async_reference_ts)
+                )
             )
+
+        # Start a periodic autoscaler tick so that time-based policies
+        # (e.g. idle-period tear-down) fire even during quiet periods.
+        tick_task = asyncio.ensure_future(
+            self._autoscaler_tick_loop(async_reference_ts)
+        )
 
         self._pbar = tqdm(total=len(self.workload_df), desc="Queries", unit="q")
 
-        for _, row in self.workload_df.iterrows():
-            query_id = row["query_id"]
-            query_text_id = str(row["query_text_id"])
-            schema_name = str(row.get("schema_name", ""))
-            rel_start_time_s = row["rel_start_time_s"]
+        try:
+            for _, row in self.workload_df.iterrows():
+                query_id = row["query_id"]
+                query_text_id = str(row["query_text_id"])
+                schema_name = str(row.get("schema_name", ""))
+                rel_start_time_s = row["rel_start_time_s"]
 
-            # Resolve the SQL text from the registry (not timing-sensitive).
-            query_text = QueryTextRegistry.get(schema_name, query_text_id)
-            if query_text is None:
-                logging.warning(
-                    f"No query text found for schema '{schema_name}', "
-                    f"query_text_id '{query_text_id}'. Skipping query {query_id}."
-                )
-                continue
+                # Resolve the SQL text from the registry (not timing-sensitive).
+                query_text = QueryTextRegistry.get(schema_name, query_text_id)
+                if query_text is None:
+                    logging.warning(
+                        f"No query text found for schema '{schema_name}', "
+                        f"query_text_id '{query_text_id}'. Skipping query {query_id}."
+                    )
+                    continue
 
-            if not self.closed_loop:
-                task = self._run_query_async(
-                    run_id,
-                    async_reference_ts,
-                    rel_start_time_s,
-                    query_id,
-                    query_text,
-                    query_text_id=query_text_id,
-                )
-                tasks.append(task)
-            else:
-                # In closed loop, wait for each query to finish before
-                # starting the next.  Ignore rel_start_time_s.
-                await self._run_query_async(
-                    run_id,
-                    async_reference_ts,
-                    0,
-                    query_id,
-                    query_text,
-                    query_text_id=query_text_id,
-                )
+                if not self.closed_loop:
+                    task = asyncio.ensure_future(
+                        self._run_query_async(
+                            run_id,
+                            async_reference_ts,
+                            rel_start_time_s,
+                            query_id,
+                            query_text,
+                            query_text_id=query_text_id,
+                        )
+                    )
+                    tasks.append(task)
+                else:
+                    # In closed loop, wait for each query to finish before
+                    # starting the next.  Ignore rel_start_time_s.
+                    await self._run_query_async(
+                        run_id,
+                        async_reference_ts,
+                        0,
+                        query_id,
+                        query_text,
+                        query_text_id=query_text_id,
+                    )
 
-        await asyncio.gather(*tasks)
-        self._pbar.close()
+            await asyncio.gather(*tasks)
+        finally:
+            # Stop the periodic tick.
+            tick_task.cancel()
+            try:
+                await tick_task
+            except asyncio.CancelledError:
+                pass
+
+            self._pbar.close()
+
+            # Graceful cleanup: close all connection pools so that
+            # in-progress Redshift connections are released.
+            try:
+                self.pool.destroy_all_conn_pools()
+            except Exception:
+                logging.exception("Error destroying connection pools.")
+
         logging.info(f"Run finished at {self._ts()}.")
 
         if _has_structured():
