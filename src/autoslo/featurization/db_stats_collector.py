@@ -225,13 +225,15 @@ class DBStatsCollector:
         # Create a connection from config.
         cluster_configs = pu.get_cluster_dicts_from_config()
         ci = ClusterConnInfo.from_dict(cluster_configs[self.cluster_name])
-        conn = ConnWithSetup(
+        conn = pg2.connect(
             host=ci.host,
             port=ci.port,
             user=ci.user,
             password=ci.password,
             dbname=ci.dbname,
-            search_path=self.schema_name,
+            connection_factory=lambda dsn, **kw: ConnWithSetup(
+                dsn, search_path=self.schema_name, **kw
+            ),
         )
 
         # Run an analyze if requested.

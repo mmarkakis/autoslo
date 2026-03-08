@@ -1,7 +1,0 @@
-workload_name: benchmarking_workload_99_3_3_shuffled_42
-initial_rpus:
-  - 8
-routing_policy:
-  type: RoundRobinPolicy
-maxconns: 1000
-closed_loop: false

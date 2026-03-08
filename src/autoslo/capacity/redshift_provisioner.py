@@ -345,6 +345,14 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             client.delete_namespace(namespaceName=namespace_name)
             logger.info("Namespace %s deletion initiated.", namespace_name)
             return True
+        except client.exceptions.ResourceNotFoundException:
+            # Namespace was already removed (e.g. auto-deleted when the
+            # workgroup was deleted).  The goal is achieved.
+            logger.info(
+                "Namespace %s already gone — nothing to delete.",
+                namespace_name,
+            )
+            return True
         except Exception:
             logger.exception(
                 "Namespace deletion failed for %s", namespace_name
@@ -384,9 +392,13 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
     # ClusterProvisioner interface
     # ------------------------------------------------------------------
 
-    def _workgroup_name(self, rpu: int) -> str:
+    def _workgroup_name(self, rpu: int, ts: int) -> str:
         """Generate a DNS-compatible, globally unique workgroup name."""
-        return f"autoslo-wg-{rpu}rpu-{int(time.time())}"
+        return f"autoslo-wg-{rpu}rpu-{ts}"
+
+    def _namespace_name(self, rpu: int, ts: int) -> str:
+        """Generate a DNS-compatible, globally unique namespace name."""
+        return f"autoslo-ns-{rpu}rpu-{ts}"
 
     def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
         """Create a Redshift Serverless workgroup and return a ready
@@ -408,8 +420,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         RuntimeError
             If any provisioning step fails.
         """
-        wg_name = self._workgroup_name(rpu)
-        ns_name = wg_name  # 1:1 namespace-to-workgroup
+        ts = int(time.time())
+        wg_name = self._workgroup_name(rpu, ts)
+        ns_name = self._namespace_name(rpu, ts)  
         spin_up_start = time.time()
 
         logger.info(

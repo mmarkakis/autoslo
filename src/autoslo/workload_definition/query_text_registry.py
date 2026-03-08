@@ -155,9 +155,10 @@ class QueryTextRegistry:
             try:
                 _cache[schema_name] = cls.load_schema(schema_name)
             except FileNotFoundError:
-                # Silently record an empty mapping so we don't repeat the
-                # failing disk hit on every subsequent call.
-                _cache[schema_name] = {}
+                # Create the summary file from individual query text files if 
+                # possible, then retry loading.
+                cls._create_registry_summary_file(schema_name)
+                _cache[schema_name] = cls.load_schema(schema_name)
 
     @classmethod
     def _registry_path(cls, schema_name: str) -> str:
@@ -167,3 +168,33 @@ class QueryTextRegistry:
             schema_name,
             _REGISTRY_FILENAME,
         )
+
+    @classmethod
+    def _create_registry_summary_file(cls, schema_name:str) -> None:
+        """Helper to create a registry Parquet file from individual
+        query text files for a schema.  Expects the files to be in
+        ``{data_root}/__query_texts/{schema_name}/`` with names like
+        ``{query_text_id}.sql`` containing the SQL text.
+
+        Parameters
+        ----------
+        schema_name:
+            The schema identifier.
+
+        """
+        dir_path = os.path.join(
+            pu.get_data_path(),
+            _REGISTRY_SUBDIR,
+            schema_name,
+        )
+        if not os.path.isdir(dir_path):
+            raise FileNotFoundError(
+                f"No directory found for schema '{schema_name}' at '{dir_path}'."
+            )
+        mapping = {}
+        for filename in os.listdir(dir_path):
+            if filename.endswith(".sql"):
+                query_text_id = filename[:-4]  # Strip .sql extension
+                with open(os.path.join(dir_path, filename), "r") as f:
+                    mapping[query_text_id] = f.read()
+        cls.save_schema(schema_name, mapping)

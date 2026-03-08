@@ -9,10 +9,8 @@ basic_config:
 ### Workload Configuration
 workload_config:
   workload_name: test_workload
-  # Optionally restrict to a time slice of the workload:
   # abs_start_time_start: "2024-01-01T00:00:00"
   # abs_start_time_end: "2024-01-01T01:00:00"
-  # Optionally compress/expand inter-query gaps (factor < 1 = faster):
   # rescale_factor: 0.5
 
 ### SLO Configuration
@@ -24,31 +22,15 @@ slo_config:
 ### Cluster Pool Configuration
 managed_cluster_pool_config:
   initial_rpus:
-    - 4
-    - 32
-  allowed_rpu_sizes:
-    - 4
     - 8
-    - 16
-    - 32
-  spin_up_delay_s: 120.0
 
 ### Query Routing Configuration
 routing_config:
-  routing_policy: model
-  
+  routing_policy: round_robin
 
 ### Autoscaling Configuration
 autoscaling_config:
-  autoscaling_policy: headroom
-  eta_crit: 0.1
-  idle_periods_before_tear_down: 5
-  capacity_poll_interval_s: 60.0
-  min_cluster_lifetime_s: 1200.0
-  capacity_checkpoints:
-    - time_s: 180.0
-      min_rpus: [8]
-
+  autoscaling_policy: noop
 
 ### Output Configuration
 output_config:
@@ -60,7 +42,4 @@ runner_config:
   maxconns: 1000
   closed_loop: false
   aws_config_path: data/__run_configs/aws.yml
-  # Provisioner fields here override anything from aws_config_path.
-  # provisioner:
-  #   type: redshift_serverless
-  #   aws_account_id: "123456789012"
+

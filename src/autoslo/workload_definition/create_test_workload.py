@@ -9,8 +9,11 @@ from autoslo.workload_definition.workload import Workload
 records = []
 gen_start_time = datetime.now()
 
-for i in range(50):
-    template = i % 5 + 1
+templates = [1,3,5,6,7]
+n = len(templates)
+
+for i in range(5 * n):
+    template = templates[i % n]
     record = {
         "query_id": f"query_{i}",
         "abs_start_time": gen_start_time + timedelta(seconds=i * 10),

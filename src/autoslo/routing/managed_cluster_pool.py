@@ -634,22 +634,34 @@ class ManagedClusterPool:
                     entry.conn_pool = None
 
     def _make_conn_pool(
-        self, conn_info: ClusterConnInfo
+        self, conn_info: ClusterConnInfo, num_retries: int = 3
     ) -> ThreadedConnectionPool:
         """Create a ThreadedConnectionPool from connection info."""
-        return ThreadedConnectionPool(
-            minconn=1,
-            maxconn=self._maxconns,
-            host=conn_info.host,
-            port=conn_info.port,
-            user=conn_info.user,
-            password=conn_info.password,
-            dbname=conn_info.dbname,
-            connection_factory=lambda *args, **kwargs: ConnWithSetup(
-                *args,
-                search_path=self._search_path,
-                **kwargs,
-            ),
+        for attempt in range(num_retries):
+            try:
+                return ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=self._maxconns,
+                    host=conn_info.host,
+                    port=conn_info.port,
+                    user=conn_info.user,
+                    password=conn_info.password,
+                    dbname=conn_info.dbname,
+                    connection_factory=lambda *args, **kwargs: ConnWithSetup(
+                        *args,
+                        search_path=self._search_path,
+                        **kwargs,
+                    ),
+                )
+            except Exception as ex:
+                logger.warning(
+                    "Failed to create connection pool (attempt %d/%d): %s",
+                    attempt + 1,
+                    num_retries,
+                    ex,
+                )
+        raise RuntimeError(
+            f"Failed to create connection pool after {num_retries} attempts."
         )
 
     # ------------------------------------------------------------------
