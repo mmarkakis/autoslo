@@ -8,6 +8,7 @@
 
 scratch.ipynb
 config/conn.yml
+data/__run_configs/aws.yml
 
 data/composite_workloads/**/cached*
 data/models/

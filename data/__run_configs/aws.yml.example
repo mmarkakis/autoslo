@@ -1,0 +1,23 @@
+# AWS account configuration for live Redshift Serverless provisioning.
+#
+# Copy this file to aws.yml (same directory) and fill in your values.
+# IMPORTANT: aws.yml is listed in .gitignore — never commit it.
+#
+# Fields here are merged as *base defaults* into the provisioner config.
+# Any key set explicitly under runner_config.provisioner in the main
+# YAML takes precedence.
+
+aws_region: "us-east-1"
+aws_account_id: "123456789012"
+
+# Credentials used when creating new Redshift Serverless namespaces.
+admin_username: "admin"
+admin_password: "your-password-here"
+
+# TPC-DS datashare that new workgroups attach to.
+datashare_account_id: "147854383891"
+datashare_namespace_id: "1015d398-b04c-40d0-bb67-257e0956c96d"
+
+# Optional overrides
+# db_name: "dev"
+# port: 5439

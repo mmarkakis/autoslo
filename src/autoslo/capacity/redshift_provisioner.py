@@ -25,8 +25,10 @@ from typing import Optional
 from autoslo.blueprints.cluster import Cluster
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.capacity.cluster_provisioner import ClusterProvisioner
+from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 
 logger = logging.getLogger(__name__)
+_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)  # noqa: E731
 
 # Default constants (match workgroup_creation_benchmarking.py)
 _DEFAULT_AWS_REGION = "us-east-1"
@@ -408,10 +410,19 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         """
         wg_name = self._workgroup_name(rpu)
         ns_name = wg_name  # 1:1 namespace-to-workgroup
+        spin_up_start = time.time()
 
         logger.info(
             "Spinning up workgroup %s with %d RPU ...", wg_name, rpu
         )
+        if _has_structured():
+            emit_structured({
+                "timestamp": spin_up_start,
+                "source": "RedshiftServerlessProvisioner",
+                "event_type": "cluster_spin_up_started",
+                "cluster_name": wg_name,
+                "rpu": rpu,
+            })
 
         if not self._create_namespace(ns_name):
             raise RuntimeError(f"Failed to create namespace {ns_name}")
@@ -456,7 +467,17 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         )
 
         cluster = Cluster(rpu=rpu, name=wg_name, conn_info=conn_info)
-        logger.info("Workgroup %s (%d RPU) is ready.", wg_name, rpu)
+        spin_up_duration = time.time() - spin_up_start
+        logger.info("Workgroup %s (%d RPU) is ready (%.1fs).", wg_name, rpu, spin_up_duration)
+        if _has_structured():
+            emit_structured({
+                "timestamp": time.time(),
+                "source": "RedshiftServerlessProvisioner",
+                "event_type": "cluster_spin_up_completed",
+                "cluster_name": wg_name,
+                "rpu": rpu,
+                "duration_s": spin_up_duration,
+            })
         return cluster
 
     def tear_down(self, cluster_name: str, current_time_s: float) -> None:
@@ -474,7 +495,15 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         RuntimeError
             If deletion fails.
         """
+        tear_down_start = time.time()
         logger.info("Tearing down workgroup %s ...", cluster_name)
+        if _has_structured():
+            emit_structured({
+                "timestamp": tear_down_start,
+                "source": "RedshiftServerlessProvisioner",
+                "event_type": "cluster_tear_down_started",
+                "cluster_name": cluster_name,
+            })
 
         if not self._delete_workgroup(cluster_name):
             raise RuntimeError(
@@ -494,4 +523,13 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
                 f"Namespace {cluster_name} was not deleted in time"
             )
 
-        logger.info("Workgroup %s fully torn down.", cluster_name)
+        tear_down_duration = time.time() - tear_down_start
+        logger.info("Workgroup %s fully torn down (%.1fs).", cluster_name, tear_down_duration)
+        if _has_structured():
+            emit_structured({
+                "timestamp": time.time(),
+                "source": "RedshiftServerlessProvisioner",
+                "event_type": "cluster_tear_down_completed",
+                "cluster_name": cluster_name,
+                "duration_s": tear_down_duration,
+            })

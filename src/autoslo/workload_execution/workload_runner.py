@@ -6,91 +6,102 @@ import shutil
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
-from autoslo.capacity.autoscaling_policy import NoOpPolicy
+from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, NoOpPolicy
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
-from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+from autoslo.capacity.headroom_policy import HeadroomPolicy
+from autoslo.models.iconq_model import IconqModel
+from autoslo.routing.managed_cluster_pool import (
+    ManagedClusterPool,
+    ManagedClusterPoolConfig,
+)
+from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
-from autoslo.routing.routing_policy import RoutingPolicy
+from autoslo.routing.routing_core import RoutingResult
+from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
 from autoslo.utils.structured_log import (
+    LOGGER_NAME,
     StructuredLogHandler,
     emit_structured,
     setup_structured_logging,
 )
+from autoslo.workload_definition.query import QueryTextId, SloMetric
+
+_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)  # noqa: E731
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
 
 
 class WorkloadRunner:
+    """Execute a workload against live Redshift Serverless clusters.
+
+    The constructor mirrors :class:`~WorkloadSimulator`'s signature so that
+    both can be driven from the same YAML configuration (see
+    :meth:`from_config`).  Runner-specific settings (``provisioner``,
+    ``maxconns``, ``closed_loop``) live in a dedicated ``runner_config``
+    section.
+    """
+
     def __init__(
         self,
-        config_path: str | Path,
+        workload_name: str,
+        routing_policy: RoutingPolicy,
+        schema_name: str,
+        managed_cluster_pool_config: Optional[ManagedClusterPoolConfig] = None,
+        autoscaling_policy: Optional[AutoscalingPolicy] = None,
+        provisioner_config: Optional[dict] = None,
+        maxconns: int = 1000,
+        closed_loop: bool = False,
+        config_path: Optional[str | Path] = None,
     ):
-        """
-        Initialize the WorkloadRunner from a YAML config file.
+        self.config_path = Path(config_path) if config_path else None
+        self.workload_name = workload_name
+        self.closed_loop = closed_loop
+        self.maxconns = maxconns
 
-        Parameters:
-            config_path: Path to a YAML config file inside
-                ``data/query_runner_configs/``.  The file must contain the
-                fields: ``workload_name``, ``initial_rpus``,
-                ``routing_policy``, ``maxconns``, ``closed_loop``.
-        """
-        self.config_path = Path(config_path)
-        with open(self.config_path, "r") as f:
-            cfg = yaml.safe_load(f)
-
-        # Validate workload name and load workload file.
-        self.workload_name = cfg["workload_name"]
-        if self.workload_name.startswith("benchmarking_workload_"):
-            self.workload_path = os.path.join(
+        # Load workload.
+        if workload_name.startswith("benchmarking_workload_"):
+            workload_path = os.path.join(
                 pu.get_data_path(),
                 "benchmarking_workloads",
-                f"{self.workload_name}.parquet",
+                f"{workload_name}.parquet",
             )
-        elif self.workload_name.startswith("interference_"):
-            self.workload_path = os.path.join(
+        elif workload_name.startswith("interference_"):
+            workload_path = os.path.join(
                 pu.get_data_path(),
                 "interference_workloads",
-                f"{self.workload_name}.parquet",
+                f"{workload_name}.parquet",
             )
         else:
-            self.workload_path = os.path.join(
+            workload_path = os.path.join(
                 pu.get_data_path(),
                 "chunks",
-                f"{self.workload_name}",
+                f"{workload_name}",
                 "chunk_workload.parquet",
             )
-        if not os.path.exists(self.workload_path):
+        if not os.path.exists(workload_path):
             raise FileNotFoundError(
-                f"Workload file {self.workload_path} does not exist."
+                f"Workload file {workload_path} does not exist."
             )
-        self.workload = Workload.load(self.workload_path)
+        self.workload = Workload.load(workload_path)
         self.workload.set_rel_start_times_from_zero()
         self.workload_df = self.workload.df
-        self.schema = Schema.load(self.workload.schema_name)
+        self.schema = Schema.load(
+            schema_name or self.workload.schema_name,
+        )
 
-        # Build the cluster pool from the configured RPU sizes.
-        initial_rpus = cfg["initial_rpus"]
-        if not initial_rpus:
-            raise ValueError("'initial_rpus' must list at least one RPU size.")
-
-        # Validate maxconns.
-        if cfg["maxconns"] < 1:
-            raise ValueError("maxconns must be at least 1.")
-        self.maxconns = cfg["maxconns"]
-
-        # Build the provisioner.
-        prov_cfg = cfg.get("provisioner")
-        if prov_cfg is not None:
-            prov_cfg = dict(prov_cfg)
+        # Build provisioner.
+        if provisioner_config is not None:
+            prov_cfg = dict(provisioner_config)
             prov_type = prov_cfg.pop("type")
             if prov_type == "redshift_serverless":
                 from autoslo.capacity.redshift_provisioner import (
@@ -102,50 +113,217 @@ class WorkloadRunner:
                     f"Unknown provisioner type: {prov_type!r}."
                 )
         else:
-            # Fallback for testing: simulated provisioner (no live connections).
             provisioner = SimulatedProvisioner(spin_up_delay_s=0.0)
 
-        # Create the managed pool (provisioner creates clusters +
-        # connection pools).
+        # Build pool.
+        mcp = (
+            managed_cluster_pool_config
+            if managed_cluster_pool_config is not None
+            else ManagedClusterPoolConfig()
+        )
         self.pool = ManagedClusterPool(
             provisioner=provisioner,
+            config=mcp,
             maxconns=self.maxconns,
             search_path=self.schema.search_path,
         )
-        for rpu in initial_rpus:
-            name = self.pool.request_spin_up(rpu, 0.0)
-            # If the provisioner returned conn_info the cluster is already
-            # READY (auto-promoted).  Otherwise promote manually.
-            try:
-                self.pool.on_cluster_ready(name, 0.0)
-            except ValueError:
-                pass  # Already READY
 
         # Build router.
-        policy_cfg = dict(cfg["routing_policy"])
-        self.routing_policy_config = policy_cfg
-        self.routing_policy_name = policy_cfg.pop("type")
-        RoutingPolicy.ensure_registry_populated()
-        if self.routing_policy_name not in RoutingPolicy._registry:
-            raise ValueError(
-                f"Unknown routing policy type: {self.routing_policy_name!r}. "
-                f"Available: {sorted(RoutingPolicy._registry)}"
-            )
-        self.routing_policy = RoutingPolicy._registry[
-            self.routing_policy_name
-        ](**policy_cfg)
+        self.routing_policy = routing_policy
+        self.routing_policy_name = type(routing_policy).__name__
+        self.routing_policy_config: dict = {}
         self.router = Router(
             policy=self.routing_policy,
             pool=self.pool,
         )
-        self.closed_loop = bool(cfg.get("closed_loop", False))
 
-        # Build autoscaler (defaults to NoOpPolicy — no dynamic scaling).
+        # Build autoscaler.
+        policy = (
+            autoscaling_policy
+            if autoscaling_policy is not None
+            else NoOpPolicy()
+        )
         self.autoscaler = Autoscaler(
-            policy=NoOpPolicy(),
+            policy=policy,
             pool=self.pool,
             on_spin_up=self._on_live_spin_up,
             on_tear_down=self._on_live_tear_down,
+        )
+
+    # ------------------------------------------------------------------
+    # Factory: create from YAML config (aligned with WorkloadSimulator)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_config(cls, config_path: str | Path) -> "WorkloadRunner":
+        """Create a :class:`WorkloadRunner` from a YAML config file.
+
+        Reads the same nested-section format as
+        :meth:`WorkloadSimulator.from_config` with an additional optional
+        ``runner_config`` section for live-execution settings.
+
+        Sections
+        --------
+        basic_config        : workload_name, schema_name, iconq_model_id
+        slo_config          : slo_s, slo_metric, slo_threshold,
+                              slo_dict_filename
+        routing_config      : routing_policy ("model" | "round_robin")
+        managed_cluster_pool_config : initial_rpus, allowed_rpu_sizes,
+                                spin_up_delay_s
+        autoscaling_config  : autoscaling_policy ("headroom" | "noop"),
+                              eta_crit, idle_periods_before_tear_down,
+                              capacity_poll_interval_s,
+                              min_cluster_lifetime_s
+        runner_config       : provisioner, maxconns, closed_loop
+        """
+        path = Path(config_path)
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+
+        # Helper: read from named section first, fall back to root.
+        def _s(section_key: str, key: str, default=None):
+            section = cfg.get(section_key)
+            if section and key in section:
+                return section[key]
+            return cfg.get(key, default)
+
+        # ── basic ────────────────────────────────────────────────────────
+        workload_name: str = _s("basic_config", "workload_name")
+        schema_name: Optional[str] = _s("basic_config", "schema_name")
+        iconq_model_id: Optional[str] = _s("basic_config", "iconq_model_id")
+
+        # ── SLO ──────────────────────────────────────────────────────────
+        slo_s: float = _s("slo_config", "slo_s", 10.0)
+        raw_metric: str = _s("slo_config", "slo_metric", "relative")
+        slo_metric = SloMetric(raw_metric)
+        slo_dict_filename: Optional[str] = _s(
+            "slo_config", "slo_dict_filename"
+        )
+        slo_resolver = SloResolver(slo_s, slo_dict_filename)
+
+        # ── routing policy ───────────────────────────────────────────────
+        routing_cfg: dict = cfg.get("routing_config") or {}
+        policy_type: str = routing_cfg.get(
+            "routing_policy", cfg.get("routing_policy", "model")
+        )
+
+        if policy_type == "model":
+            routing_policy: RoutingPolicy = ModelPolicy(
+                iconq_model_id=iconq_model_id,
+                default_slo_s=slo_s,
+                slo_overrides=slo_resolver.slo_dict,
+                slo_metric=slo_metric,
+            )
+        elif policy_type == "round_robin":
+            routing_policy = RoundRobinPolicy()
+        else:
+            raise ValueError(
+                f"Unknown routing_policy {policy_type!r}. "
+                "Expected one of: 'model', 'round_robin'."
+            )
+
+        # ── cluster pool ─────────────────────────────────────────────────
+        mcp_raw: Optional[dict] = cfg.get("managed_cluster_pool_config")
+        mcp: Optional[ManagedClusterPoolConfig] = None
+        if mcp_raw is not None:
+            mcp_raw = dict(mcp_raw)  # shallow copy
+            if "initial_rpus" in mcp_raw and isinstance(
+                mcp_raw["initial_rpus"], list
+            ):
+                mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
+            if "allowed_rpu_sizes" in mcp_raw and isinstance(
+                mcp_raw["allowed_rpu_sizes"], list
+            ):
+                mcp_raw["allowed_rpu_sizes"] = tuple(
+                    mcp_raw["allowed_rpu_sizes"]
+                )
+            mcp = ManagedClusterPoolConfig(**mcp_raw)
+
+        # ── autoscaling ──────────────────────────────────────────────────
+        autoscaling_policy_type: str = _s(
+            "autoscaling_config", "autoscaling_policy", "headroom"
+        )
+        allowed_rpus: list[int] = list(
+            mcp.allowed_rpu_sizes
+            if mcp is not None
+            else ManagedClusterPoolConfig().allowed_rpu_sizes
+        )
+
+        if autoscaling_policy_type == "headroom":
+            autoscaling_policy: AutoscalingPolicy = HeadroomPolicy(
+                slo_resolver=slo_resolver,
+                slo_metric=slo_metric,
+                eta_crit=float(
+                    _s("autoscaling_config", "eta_crit", 0.1)
+                ),
+                idle_periods_before_tear_down=int(
+                    _s(
+                        "autoscaling_config",
+                        "idle_periods_before_tear_down",
+                        5,
+                    )
+                ),
+                min_cluster_lifetime_s=float(
+                    _s(
+                        "autoscaling_config",
+                        "min_cluster_lifetime_s",
+                        1200.0,
+                    )
+                ),
+                allowed_rpu_sizes=allowed_rpus,
+                iconq_model=(
+                    IconqModel.load(iconq_model_id)
+                    if iconq_model_id
+                    else None
+                ),
+            )
+        elif autoscaling_policy_type == "noop":
+            autoscaling_policy = NoOpPolicy()
+        else:
+            raise ValueError(
+                f"Unknown autoscaling_policy {autoscaling_policy_type!r}. "
+                "Expected one of: 'headroom', 'noop'."
+            )
+
+        # ── runner-specific ──────────────────────────────────────────────
+        runner_cfg: dict = cfg.get("runner_config") or {}
+
+        # Load a separate AWS credentials file if referenced.
+        aws_cfg: dict = {}
+        aws_config_path_str: Optional[str] = runner_cfg.get("aws_config_path")
+        if aws_config_path_str is not None:
+            aws_path = Path(aws_config_path_str)
+            if not aws_path.is_absolute():
+                aws_path = Path.cwd() / aws_path
+            with open(aws_path) as _f:
+                aws_cfg = yaml.safe_load(_f) or {}
+            logging.info("Loaded AWS config from %s", aws_path)
+
+        # Build provisioner config by merging aws_cfg (base defaults) with
+        # any explicit provisioner fields in runner_config (take precedence).
+        provisioner_raw: Optional[dict] = runner_cfg.get("provisioner")
+        if provisioner_raw is not None:
+            provisioner_config: Optional[dict] = {**aws_cfg, **provisioner_raw}
+        elif aws_cfg:
+            # No explicit provisioner section — infer redshift_serverless
+            # from the aws_config alone.
+            provisioner_config = {"type": "redshift_serverless", **aws_cfg}
+        else:
+            provisioner_config = None
+
+        maxconns: int = int(runner_cfg.get("maxconns", 1000))
+        closed_loop: bool = bool(runner_cfg.get("closed_loop", False))
+
+        return cls(
+            workload_name=workload_name,
+            routing_policy=routing_policy,
+            schema_name=schema_name,
+            managed_cluster_pool_config=mcp,
+            autoscaling_policy=autoscaling_policy,
+            provisioner_config=provisioner_config,
+            maxconns=maxconns,
+            closed_loop=closed_loop,
+            config_path=config_path,
         )
 
     # ------------------------------------------------------------------
@@ -244,8 +422,15 @@ class WorkloadRunner:
         )
 
         # Keep a verbatim copy of the config file used for this run.
-        shutil.copy2(self.config_path, os.path.join(run_dir, "runner_config.yml"))
-        logging.info(f"Config file copied to {os.path.join(run_dir, 'runner_config.yml')}")
+        if self.config_path is not None:
+            shutil.copy2(
+                self.config_path,
+                os.path.join(run_dir, "runner_config.yml"),
+            )
+            logging.info(
+                f"Config file copied to "
+                f"{os.path.join(run_dir, 'runner_config.yml')}"
+            )
 
         return run_id, run_dir
 
@@ -263,6 +448,15 @@ class WorkloadRunner:
         """
         logging.info(f"Starting query {query_id}")
         start_time = self._ts()
+        if _has_structured():
+            emit_structured({
+                "timestamp": start_time,
+                "source": "WorkloadRunner",
+                "event_type": "query_execution_start",
+                "run_id": run_id,
+                "query_id": query_id,
+                "cluster_name": cluster_name,
+            })
         conn = self.pool.conn_pool(cluster_name).getconn()
         try:
             with conn.cursor() as cur:
@@ -286,9 +480,20 @@ class WorkloadRunner:
             except Exception:
                 pass
         end_time = self._ts()
+        latency_s = end_time - start_time
         logging.info(
-            f"Query {query_id} finished after t={end_time - start_time:.2f}s"
+            f"Query {query_id} finished after t={latency_s:.2f}s"
         )
+        if _has_structured():
+            emit_structured({
+                "timestamp": end_time,
+                "source": "WorkloadRunner",
+                "event_type": "query_execution_finish",
+                "run_id": run_id,
+                "query_id": query_id,
+                "cluster_name": cluster_name,
+                "latency_s": latency_s,
+            })
         self._pbar.update(1)
 
     async def _run_query_async(
@@ -355,6 +560,17 @@ class WorkloadRunner:
         """
         run_id, run_dir = self._setup_run_directory()
         print(f"Run started with ID {run_id}.")
+        if _has_structured():
+            emit_structured({
+                "timestamp": self._ts(),
+                "source": "WorkloadRunner",
+                "event_type": "run_start",
+                "run_id": run_id,
+                "workload_name": self.workload_name,
+                "num_queries": len(self.workload_df),
+                "routing_policy": self.routing_policy_name,
+                "closed_loop": self.closed_loop,
+            })
 
         async_reference_ts = self._async_ts()
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
@@ -455,6 +671,15 @@ class WorkloadRunner:
             os.path.join(run_dir, "query_routing_timings.parquet"), index=False
         )
 
+        if _has_structured():
+            emit_structured({
+                "timestamp": self._ts(),
+                "source": "WorkloadRunner",
+                "event_type": "run_finish",
+                "run_id": run_id,
+                "workload_name": self.workload_name,
+            })
+
         # Finalize structured log (consolidate shards).
         if hasattr(self, "_structured_handler") and self._structured_handler is not None:
             self._structured_handler.finalize()
@@ -469,11 +694,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "config",
         type=str,
-        default=os.path.join(pu.get_query_runner_configs_path(), "default.yml"),
-        help="Path to the runner config YAML file (default: "
-        "data/query_runner_configs/default.yml).",
+        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
     )
     args = parser.parse_args()
 
-    qr = WorkloadRunner(args.config)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    qr = WorkloadRunner.from_config(args.config)
     asyncio.run(qr.run())

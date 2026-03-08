@@ -16,8 +16,8 @@ slo_config:
 ### Cluster Pool Configuration
 managed_cluster_pool_config:
   initial_rpus:
-    - 16
-    - 16
+    - 4
+    - 32
   allowed_rpu_sizes:
     - 4
     - 8
@@ -42,3 +42,13 @@ autoscaling_config:
 output_config:
   verbose: true
   export_video: false
+
+### Runner Configuration (live execution only)
+runner_config:
+  maxconns: 1000
+  closed_loop: false
+  aws_config_path: data/__run_configs/aws.yml
+  # Provisioner fields here override anything from aws_config_path.
+  # provisioner:
+  #   type: redshift_serverless
+  #   aws_account_id: "123456789012"
