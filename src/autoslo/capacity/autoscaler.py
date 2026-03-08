@@ -162,7 +162,7 @@ class Autoscaler:
                 "checkpoint_time_s": cp.time_s,
                 "desired_rpus": list(cp.min_rpus),
                 "current_rpus": sorted(current.elements()),
-                "gap_spin_ups": dict(gap) if gap else {},
+                "gap_spin_ups": str(dict(gap)) if gap else "",
             })
 
         if not gap:

@@ -8,14 +8,17 @@ from functools import partial
 from pathlib import Path
 from typing import Optional, Union
 
-import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
-from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, CapacityCheckpoint, NoOpPolicy
+from autoslo.capacity.autoscaling_policy import (
+    AutoscalingPolicy,
+    CapacityCheckpoint,
+    NoOpPolicy,
+)
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.models.iconq_model import IconqModel
@@ -25,7 +28,6 @@ from autoslo.routing.managed_cluster_pool import (
 )
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
-from autoslo.routing.routing_core import RoutingResult
 from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
 from autoslo.utils.structured_log import (
     LOGGER_NAME,
@@ -35,7 +37,9 @@ from autoslo.utils.structured_log import (
 )
 from autoslo.workload_definition.query import QueryTextId, SloMetric
 
-_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)  # noqa: E731
+_has_structured = lambda: bool(
+    logging.getLogger(LOGGER_NAME).handlers
+)  # noqa: E731
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
@@ -108,11 +112,10 @@ class WorkloadRunner:
                 from autoslo.capacity.redshift_provisioner import (
                     RedshiftServerlessProvisioner,
                 )
+
                 provisioner = RedshiftServerlessProvisioner(**prov_cfg)
             else:
-                raise ValueError(
-                    f"Unknown provisioner type: {prov_type!r}."
-                )
+                raise ValueError(f"Unknown provisioner type: {prov_type!r}.")
         else:
             provisioner = SimulatedProvisioner(spin_up_delay_s=0.0)
 
@@ -214,9 +217,7 @@ class WorkloadRunner:
         slo_s: float = _s("slo_config", "slo_s", 10.0)
         raw_metric: str = _s("slo_config", "slo_metric", "relative")
         slo_metric = SloMetric(raw_metric)
-        slo_dict_filename: Optional[str] = _s(
-            "slo_config", "slo_dict_filename"
-        )
+        slo_dict_filename: Optional[str] = _s("slo_config", "slo_dict_filename")
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
         # ── routing policy ───────────────────────────────────────────────
@@ -271,9 +272,7 @@ class WorkloadRunner:
             autoscaling_policy: AutoscalingPolicy = HeadroomPolicy(
                 slo_resolver=slo_resolver,
                 slo_metric=slo_metric,
-                eta_crit=float(
-                    _s("autoscaling_config", "eta_crit", 0.1)
-                ),
+                eta_crit=float(_s("autoscaling_config", "eta_crit", 0.1)),
                 idle_periods_before_tear_down=int(
                     _s(
                         "autoscaling_config",
@@ -290,9 +289,7 @@ class WorkloadRunner:
                 ),
                 allowed_rpu_sizes=allowed_rpus,
                 iconq_model=(
-                    IconqModel.load(iconq_model_id)
-                    if iconq_model_id
-                    else None
+                    IconqModel.load(iconq_model_id) if iconq_model_id else None
                 ),
             )
         elif autoscaling_policy_type == "noop":
@@ -333,9 +330,9 @@ class WorkloadRunner:
         closed_loop: bool = bool(runner_cfg.get("closed_loop", False))
 
         # ── capacity checkpoints ─────────────────────────────────────────
-        raw_checkpoints: list[dict] = _s(
-            "autoscaling_config", "capacity_checkpoints", []
-        ) or []
+        raw_checkpoints: list[dict] = (
+            _s("autoscaling_config", "capacity_checkpoints", []) or []
+        )
         capacity_checkpoints = [
             CapacityCheckpoint(
                 time_s=float(cp["time_s"]),
@@ -480,14 +477,16 @@ class WorkloadRunner:
         logging.info(f"Starting query {query_id}")
         start_time = self._ts()
         if _has_structured():
-            emit_structured({
-                "timestamp": start_time,
-                "source": "WorkloadRunner",
-                "event_type": "query_execution_start",
-                "run_id": run_id,
-                "query_id": query_id,
-                "cluster_name": cluster_name,
-            })
+            emit_structured(
+                {
+                    "timestamp": start_time,
+                    "source": "WorkloadRunner",
+                    "event_type": "query_execution_start",
+                    "run_id": run_id,
+                    "query_id": query_id,
+                    "cluster_name": cluster_name,
+                }
+            )
         conn = self.pool.conn_pool(cluster_name).getconn()
         try:
             with conn.cursor() as cur:
@@ -512,19 +511,19 @@ class WorkloadRunner:
                 pass
         end_time = self._ts()
         latency_s = end_time - start_time
-        logging.info(
-            f"Query {query_id} finished after t={latency_s:.2f}s"
-        )
+        logging.info(f"Query {query_id} finished after t={latency_s:.2f}s")
         if _has_structured():
-            emit_structured({
-                "timestamp": end_time,
-                "source": "WorkloadRunner",
-                "event_type": "query_execution_finish",
-                "run_id": run_id,
-                "query_id": query_id,
-                "cluster_name": cluster_name,
-                "latency_s": latency_s,
-            })
+            emit_structured(
+                {
+                    "timestamp": end_time,
+                    "source": "WorkloadRunner",
+                    "event_type": "query_execution_finish",
+                    "run_id": run_id,
+                    "query_id": query_id,
+                    "cluster_name": cluster_name,
+                    "latency_s": latency_s,
+                }
+            )
         self._pbar.update(1)
 
     async def _run_query_async(
@@ -535,19 +534,24 @@ class WorkloadRunner:
         query_id: str,
         query_text: str,
         query_text_id: str,
-        cluster_name: str,
     ) -> None:
         """
         Run a single query asynchronously, waiting until its scheduled start.
 
+        Routing is performed **after** the sleep so that the routing
+        decision reflects the live pool state at the query's actual
+        arrival time — not the pool state at the start of the run.
+
         Parameters:
             run_id: ID of the current run.
             async_reference_ts: Reference timestamp for scheduling.
-            rel_start_time_s: Relative start time in seconds from the reference timestamp.
+            rel_start_time_s: Relative start time in seconds from the
+                reference timestamp.  Ignored in closed-loop mode
+                (pass 0).
             query_id: ID of the query.
             query_text: SQL text of the query.
-            query_text_id: The query_text_id for this query (used for routing).
-            cluster_name: Name of the cluster to run the query on.
+            query_text_id: The query_text_id for this query (used for
+                routing).
         """
         now = self._async_ts()
         scheduled_time = async_reference_ts + rel_start_time_s
@@ -558,6 +562,36 @@ class WorkloadRunner:
         )
         if delay > 0:
             await asyncio.sleep(delay)
+
+        # ── Route at arrival time ────────────────────────────────────
+        route_start_ts = self._async_ts()
+        result = self.router.route_query_with_predictions(
+            query_id=query_id,
+            query_text_id=query_text_id,
+        )
+        cluster_name = result.cluster_name
+        route_end_ts = self._async_ts()
+
+        if _has_structured():
+            emit_structured(
+                {
+                    "timestamp": self._ts(),
+                    "source": "WorkloadRunner",
+                    "event_type": "query_routed",
+                    "run_id": run_id,
+                    "query_id": query_id,
+                    "query_text_id": query_text_id,
+                    "cluster_name": cluster_name,
+                    "routing_time_s": route_end_ts - route_start_ts,
+                }
+            )
+
+        # ── Register immediately (before autoscaler) ─────────────────
+        # Registering the query in the pool *before* notifying the
+        # autoscaler guarantees the cluster cannot be fully torn down
+        # while this query is active.  If the autoscaler decides to
+        # drain the cluster in response to the routing result, the
+        # active-query count prevents premature removal.
         now = self._async_ts()
         self.router.on_query_start(
             query_id=query_id,
@@ -565,6 +599,11 @@ class WorkloadRunner:
             query_text_id=query_text_id,
             start_time_s=now,
         )
+
+        # Feed routing result to the autoscaler (sees updated pool state).
+        self.autoscaler.on_routing_result(result, self._ts())
+
+        # ── Execute ──────────────────────────────────────────────────
         try:
             fn = partial(
                 self._run_query_sync, run_id, query_id, query_text, cluster_name
@@ -578,9 +617,7 @@ class WorkloadRunner:
                 cluster_name=cluster_name,
                 current_time_s=now,
             )
-            self.autoscaler.on_query_complete(
-                query_id, cluster_name, now
-            )
+            self.autoscaler.on_query_complete(query_id, cluster_name, now)
 
     async def run(self) -> str:
         """
@@ -592,16 +629,18 @@ class WorkloadRunner:
         run_id, run_dir = self._setup_run_directory()
         print(f"Run started with ID {run_id}.")
         if _has_structured():
-            emit_structured({
-                "timestamp": self._ts(),
-                "source": "WorkloadRunner",
-                "event_type": "run_start",
-                "run_id": run_id,
-                "workload_name": self.workload_name,
-                "num_queries": len(self.workload_df),
-                "routing_policy": self.routing_policy_name,
-                "closed_loop": self.closed_loop,
-            })
+            emit_structured(
+                {
+                    "timestamp": self._ts(),
+                    "source": "WorkloadRunner",
+                    "event_type": "run_start",
+                    "run_id": run_id,
+                    "workload_name": self.workload_name,
+                    "num_queries": len(self.workload_df),
+                    "routing_policy": self.routing_policy_name,
+                    "closed_loop": self.closed_loop,
+                }
+            )
 
         async_reference_ts = self._async_ts()
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
@@ -616,46 +655,18 @@ class WorkloadRunner:
 
         self._pbar = tqdm(total=len(self.workload_df), desc="Queries", unit="q")
 
-        route_info = []
-
         for _, row in self.workload_df.iterrows():
             query_id = row["query_id"]
             query_text_id = str(row["query_text_id"])
             schema_name = str(row.get("schema_name", ""))
             rel_start_time_s = row["rel_start_time_s"]
 
-            # Resolve the SQL text from the registry.
+            # Resolve the SQL text from the registry (not timing-sensitive).
             query_text = QueryTextRegistry.get(schema_name, query_text_id)
             if query_text is None:
                 logging.warning(
                     f"No query text found for schema '{schema_name}', "
                     f"query_text_id '{query_text_id}'. Skipping query {query_id}."
-                )
-                continue
-
-            route_start_timestamp = self._async_ts()
-            result = self.router.route_query_with_predictions(
-                query_id=query_id,
-                query_text_id=query_text_id,
-            )
-            cluster_name = result.cluster_name
-            route_end_timestamp = self._async_ts()
-
-            # Feed routing result to the autoscaler.
-            self.autoscaler.on_routing_result(result, self._ts())
-
-            route_info.append(
-                {
-                    "query_seq_num": query_id,
-                    "route_start_timestamp": route_start_timestamp,
-                    "route_end_timestamp": route_end_timestamp,
-                    "cluster_name": cluster_name,
-                }
-            )
-            if cluster_name not in self.pool.conn_pool_map():
-                print(
-                    f"QueryRouter returned unknown cluster name "
-                    f"'{cluster_name}' for query {query_id}. Skipping query."
                 )
                 continue
 
@@ -667,12 +678,11 @@ class WorkloadRunner:
                     query_id,
                     query_text,
                     query_text_id=query_text_id,
-                    cluster_name=cluster_name,
                 )
                 tasks.append(task)
             else:
-                # In closed loop, wait for each query to finish before starting the next.
-                # Also ignore rel_start_time_s.
+                # In closed loop, wait for each query to finish before
+                # starting the next.  Ignore rel_start_time_s.
                 await self._run_query_async(
                     run_id,
                     async_reference_ts,
@@ -680,46 +690,28 @@ class WorkloadRunner:
                     query_id,
                     query_text,
                     query_text_id=query_text_id,
-                    cluster_name=cluster_name,
                 )
 
         await asyncio.gather(*tasks)
         self._pbar.close()
         logging.info(f"Run finished at {self._ts()}.")
 
-        # Save query routing timings.
-        route_info_df = pd.DataFrame(route_info)
-        route_info_df["run_id"] = run_id
-        route_info_df["routing_policy"] = self.routing_policy_name
-        route_info_df["routing_time_s"] = (
-            route_info_df["route_end_timestamp"]
-            - route_info_df["route_start_timestamp"]
-        )
-        column_order = [
-            "run_id",
-            "routing_policy",
-            "query_seq_num",
-            "cluster_name",
-            "route_start_timestamp",
-            "route_end_timestamp",
-            "routing_time_s",
-        ]
-        route_info_df = route_info_df[column_order]
-        route_info_df.to_parquet(
-            os.path.join(run_dir, "query_routing_timings.parquet"), index=False
-        )
-
         if _has_structured():
-            emit_structured({
-                "timestamp": self._ts(),
-                "source": "WorkloadRunner",
-                "event_type": "run_finish",
-                "run_id": run_id,
-                "workload_name": self.workload_name,
-            })
+            emit_structured(
+                {
+                    "timestamp": self._ts(),
+                    "source": "WorkloadRunner",
+                    "event_type": "run_finish",
+                    "run_id": run_id,
+                    "workload_name": self.workload_name,
+                }
+            )
 
         # Finalize structured log (consolidate shards).
-        if hasattr(self, "_structured_handler") and self._structured_handler is not None:
+        if (
+            hasattr(self, "_structured_handler")
+            and self._structured_handler is not None
+        ):
             self._structured_handler.finalize()
 
         return run_id
