@@ -28,7 +28,9 @@ from autoslo.capacity.cluster_provisioner import ClusterProvisioner
 from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 
 logger = logging.getLogger(__name__)
-_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)  # noqa: E731
+_has_structured = lambda: bool(
+    logging.getLogger(LOGGER_NAME).handlers
+)  # noqa: E731
 
 # Default constants (match workgroup_creation_benchmarking.py)
 _DEFAULT_AWS_REGION = "us-east-1"
@@ -76,6 +78,19 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         Database name for connections.
     port :
         Port for connections.
+    max_capacity_ratio :
+        Ratio of ``maxCapacity`` to ``baseCapacity`` passed to
+        ``create_workgroup``.  A value of ``1`` (the default) sets
+        ``maxCapacity`` equal to ``baseCapacity``, disabling automatic
+        scale-out.  A value of e.g. ``4`` would allow the workgroup to
+        scale up to 4× its base capacity.
+    price_performance_target_level :
+        Optional integer level for the ``pricePerformanceTarget``
+        workgroup setting.  Valid values are ``1`` (LOW_COST), ``25``
+        (ECONOMICAL), ``50`` (BALANCED), ``75`` (RESOURCEFUL), and
+        ``100`` (HIGH_PERFORMANCE).  When ``None`` (the default) the
+        parameter is omitted from the ``create_workgroup`` call and AWS
+        uses its own default.
     """
 
     def __init__(
@@ -89,6 +104,8 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         schema_scales: Optional[list[int]] = None,
         db_name: str = _DEFAULT_DB_NAME,
         port: int = _DEFAULT_PORT,
+        max_capacity_ratio: float = 1,
+        price_performance_target_level: Optional[int] = None,
     ) -> None:
         self._aws_region = aws_region
         self._aws_account_id = aws_account_id
@@ -97,10 +114,14 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         self._datashare_account_id = datashare_account_id
         self._datashare_namespace_id = datashare_namespace_id
         self._schema_scales = (
-            schema_scales if schema_scales is not None else _DEFAULT_SCHEMA_SCALES
+            schema_scales
+            if schema_scales is not None
+            else _DEFAULT_SCHEMA_SCALES
         )
         self._db_name = db_name
         self._port = port
+        self._max_capacity_ratio = max_capacity_ratio
+        self._price_performance_target_level = price_performance_target_level
 
     # ------------------------------------------------------------------
     # Internal AWS helpers (thin wrappers — logic copied from
@@ -136,27 +157,38 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         self, workgroup_name: str, base_rpu: int, namespace_name: str
     ) -> bool:
         client = self._get_client("redshift-serverless")
+        max_rpu = max(base_rpu, int(base_rpu * self._max_capacity_ratio))
         try:
-            client.create_workgroup(
-                workgroupName=workgroup_name,
-                namespaceName=namespace_name,
-                baseCapacity=base_rpu,
-                maxCapacity=base_rpu,
-                publiclyAccessible=True,
-            )
-            logger.info(
-                "Workgroup %s (%d RPU) creation initiated.",
-                workgroup_name,
-                base_rpu,
-            )
+            kwargs: dict = {
+                "workgroupName": workgroup_name,
+                "namespaceName": namespace_name,
+                "publiclyAccessible": True,
+                 "maxCapacity": max_rpu,
+            }
+            if self._price_performance_target_level is None:
+                kwargs["baseCapacity"] = base_rpu
+            else:
+                kwargs["pricePerformanceTarget"] = {
+                    "level": self._price_performance_target_level,
+                    "status": "ENABLED",
+                }
+            client.create_workgroup(**kwargs)
+            log_message = f"Workgroup {workgroup_name} creation initiated with "
+            if self._price_performance_target_level is None:
+                log_message += f"base RPU {base_rpu} "
+            else:
+                log_message += (
+                    f"price-performance target level "
+                    f"{self._price_performance_target_level} "
+                )
+            log_message += f"and max RPU {max_rpu}."
+            logger.info(log_message)
             return True
         except client.exceptions.ConflictException:
             logger.info("Workgroup %s already exists.", workgroup_name)
             return True
         except Exception:
-            logger.exception(
-                "Workgroup creation failed for %s", workgroup_name
-            )
+            logger.exception("Workgroup creation failed for %s", workgroup_name)
             return False
 
     def _wait_for_namespace_available(
@@ -237,7 +269,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             )
             stmt_id = resp["Id"]
         except Exception:
-            logger.exception("Datashare attach submit failed for %s", workgroup_name)
+            logger.exception(
+                "Datashare attach submit failed for %s", workgroup_name
+            )
             return False
 
         return self._wait_for_statement(client, stmt_id, "attach_tpcds")
@@ -305,9 +339,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             logger.info("Workgroup %s deletion initiated.", workgroup_name)
             return True
         except Exception:
-            logger.exception(
-                "Workgroup deletion failed for %s", workgroup_name
-            )
+            logger.exception("Workgroup deletion failed for %s", workgroup_name)
             return False
 
     def _wait_for_workgroup_deleted(
@@ -354,9 +386,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             )
             return True
         except Exception:
-            logger.exception(
-                "Namespace deletion failed for %s", namespace_name
-            )
+            logger.exception("Namespace deletion failed for %s", namespace_name)
             return False
 
     def _wait_for_namespace_deleted(
@@ -422,36 +452,32 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         """
         ts = int(time.time())
         wg_name = self._workgroup_name(rpu, ts)
-        ns_name = self._namespace_name(rpu, ts)  
+        ns_name = self._namespace_name(rpu, ts)
         spin_up_start = time.time()
 
-        logger.info(
-            "Spinning up workgroup %s with %d RPU ...", wg_name, rpu
-        )
+        logger.info("Spinning up workgroup %s with %d RPU ...", wg_name, rpu)
         if _has_structured():
-            emit_structured({
-                "timestamp": spin_up_start,
-                "source": "RedshiftServerlessProvisioner",
-                "event_type": "cluster_spin_up_started",
-                "cluster_name": wg_name,
-                "rpu": rpu,
-            })
+            emit_structured(
+                {
+                    "timestamp": spin_up_start,
+                    "source": "RedshiftServerlessProvisioner",
+                    "event_type": "cluster_spin_up_started",
+                    "cluster_name": wg_name,
+                    "rpu": rpu,
+                }
+            )
 
         if not self._create_namespace(ns_name):
             raise RuntimeError(f"Failed to create namespace {ns_name}")
 
         if not self._wait_for_namespace_available(ns_name):
-            raise RuntimeError(
-                f"Namespace {ns_name} did not become available"
-            )
+            raise RuntimeError(f"Namespace {ns_name} did not become available")
 
         if not self._create_workgroup(wg_name, rpu, ns_name):
             raise RuntimeError(f"Failed to create workgroup {wg_name}")
 
         if not self._wait_for_workgroup_available(wg_name):
-            raise RuntimeError(
-                f"Workgroup {wg_name} did not become available"
-            )
+            raise RuntimeError(f"Workgroup {wg_name} did not become available")
 
         if not self._attach_tpcds_database(wg_name):
             logger.warning(
@@ -481,16 +507,23 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         cluster = Cluster(rpu=rpu, name=wg_name, conn_info=conn_info)
         spin_up_duration = time.time() - spin_up_start
-        logger.info("Workgroup %s (%d RPU) is ready (%.1fs).", wg_name, rpu, spin_up_duration)
+        logger.info(
+            "Workgroup %s (%d RPU) is ready (%.1fs).",
+            wg_name,
+            rpu,
+            spin_up_duration,
+        )
         if _has_structured():
-            emit_structured({
-                "timestamp": time.time(),
-                "source": "RedshiftServerlessProvisioner",
-                "event_type": "cluster_spin_up_completed",
-                "cluster_name": wg_name,
-                "rpu": rpu,
-                "duration_s": spin_up_duration,
-            })
+            emit_structured(
+                {
+                    "timestamp": time.time(),
+                    "source": "RedshiftServerlessProvisioner",
+                    "event_type": "cluster_spin_up_completed",
+                    "cluster_name": wg_name,
+                    "rpu": rpu,
+                    "duration_s": spin_up_duration,
+                }
+            )
         return cluster
 
     def tear_down(self, cluster_name: str, current_time_s: float) -> None:
@@ -511,38 +544,42 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         tear_down_start = time.time()
         logger.info("Tearing down workgroup %s ...", cluster_name)
         if _has_structured():
-            emit_structured({
-                "timestamp": tear_down_start,
-                "source": "RedshiftServerlessProvisioner",
-                "event_type": "cluster_tear_down_started",
-                "cluster_name": cluster_name,
-            })
+            emit_structured(
+                {
+                    "timestamp": tear_down_start,
+                    "source": "RedshiftServerlessProvisioner",
+                    "event_type": "cluster_tear_down_started",
+                    "cluster_name": cluster_name,
+                }
+            )
 
         if not self._delete_workgroup(cluster_name):
-            raise RuntimeError(
-                f"Failed to delete workgroup {cluster_name}"
-            )
+            raise RuntimeError(f"Failed to delete workgroup {cluster_name}")
         if not self._wait_for_workgroup_deleted(cluster_name):
             raise RuntimeError(
                 f"Workgroup {cluster_name} was not deleted in time"
             )
 
         if not self._delete_namespace(cluster_name):
-            raise RuntimeError(
-                f"Failed to delete namespace {cluster_name}"
-            )
+            raise RuntimeError(f"Failed to delete namespace {cluster_name}")
         if not self._wait_for_namespace_deleted(cluster_name):
             raise RuntimeError(
                 f"Namespace {cluster_name} was not deleted in time"
             )
 
         tear_down_duration = time.time() - tear_down_start
-        logger.info("Workgroup %s fully torn down (%.1fs).", cluster_name, tear_down_duration)
+        logger.info(
+            "Workgroup %s fully torn down (%.1fs).",
+            cluster_name,
+            tear_down_duration,
+        )
         if _has_structured():
-            emit_structured({
-                "timestamp": time.time(),
-                "source": "RedshiftServerlessProvisioner",
-                "event_type": "cluster_tear_down_completed",
-                "cluster_name": cluster_name,
-                "duration_s": tear_down_duration,
-            })
+            emit_structured(
+                {
+                    "timestamp": time.time(),
+                    "source": "RedshiftServerlessProvisioner",
+                    "event_type": "cluster_tear_down_completed",
+                    "cluster_name": cluster_name,
+                    "duration_s": tear_down_duration,
+                }
+            )
