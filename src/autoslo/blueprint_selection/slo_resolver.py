@@ -17,6 +17,7 @@ Usage
     # Resolve per query:
     slo = resolver.resolve("3_7")   # returns override for template 3, or default
 """
+
 from __future__ import annotations
 
 import os
@@ -47,16 +48,14 @@ class SloResolver:
         slo_dict_filename: str | None = None,
     ) -> None:
         self._default = default_slo_s
-        self._dict: dict[int, float] = {}
+        self._dict: dict[str, float] = {}
         self._filename: str | None = slo_dict_filename
 
         if slo_dict_filename:
-            path = os.path.join(
-                pu.get_data_path(), "generation_parameters", slo_dict_filename
-            )
+            path = os.path.join(pu.get_data_path(), "slos", slo_dict_filename)
             with open(path) as f:
                 raw = yaml.safe_load(f) or {}
-            self._dict = {int(k): float(v) for k, v in raw.items()}
+            self._dict = {str(k): float(v) for k, v in raw["slo_dict"].items()}
 
     # ------------------------------------------------------------------
     # alternate constructors
@@ -66,14 +65,14 @@ class SloResolver:
     def from_dict(
         cls,
         default_slo_s: float,
-        slo_dict: dict[int, float],
+        slo_dict: dict[str, float],
         slo_dict_filename: str | None = None,
     ) -> "SloResolver":
         """Construct directly from an already-loaded mapping (e.g. inlined in
         a config or experiment_meta.json) without touching the filesystem."""
         inst = cls.__new__(cls)
         inst._default = default_slo_s
-        inst._dict = {int(k): float(v) for k, v in slo_dict.items()}
+        inst._dict = {str(k): float(v) for k, v in slo_dict.items()}
         inst._filename = slo_dict_filename
         return inst
 
@@ -81,8 +80,19 @@ class SloResolver:
     # core API
     # ------------------------------------------------------------------
 
-    def resolve(self, query_text_id: QueryTextId | None) -> float:
+    def resolve(self, query_text_id: "QueryTextId | str | None") -> float:
         """Return the SLO in seconds for the given query identifier.
+
+        Accepts any of:
+
+        * a :class:`QueryTextId` object,
+        * a ``"schema#template#index"`` string (from structured logs),
+        * a ``"template_index"`` string (e.g. ``"042_001"`` from
+          ``tpcds_temp_and_q_idx``),
+        * ``None``.
+
+        The lookup key is the **template ID** (int).  All variants of
+        the same template share a single SLO.
 
         Falls back to *default_slo_s* when the template has no override,
         *query_text_id* is *None*, or its value cannot be parsed
@@ -91,8 +101,20 @@ class SloResolver:
         if query_text_id is None or not self._dict:
             return self._default
         try:
-            tid = int(query_text_id.template_id)
-        except (ValueError, AttributeError, TypeError):
+            if isinstance(query_text_id, QueryTextId):
+                tid = query_text_id.template_id
+            elif isinstance(query_text_id, str):
+                if "#" in query_text_id:
+                    # "ext_tpcds1000#042#001" → template "042"
+                    tid = query_text_id.split("#")[1]
+                elif "_" in query_text_id:
+                    # "042_001" → template "042"
+                    tid = query_text_id.split("_")[0]
+                else:
+                    tid = query_text_id
+            else:
+                return self._default
+        except (ValueError, AttributeError, TypeError, IndexError):
             return self._default
         return self._dict.get(tid, self._default)
 
@@ -105,7 +127,7 @@ class SloResolver:
         return self._default
 
     @property
-    def slo_dict(self) -> dict[int, float]:
+    def slo_dict(self) -> dict[str, float]:
         """Returns the per-template override dict (may be empty)."""
         return dict(self._dict)
 
@@ -145,9 +167,7 @@ def slo_relative_violation(latency_s: float, slo_s: float) -> float:
     return max(0.0, (latency_s - slo_s) / slo_s)
 
 
-def slo_violation(
-    latency_s: float, slo_s: float, metric: SloMetric
-) -> float:
+def slo_violation(latency_s: float, slo_s: float, metric: SloMetric) -> float:
     """Unified SLO-violation accessor dispatching on *metric*."""
     if metric is SloMetric.BINARY:
         return float(violates_slo(latency_s, slo_s))

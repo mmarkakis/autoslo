@@ -75,16 +75,22 @@ def compute_isolated_latencies(
 # ------------------------------------------------------------------
 
 
+def _extract_template_id(tpcds_temp_and_q_idx: str) -> str:
+    """Extract template ID from a ``'042_001'`` style key."""
+    return tpcds_temp_and_q_idx.split("_")[0]
+
+
 def compute_slo_dict(
     latencies_df: pd.DataFrame,
     rpu: int,
     baseline_percentile: float = 50.0,
     multiplier: float = 2.5,
-) -> dict[str, float]:
+) -> dict[int, float]:
     """
-    Compute a per-``(template, query_index)`` SLO dictionary.
+    Compute a per-template SLO dictionary.
 
-    For each ``tpcds_temp_and_q_idx`` the SLO is:
+    All variants (query indices) of the same TPC-DS template are pooled
+    into a single sample.  The SLO is then:
 
     .. math::
         \\text{SLO} = k \\times \\text{percentile}(\\text{latency}, p)
@@ -99,18 +105,21 @@ def compute_slo_dict(
         multiplier: Multiplicative headroom factor *k*.
 
     Returns:
-        A dict mapping ``tpcds_temp_and_q_idx`` → SLO in seconds (rounded to
+        A dict mapping ``template_id`` (int) → SLO in seconds (rounded to
         3 decimal places).
     """
-    subset = latencies_df.loc[latencies_df["rpu"] == rpu]
+    subset = latencies_df.loc[latencies_df["rpu"] == rpu].copy()
     if subset.empty:
         raise ValueError(
             f"No isolated latencies found for rpu={rpu}. "
             f"Available RPUs: {sorted(latencies_df['rpu'].unique())}."
         )
 
+    subset["template_id"] = subset["tpcds_temp_and_q_idx"].map(
+        _extract_template_id
+    )
     baseline = (
-        subset.groupby("tpcds_temp_and_q_idx")["latency_s"]
+        subset.groupby("template_id")["latency_s"]
         .quantile(baseline_percentile / 100.0)
     )
     slo = baseline * multiplier
@@ -124,7 +133,7 @@ def dump_slo_table(
     multiplier: float,
     output_path: Optional[str] = None,
     workload_tag: str = "default",
-) -> dict[str, float]:
+) -> dict[int, float]:
     """
     Compute and persist an SLO table as a YAML file.
 
