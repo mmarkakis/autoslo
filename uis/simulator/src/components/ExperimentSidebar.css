@@ -8,6 +8,37 @@
   overflow: hidden;
 }
 
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid #2d3748;
+  flex-shrink: 0;
+}
+
+.sidebar-tab {
+  flex: 1;
+  padding: 0.55rem 0.5rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #718096;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.sidebar-tab:hover {
+  color: #a0aec0;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sidebar-tab.active {
+  color: #63b3ed;
+  border-bottom-color: #63b3ed;
+}
+
 .sidebar-header {
   padding: 0.75rem 1rem;
   font-size: 0.7rem;

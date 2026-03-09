@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from autoslo.api.routers import  simulator_router
+from autoslo.api.routers import runner_router, simulator_router
 
 
 def create_app(
@@ -21,6 +21,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.include_router(simulator_router.router, prefix="/api")
+    app.include_router(runner_router.router, prefix="/api")
 
     if ui_dir:
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")

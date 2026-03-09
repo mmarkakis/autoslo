@@ -12,6 +12,7 @@ from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.blueprints.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
 from autoslo.utils.billing import Billing
@@ -49,6 +50,12 @@ class Trace:
             "plan_node",
             "child_query_sequence",
         ],
+        "sys_serverless_usage": [
+            "start_time",
+            "end_time",
+            "charged_seconds",
+            "charged_extra_compute_for_automatic_optimization_seconds",
+        ],
     }
 
     REDSHIFT_ELAPSED_TIME_UNIT = "us"  # microseconds
@@ -63,7 +70,6 @@ class Trace:
         "svl_",
     ]
     REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
-
 
     def __init__(self, run_id: str):
         """
@@ -86,6 +92,8 @@ class Trace:
 
         # For caching.
         self._query_ids: list[str] = []
+        self._slo_config: dict | None = None
+        self._slo_resolver: SloResolver | None = None
 
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
@@ -110,10 +118,11 @@ class Trace:
                 # of the same run of the same chunk to each other. To maintain
                 # proper joins across the sys tables of each copy, we append
                 # a UUID to each query_id.
-                df["query_id"] = df.apply(
-                    lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
-                    axis=1,
-                )
+                if "query_id" in df.columns:
+                    df["query_id"] = df.apply(
+                        lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
+                        axis=1,
+                    )
 
                 if table_name == "sys_query_explain":
                     df = (
@@ -389,14 +398,13 @@ class Trace:
         if cluster_name not in self.seen_clusters:
             return 0.0
 
-        df = self._dfs["sys_query_history"][cluster_name]
-        query_intervals = [
-            Interval(begin=start.timestamp(), end=end.timestamp())
-            for start, end in zip(df["start_time"], df["end_time"])
-        ]
-        billed_s = Billing.billed_s(query_intervals=query_intervals)
-        rpu = Cluster.rpu_for_cluster_name(cluster_name)
-        return billed_s * Cluster.cost_per_second_for_rpu(rpu)
+        df = self._dfs["sys_serverless_usage"][cluster_name]
+        charged_seconds = df["charged_seconds"].sum()
+        if "extra_compute_for_automatic_optimization_seconds" in df.columns:
+            charged_seconds += df[
+                "charged_extra_compute_for_automatic_optimization_seconds"
+            ].sum()
+        return charged_seconds / 3600 * Cluster.US_EAST_1_COST_PER_RPU_HOUR
 
     @property
     def query_ids(self) -> list[str]:
@@ -460,9 +468,8 @@ class Trace:
         """
         try:
             idx = 1 if has_prepended_run_information else 0
-            raw_id = query_text.split("\\n")[idx][-11:-4].strip()
-            template_id, query_index = raw_id.split("_", 1)
-            return QueryTextId(f"{schema_name}#{template_id}#{query_index}")
+            raw_id = query_text.split("\\n")[idx][3:].strip()
+            return QueryTextId(raw_id)
 
         except Exception as e:
             raise ValueError(
@@ -488,11 +495,26 @@ class Trace:
         run_dir = os.path.join(pu.get_runs_path(), self.run_id)
         cache_path = os.path.join(run_dir, "query_text_ids.parquet")
 
-        # Read schema_name once — needed for both cache-miss and stale-check.
+        # Read schema_name — try run_params.yml (simulator convention),
+        # then runner_config.yml (runner convention).  schema_name is
+        # passed to extract_query_text_id but is not actually used when
+        # the comment already embeds the full schema#template#index
+        # format (as in runner runs).
         run_params_path = os.path.join(run_dir, "run_params.yml")
-        with open(run_params_path, "r") as f:
-            run_params = yaml.safe_load(f)
-        schema_name = run_params["schema_name"]
+        if os.path.exists(run_params_path):
+            with open(run_params_path, "r") as f:
+                run_params = yaml.safe_load(f)
+            schema_name = run_params["schema_name"]
+        else:
+            config_path = os.path.join(run_dir, "runner_config.yml")
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                schema_name = cfg.get("basic_config", {}).get(
+                    "schema_name", ""
+                )
+            else:
+                schema_name = ""
 
         if os.path.exists(cache_path):
             concatenated = cast(
@@ -506,7 +528,10 @@ class Trace:
             else:
                 # Re-attach the current UUID so joins against live query IDs work.
                 concatenated.index = pd.Index(
-                    [f"{q.split('#')[0]}#{self._uuid}" for q in concatenated.index]
+                    [
+                        f"{q.split('#')[0]}#{self._uuid}"
+                        for q in concatenated.index
+                    ]
                 )
                 return concatenated.map(QueryTextId)
 
@@ -525,9 +550,7 @@ class Trace:
             )
             df_with_query_text["query_text_id"] = df_with_query_text[
                 "query_text"
-            ].apply(
-                lambda t: Trace.extract_query_text_id(t, schema_name).value
-            )
+            ].apply(lambda t: Trace.extract_query_text_id(t, schema_name).value)
             s = df_with_query_text.set_index("query_id")["query_text_id"]
             series.append(s)
 
@@ -664,9 +687,7 @@ class Trace:
         for query_id, query_text_id in self.query_text_ids.items():
             query_id = cast(str, query_id)
             cached_plan = (
-                None
-                if ignore_caching
-                else QueryPlanRegistry.get(query_text_id)
+                None if ignore_caching else QueryPlanRegistry.get(query_text_id)
             )
             if cached_plan is not None:
                 d[query_id] = cached_plan
@@ -730,6 +751,141 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
+
+    # ------------------------------------------------------------------
+    # SLO configuration and compliance
+    # ------------------------------------------------------------------
+
+    @property
+    def slo_config(self) -> dict:
+        """Return the ``slo_config`` section from the run's
+        ``runner_config.yml``.
+
+        Returns an empty dict when no ``runner_config.yml`` is present
+        (e.g. for simulator-generated runs).  The result is lazily loaded
+        and cached for the lifetime of this :class:`Trace`.
+        """
+        if self._slo_config is None:
+            run_dir = os.path.join(pu.get_runs_path(), self._run_id)
+            config_path = os.path.join(run_dir, "runner_config.yml")
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                self._slo_config = cfg.get("slo_config", {})
+            else:
+                self._slo_config = {}
+        return self._slo_config
+
+    def make_resolver(
+        self,
+        override_slo_s: float | None = None,
+    ) -> SloResolver:
+        """Build a :class:`SloResolver` from this trace's SLO configuration.
+
+        When ``slo_dict_filename`` is present in the config the regular
+        ``SloResolver.__init__`` constructor is used so the YAML file in
+        ``data/slos/`` is actually loaded.  If an inline ``slo_dict`` is
+        provided instead, ``SloResolver.from_dict`` is used.
+
+        Parameters:
+            override_slo_s: If given, replaces the config's ``slo_s`` as
+                the default (fallback) SLO.
+
+        Returns:
+            A fully configured :class:`SloResolver`.
+        """
+        cfg = self.slo_config
+        default = (
+            override_slo_s
+            if override_slo_s is not None
+            else cfg.get("slo_s", 0.0)
+        )
+        slo_dict = cfg.get("slo_dict") or {}
+        slo_dict_filename = cfg.get("slo_dict_filename")
+
+        if slo_dict:
+            return SloResolver.from_dict(
+                default_slo_s=default,
+                slo_dict=slo_dict,
+                slo_dict_filename=slo_dict_filename,
+            )
+        elif slo_dict_filename:
+            return SloResolver(
+                default_slo_s=default,
+                slo_dict_filename=slo_dict_filename,
+            )
+        else:
+            return SloResolver.from_dict(default_slo_s=default, slo_dict={})
+
+    @property
+    def slo_resolver(self) -> SloResolver:
+        """Default :class:`SloResolver` for this trace (no overrides).
+
+        Lazily built and cached.  Call :meth:`make_resolver` directly
+        when you need a custom ``override_slo_s``.
+        """
+        if self._slo_resolver is None:
+            self._slo_resolver = self.make_resolver()
+        return self._slo_resolver
+
+    def slo_compliance(
+        self,
+        resolver: SloResolver | None = None,
+        query_text_ids: pd.Series | None = None,
+    ) -> pd.DataFrame:
+        """Compute per-query SLO compliance.
+
+        Parameters:
+            resolver:
+                A :class:`SloResolver` mapping query text IDs to SLO
+                thresholds.  Defaults to :attr:`slo_resolver` (built from
+                the run's ``runner_config.yml``).
+            query_text_ids:
+                A Series indexed by query_id with string or
+                :class:`QueryTextId` values.  Defaults to
+                :attr:`query_text_ids`.
+
+        Returns:
+            A DataFrame indexed by ``query_id`` with columns:
+            ``query_text_id``, ``latency_s``, ``slo_s``, ``is_aborted``,
+            ``violates_slo``, ``violation_amount_s``, ``violation_relative``.
+        """
+        if resolver is None:
+            resolver = self.slo_resolver
+        if query_text_ids is None:
+            query_text_ids = self.query_text_ids
+
+        latencies = self.latencies_s
+        aborted = self.was_aborted()
+
+        rows = []
+        for qid in self.query_ids:
+            lat = float(latencies[qid])
+            qtid = query_text_ids.get(qid)
+            qtid_str = qtid.value if isinstance(qtid, QueryTextId) else qtid
+            slo_s = resolver.resolve(qtid)
+            is_ab = bool(aborted.get(qid, False))
+            if is_ab:
+                viol_amt = 0.0
+                viol_rel = 0.0
+                violates = False
+            else:
+                viol_amt = max(0.0, lat - slo_s)
+                viol_rel = max(0.0, (lat - slo_s) / slo_s) if slo_s > 0 else 0.0
+                violates = lat > slo_s
+            rows.append(
+                {
+                    "query_id": qid,
+                    "query_text_id": qtid_str,
+                    "latency_s": lat,
+                    "slo_s": slo_s,
+                    "is_aborted": is_ab,
+                    "violates_slo": violates,
+                    "violation_amount_s": viol_amt,
+                    "violation_relative": viol_rel,
+                }
+            )
+        return pd.DataFrame.from_records(rows).set_index("query_id")
 
     def was_cached(self) -> pd.Series:
         """
@@ -892,7 +1048,7 @@ class Trace:
     def sys_query_explain_rows_per_query(self) -> dict[str, pd.DataFrame]:
         """
         Return a dictionary mapping query IDs to their corresponding rows in
-        SYS_QUERY_EXPLAIN. Ignore any rows corresponding to preempted child 
+        SYS_QUERY_EXPLAIN. Ignore any rows corresponding to preempted child
         queries as indicated by the error messages.
         """
         d: dict[str, pd.DataFrame] = {}

@@ -19,6 +19,7 @@ const METRIC_COLORS = {
 }
 
 export default function RunSummaryTable({
+    apiBase,
     experimentName,
     selectedRun,
     onSelectRun,
@@ -33,7 +34,7 @@ export default function RunSummaryTable({
         if (!experimentName) return
         setLoading(true)
         setError(null)
-        fetch(`/api/simulator/experiments/${encodeURIComponent(experimentName)}`)
+        fetch(`${apiBase}/experiments/${encodeURIComponent(experimentName)}`)
             .then((r) => {
                 if (!r.ok) throw new Error(`HTTP ${r.status}`)
                 return r.json()
@@ -148,6 +149,7 @@ export default function RunSummaryTable({
 
             {statsRunId && (
                 <TemplateStatsModal
+                    apiBase={apiBase}
                     experimentName={experimentName}
                     runId={statsRunId}
                     sloMetric={statsRunMetric}

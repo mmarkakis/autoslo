@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import GanttChart from './GanttChart.jsx'
 import TemplateStatsModal from './TemplateStatsModal.jsx'
 
@@ -20,19 +20,20 @@ const ACTIVE_METRIC_VALUE = {
   relative: (t) => t.violation_relative_mean,
 }
 
-export default function GanttViewer({ experimentName, runId }) {
+export default function GanttViewer({ apiBase, experimentName, runId }) {
   const [timeline, setTimeline] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showTemplateStats, setShowTemplateStats] = useState(false)
 
-  useEffect(() => {
+  const fetchTimeline = useCallback(() => {
     if (!experimentName || !runId) return
     setLoading(true)
     setError(null)
     setTimeline(null)
 
-    const url = `/api/simulator/runs/${encodeURIComponent(experimentName)}/${encodeURIComponent(runId)}/timeline`
+    const url = `${apiBase}/runs/${encodeURIComponent(experimentName)}/${encodeURIComponent(runId)}/timeline`
+
     fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -46,7 +47,11 @@ export default function GanttViewer({ experimentName, runId }) {
         setError(e.message)
         setLoading(false)
       })
-  }, [experimentName, runId])
+  }, [apiBase, experimentName, runId])
+
+  useEffect(() => {
+    fetchTimeline()
+  }, [fetchTimeline])
 
   if (loading) {
     return (
@@ -81,7 +86,7 @@ export default function GanttViewer({ experimentName, runId }) {
     <>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <div style={{ marginBottom: '0.5rem' }}>
-          {/* Line 1: queries + cost + template stats button */}
+          {/* Line 1: queries + cost */}
           <span style={ROW}>
             Num Queries: <span style={{ color: '#cbd5e0' }}>{timeline.total_queries}</span>
             {SEP}
@@ -134,7 +139,7 @@ export default function GanttViewer({ experimentName, runId }) {
         </span>
 
 
-        {/* Line 2: default SLO + template overrides */}
+        {/* Template stats button */}
         <span style={ROW}>
           
             <button
@@ -174,6 +179,7 @@ export default function GanttViewer({ experimentName, runId }) {
 
       {showTemplateStats && (
         <TemplateStatsModal
+          apiBase={apiBase}
           experimentName={experimentName}
           runId={runId}
           sloMetric={metric}

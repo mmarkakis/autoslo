@@ -26,6 +26,11 @@
   color: #a0aec0;
 }
 
+.breadcrumb-mode {
+  color: #63b3ed;
+  font-weight: 600;
+}
+
 .breadcrumb strong {
   color: #63b3ed;
 }

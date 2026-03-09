@@ -5,9 +5,20 @@ import GanttViewer from './components/GanttViewer.jsx'
 import './App.css'
 
 export default function App() {
+  const [mode, setMode] = useState('simulator') // "simulator" | "runner"
   const [selectedExperiment, setSelectedExperiment] = useState(null)
   const [openGanttTabs, setOpenGanttTabs] = useState([]) // [{ runId, runIndex }]
   const [activeTabKey, setActiveTabKey] = useState('summary') // 'summary' | runId
+
+  const apiBase = mode === 'runner' ? '/api/runner' : '/api/simulator'
+
+  function handleModeChange(newMode) {
+    if (newMode === mode) return
+    setMode(newMode)
+    setSelectedExperiment(null)
+    setOpenGanttTabs([])
+    setActiveTabKey('summary')
+  }
 
   function handleSelectExperiment(name) {
     setSelectedExperiment(name)
@@ -40,14 +51,19 @@ export default function App() {
   return (
     <div className="app-layout">
       <header className="app-header">
-        <h1>Simulator Viewer</h1>
+        <h1>AutoSLO Viewer</h1>
         {selectedExperiment && (
-          <span className="breadcrumb">{selectedExperiment}</span>
+          <span className="breadcrumb">
+            <span className="breadcrumb-mode">{mode === 'runner' ? 'Live' : 'Sim'}</span>
+            {' / '}{selectedExperiment}
+          </span>
         )}
       </header>
 
       <div className="app-body">
         <ExperimentSidebar
+          mode={mode}
+          onModeChange={handleModeChange}
           selected={selectedExperiment}
           onSelect={handleSelectExperiment}
         />
@@ -91,6 +107,7 @@ export default function App() {
               <div className="tab-content">
                 {activeTabKey === 'summary' && (
                   <RunSummaryTable
+                    apiBase={apiBase}
                     experimentName={selectedExperiment}
                     selectedRun={activeGanttRunId}
                     onSelectRun={handleSelectRun}
@@ -106,6 +123,7 @@ export default function App() {
                     }}
                   >
                     <GanttViewer
+                      apiBase={apiBase}
                       experimentName={selectedExperiment}
                       runId={runId}
                     />

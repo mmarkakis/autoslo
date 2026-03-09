@@ -37,6 +37,7 @@ function violationClass(value, colKey, activeCol) {
 }
 
 export default function TemplateStatsModal({
+  apiBase,
   experimentName,
   runId,
   sloMetric,
@@ -53,9 +54,8 @@ export default function TemplateStatsModal({
     if (!experimentName || !runId) return
     setLoading(true)
     setError(null)
-    fetch(
-      `/api/simulator/runs/${encodeURIComponent(experimentName)}/${encodeURIComponent(runId)}/template_stats`
-    )
+    const url = `${apiBase || '/api/simulator'}/runs/${encodeURIComponent(experimentName)}/${encodeURIComponent(runId)}/template_stats`
+    fetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()

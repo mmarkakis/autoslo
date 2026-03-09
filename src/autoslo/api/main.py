@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from autoslo.api.routers import (
+    runner_router,
     simulator_router,
 )
 
@@ -18,6 +19,7 @@ app.add_middleware(
 
 # Mount routers
 app.include_router(simulator_router.router, prefix="/api", tags=["simulator"])
+app.include_router(runner_router.router, prefix="/api", tags=["runner"])
 
 
 @app.get("/")
