@@ -312,6 +312,8 @@ class WorkloadSimulator:
                 iconq_model=(
                     IconqModel.load(iconq_model_id) if iconq_model_id else None
                 ),
+                routing_policy=routing_policy,
+                slo_threshold=slo_threshold,
             )
         elif autoscaling_policy_type == "noop":
             autoscaling_policy = NoOpPolicy()

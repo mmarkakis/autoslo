@@ -229,6 +229,7 @@ class WorkloadRunner:
         raw_metric: str = _s("slo_config", "slo_metric", "relative")
         slo_metric = SloMetric(raw_metric)
         slo_dict_filename: Optional[str] = _s("slo_config", "slo_dict_filename")
+        slo_threshold: float = float(_s("slo_config", "slo_threshold", 0.0))
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
         # ── routing policy ───────────────────────────────────────────────
@@ -302,6 +303,8 @@ class WorkloadRunner:
                 iconq_model=(
                     IconqModel.load(iconq_model_id) if iconq_model_id else None
                 ),
+                routing_policy=routing_policy,
+                slo_threshold=slo_threshold,
             )
         elif autoscaling_policy_type == "noop":
             autoscaling_policy = NoOpPolicy()

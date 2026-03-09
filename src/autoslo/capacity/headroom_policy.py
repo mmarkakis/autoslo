@@ -29,8 +29,13 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from autoslo.blueprints.cluster import Cluster
+from autoslo.blueprint_selection.slo_resolver import (
+    slo_violation as _slo_violation,
+)
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingAction,
     AutoscalingPolicy,
@@ -41,6 +46,7 @@ from autoslo.routing.routing_core import (
     ClusterSnapshot,
     RoutingResult,
 )
+from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
 from autoslo.workload_definition.query import Query, SloMetric
 
@@ -48,6 +54,68 @@ if TYPE_CHECKING:
     from autoslo.blueprint_selection.slo_resolver import SloResolver
     from autoslo.models.iconq_model import IconqModel
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+
+
+# ---------------------------------------------------------------------------
+# Lightweight virtual cluster for counterfactual replay
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _VirtualCluster:
+    """Mutable per-cluster state used during counterfactual replay."""
+
+    rpu: int
+    cost_per_second: float
+    active_queries: dict[str, Query] = field(default_factory=dict)
+    latencies: dict[str, float] = field(default_factory=dict)
+    completion_times: dict[str, float] = field(default_factory=dict)
+    billing_window_start_s: float | None = None
+
+    def to_snapshot(self, name: str) -> ClusterSnapshot:
+        """Build an immutable :class:`ClusterSnapshot` from current state."""
+        return ClusterSnapshot(
+            cluster_name=name,
+            cost_per_second=self.cost_per_second,
+            active_queries=list(self.active_queries.values()),
+            billing_window_start_s=self.billing_window_start_s,
+        )
+
+    def expire_before(self, time_s: float) -> None:
+        """Remove queries whose estimated completion is ≤ *time_s*."""
+        expired = [
+            qid
+            for qid, ct in self.completion_times.items()
+            if ct <= time_s
+        ]
+        for qid in expired:
+            self.active_queries.pop(qid, None)
+            self.latencies.pop(qid, None)
+            self.completion_times.pop(qid, None)
+        # Close billing window when empty.
+        if not self.active_queries:
+            self.billing_window_start_s = None
+
+    def add_query(
+        self,
+        query: Query,
+        returned_latencies: dict[str, float],
+    ) -> None:
+        """Register *query* and refresh latencies for the cluster.
+
+        *returned_latencies* comes from
+        :meth:`RoutingPolicy.score_counterfactual` and already respects
+        the ``max(current, predicted)`` monotonicity invariant.
+        """
+        self.active_queries[query.query_id] = query
+        if self.billing_window_start_s is None:
+            self.billing_window_start_s = query.rel_start_time_s
+        # Update latencies and completion times for all affected queries.
+        for qid, lat in returned_latencies.items():
+            self.latencies[qid] = lat
+            q = self.active_queries.get(qid)
+            if q is not None:
+                self.completion_times[qid] = q.rel_start_time_s + lat
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
@@ -76,6 +144,16 @@ class HeadroomPolicy(AutoscalingPolicy):
         Optional :class:`~autoslo.models.iconq_model.IconqModel` for
         counterfactual RPU selection.  When *None*, the smallest
         allowed RPU is used.
+    routing_policy :
+        Optional :class:`~autoslo.routing.routing_policy.RoutingPolicy`
+        reference used for counterfactual routing replay during RPU
+        selection.  When *None*, falls back to stage-model-only sizing.
+    slo_threshold :
+        Maximum acceptable value for the aggregate SLO-violation metric
+        during counterfactual replay.  Interpretation depends on
+        *slo_metric*: for ``BINARY`` it is the tolerated violation
+        **rate** (fraction); for ``ABSOLUTE_S`` / ``RELATIVE`` it is
+        the maximum aggregate violation sum.  Default 0.0.
     routing_window_s :
         Duration (seconds) of the rolling routing-decision window
         retained for counterfactual RPU selection.
@@ -95,6 +173,8 @@ class HeadroomPolicy(AutoscalingPolicy):
         min_cluster_lifetime_s: float = 1200.0,
         allowed_rpu_sizes: Optional[list[int]] = None,
         iconq_model: Optional["IconqModel"] = None,
+        routing_policy: Optional[RoutingPolicy] = None,
+        slo_threshold: float = 0.0,
         routing_window_s: float = 120.0,
         min_window_observations: int = 3,
         *args: Any,
@@ -110,6 +190,8 @@ class HeadroomPolicy(AutoscalingPolicy):
             allowed_rpu_sizes if allowed_rpu_sizes is not None else [8]
         )
         self._iconq_model = iconq_model
+        self._routing_policy = routing_policy
+        self._slo_threshold = slo_threshold
         self._routing_window_s = routing_window_s
         self._min_window_observations = min_window_observations
 
@@ -120,6 +202,10 @@ class HeadroomPolicy(AutoscalingPolicy):
         self._routing_window: deque[
             tuple[Query, float, float, ClusterSnapshot | None]
         ] = deque()
+        self._window_initial_snapshots: dict[str, ClusterSnapshot] | None = (
+            None
+        )
+        self._window_initial_latencies: dict[str, float] | None = None
 
     # ------------------------------------------------------------------
     # Properties (tunable by Layer 3 / PolicyTuner)
@@ -180,6 +266,8 @@ class HeadroomPolicy(AutoscalingPolicy):
         self._pending_count = 0
         self._cluster_ready_time_s.clear()
         self._routing_window.clear()
+        self._window_initial_snapshots = None
+        self._window_initial_latencies = None
 
     def on_cluster_ready(
         self,
@@ -198,6 +286,8 @@ class HeadroomPolicy(AutoscalingPolicy):
         # are based only on evidence gathered *after* this cluster
         # is available to absorb load.
         self._routing_window.clear()
+        self._window_initial_snapshots = None
+        self._window_initial_latencies = None
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -226,6 +316,16 @@ class HeadroomPolicy(AutoscalingPolicy):
         # on_cluster_ready fires, so that all future evidence is
         # gathered *after* the new cluster can absorb load.
         if self._pending_count == 0:
+            # Capture initial pool state on the first entry of a fresh
+            # window (after on_cluster_ready or on_attach cleared it).
+            if not self._routing_window:
+                self._window_initial_snapshots = (
+                    self._pool.build_snapshots()
+                )
+                self._window_initial_latencies = dict(
+                    current_latencies or {}
+                )
+
             self._routing_window.append(
                 (result.query, result.predicted_latency_s, current_time_s, None)
             )
@@ -397,24 +497,224 @@ class HeadroomPolicy(AutoscalingPolicy):
     # RPU selection
     # ------------------------------------------------------------------
 
+
     def _select_rpu(self, current_time_s: float) -> int:
         """Choose the RPU size for a new cluster via counterfactual
         routing replay.
 
-        For each candidate RPU (ascending), predict whether the
-        pressure-causing queries in the recent routing window would
-        have met their SLOs on a hypothetical empty cluster of that
-        size.  Returns the smallest RPU that clears all violations,
-        or the largest available RPU if none suffices.
+        For each candidate RPU (ascending), replay all queries from the
+        routing window through the routing policy as if a new cluster of
+        that RPU had been available from the window's start.  Returns
+        the smallest RPU whose counterfactual SLO-compliance metric
+        is within ``slo_threshold``, or the RPU that gets closest to
+        the threshold if none qualifies.
 
-        Falls back to ``self._allowed_rpu_sizes[0]`` (smallest) when
-        no latency model or routing window is available.
+        Falls back to the legacy stage-model-only sizing when no
+        ``routing_policy`` is available, and to the smallest RPU when
+        no model or routing window exists.
 
         Parameters
         ----------
         current_time_s :
             Current time (wall-clock or simulated) in seconds, used for
             routing window management and structured logging.
+        """
+        # -- Guard: prerequisites for counterfactual replay ---------------
+        can_replay = (
+            self._routing_policy is not None
+            and self._iconq_model is not None
+            and self._routing_window
+            and self._window_initial_snapshots is not None
+        )
+
+        if not can_replay:
+            return self._select_rpu_legacy(current_time_s)
+
+        # -- Counterfactual replay per candidate RPU ----------------------
+        best_rpu: int | None = None
+        best_metric: float = float("inf")
+
+        for rpu in self._allowed_rpu_sizes:
+            metric = self._counterfactual_replay(rpu, current_time_s)
+
+            if _has_structured():
+                emit_structured(
+                    {
+                        "timestamp": current_time_s,
+                        "event_type": "rpu_counterfactual",
+                        "source": "headroom_policy",
+                        "candidate_rpu": rpu,
+                        "metric": metric,
+                        "slo_threshold": self._slo_threshold,
+                    }
+                )
+
+            if metric <= self._slo_threshold:
+                return rpu  # smallest acceptable
+            if metric < best_metric:
+                best_metric = metric
+                best_rpu = rpu
+
+        # No RPU fully satisfies the threshold — pick closest.
+        return best_rpu if best_rpu is not None else self._allowed_rpu_sizes[-1]
+
+    # ------------------------------------------------------------------
+    # Counterfactual replay
+    # ------------------------------------------------------------------
+
+    def _counterfactual_replay(
+        self,
+        candidate_rpu: int,
+        current_time_s: float,
+    ) -> float:
+        """Replay the routing window with a hypothetical new cluster of
+        *candidate_rpu* and return the aggregate SLO-violation metric.
+
+        Lower is better.  The metric's semantics depend on
+        ``self._slo_metric``:
+
+        * ``BINARY``     – violation **rate** (fraction of queries).
+        * ``ABSOLUTE_S`` – total violation seconds.
+        * ``RELATIVE``   – total relative violation.
+        """
+        assert self._routing_policy is not None
+        assert self._iconq_model is not None
+        assert self._window_initial_snapshots is not None
+
+        # 1. Initialise virtual clusters from stored snapshots.
+        virtuals: dict[str, _VirtualCluster] = {}
+        initial_lats = self._window_initial_latencies or {}
+
+        for cn, snap in self._window_initial_snapshots.items():
+            rpu = self._pool.get_rpu(cn)
+            vc = _VirtualCluster(
+                rpu=rpu,
+                cost_per_second=snap.cost_per_second,
+                billing_window_start_s=snap.billing_window_start_s,
+            )
+            for q in snap.active_queries:
+                lat = initial_lats.get(q.query_id, -1.0)
+                vc.active_queries[q.query_id] = q
+                vc.latencies[q.query_id] = lat
+                if lat > 0:
+                    vc.completion_times[q.query_id] = (
+                        q.rel_start_time_s + lat
+                    )
+            virtuals[cn] = vc
+
+        # 2. Add the hypothetical new cluster (empty).
+        hyp_name = "__hypothetical__"
+        virtuals[hyp_name] = _VirtualCluster(
+            rpu=candidate_rpu,
+            cost_per_second=Cluster.cost_per_second_for_rpu(candidate_rpu),
+        )
+
+        # 3. Ensure window queries have stage predictions for the
+        #    candidate RPU (needed by the IconQ featuriser).
+        window_queries = self._augment_window_queries(candidate_rpu)
+
+        # 4. Sequential replay.
+        violations: list[float] = []
+
+        for query, _orig_lat, arrival_time_s in window_queries:
+            # a. Expire completed queries on all virtual clusters.
+            for vc in virtuals.values():
+                vc.expire_before(arrival_time_s)
+
+            # b. Build snapshots and RPU map for scoring.
+            snapshots = {cn: vc.to_snapshot(cn) for cn, vc in virtuals.items()}
+            cluster_rpus = {cn: vc.rpu for cn, vc in virtuals.items()}
+            current_lats = {}
+            for vc in virtuals.values():
+                current_lats.update(vc.latencies)
+
+            # c. Route via the routing policy's counterfactual scorer.
+            result = self._routing_policy.score_counterfactual(
+                query=query,
+                arrival_time_s=arrival_time_s,
+                snapshots=snapshots,
+                cluster_rpus=cluster_rpus,
+                current_latencies=current_lats,
+            )
+
+            if result is None:
+                # Policy cannot produce a score — skip this query.
+                continue
+
+            chosen_cn, returned_lats = result
+
+            # d. Update virtual state for the chosen cluster.
+            virtuals[chosen_cn].add_query(query, returned_lats)
+
+            # e. Record SLO violation for the incoming query.
+            pred_lat = returned_lats.get(query.query_id, -1.0)
+            slo_s = self._slo_resolver.resolve(query.query_text_id)
+            violations.append(
+                _slo_violation(pred_lat, slo_s, self._slo_metric)
+            )
+
+        if not violations:
+            return 0.0
+
+        # 5. Aggregate metric.
+        total_violation = sum(violations)
+        if self._slo_metric is SloMetric.BINARY:
+            return total_violation / len(violations)  # violation rate
+        return total_violation  # absolute or relative sum
+
+    def _augment_window_queries(
+        self,
+        candidate_rpu: int,
+    ) -> list[tuple[Query, float, float]]:
+        """Return window queries augmented with stage predictions for
+        *candidate_rpu*.
+
+        Returns a list of ``(query, original_predicted_latency, arrival_time)``
+        sorted by arrival time.  If a query already has a stage prediction for
+        *candidate_rpu*, it is returned as-is; otherwise a new ``Query`` is
+        created with the additional entry.
+        """
+        assert self._iconq_model is not None
+        result: list[tuple[Query, float, float]] = []
+
+        for query, pred_lat, arrival_time, _snap in self._routing_window:
+            if candidate_rpu in query.stage_predictions_per_rpu:
+                result.append((query, pred_lat, arrival_time))
+            else:
+                # Compute missing stage prediction.
+                sp = (
+                    self._iconq_model.stage_model
+                    .predict_from_query_text_id(
+                        {query.query_id: query.query_text_id},
+                        cluster_rpu=candidate_rpu,
+                    )[query.query_id].overall_mean_s()
+                )
+                new_preds = dict(query.stage_predictions_per_rpu)
+                new_preds[candidate_rpu] = sp
+                augmented = Query(
+                    query_id=query.query_id,
+                    query_text_id=query.query_text_id,
+                    featurization=query.featurization,
+                    abs_start_time=query.abs_start_time,
+                    rel_start_time_s=query.rel_start_time_s,
+                    repetition_id=query.repetition_id,
+                    stage_predictions_per_rpu=new_preds,
+                )
+                result.append((augmented, pred_lat, arrival_time))
+
+        # Sort by arrival time (window deque is already in order, but be safe).
+        result.sort(key=lambda x: x[2])
+        return result
+
+    # ------------------------------------------------------------------
+    # Legacy RPU selection (stage-model-only fallback)
+    # ------------------------------------------------------------------
+
+    def _select_rpu_legacy(self, current_time_s: float) -> int:
+        """Original stage-model-only RPU selection.
+
+        Used as a fallback when ``routing_policy`` is not available for
+        counterfactual replay.
         """
         if self._iconq_model is None or not self._routing_window:
             if _has_structured():

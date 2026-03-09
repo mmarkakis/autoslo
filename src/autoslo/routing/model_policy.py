@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.routing_core import (
+    ClusterSnapshot,
     PlacementScore,
     RoutingCore,
     RoutingResult,
@@ -231,3 +232,120 @@ class ModelPolicy(RoutingPolicy):
             featurization=featurization,
             stage_predictions_per_rpu={cluster_rpu: stage_pred},
         )
+
+    # ------------------------------------------------------------------
+    # Counterfactual scoring
+    # ------------------------------------------------------------------
+
+    def score_counterfactual(
+        self,
+        query: Query,
+        arrival_time_s: float,
+        snapshots: dict[str, ClusterSnapshot],
+        cluster_rpus: dict[str, int],
+        current_latencies: dict[str, float],
+    ) -> tuple[str, dict[str, float]] | None:
+        """Score *query* against virtual cluster snapshots using the full
+        IconQ scoring pipeline.
+
+        This mirrors :meth:`RoutingCore.score_query_on_clusters` but works
+        against caller-provided virtual state rather than a live
+        :class:`ManagedClusterPool`.  Used by
+        :class:`~autoslo.capacity.headroom_policy.HeadroomPolicy` for
+        counterfactual RPU selection.
+
+        The RPU lookup on the interaction featuriser is temporarily
+        overridden to cover hypothetical cluster names that don't exist
+        in the real pool.
+        """
+        from autoslo.nn.concurrent_query_dataset import (  # noqa: PLC0415
+            ConcurrentQueryDataset,
+        )
+
+        if not snapshots:
+            return None
+
+        featurizer = self._iconq_model.iconq_interaction_featurizer
+        orig_lookup = featurizer._rpu_lookup
+
+        # Override RPU lookup so virtual / hypothetical clusters resolve.
+        featurizer.set_rpu_lookup(lambda cn: cluster_rpus[cn])
+        try:
+            return self._score_counterfactual_impl(
+                query=query,
+                arrival_time_s=arrival_time_s,
+                snapshots=snapshots,
+                cluster_rpus=cluster_rpus,
+                current_latencies=current_latencies,
+            )
+        finally:
+            featurizer._rpu_lookup = orig_lookup
+
+    def _score_counterfactual_impl(
+        self,
+        query: Query,
+        arrival_time_s: float,
+        snapshots: dict[str, ClusterSnapshot],
+        cluster_rpus: dict[str, int],
+        current_latencies: dict[str, float],
+    ) -> tuple[str, dict[str, float]] | None:
+        """Inner implementation of counterfactual scoring (RPU lookup
+        already set)."""
+        from autoslo.nn.concurrent_query_dataset import (  # noqa: PLC0415
+            ConcurrentQueryDataset,
+        )
+
+        # -- Build neighbour maps (all-vs-all per cluster) ----------------
+        cluster_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
+        for cn, snap in snapshots.items():
+            all_queries = list(snap.active_queries) + [query]
+            # Use the *same* list object so ConcurrentQueryDataset can
+            # hit the fast all-vs-all featurisation path.
+            cluster_to_base_to_neighbors[cn] = {
+                q: all_queries for q in all_queries
+            }
+
+        # -- Before-state per cluster -------------------------------------
+        before: dict[str, tuple[float, float]] = {}
+        for cn, snap in snapshots.items():
+            before[cn] = RoutingCore.compute_before_state(
+                snapshot=snap,
+                current_time_s=arrival_time_s,
+                slo_resolver=self._slo_resolver,
+                slo_metric=self._slo_metric,
+                latencies=current_latencies,
+            )
+
+        # -- Batched model predictions ------------------------------------
+        dataset = ConcurrentQueryDataset.build_from_query_groups(
+            iconq_interaction_featurizer=(
+                self._iconq_model.iconq_interaction_featurizer
+            ),
+            cluster_to_base_to_neighbors=cluster_to_base_to_neighbors,
+        )
+        all_predictions = self._iconq_model.predict_from_dataset(dataset)
+
+        # -- Score each cluster -------------------------------------------
+        scores: list[PlacementScore] = []
+        for cn, predictions in all_predictions.items():
+            if cn not in before or cn not in snapshots:
+                continue
+            bc, bv = before[cn]
+            score = RoutingCore.score_placement(
+                query=query,
+                snapshot=snapshots[cn],
+                predictions=predictions,
+                current_time_s=arrival_time_s,
+                slo_resolver=self._slo_resolver,
+                slo_metric=self._slo_metric,
+                before_cost=bc,
+                before_slo_violation=bv,
+                current_latencies=current_latencies,
+            )
+            scores.append(score)
+
+        if not scores:
+            return None
+
+        best = RoutingCore.pick_best(scores, tolerance=self.TOLERANCE_S)
+        return (best.cluster_name, best.latencies)

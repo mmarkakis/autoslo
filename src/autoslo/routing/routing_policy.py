@@ -14,7 +14,7 @@ import itertools
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from autoslo.routing.routing_core import RoutingResult
+from autoslo.routing.routing_core import ClusterSnapshot, RoutingResult
 from autoslo.utils.class_with_factory import ClassWithFactory
 from autoslo.workload_definition.query import Query, QueryTextId
 
@@ -125,6 +125,45 @@ class RoutingPolicy(ClassWithFactory):
         Override to perform one-time setup that requires the pool
         (e.g. injecting an RPU-lookup callback into a featuriser).
         """
+
+    def score_counterfactual(
+        self,
+        query: Query,
+        arrival_time_s: float,
+        snapshots: dict[str, ClusterSnapshot],
+        cluster_rpus: dict[str, int],
+        current_latencies: dict[str, float],
+    ) -> tuple[str, dict[str, float]] | None:
+        """Route *query* against virtual cluster snapshots for counterfactual
+        replay.
+
+        Used by :class:`~autoslo.capacity.headroom_policy.HeadroomPolicy` to
+        evaluate hypothetical RPU configurations without a live pool.
+
+        Parameters
+        ----------
+        query :
+            The incoming query to route.
+        arrival_time_s :
+            Simulated arrival time of *query*.
+        snapshots :
+            ``{cluster_name: ClusterSnapshot}`` representing the virtual state
+            of each cluster (existing + hypothetical).
+        cluster_rpus :
+            ``{cluster_name: rpu}`` for every cluster in *snapshots*.
+        current_latencies :
+            ``{query_id: predicted_latency_s}`` for all currently-active
+            queries across all virtual clusters.
+
+        Returns
+        -------
+        tuple[str, dict[str, float]] | None
+            ``(chosen_cluster_name, latencies_on_chosen_cluster)`` where
+            *latencies* maps ``query_id → predicted_latency`` for every query
+            on the chosen cluster (including *query*).  Returns ``None`` if
+            the policy cannot produce counterfactual scores.
+        """
+        return None
 
 
 # -----------------------------------------------------------------------
