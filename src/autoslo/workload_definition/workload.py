@@ -231,8 +231,12 @@ class Workload:
             str(workload_df["query_text_id"].nunique()),
         )
         stats_table.add_row(
-            "Time Range",
+            "Absolute Time Range",
             f"{workload_df['abs_start_time'].min()} to {workload_df['abs_start_time'].max()}",
+        )
+        stats_table.add_row(
+            "Relative Time Range (seconds)",
+            f"{workload_df['rel_start_time_s'].min()} to {workload_df['rel_start_time_s'].max()}",
         )
         stats_table.add_row(
             "Mean Inter-Arrival Time (seconds)",

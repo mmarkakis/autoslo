@@ -7,14 +7,14 @@ import pandas as pd
 import pyarrow.parquet as pq
 import yaml
 
-# FIXME: bring these queries in eventually
-QUERIES_PATH = "/home/markakis/tpc-ds-generator/queries/1721657313/redshift"
 
 AUTOSLO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")
 )
 
 REDSET_RAW_PATH = "/home/markakis/redset"
+
+QUERIES_PATH = os.path.join(AUTOSLO_ROOT, "data", "__query_texts")
 
 
 def get_redset_raw_path() -> str:
@@ -93,6 +93,7 @@ def get_blueprint_dicts_from_config() -> dict[str, dict]:
         blueprint_dicts = yaml.safe_load(f)
     return blueprint_dicts
 
+
 def add_blueprint_to_config(
     blueprint_name: str, cluster_names: list[str]
 ) -> None:
@@ -109,6 +110,7 @@ def add_blueprint_to_config(
     config_path = os.path.join(AUTOSLO_ROOT, "config", "blueprints.yml")
     with open(config_path, "w") as f:
         yaml.safe_dump(blueprint_dicts, f, sort_keys=False)
+
 
 def get_data_path() -> str:
     """
@@ -167,11 +169,13 @@ def list_composite_workloads() -> list[str]:
         d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))
     )
 
+
 def get_workloads_dir() -> str:
     """
     Return the absolute path to the workloads directory.
     """
     return os.path.join(get_data_path(), "__workloads")
+
 
 def get_conn_info_path() -> str:
     """

@@ -97,6 +97,7 @@ class WorkloadRunner:
         self.workload.set_rel_start_times_from_zero()
         if rescale_factor is not None:
             self.workload.rescale_rel_start_times(rescale_factor)
+        self.workload.print_summary()
         self.workload_df = self.workload.df
         self.schema = Schema.load(
             schema_name or self.workload.schema_name,
@@ -573,13 +574,11 @@ class WorkloadRunner:
         log_file_path = os.path.join(run_dir, "run.log")
         logger = logging.getLogger()
         logger.setLevel(logging.INFO)
-        # Remove file handlers from previous runs but keep any console
-        # handlers that were set up by the caller (e.g. basicConfig in
-        # __main__).  This avoids silently swallowing log output when
-        # the runner is embedded in a larger script.
+        # Remove all existing handlers (console and file alike) so that
+        # log records are emitted only to the run-specific file and the
+        # structured log — never to the caller's console.
         for h in list(logger.handlers):
-            if isinstance(h, logging.FileHandler):
-                logger.removeHandler(h)
+            logger.removeHandler(h)
         file_handler = logging.FileHandler(log_file_path)
         file_handler.setLevel(logging.INFO)
         formatter = logging.Formatter(
@@ -860,7 +859,7 @@ class WorkloadRunner:
 
         try:
             for _, row in self.workload_df.iterrows():
-                query_id = row["query_id"]
+                query_id = str(row["query_id"])
                 query_text_id = str(row["query_text_id"])
                 rel_start_time_s = row["rel_start_time_s"]
 

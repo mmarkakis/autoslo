@@ -7,8 +7,12 @@ import rich
 
 import autoslo.utils.paths as pu
 
+from autoslo.workload_definition.query import QueryTextId
 
-def main(workload_dir: str) -> None:
+
+def main(
+    workload_dir: str, new_q_per_template_min: int, new_q_per_template_max: int
+) -> None:
     # Read in the workload queries from 'queries.json', either in the workload_dir
     # or in a subdir starting with `matching_` or `generation`.
     queries_json_path = os.path.join(workload_dir, "queries.json")
@@ -38,32 +42,43 @@ def main(workload_dir: str) -> None:
         queries = json.load(f)
 
     # Read in records.
+    q_per_template_width = new_q_per_template_max - new_q_per_template_min + 1
     records = []
     for query in queries:
         if query["query_type"] != "select":
             continue
+        original_q_per_template = int(query["q_in_template"])
+        reassigned_q_per_template = (
+            original_q_per_template % q_per_template_width
+        ) + new_q_per_template_min
+        combined = "#".join(
+            [
+                "ext_tpcds1000",
+                f"{int(query['template']):03d}",
+                f"{reassigned_q_per_template:03d}",
+            ]
+        )
         record = {
             "query_id": query["redset_query"]["query_id"],
             "abs_start_time_str": query["arrival_timestamp"],
-            "query_template": int(query["template"]),
-            "query_num_within_template": int(query["q_in_template"]),
+            "query_text_id": combined,
+            "repetition_id": query["query_hash"],
         }
 
         records.append(record)
     df = pd.DataFrame.from_records(records)
 
     # Convert as needed and save to Parquet.
-    df["workload_id"] = os.path.basename(workload_dir)
     df["abs_start_time"] = pd.to_datetime(df["abs_start_time_str"])
     df = df.drop(columns=["abs_start_time_str"])
-    df["tpcds_temp_and_q_idx"] = df[
-        ["query_template", "query_num_within_template"]
-    ].apply(
-        lambda row: f"{row['query_template']:03d}_{row['query_num_within_template']:03d}",
-        axis=1,
-    )
     output_path = os.path.join(workload_dir, "workload.parquet")
     df.to_parquet(output_path, index=False)
+    output_path_2 = os.path.join(
+        pu.get_workloads_dir(),
+        "ext_tpcds1000",
+        f"{os.path.basename(workload_dir)}.parquet",
+    )
+    df.to_parquet(output_path_2, index=False)
 
     # Pretty print some stats about the workload in a table.
     rich.print(
@@ -74,11 +89,16 @@ def main(workload_dir: str) -> None:
     stats_table.add_column("Value", style="magenta")
     stats_table.add_row("Total Queries", str(len(df)))
     stats_table.add_row(
-        "Unique Query Templates", str(df["query_template"].nunique())
+        "Unique Query Templates",
+        str(
+            df["query_text_id"]
+            .apply(lambda x: QueryTextId(x).template_id)
+            .nunique()
+        ),
     )
     stats_table.add_row(
         "Unique Template+Query Index",
-        str(df["tpcds_temp_and_q_idx"].nunique()),
+        str(df["query_text_id"].nunique()),
     )
     stats_table.add_row(
         "Time Range",
@@ -97,10 +117,9 @@ def main(workload_dir: str) -> None:
     )
     rich.print(stats_table)
 
-    # Also save a "warm-up" workload that includes 3 copies of each **unique **
-    # query, in a random order. The absolute start times are fixed to the same
-    # value, so that we run this workload in a closed-loop manner.
-    unique_queries = df.drop_duplicates(subset=["tpcds_temp_and_q_idx"])
+    # Also save a "plan_collection" workload that contains each unique query once,
+    # so that we can collect their
+    unique_queries = df.drop_duplicates(subset=["query_text_id"])
     warmup_df = pd.concat([unique_queries] * 3, ignore_index=True)
     warmup_df = warmup_df.sample(
         frac=1, random_state=42, replace=False
@@ -108,6 +127,12 @@ def main(workload_dir: str) -> None:
     warmup_df["abs_start_time"] = pd.Timestamp("2024-01-01 00:00:00")
     warmup_output_path = os.path.join(workload_dir, "warmup_workload.parquet")
     warmup_df.to_parquet(warmup_output_path, index=False)
+    warmup_output_path_2 = os.path.join(
+        pu.get_workloads_dir(),
+        "ext_tpcds1000",
+        f"{os.path.basename(workload_dir)}_warmup.parquet",
+    )
+    warmup_df.to_parquet(warmup_output_path_2, index=False)
 
     # Print some stats about the warm-up workload as well.
     rich.print(
@@ -118,11 +143,16 @@ def main(workload_dir: str) -> None:
     warmup_stats_table.add_column("Value", style="magenta")
     warmup_stats_table.add_row("Total Queries", str(len(warmup_df)))
     warmup_stats_table.add_row(
-        "Unique Query Templates", str(warmup_df["query_template"].nunique())
+        "Unique Query Templates",
+        str(
+            warmup_df["query_text_id"]
+            .apply(lambda x: QueryTextId(x).template_id)
+            .nunique()
+        ),
     )
     warmup_stats_table.add_row(
         "Unique Template+Query Index",
-        str(warmup_df["tpcds_temp_and_q_idx"].nunique()),
+        str(warmup_df["query_text_id"].nunique()),
     )
     rich.print(warmup_stats_table)
 
@@ -130,31 +160,25 @@ def main(workload_dir: str) -> None:
     # query and save them in a separate file.
     query_text_records = []
     for _, row in unique_queries.iterrows():
-        query_template = row["query_template"]
-        template_str = f"query{query_template:03d}"
-        query_num_within_template = row["query_num_within_template"]
+        schema_name = QueryTextId(row["query_text_id"]).schema_name
         query_text_file = os.path.join(
             pu.QUERIES_PATH,
-            template_str,
-            f"{template_str}_{query_num_within_template:03d}.sql",
+            schema_name,
+            f"{row['query_text_id']}.sql",
         )
         with open(query_text_file, "r") as f:
             query_text = f.read()
         query_text_records.append(
             {
-                "query_template": query_template,
-                "query_num_within_template": query_num_within_template,
-                "tpcds_temp_and_q_idx": row["tpcds_temp_and_q_idx"],
+                "query_text_id": row["query_text_id"],
                 "query_text": query_text,
             }
         )
     query_text_df = pd.DataFrame.from_records(query_text_records)
-    query_text_df = query_text_df.drop_duplicates(
-        subset=["tpcds_temp_and_q_idx"]
+    query_text_df = query_text_df.drop_duplicates(subset=["query_text_id"])
+    query_text_df = query_text_df.sort_values(by=["query_text_id"]).reset_index(
+        drop=True
     )
-    query_text_df = query_text_df.sort_values(
-        by=["query_template", "query_num_within_template"]
-    ).reset_index(drop=True)
     query_text_output_path = os.path.join(workload_dir, "query_texts.parquet")
     query_text_df.to_parquet(query_text_output_path, index=False)
 
@@ -169,10 +193,22 @@ if __name__ == "__main__":
         required=True,
         help="Name of the Redbench workload.",
     )
+    parser.add_argument(
+        "--new_q_per_template_min",
+        type=int,
+        default=1,
+        help="Minimum query per template in the new workload.",
+    )
+    parser.add_argument(
+        "--new_q_per_template_max",
+        type=int,
+        default=3,
+        help="Maximum query per template in the new workload.",
+    )
     args = parser.parse_args()
 
     workload_name = args.workload_name
     workload_dir = os.path.join(
-        pu.get_data_path(), "redset_workloads", workload_name
+        pu.get_data_path(), "redset_executable_workloads", workload_name
     )
-    main(workload_dir)
+    main(workload_dir, args.new_q_per_template_min, args.new_q_per_template_max)

@@ -251,6 +251,7 @@ class HeadroomPolicy(AutoscalingPolicy):
         pressure = (
             result.score is not None and result.score.marginal_slo_violation > 0
         )
+        pressure = False
 
         # -- Emit structured headroom record ---------------------------
         if _has_structured():

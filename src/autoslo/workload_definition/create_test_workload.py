@@ -7,7 +7,7 @@ import autoslo.utils.paths as pu
 from autoslo.workload_definition.workload import Workload
 
 records = []
-gen_start_time = datetime.now()
+gen_start_time = datetime.fromisoformat("2026-01-01T00:00:00")
 
 templates = [1,3,5,6,7]
 n = len(templates)
