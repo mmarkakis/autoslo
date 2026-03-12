@@ -93,7 +93,9 @@ class WorkloadRunner:
             workload_name=workload_name, schema_name=schema_name
         )
         if abs_start_time_start is not None or abs_start_time_end is not None:
-            self.workload.slice_by_abs_time(abs_start_time_start, abs_start_time_end)
+            self.workload.slice_by_abs_time(
+                abs_start_time_start, abs_start_time_end
+            )
         self.workload.set_rel_start_times_from_zero()
         if rescale_factor is not None:
             self.workload.rescale_rel_start_times(rescale_factor)
@@ -221,7 +223,9 @@ class WorkloadRunner:
         abs_start_time_end: str | None = wl_cfg.get("abs_start_time_end")
         rescale_factor_raw = wl_cfg.get("rescale_factor")
         rescale_factor: float | None = (
-            float(rescale_factor_raw) if rescale_factor_raw is not None else None
+            float(rescale_factor_raw)
+            if rescale_factor_raw is not None
+            else None
         )
 
         # ── SLO ──────────────────────────────────────────────────────────
@@ -457,9 +461,7 @@ class WorkloadRunner:
             # Derive query-id and time ranges for the remaining tables.
             min_qid = int(history_df["query_id"].min())
             max_qid = int(history_df["query_id"].max())
-            min_time = history_df["start_time"].min() - pd.Timedelta(
-                minutes=1
-            )
+            min_time = history_df["start_time"].min() - pd.Timedelta(minutes=1)
             max_time = history_df["end_time"].max() + pd.Timedelta(minutes=3)
 
             # 2–5. remaining system tables.
@@ -473,9 +475,7 @@ class WorkloadRunner:
                     "sys_query_detail",
                 ),
                 (
-                    SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(
-                        min_time, max_time
-                    ),
+                    SYS_EXTERNAL_QUERY_DETAIL_QUERY.format(min_time, max_time),
                     "sys_external_query_detail",
                 ),
                 (
@@ -492,9 +492,7 @@ class WorkloadRunner:
             except Exception:
                 pass
 
-        logging.info(
-            "Stats collection complete for cluster %s.", cluster_name
-        )
+        logging.info("Stats collection complete for cluster %s.", cluster_name)
 
     def _query_to_parquet(
         self,
@@ -837,9 +835,9 @@ class WorkloadRunner:
                 }
             )
 
-        # Add a 30-second buffer between the reference timestamp and the first 
+        # Add a 30-second buffer between the reference timestamp and the first
         # query's scheduled start time for setup.
-        async_reference_ts = self._async_ts() + 30 
+        async_reference_ts = self._async_ts() + 30
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
 
         tasks: list[asyncio.Task] = []
@@ -867,7 +865,9 @@ class WorkloadRunner:
                 rel_start_time_s = row["rel_start_time_s"]
 
                 # Resolve the SQL text from the registry (not timing-sensitive).
-                query_text = QueryTextRegistry.get(self.schema.name, query_text_id)
+                query_text = QueryTextRegistry.get(
+                    self.schema.name, query_text_id
+                )
                 if query_text is None:
                     logging.warning(
                         f"No query text found for schema '{self.schema.name}', "
@@ -928,9 +928,7 @@ class WorkloadRunner:
                         ),
                     )
                 except Exception:
-                    logging.exception(
-                        "Failed to tear down cluster %s.", cn
-                    )
+                    logging.exception("Failed to tear down cluster %s.", cn)
 
         logging.info(f"Run finished at {self._ts()}.")
 
