@@ -123,6 +123,8 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         self._max_capacity_ratio = max_capacity_ratio
         self._price_performance_target_level = price_performance_target_level
 
+        self._seq_counter = 0
+
     # ------------------------------------------------------------------
     # Internal AWS helpers (thin wrappers — logic copied from
     # workgroup_creation_benchmarking.py to avoid import-path issues)
@@ -163,7 +165,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
                 "workgroupName": workgroup_name,
                 "namespaceName": namespace_name,
                 "publiclyAccessible": True,
-                 "maxCapacity": max_rpu,
+                "maxCapacity": max_rpu,
             }
             if self._price_performance_target_level is None:
                 kwargs["baseCapacity"] = base_rpu
@@ -422,13 +424,16 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
     # ClusterProvisioner interface
     # ------------------------------------------------------------------
 
-    def _workgroup_name(self, rpu: int, ts: int) -> str:
+    def _workgroup_and_namespace_names(
+        self, rpu: int, ts: int
+    ) -> tuple[str, str]:
         """Generate a DNS-compatible, globally unique workgroup name."""
-        return f"autoslo-wg-{rpu}rpu-{ts}"
+        seq = self._seq_counter
+        self._seq_counter += 1
 
-    def _namespace_name(self, rpu: int, ts: int) -> str:
-        """Generate a DNS-compatible, globally unique namespace name."""
-        return f"autoslo-ns-{rpu}rpu-{ts}"
+        wg_name = f"autoslo-wg-{rpu}rpu-{ts}-{seq}"
+        ns_name = f"autoslo-ns-{rpu}rpu-{ts}-{seq}"
+        return wg_name, ns_name
 
     def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
         """Create a Redshift Serverless workgroup and return a ready
@@ -451,8 +456,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             If any provisioning step fails.
         """
         ts = int(time.time())
-        wg_name = self._workgroup_name(rpu, ts)
-        ns_name = self._namespace_name(rpu, ts)
+        wg_name, ns_name = self._workgroup_and_namespace_names(rpu, ts)
         spin_up_start = time.time()
 
         logger.info("Spinning up workgroup %s with %d RPU ...", wg_name, rpu)

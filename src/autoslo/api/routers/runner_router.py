@@ -74,7 +74,7 @@ def _rpu_for_runner_cluster(cluster_name: str) -> int:
     """Extract RPU from runner cluster names.
 
     Supports:
-    - ``autoslo-wg-{rpu}rpu-{ts}``  (live runner convention)
+    - ``autoslo-wg-{rpu}rpu-{ts}-{seq}``  (live runner convention)
     - ``cluster_{rpu}_{ts}_{seq}``   (simulator convention)
     """
     # Try autoslo-wg-{rpu}rpu-{ts} first
