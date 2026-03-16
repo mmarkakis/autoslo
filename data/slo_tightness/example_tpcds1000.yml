@@ -1,0 +1,54 @@
+# SLO tightness table for TPC-DS 1000 workload.
+#
+# Per-template SLO tightness: how close the isolated prediction is to the SLO.
+#   tightness = isolated_prediction_s / slo_s
+#   tightness >= 0:  low = plenty of headroom, >= 1 = at or past SLO.
+#
+# Built by: scripts/build_slo_tightness.py
+# Source: StageModel predictions + SloResolver
+#
+schema_name: ext_tpcds1000
+reference_rpu: 16
+stage_model_id: "1771539369"
+slo_source: ext_tpcds1000_rpu16_p50_k1.5.yml
+
+entries:
+  "1":
+    isolated_prediction_s: 1.82
+    slo_s: 3.23
+    tightness: 0.5635
+
+  "14":
+    isolated_prediction_s: 3.20
+    slo_s: 5.00
+    tightness: 0.64
+
+  "42":
+    isolated_prediction_s: 2.10
+    slo_s: 8.00
+    tightness: 0.2625
+
+  "67":
+    isolated_prediction_s: 8.10
+    slo_s: 10.00
+    tightness: 0.81
+
+  "78":
+    isolated_prediction_s: 6.50
+    slo_s: 7.00
+    tightness: 0.9286
+
+  "83":
+    isolated_prediction_s: 4.20
+    slo_s: 12.00
+    tightness: 0.35
+
+  "95":
+    isolated_prediction_s: 9.80
+    slo_s: 10.00
+    tightness: 0.98
+
+  "99":
+    isolated_prediction_s: 5.50
+    slo_s: 11.86
+    tightness: 0.536

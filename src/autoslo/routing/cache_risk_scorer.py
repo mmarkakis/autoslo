@@ -42,8 +42,9 @@ class FutureQueryMix:
         ``IconqQueryFeaturization[2*m:]``.
     slo_tightness :
         Per-template SLO tightness in [0, 1] (K,).
-        ``1 − max(0, slo − isolated_pred) / slo``.
-        Tight templates (close to 1) are penalised more.
+        ``isolated_prediction / slo``.
+        Values >= 1 mean the query already meets or exceeds its SLO
+        in isolation; higher values are penalised more.
     """
 
     template_ids: list[str]
