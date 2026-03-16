@@ -64,6 +64,13 @@ class PlacementScore:
     """Maps query_id → predicted latency for every query involved
     (the incoming query plus all active co-runners)."""
 
+    cache_risk: float = 0.0
+    """Cache-risk penalty set by :class:`CacheAwarePolicy` (default 0)."""
+
+    adjusted_slo_violation: float = 0.0
+    """``marginal_slo_violation + λ·cache_risk``.  When zero (default),
+    :meth:`RoutingCore.pick_best` falls back to ``marginal_slo_violation``."""
+
 
 @dataclass
 class RoutingResult:
@@ -287,11 +294,18 @@ class RoutingCore:
         if not scores:
             raise ValueError("Cannot pick from an empty list of scores.")
 
+        def _effective_slo(s: PlacementScore) -> float:
+            return (
+                s.adjusted_slo_violation
+                if s.adjusted_slo_violation != 0.0
+                else s.marginal_slo_violation
+            )
+
         best = scores[0]
         for candidate in scores[1:]:
             cmp = RoutingCore._slo_cmp_with_tolerance(
-                candidate.marginal_slo_violation,
-                best.marginal_slo_violation,
+                _effective_slo(candidate),
+                _effective_slo(best),
                 tolerance,
             )
             if cmp < 0 or (

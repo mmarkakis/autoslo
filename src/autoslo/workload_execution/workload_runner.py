@@ -27,6 +27,7 @@ from autoslo.routing.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
+from autoslo.routing.cache_aware_policy import CacheAwarePolicy
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
 from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
@@ -192,7 +193,7 @@ class WorkloadRunner:
         basic_config        : schema_name, iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold,
                               slo_dict_filename
-        routing_config      : routing_policy ("model" | "round_robin")
+        routing_config      : routing_policy ("model" | "round_robin" | "cache_aware")
         managed_cluster_pool_config : initial_rpus, allowed_rpu_sizes,
                                 spin_up_delay_s
         autoscaling_config  : autoscaling_policy ("headroom" | "noop"),
@@ -251,10 +252,25 @@ class WorkloadRunner:
             )
         elif policy_type == "round_robin":
             routing_policy = RoundRobinPolicy()
+        elif policy_type == "cache_aware":
+            routing_policy = CacheAwarePolicy(
+                iconq_model_id=iconq_model_id,
+                default_slo_s=slo_s,
+                slo_overrides=slo_resolver.slo_dict,
+                slo_metric=slo_metric,
+                forecast_distribution_path=routing_cfg["forecast_distribution_path"],
+                slo_tightness_path=routing_cfg["slo_tightness_path"],
+                cache_risk_lambda=float(routing_cfg.get("cache_risk_lambda", 0.0)),
+                cache_decay_strategy=routing_cfg.get("cache_decay_strategy", "exponential"),
+                cache_decay_params=routing_cfg.get("cache_decay_params", {}),
+                n_table_dims=routing_cfg.get("n_table_dims"),
+                m_operator_dims=routing_cfg.get("m_operator_dims"),
+                fallback_tightness=float(routing_cfg.get("fallback_tightness", 0.5)),
+            )
         else:
             raise ValueError(
                 f"Unknown routing_policy {policy_type!r}. "
-                "Expected one of: 'model', 'round_robin'."
+                "Expected one of: 'model', 'round_robin', 'cache_aware'."
             )
 
         # ── cluster pool ─────────────────────────────────────────────────
