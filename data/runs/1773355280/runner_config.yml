@@ -1,0 +1,42 @@
+### Basic Configuration
+basic_config:
+  schema_name: ext_tpcds1000
+  experiment_name: motivation_tables
+  overwrite_experiment: true
+  simulator_run_id: double_8_roundrobin
+  iconq_model_id: "1771539369"
+
+### Workload Configuration
+workload_config:
+  workload_name: motivation_workload_tables
+
+### SLO Configuration
+slo_config:
+  slo_s: 30.0
+  slo_metric: relative
+  slo_threshold: 1
+
+### Cluster Pool Configuration
+managed_cluster_pool_config:
+  initial_rpus:
+    - 8
+    - 8
+
+### Query Routing Configuration
+routing_config:
+  routing_policy: round_robin
+
+### Autoscaling Configuration
+autoscaling_config:
+  autoscaling_policy: noop
+
+### Output Configuration
+output_config:
+  verbose: true
+  export_video: false
+
+### Runner Configuration (live execution only)
+runner_config:
+  maxconns: 1000
+  closed_loop: true
+  aws_config_path: data/__run_configs/aws.yml

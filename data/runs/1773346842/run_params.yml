@@ -1,0 +1,10 @@
+run_id: '1773346842'
+workload_name: motivation_workload_tables
+num_queries: 34
+schema_name: ext_tpcds1000
+search_path: ext_tpcds1000
+initial_rpus:
+- 8
+routing_policy: {}
+maxconns: 1000
+closed_loop: false
