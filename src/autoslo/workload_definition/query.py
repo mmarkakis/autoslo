@@ -19,21 +19,24 @@ class SloMetric(Enum):
     ABSOLUTE_S = "absolute_s"
     RELATIVE = "relative"
 
+
 QueryFeaturization: TypeAlias = list[float]
+
 
 @dataclass(frozen=True)
 class QueryTextId:
-    """Opaque identifier for a query's text. Includes 3 pound-separated parts: 
+    """Opaque identifier for a query's text. Includes 3 pound-separated parts:
     - The schema name (e.g. "ext_tpcds1000")
     - The template ID (e.g. "42")
     - The query index within the template (e.g. "001")
     For example, "ext_tpcds1000#42#001".
     """
+
     value: str
 
     def __str__(self):
         return self.value
-    
+
     @property
     def schema_name(self) -> str:
         """Extracts the schema name from the query text ID."""
@@ -43,12 +46,11 @@ class QueryTextId:
     def template_id(self) -> str:
         """Extracts the template ID from the query text ID."""
         return self.value.split("#")[1]
-    
+
     @property
     def query_index(self) -> str:
         """Extracts the query index from the query text ID."""
         return self.value.split("#")[2]
-
 
 
 @dataclass(frozen=True, eq=False)
@@ -105,7 +107,9 @@ class Query:
             object.__setattr__(
                 self,
                 "abs_start_time",
-                datetime.fromtimestamp(self.rel_start_time_s, tz=timezone.utc),
+                datetime.fromtimestamp(
+                    float(self.rel_start_time_s), tz=timezone.utc
+                ),
             )
         elif self.rel_start_time_s < 0:
             object.__setattr__(

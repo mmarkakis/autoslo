@@ -32,7 +32,12 @@ class Workload:
     not need to call ``super().__init__()``.
     """
 
-    def __init__(self, workload_name: str, schema_name: str) -> None:
+    def __init__(
+        self,
+        workload_name: str,
+        schema_name: str,
+        df: pd.DataFrame | None = None,
+    ) -> None:
         """
         Parameters
         ----------
@@ -40,23 +45,34 @@ class Workload:
             The name of the workload.
         schema_name:
             The name of the schema.
+        df:
+            Optional DataFrame to use directly instead of loading from disk.
+            Must contain all columns listed in :data:`WORKLOAD_SCHEMA_COLUMNS`.
+            When *None* (default), the workload is loaded from the standard
+            file path under the ``__workloads`` data directory.
 
         Raises
         ------
         ValueError
-            If *df* is missing any of the required columns from
-            :data:`WORKLOAD_SCHEMA_COLUMNS`.
+            If the DataFrame (loaded or supplied) is missing any of the
+            required columns from :data:`WORKLOAD_SCHEMA_COLUMNS`.
+        FileNotFoundError
+            If *df* is *None* and no parquet file exists at the expected path.
         """
         self._workload_name = workload_name
         self._schema_name = schema_name
-        path = os.path.join(
-            pu.get_data_path(),
-            "__workloads",
-            schema_name,
-            f"{workload_name}.parquet",
-        )
 
-        self._df = pd.read_parquet(path)
+        if df is not None:
+            self._df = df.copy()
+        else:
+            path = os.path.join(
+                pu.get_data_path(),
+                "__workloads",
+                schema_name,
+                f"{workload_name}.parquet",
+            )
+            self._df = pd.read_parquet(path)
+
         for col in WORKLOAD_SCHEMA_COLUMNS:
             if col not in self._df.columns:
                 raise ValueError(
@@ -207,6 +223,45 @@ class Workload:
 
         self._df = self._df[mask].reset_index(drop=True)
         self._queries_cache = None
+
+    def save(self, overwrite: bool = False) -> Path:
+        """Persist the workload DataFrame to the standard file path.
+
+        The file is written to
+        ``<data_root>/__workloads/<schema_name>/<workload_name>.parquet``.
+        Parent directories are created automatically.
+
+        Parameters
+        ----------
+        overwrite:
+            If *False* (default) and the file already exists, raises
+            :class:`FileExistsError`.  Set to *True* to overwrite.
+
+        Returns
+        -------
+        Path
+            The path of the written file.
+
+        Raises
+        ------
+        FileExistsError
+            If a file already exists at the target path and *overwrite* is
+            *False*.
+        """
+        path = (
+            Path(pu.get_data_path())
+            / "__workloads"
+            / self._schema_name
+            / f"{self._workload_name}.parquet"
+        )
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"Workload file already exists at {path}. "
+                "Pass overwrite=True to replace it."
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._df.to_parquet(path, index=False)
+        return path
 
     def print_summary(self) -> None:
         """Print a summary of the workload using rich."""
