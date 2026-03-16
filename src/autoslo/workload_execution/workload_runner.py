@@ -403,6 +403,11 @@ class WorkloadRunner:
     def _on_live_spin_up(self, reason: str, rpu: int) -> None:
         """Autoscaler callback: spin up a new cluster."""
         name = self.pool.request_spin_up(rpu, self._ts())
+        # The live provisioner blocks until the cluster is AVAILABLE,
+        # so it is already READY at this point.  Notify the autoscaler
+        # to decrement pending_count and record the ready time.
+        ready_ts = self._ts()
+        self.autoscaler.notify_cluster_ready(name, rpu, ready_ts)
         logging.info(
             "Autoscaler spin-up: %s (rpu=%d, cluster=%s)", reason, rpu, name
         )
