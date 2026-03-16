@@ -60,10 +60,6 @@ class CacheAwarePolicy(ModelPolicy):
     cache_decay_params :
         Strategy-specific keyword arguments forwarded to
         :func:`~autoslo.routing.cluster_cache_state.build_decay_strategy`.
-    n_table_dims :
-        Number of table dimensions in the featurization (``_n``).
-    m_operator_dims :
-        Number of operator pairs (``_m``).
     fallback_tightness :
         Default tightness for templates missing from the tightness table.
     """
@@ -80,8 +76,6 @@ class CacheAwarePolicy(ModelPolicy):
         cache_risk_lambda: float = 0.0,
         cache_decay_strategy: str = "exponential",
         cache_decay_params: Optional[dict[str, Any]] = None,
-        n_table_dims: Optional[int] = None,
-        m_operator_dims: Optional[int] = None,
         fallback_tightness: float = 0.5,
     ) -> None:
         super().__init__(
@@ -95,10 +89,10 @@ class CacheAwarePolicy(ModelPolicy):
         self._decay_strategy_kind = cache_decay_strategy
         self._decay_params = cache_decay_params or {}
 
-        # Derive dims from the loaded model when not explicitly provided.
+        # Derive dims from the loaded model's featurizer.
         featurizer = self._iconq_model.iconq_query_featurizer
-        self._m = m_operator_dims if m_operator_dims is not None else featurizer._m
-        self._n = n_table_dims if n_table_dims is not None else featurizer._n
+        self._m = featurizer._m
+        self._n = featurizer._n
 
         # Forecast loader (pre-computes table vectors per template).
         self._forecast_loader = ForecastDistributionLoader(

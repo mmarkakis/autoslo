@@ -97,8 +97,6 @@ class TestConfigFactoryConstructsCacheAwarePolicy:
             "cache_risk_lambda": 2.5,
             "cache_decay_strategy": "sliding_window",
             "cache_decay_params": {"max_queries": 10},
-            "n_table_dims": N_TABLE,
-            "m_operator_dims": M_OPERATOR,
             "fallback_tightness": 0.3,
         }
 
@@ -120,8 +118,6 @@ class TestConfigFactoryConstructsCacheAwarePolicy:
                 cache_risk_lambda=float(routing_cfg.get("cache_risk_lambda", 0.0)),
                 cache_decay_strategy=routing_cfg.get("cache_decay_strategy", "exponential"),
                 cache_decay_params=routing_cfg.get("cache_decay_params", {}),
-                n_table_dims=routing_cfg.get("n_table_dims"),
-                m_operator_dims=routing_cfg.get("m_operator_dims"),
                 fallback_tightness=float(routing_cfg.get("fallback_tightness", 0.5)),
             )
 
@@ -147,8 +143,6 @@ class TestConfigFactoryConstructsCacheAwarePolicy:
                 forecast_distribution_path=fp,
                 slo_tightness_path=tp,
                 cache_risk_lambda=0.0,
-                n_table_dims=N_TABLE,
-                m_operator_dims=M_OPERATOR,
             )
 
         assert isinstance(policy, ModelPolicy)
@@ -173,8 +167,6 @@ class TestEndToEndRouting:
                 cache_risk_lambda=1.0,
                 cache_decay_strategy="exponential",
                 cache_decay_params={"alpha": 0.5},
-                n_table_dims=N_TABLE,
-                m_operator_dims=M_OPERATOR,
             )
 
         pool = MagicMock()

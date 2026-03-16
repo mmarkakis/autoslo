@@ -161,8 +161,6 @@ def policy(mock_model, yaml_paths):
             cache_risk_lambda=1.0,
             cache_decay_strategy="exponential",
             cache_decay_params={"alpha": 0.5},
-            n_table_dims=N_TABLE,
-            m_operator_dims=M_OPERATOR,
         )
 
 
@@ -206,8 +204,6 @@ class TestLambdaZeroMatchesModelPolicy:
                 forecast_distribution_path=fp,
                 slo_tightness_path=tp,
                 cache_risk_lambda=0.0,
-                n_table_dims=N_TABLE,
-                m_operator_dims=M_OPERATOR,
             )
 
         # c0 has lower marginal SLO violation.
