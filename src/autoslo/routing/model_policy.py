@@ -2,11 +2,6 @@
 model_policy.py
 ---------------
 Model-based routing policy using :mod:`autoslo.routing.routing_core`.
-
-This policy replaces the scoring logic that lived inside ``RAutoSLO``.
-All mutable bookkeeping (active queries, neighbours, billing windows) is
-delegated to a :class:`ClusterStateTracker`; this class owns only the
-**IconQ model** and **SLO resolver**.
 """
 
 from __future__ import annotations
