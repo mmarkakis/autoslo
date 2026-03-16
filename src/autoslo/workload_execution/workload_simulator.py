@@ -94,6 +94,7 @@ class WorkloadSimulator:
         abs_start_time_start: str | None = None,
         abs_start_time_end: str | None = None,
         rescale_factor: float | None = None,
+        closed_loop: bool = False,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -101,6 +102,7 @@ class WorkloadSimulator:
         self._slo_s = slo_s
         self._slo_dict_filename = slo_dict_filename
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
+        self._closed_loop = closed_loop
 
         # Store the routing policy (caller is responsible for constructing it).
         self._routing_policy = routing_policy
@@ -189,7 +191,8 @@ class WorkloadSimulator:
         Nested sections
         ---------------
         workload_config     : workload_name, abs_start_time_start,
-                              abs_start_time_end, rescale_factor
+                              abs_start_time_end, rescale_factor,
+                              closed_loop
         basic_config        : schema_name, experiment_name,
                               simulator_run_id, overwrite_experiment,
                               iconq_model_id
@@ -231,6 +234,7 @@ class WorkloadSimulator:
         rescale_factor: float | None = (
             float(rescale_factor_raw) if rescale_factor_raw is not None else None
         )
+        closed_loop: bool = bool(wl_cfg.get("closed_loop", False))
 
         # ── SLO ──────────────────────────────────────────────────────────────
         slo_s: float = _s("slo_config", "slo_s", 10.0)
@@ -378,6 +382,7 @@ class WorkloadSimulator:
             abs_start_time_start=abs_start_time_start,
             abs_start_time_end=abs_start_time_end,
             rescale_factor=rescale_factor,
+            closed_loop=closed_loop,
         )
 
     # ------------------------------------------------------------------
@@ -458,6 +463,7 @@ class WorkloadSimulator:
                 "export_video": self._export_video,
                 "video_frame_duration": self._video_frame_duration,
                 "seed": self._seed,
+                "closed_loop": self._closed_loop,
             }
             yaml.safe_dump(d, f, sort_keys=False)
 
@@ -776,15 +782,25 @@ class WorkloadSimulator:
 
         total_queries = len(queries)
 
+        closed_loop_clock = 0.0  # tracks effective wall-clock in closed-loop
+
         for i, query in tqdm(enumerate(queries), total=total_queries):
 
-            self._advance_simulated_time(query.rel_start_time_s)
+            # In closed-loop mode the next query starts only after the
+            # previous one finishes, ignoring the original inter-arrival times.
+            start_s = (
+                closed_loop_clock
+                if self._closed_loop
+                else query.rel_start_time_s
+            )
 
-            self._cleanup_completed_queries_up_to(query.rel_start_time_s)
+            self._advance_simulated_time(start_s)
+
+            self._cleanup_completed_queries_up_to(start_s)
 
             self._log_if_verbose(
                 {
-                    "timestamp": query.rel_start_time_s,
+                    "timestamp": start_s,
                     "event_type": "arrival",
                     "query_id": query.query_id,
                     "query_text_id": query.query_text_id.value,
@@ -796,7 +812,7 @@ class WorkloadSimulator:
             result = self._router.route_query_with_predictions(
                 query_id=query.query_id,
                 query_text_id=str(query.query_text_id),
-                start_time_s=query.rel_start_time_s,
+                start_time_s=start_s,
             )
 
             # If the policy did not produce a PlacementScore (e.g. RoundRobinPolicy),
@@ -808,7 +824,7 @@ class WorkloadSimulator:
                     query_id=query.query_id,
                     query_text_id=query.query_text_id,
                     cluster_name=result.cluster_name,
-                    start_time_s=query.rel_start_time_s,
+                    start_time_s=start_s,
                 )
                 if computed_score is not None:
                     result = RoutingResult(
@@ -820,7 +836,7 @@ class WorkloadSimulator:
             # Feed routing result to the autoscaler.
             if self._autoscaler is not None:
                 self._autoscaler.on_routing_result(
-                    result, query.rel_start_time_s, self._predicted_latencies
+                    result, start_s, self._predicted_latencies
                 )
 
             selected_cluster_name = result.cluster_name
@@ -833,7 +849,7 @@ class WorkloadSimulator:
 
             self._log_if_verbose(
                 {
-                    "timestamp": query.rel_start_time_s,
+                    "timestamp": start_s,
                     "event_type": "routing",
                     "query_id": query.query_id,
                     "query_text_id": query.query_text_id.value,
@@ -841,7 +857,7 @@ class WorkloadSimulator:
                     "old_latency_s": None,
                     "raw_model_latency_s": None,
                     "latency_s": self_latency_s,
-                    "end_time_s": query.rel_start_time_s + self_latency_s,
+                    "end_time_s": start_s + self_latency_s,
                 }
             )
 
@@ -863,7 +879,7 @@ class WorkloadSimulator:
                 updated_latency_s = max(old_latency_s, predicted_latency_s)
                 self._log_if_verbose(
                     {
-                        "timestamp": query.rel_start_time_s,
+                        "timestamp": start_s,
                         "event_type": "latency_update",
                         "query_id": q.query_id,
                         "query_text_id": q.query_text_id.value,
@@ -875,6 +891,10 @@ class WorkloadSimulator:
                     }
                 )
                 self._predicted_latencies[q.query_id] = updated_latency_s
+
+            # Advance the closed-loop clock past this query's completion.
+            if self._closed_loop:
+                closed_loop_clock = start_s + self_latency_s
 
         all_completed = [
             q

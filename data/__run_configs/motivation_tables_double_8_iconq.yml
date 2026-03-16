@@ -9,6 +9,7 @@ basic_config:
 ### Workload Configuration
 workload_config:
   workload_name: motivation_workload_tables
+  closed_loop: true
 
 ### SLO Configuration
 slo_config:
@@ -39,5 +40,4 @@ output_config:
 ### Runner Configuration (live execution only)
 runner_config:
   maxconns: 1000
-  closed_loop: true
   aws_config_path: data/__run_configs/aws.yml

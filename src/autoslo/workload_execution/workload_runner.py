@@ -189,7 +189,8 @@ class WorkloadRunner:
         Sections
         --------
         workload_config     : workload_name, abs_start_time_start,
-                              abs_start_time_end, rescale_factor
+                              abs_start_time_end, rescale_factor,
+                              closed_loop
         basic_config        : schema_name, iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold,
                               slo_dict_filename
@@ -200,7 +201,7 @@ class WorkloadRunner:
                               eta_crit, idle_periods_before_tear_down,
                               capacity_poll_interval_s,
                               min_cluster_lifetime_s
-        runner_config       : provisioner, maxconns, closed_loop
+        runner_config       : provisioner, maxconns
         """
         path = Path(config_path)
         with open(path) as f:
@@ -228,6 +229,7 @@ class WorkloadRunner:
             if rescale_factor_raw is not None
             else None
         )
+        closed_loop: bool = bool(wl_cfg.get("closed_loop", False))
 
         # ── SLO ──────────────────────────────────────────────────────────
         slo_s: float = _s("slo_config", "slo_s", 10.0)
@@ -359,7 +361,6 @@ class WorkloadRunner:
             provisioner_config = None
 
         maxconns: int = int(runner_cfg.get("maxconns", 1000))
-        closed_loop: bool = bool(runner_cfg.get("closed_loop", False))
 
         # ── capacity checkpoints ─────────────────────────────────────────
         raw_checkpoints: list[dict] = (
