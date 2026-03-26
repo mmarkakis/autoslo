@@ -1,4 +1,3 @@
-import argparse
 import asyncio
 import logging
 import os
@@ -9,52 +8,51 @@ from pathlib import Path
 from typing import Optional, Union
 
 import pandas as pd
+import psycopg2
 import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
     CapacityCheckpoint,
     NoOpPolicy,
 )
-from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
-from autoslo.capacity.headroom_policy import HeadroomPolicy
-from autoslo.models.iconq_model import IconqModel
+from autoslo.capacity.cluster_provisioner import (
+    ClusterProvisioner,
+    SimulatedProvisioner,
+)
 from autoslo.routing.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
-from autoslo.routing.cache_aware_policy import CacheAwarePolicy
-from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
-from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
-import psycopg2
-
-from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-from autoslo.workload_execution.conn_utils import ConnWithSetup
-from autoslo.workload_execution.run_stats_collector import (
-    SYS_QUERY_HISTORY_QUERY,
-    SYS_QUERY_EXPLAIN_QUERY,
-    SYS_QUERY_DETAIL_QUERY,
-    SYS_EXTERNAL_QUERY_DETAIL_QUERY,
-    SYS_SERVERLESS_USAGE_QUERY,
-)
+from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.utils.structured_log import (
     LOGGER_NAME,
     emit_structured,
     setup_structured_logging,
 )
-from autoslo.workload_definition.query import QueryTextId, SloMetric
+from autoslo.workload_definition.query import SloMetric
+from autoslo.workload_execution.conn_utils import ConnWithSetup
+from autoslo.workload_execution.run_stats_collector import (
+    SYS_EXTERNAL_QUERY_DETAIL_QUERY,
+    SYS_QUERY_DETAIL_QUERY,
+    SYS_QUERY_EXPLAIN_QUERY,
+    SYS_QUERY_HISTORY_QUERY,
+    SYS_SERVERLESS_USAGE_QUERY,
+)
 
 _has_structured = lambda: bool(
     logging.getLogger(LOGGER_NAME).handlers
 )  # noqa: E731
-from autoslo.workload_definition.workload import Workload
+import autoslo.utils.config as cfgu
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
+from autoslo.workload_definition.workload import Workload
 
 
 class WorkloadRunner:
@@ -107,6 +105,7 @@ class WorkloadRunner:
         )
 
         # Build provisioner.
+        provisioner: ClusterProvisioner
         if provisioner_config is not None:
             prov_cfg = dict(provisioner_config)
             prov_type = prov_cfg.pop("type")
@@ -179,12 +178,33 @@ class WorkloadRunner:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_config(cls, config_path: str | Path) -> "WorkloadRunner":
+    def from_config(
+        cls, config_path: str | Path, **overrides: object
+    ) -> "WorkloadRunner":
         """Create a :class:`WorkloadRunner` from a YAML config file.
 
-        Reads the same nested-section format as
-        :meth:`WorkloadSimulator.from_config` with an additional optional
-        ``runner_config`` section for live-execution settings.
+        Parameters
+        ----------
+        config_path : str | Path
+            Path to the YAML configuration file.
+        **overrides
+            Dot-delimited keys mapped to override values, e.g.
+            ``slo_config.slo_s=5.0``.  Applied on top of the parsed YAML
+            before the config dict is interpreted.
+        """
+        path = Path(config_path)
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+        cfgu.apply_overrides(cfg, overrides)
+        return cls.from_config_dict(cfg, config_path=config_path)
+
+    @classmethod
+    def from_config_dict(
+        cls,
+        cfg: dict,
+        config_path: str | Path | None = None,
+    ) -> "WorkloadRunner":
+        """Create a :class:`WorkloadRunner` from an already-loaded config dict.
 
         Sections
         --------
@@ -203,20 +223,14 @@ class WorkloadRunner:
                               min_cluster_lifetime_s
         runner_config       : provisioner, maxconns
         """
-        path = Path(config_path)
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
-
-        # Helper: read from named section first, fall back to root.
-        def _s(section_key: str, key: str, default=None):
-            section = cfg.get(section_key)
-            if section and key in section:
-                return section[key]
-            return cfg.get(key, default)
 
         # ── basic ────────────────────────────────────────────────────────
-        schema_name: Optional[str] = _s("basic_config", "schema_name")
-        iconq_model_id: Optional[str] = _s("basic_config", "iconq_model_id")
+        schema_name: str = cfgu.cfg_get(
+            cfg, "basic_config", "schema_name", required=True
+        )
+        iconq_model_id: Optional[str] = cfgu.cfg_get(
+            cfg, "basic_config", "iconq_model_id"
+        )
 
         # ── workload ─────────────────────────────────────────────────────
         wl_cfg: dict = cfg.get("workload_config") or {}
@@ -232,107 +246,47 @@ class WorkloadRunner:
         closed_loop: bool = bool(wl_cfg.get("closed_loop", False))
 
         # ── SLO ──────────────────────────────────────────────────────────
-        slo_s: float = _s("slo_config", "slo_s", 10.0)
-        raw_metric: str = _s("slo_config", "slo_metric", "relative")
-        slo_metric = SloMetric(raw_metric)
-        slo_dict_filename: Optional[str] = _s("slo_config", "slo_dict_filename")
-        slo_threshold: float = float(_s("slo_config", "slo_threshold", 0.0))
+        slo_s: float = cfgu.cfg_get(cfg, "slo_config", "slo_s", 10.0)
+        slo_metric = SloMetric(
+            cfgu.cfg_get(cfg, "slo_config", "slo_metric", "relative")
+        )
+        slo_dict_filename: Optional[str] = cfgu.cfg_get(
+            cfg, "slo_config", "slo_dict_filename"
+        )
+        slo_threshold: float = float(
+            cfgu.cfg_get(cfg, "slo_config", "slo_threshold", 0.0)
+        )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
-        # ── routing policy ───────────────────────────────────────────────
-        routing_cfg: dict = cfg.get("routing_config") or {}
-        policy_type: str = routing_cfg.get(
-            "routing_policy", cfg.get("routing_policy", "model")
+        # ── shared policy / pool construction ────────────────────────────
+        routing_policy = cfgu.build_routing_policy(
+            cfg,
+            iconq_model_id,
+            slo_s,
+            slo_resolver,
+            slo_metric,
         )
-
-        if policy_type == "model":
-            routing_policy: RoutingPolicy = ModelPolicy(
-                iconq_model_id=iconq_model_id,
-                default_slo_s=slo_s,
-                slo_overrides=slo_resolver.slo_dict,
-                slo_metric=slo_metric,
-            )
-        elif policy_type == "round_robin":
-            routing_policy = RoundRobinPolicy()
-        elif policy_type == "cache_aware":
-            routing_policy = CacheAwarePolicy(
-                iconq_model_id=iconq_model_id,
-                default_slo_s=slo_s,
-                slo_overrides=slo_resolver.slo_dict,
-                slo_metric=slo_metric,
-                forecast_distribution_path=routing_cfg["forecast_distribution_path"],
-                slo_tightness_path=routing_cfg["slo_tightness_path"],
-                cache_risk_lambda=float(routing_cfg.get("cache_risk_lambda", 0.0)),
-                cache_decay_strategy=routing_cfg.get("cache_decay_strategy", "exponential"),
-                cache_decay_params=routing_cfg.get("cache_decay_params", {}),
-                fallback_tightness=float(routing_cfg.get("fallback_tightness", 0.5)),
-            )
-        else:
-            raise ValueError(
-                f"Unknown routing_policy {policy_type!r}. "
-                "Expected one of: 'model', 'round_robin', 'cache_aware'."
-            )
-
-        # ── cluster pool ─────────────────────────────────────────────────
-        mcp_raw: Optional[dict] = cfg.get("managed_cluster_pool_config")
-        mcp: Optional[ManagedClusterPoolConfig] = None
-        if mcp_raw is not None:
-            mcp_raw = dict(mcp_raw)  # shallow copy
-            if "initial_rpus" in mcp_raw and isinstance(
-                mcp_raw["initial_rpus"], list
-            ):
-                mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
-            if "allowed_rpu_sizes" in mcp_raw and isinstance(
-                mcp_raw["allowed_rpu_sizes"], list
-            ):
-                mcp_raw["allowed_rpu_sizes"] = tuple(
-                    mcp_raw["allowed_rpu_sizes"]
-                )
-            mcp = ManagedClusterPoolConfig(**mcp_raw)
-
-        # ── autoscaling ──────────────────────────────────────────────────
-        autoscaling_policy_type: str = _s(
-            "autoscaling_config", "autoscaling_policy", "headroom"
-        )
+        mcp = cfgu.build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
             mcp.allowed_rpu_sizes
             if mcp is not None
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
-
-        if autoscaling_policy_type == "headroom":
-            autoscaling_policy: AutoscalingPolicy = HeadroomPolicy(
-                slo_resolver=slo_resolver,
-                slo_metric=slo_metric,
-                eta_crit=float(_s("autoscaling_config", "eta_crit", 0.1)),
-                idle_periods_before_tear_down=int(
-                    _s(
-                        "autoscaling_config",
-                        "idle_periods_before_tear_down",
-                        5,
-                    )
-                ),
-                min_cluster_lifetime_s=float(
-                    _s(
-                        "autoscaling_config",
-                        "min_cluster_lifetime_s",
-                        1200.0,
-                    )
-                ),
-                allowed_rpu_sizes=allowed_rpus,
-                iconq_model=(
-                    IconqModel.load(iconq_model_id) if iconq_model_id else None
-                ),
-                routing_policy=routing_policy,
-                slo_threshold=slo_threshold,
+        autoscaling_policy = cfgu.build_autoscaling_policy(
+            cfg,
+            slo_resolver,
+            slo_metric,
+            slo_threshold,
+            iconq_model_id,
+            routing_policy,
+            allowed_rpus,
+        )
+        capacity_checkpoints = cfgu.parse_capacity_checkpoints(cfg)
+        poll_s: float = float(
+            cfgu.cfg_get(
+                cfg, "autoscaling_config", "capacity_poll_interval_s", 60.0
             )
-        elif autoscaling_policy_type == "noop":
-            autoscaling_policy = NoOpPolicy()
-        else:
-            raise ValueError(
-                f"Unknown autoscaling_policy {autoscaling_policy_type!r}. "
-                "Expected one of: 'headroom', 'noop'."
-            )
+        )
 
         # ── runner-specific ──────────────────────────────────────────────
         runner_cfg: dict = cfg.get("runner_config") or {}
@@ -361,22 +315,6 @@ class WorkloadRunner:
             provisioner_config = None
 
         maxconns: int = int(runner_cfg.get("maxconns", 1000))
-
-        # ── capacity checkpoints ─────────────────────────────────────────
-        raw_checkpoints: list[dict] = (
-            _s("autoscaling_config", "capacity_checkpoints", []) or []
-        )
-        capacity_checkpoints = [
-            CapacityCheckpoint(
-                time_s=float(cp["time_s"]),
-                min_rpus=tuple(cp["min_rpus"]),
-            )
-            for cp in raw_checkpoints
-        ]
-
-        poll_s: float = float(
-            _s("autoscaling_config", "capacity_poll_interval_s", 60.0)
-        )
 
         return cls(
             workload_name=workload_name,
@@ -688,7 +626,9 @@ class WorkloadRunner:
         try:
             conn = self.pool.getconn(cluster_name)
         except Exception as e:
-            logging.exception(f"Query {query_id} failed to acquire connection: {e}")
+            logging.exception(
+                f"Query {query_id} failed to acquire connection: {e}"
+            )
             return
         try:
             with conn.cursor() as cur:
@@ -990,20 +930,8 @@ class WorkloadRunner:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Run queries from a workload using a YAML config file."
+    cfg, config_path = cfgu.load_config_from_cli(
+        "Run queries from a workload using a YAML config file.",
     )
-    parser.add_argument(
-        "config",
-        type=str,
-        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
-    )
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-    qr = WorkloadRunner.from_config(args.config)
+    qr = WorkloadRunner.from_config_dict(cfg, config_path=config_path)
     asyncio.run(qr.run())

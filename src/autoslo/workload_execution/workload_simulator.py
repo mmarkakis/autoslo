@@ -5,13 +5,13 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
-import pandas as pd
 import yaml
 from filelock import FileLock
 from tqdm import tqdm
 
+import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection import log_timeline_builder
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
@@ -20,7 +20,10 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
 )
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
-from autoslo.capacity.autoscaling_policy import AutoscalingPolicy, CapacityCheckpoint, NoOpPolicy
+from autoslo.capacity.autoscaling_policy import (
+    AutoscalingPolicy,
+    CapacityCheckpoint,
+)
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
 from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.models.iconq_model import IconqModel
@@ -28,7 +31,6 @@ from autoslo.routing.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
-from autoslo.routing.cache_aware_policy import CacheAwarePolicy
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.router import Router
 from autoslo.routing.routing_core import (
@@ -36,7 +38,7 @@ from autoslo.routing.routing_core import (
     RoutingCore,
     RoutingResult,
 )
-from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
+from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.utils.billing import Billing
 from autoslo.utils.structured_log import (
     StructuredLogHandler,
@@ -48,7 +50,6 @@ from autoslo.workload_definition.workload import Workload
 
 if TYPE_CHECKING:
     from autoslo.workload_definition.redset_workload import (
-        RedsetWorkload,
         RedsetWorkloadSamplingSpec,
     )
 
@@ -135,11 +136,13 @@ class WorkloadSimulator:
             self._workload = RedsetWorkload.load(workload_name)
         else:
             self._workload = Workload(
-                workload_name= workload_name,
+                workload_name=workload_name,
                 schema_name=schema_name,
             )
         if abs_start_time_start is not None or abs_start_time_end is not None:
-            self._workload.slice_by_abs_time(abs_start_time_start, abs_start_time_end)
+            self._workload.slice_by_abs_time(
+                abs_start_time_start, abs_start_time_end
+            )
         self._workload.set_rel_start_times_from_zero()
         if rescale_factor is not None:
             self._workload.rescale_rel_start_times(rescale_factor)
@@ -161,11 +164,7 @@ class WorkloadSimulator:
                 out_dir=self._out_dir,
             )
 
-        # Dynamic provisioning state.
-        self._provisioner: Optional[SimulatedProvisioner] = None
-        self._pool: Optional[ManagedClusterPool] = None
-        self._autoscaler: Optional[Autoscaler] = None
-        self._router: Optional[Router] = None
+        # Dynamic provisioning state (always initialised by _init_dynamic_clusters).
         self._pending_events: list[tuple[float, int, str]] = []
         self._event_counter: int = 0
         self._current_sim_time_s: float = 0.0
@@ -185,8 +184,29 @@ class WorkloadSimulator:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_config(cls, config_path: str | Path) -> "WorkloadSimulator":
+    def from_config(
+        cls, config_path: str | Path, **overrides: object
+    ) -> "WorkloadSimulator":
         """Create a :class:`WorkloadSimulator` from a YAML config file.
+
+        Parameters
+        ----------
+        config_path : str | Path
+            Path to the YAML configuration file.
+        **overrides
+            Dot-delimited keys mapped to override values, e.g.
+            ``slo_config.slo_s=5.0``.  Applied on top of the parsed YAML
+            before the config dict is interpreted.
+        """
+        path = Path(config_path)
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+        cfgu.apply_overrides(cfg, overrides)
+        return cls.from_config_dict(cfg)
+
+    @classmethod
+    def from_config_dict(cls, cfg: dict) -> "WorkloadSimulator":
+        """Create a :class:`WorkloadSimulator` from an already-loaded config dict.
 
         Nested sections
         ---------------
@@ -205,25 +225,23 @@ class WorkloadSimulator:
                               capacity_poll_interval_s, min_cluster_lifetime_s
         output_config       : verbose, export_video, video_frame_duration
         """
-        path = Path(config_path)
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
-
-        # Helper: read from named section first, fall back to root-level key.
-        def _s(section_key: str, key: str, default=None):
-            section = cfg.get(section_key)
-            if section and key in section:
-                return section[key]
-            return cfg.get(key, default)
 
         # ── basic ────────────────────────────────────────────────────────────
-        schema_name: Optional[str] = _s("basic_config", "schema_name")
-        experiment_name: Optional[str] = _s("basic_config", "experiment_name")
-        simulator_run_id: Optional[str] = _s("basic_config", "simulator_run_id")
-        overwrite_experiment: bool = _s(
-            "basic_config", "overwrite_experiment", False
+        schema_name: str = cfgu.cfg_get(
+            cfg, "basic_config", "schema_name", required=True
         )
-        iconq_model_id: Optional[str] = _s("basic_config", "iconq_model_id")
+        experiment_name: Optional[str] = cfgu.cfg_get(
+            cfg, "basic_config", "experiment_name"
+        )
+        simulator_run_id: Optional[str] = cfgu.cfg_get(
+            cfg, "basic_config", "simulator_run_id"
+        )
+        overwrite_experiment: bool = cfgu.cfg_get(
+            cfg, "basic_config", "overwrite_experiment", False
+        )
+        iconq_model_id: str = cfgu.cfg_get(
+            cfg, "basic_config", "iconq_model_id", required=True
+        )
 
         # ── workload ─────────────────────────────────────────────────────
         wl_cfg: dict = cfg.get("workload_config") or {}
@@ -232,133 +250,63 @@ class WorkloadSimulator:
         abs_start_time_end: str | None = wl_cfg.get("abs_start_time_end")
         rescale_factor_raw = wl_cfg.get("rescale_factor")
         rescale_factor: float | None = (
-            float(rescale_factor_raw) if rescale_factor_raw is not None else None
+            float(rescale_factor_raw)
+            if rescale_factor_raw is not None
+            else None
         )
         closed_loop: bool = bool(wl_cfg.get("closed_loop", False))
 
         # ── SLO ──────────────────────────────────────────────────────────────
-        slo_s: float = _s("slo_config", "slo_s", 10.0)
-        raw_metric: str = _s("slo_config", "slo_metric", "relative")
-        slo_metric = SloMetric(raw_metric)
-        slo_threshold: float = _s("slo_config", "slo_threshold", 0.0)
-        slo_dict_filename: Optional[str] = _s("slo_config", "slo_dict_filename")
-
-        # ── routing policy ───────────────────────────────────────────────────
-        routing_cfg: dict = cfg.get("routing_config") or {}
-        policy_type: str = routing_cfg.get(
-            "routing_policy", cfg.get("routing_policy", "model")
+        slo_s: float = cfgu.cfg_get(cfg, "slo_config", "slo_s", 10.0)
+        slo_metric = SloMetric(
+            cfgu.cfg_get(cfg, "slo_config", "slo_metric", "relative")
+        )
+        slo_threshold: float = float(
+            cfgu.cfg_get(cfg, "slo_config", "slo_threshold", 0.0)
+        )
+        slo_dict_filename: Optional[str] = cfgu.cfg_get(
+            cfg, "slo_config", "slo_dict_filename"
         )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
-        if policy_type == "model":
-            routing_policy: RoutingPolicy = ModelPolicy(
-                iconq_model_id=iconq_model_id,
-                default_slo_s=slo_s,
-                slo_overrides=slo_resolver.slo_dict,
-                slo_metric=slo_metric,
-            )
-        elif policy_type == "round_robin":
-            routing_policy = RoundRobinPolicy()
-        elif policy_type == "cache_aware":
-            routing_policy = CacheAwarePolicy(
-                iconq_model_id=iconq_model_id,
-                default_slo_s=slo_s,
-                slo_overrides=slo_resolver.slo_dict,
-                slo_metric=slo_metric,
-                forecast_distribution_path=routing_cfg["forecast_distribution_path"],
-                slo_tightness_path=routing_cfg["slo_tightness_path"],
-                cache_risk_lambda=float(routing_cfg.get("cache_risk_lambda", 0.0)),
-                cache_decay_strategy=routing_cfg.get("cache_decay_strategy", "exponential"),
-                cache_decay_params=routing_cfg.get("cache_decay_params", {}),
-                fallback_tightness=float(routing_cfg.get("fallback_tightness", 0.5)),
-            )
-        else:
-            raise ValueError(
-                f"Unknown routing_policy {policy_type!r}. "
-                "Expected one of: 'model', 'round_robin', 'cache_aware'."
-            )
-
-        # ── cluster pool ─────────────────────────────────────────────────────
-        mcp_raw: Optional[dict] = cfg.get("managed_cluster_pool_config")
-        mcp: Optional[ManagedClusterPoolConfig] = None
-        if mcp_raw is not None:
-            if "initial_rpus" in mcp_raw and isinstance(
-                mcp_raw["initial_rpus"], list
-            ):
-                mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
-            if "allowed_rpu_sizes" in mcp_raw and isinstance(
-                mcp_raw["allowed_rpu_sizes"], list
-            ):
-                mcp_raw["allowed_rpu_sizes"] = tuple(
-                    mcp_raw["allowed_rpu_sizes"]
-                )
-            mcp = ManagedClusterPoolConfig(**mcp_raw)
-
-        # ── autoscaling ───────────────────────────────────────────────────────
-        autoscaling_policy_type: str = _s(
-            "autoscaling_config", "autoscaling_policy", "headroom"
+        # ── shared policy / pool construction ────────────────────────────────
+        routing_policy = cfgu.build_routing_policy(
+            cfg,
+            iconq_model_id,
+            slo_s,
+            slo_resolver,
+            slo_metric,
         )
-        poll_s: float = _s(
-            "autoscaling_config", "capacity_poll_interval_s", 60.0
-        )
+        mcp = cfgu.build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
             mcp.allowed_rpu_sizes
             if mcp is not None
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
-
-        if autoscaling_policy_type == "headroom":
-            autoscaling_policy: AutoscalingPolicy = HeadroomPolicy(
-                slo_resolver=slo_resolver,
-                slo_metric=slo_metric,
-                eta_crit=float(_s("autoscaling_config", "eta_crit", 0.1)),
-                idle_periods_before_tear_down=int(
-                    _s(
-                        "autoscaling_config",
-                        "idle_periods_before_tear_down",
-                        5,
-                    )
-                ),
-                min_cluster_lifetime_s=float(
-                    _s(
-                        "autoscaling_config",
-                        "min_cluster_lifetime_s",
-                        1200.0,
-                    )
-                ),
-                allowed_rpu_sizes=allowed_rpus,
-                iconq_model=(
-                    IconqModel.load(iconq_model_id) if iconq_model_id else None
-                ),
-                routing_policy=routing_policy,
-                slo_threshold=slo_threshold,
-            )
-        elif autoscaling_policy_type == "noop":
-            autoscaling_policy = NoOpPolicy()
-        else:
-            raise ValueError(
-                f"Unknown autoscaling_policy {autoscaling_policy_type!r}. "
-                "Expected one of: 'headroom', 'noop'."
-            )
-
-        # ── output ────────────────────────────────────────────────────────────
-        verbose: bool = _s("output_config", "verbose", False)
-        export_video: bool = _s("output_config", "export_video", False)
-        video_frame_duration: float = _s(
-            "output_config", "video_frame_duration", 1.0
+        autoscaling_policy = cfgu.build_autoscaling_policy(
+            cfg,
+            slo_resolver,
+            slo_metric,
+            slo_threshold,
+            iconq_model_id,
+            routing_policy,
+            allowed_rpus,
         )
-
-        # ── capacity checkpoints ─────────────────────────────────────────────
-        raw_checkpoints: list[dict] = _s(
-            "autoscaling_config", "capacity_checkpoints", []
-        ) or []
-        capacity_checkpoints = [
-            CapacityCheckpoint(
-                time_s=float(cp["time_s"]),
-                min_rpus=tuple(cp["min_rpus"]),
+        poll_s: float = float(
+            cfgu.cfg_get(
+                cfg, "autoscaling_config", "capacity_poll_interval_s", 60.0
             )
-            for cp in raw_checkpoints
-        ]
+        )
+        capacity_checkpoints = cfgu.parse_capacity_checkpoints(cfg)
+
+        # ── output (simulator-specific) ──────────────────────────────────────
+        verbose: bool = cfgu.cfg_get(cfg, "output_config", "verbose", False)
+        export_video: bool = cfgu.cfg_get(
+            cfg, "output_config", "export_video", False
+        )
+        video_frame_duration: float = cfgu.cfg_get(
+            cfg, "output_config", "video_frame_duration", 1.0
+        )
 
         return cls(
             workload_name=workload_name,
@@ -517,20 +465,19 @@ class WorkloadSimulator:
         config = self._dynamic_cluster_config
 
         # Provisioner
-        self._provisioner = SimulatedProvisioner(
+        self._provisioner: SimulatedProvisioner = SimulatedProvisioner(
             spin_up_delay_s=config.spin_up_delay_s
         )
 
         # Pool (no initial clusters via constructor — we add them below
         # with instant on_cluster_ready to bypass spin-up delay).
-        self._pool = ManagedClusterPool(
+        self._pool: ManagedClusterPool = ManagedClusterPool(
             provisioner=self._provisioner,
             config=ManagedClusterPoolConfig(
                 initial_rpus=(),
                 allowed_rpu_sizes=config.allowed_rpu_sizes,
             ),
         )
-        assert self._pool is not None  # for mypy
 
         # Activate initial clusters immediately (no spin-up delay).
         for rpu in config.initial_rpus:
@@ -538,7 +485,7 @@ class WorkloadSimulator:
             self._pool.on_cluster_ready(name, 0.0)
 
         # Create the Router (invokes policy.on_attach to wire up RPU lookup).
-        self._router = Router(
+        self._router: Router = Router(
             policy=self._routing_policy,
             pool=self._pool,
         )
@@ -554,6 +501,7 @@ class WorkloadSimulator:
 
         # Autoscaler (replaces CapacityController).
         # If no policy was provided, default to HeadroomPolicy.
+        policy: AutoscalingPolicy
         if self._autoscaling_policy is None:
             policy = HeadroomPolicy(
                 slo_resolver=self._slo_resolver,
@@ -563,7 +511,7 @@ class WorkloadSimulator:
         else:
             policy = self._autoscaling_policy
 
-        self._autoscaler = Autoscaler(
+        self._autoscaler: Autoscaler = Autoscaler(
             policy=policy,
             pool=self._pool,
             on_spin_up=self._on_sim_spin_up,
@@ -826,7 +774,7 @@ class WorkloadSimulator:
                     cluster_name=result.cluster_name,
                     start_time_s=start_s,
                 )
-                if computed_score is not None:
+                if (computed_score is not None) and (enriched_tq is not None):
                     result = RoutingResult(
                         cluster_name=result.cluster_name,
                         score=computed_score,
@@ -841,6 +789,9 @@ class WorkloadSimulator:
 
             selected_cluster_name = result.cluster_name
             tq = result.query
+            assert (
+                result.score is not None
+            ), "RoutingResult must have a score at this point."
             self_latency_s = result.score.latencies[query.query_id]
 
             # Store predicted latency and cluster mapping.
@@ -903,7 +854,8 @@ class WorkloadSimulator:
         ]
         if all_completed:
             workload_end_time_s = max(
-                q.rel_start_time_s + self._predicted_latencies.get(q.query_id, 0.0)
+                q.rel_start_time_s
+                + self._predicted_latencies.get(q.query_id, 0.0)
                 for q in all_completed
             )
 
@@ -941,7 +893,10 @@ class WorkloadSimulator:
             active_queries = self._pool.get_active_queries(cluster_name)
             completed: list[tuple[Query, float]] = []
             for query in active_queries:
-                end_time_s = query.rel_start_time_s + self._predicted_latencies.get(query.query_id, 0.0)
+                end_time_s = (
+                    query.rel_start_time_s
+                    + self._predicted_latencies.get(query.query_id, 0.0)
+                )
                 if (current_time_s is None) or (end_time_s <= current_time_s):
                     completed.append((query, end_time_s))
 
@@ -967,7 +922,9 @@ class WorkloadSimulator:
                         "cluster_name": cluster_name,
                         "old_latency_s": None,
                         "raw_model_latency_s": None,
-                        "latency_s": self._predicted_latencies.get(query.query_id, -1.0),
+                        "latency_s": self._predicted_latencies.get(
+                            query.query_id, -1.0
+                        ),
                         "end_time_s": end_time_s,
                     }
                 )
@@ -1039,7 +996,9 @@ class WorkloadSimulator:
             if len(completed_queries) == 0:
                 continue
 
-            from autoslo.blueprint_selection.slo_resolver import query_interval as _qi  # noqa: PLC0415
+            from autoslo.blueprint_selection.slo_resolver import (
+                query_interval as _qi,
+            )  # noqa: PLC0415
 
             billed_intervals = Billing.billed_intervals(
                 [
@@ -1166,21 +1125,8 @@ class WorkloadSimulator:
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Run the WorkloadSimulator from a YAML config file.",
+    cfg, _ = cfgu.load_config_from_cli(
+        "Run the WorkloadSimulator from a YAML config file.",
     )
-    parser.add_argument(
-        "config",
-        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
-    )
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-    sim = WorkloadSimulator.from_config(args.config)
+    sim = WorkloadSimulator.from_config_dict(cfg)
     sim.simulate_one()

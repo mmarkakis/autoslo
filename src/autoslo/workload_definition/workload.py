@@ -94,6 +94,11 @@ class Workload:
         return self._workload_name
 
     @property
+    def schema_name(self) -> str:
+        """The schema identifier, taken from the ``schema_name`` column."""
+        return self._schema_name
+
+    @property
     def df(self) -> pd.DataFrame:
         """
         The underlying :class:`~pandas.DataFrame`.
