@@ -54,7 +54,7 @@ class ModelPolicy(RoutingPolicy):
         self,
         iconq_model_id: str,
         default_slo_s: float = 10.0,
-        slo_overrides: Optional[dict[int, float]] = None,
+        slo_overrides: Optional[dict[str, float]] = None,
         slo_metric: SloMetric = SloMetric.RELATIVE,
         *args: Any,
         **kwargs: Any,

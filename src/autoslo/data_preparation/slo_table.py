@@ -85,7 +85,7 @@ def compute_slo_dict(
     rpu: int,
     baseline_percentile: float = 50.0,
     multiplier: float = 2.5,
-) -> dict[int, float]:
+) -> dict[str, float]:
     """
     Compute a per-template SLO dictionary.
 
@@ -105,8 +105,8 @@ def compute_slo_dict(
         multiplier: Multiplicative headroom factor *k*.
 
     Returns:
-        A dict mapping ``template_id`` (int) → SLO in seconds (rounded to
-        3 decimal places).
+        A dict mapping ``template_id`` (zero-padded str, e.g. ``"042"``) →
+        SLO in seconds (rounded to 3 decimal places).
     """
     subset = latencies_df.loc[latencies_df["rpu"] == rpu].copy()
     if subset.empty:
@@ -133,7 +133,7 @@ def dump_slo_table(
     multiplier: float,
     output_path: Optional[str] = None,
     workload_tag: str = "default",
-) -> dict[int, float]:
+) -> dict[str, float]:
     """
     Compute and persist an SLO table as a YAML file.
 
@@ -174,7 +174,23 @@ def dump_slo_table(
         "num_templates": len(slo_dict),
         "slo_dict": slo_dict,
     }
+
+    # Use a private Dumper subclass that quotes digit-only strings so
+    # zero-padded template keys like "008" survive a YAML round-trip
+    # (bare ``008`` is parsed as int 8 by yaml.safe_load).
+    class _SLODumper(yaml.Dumper):
+        pass
+
+    def _maybe_quote(dumper: yaml.Dumper, data: str) -> yaml.ScalarNode:
+        if data.isdigit():
+            return dumper.represent_scalar(
+                "tag:yaml.org,2002:str", data, style="'"
+            )
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+    _SLODumper.add_representer(str, _maybe_quote)
+
     with open(output_path, "w") as f:
-        yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
+        yaml.dump(meta, f, Dumper=_SLODumper, default_flow_style=False, sort_keys=False)
 
     return slo_dict

@@ -12,7 +12,7 @@ Usage
     resolver = SloResolver(default_slo_s=10.0, slo_dict_filename="slo_dict.yml")
 
     # From an already-loaded dict (e.g. inlined in config):
-    resolver = SloResolver.from_dict(default_slo_s=10.0, slo_dict={1: 5.0, 2: 8.0})
+    resolver = SloResolver.from_dict(default_slo_s=10.0, slo_dict={"001": 5.0, "002": 8.0})
 
     # Resolve per query:
     slo = resolver.resolve("3_7")   # returns override for template 3, or default
@@ -38,7 +38,7 @@ class SloResolver:
         Fallback SLO used when the query's template has no override.
     slo_dict_filename:
         Filename (not full path) of a YAML file under
-        ``data/generation_parameters/`` mapping template IDs (int) to SLOs
+        ``data/slos/`` mapping template IDs (zero-padded str) to SLOs
         (float).  If *None*, only the global default is used.
     """
 
@@ -55,7 +55,9 @@ class SloResolver:
             path = os.path.join(pu.get_data_path(), "slos", slo_dict_filename)
             with open(path) as f:
                 raw = yaml.safe_load(f) or {}
-            self._dict = {str(k): float(v) for k, v in raw["slo_dict"].items()}
+            self._dict = {
+                str(k).zfill(3): float(v) for k, v in raw["slo_dict"].items()
+            }
 
     # ------------------------------------------------------------------
     # alternate constructors
@@ -72,7 +74,7 @@ class SloResolver:
         a config or experiment_meta.json) without touching the filesystem."""
         inst = cls.__new__(cls)
         inst._default = default_slo_s
-        inst._dict = {str(k): float(v) for k, v in slo_dict.items()}
+        inst._dict = {str(k).zfill(3): float(v) for k, v in slo_dict.items()}
         inst._filename = slo_dict_filename
         return inst
 
