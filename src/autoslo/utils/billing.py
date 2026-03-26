@@ -1,4 +1,9 @@
+import math
+
 from intervaltree import Interval  # type: ignore[import]
+import pandas as pd
+
+from datetime import datetime
 
 
 class Billing:
@@ -14,7 +19,9 @@ class Billing:
             value: The value to round up.
             granularity: The granularity to round up to.
         """
-        return granularity * ((value + granularity - 1) // granularity)
+        if granularity == 0:
+            return value
+        return math.ceil(value / granularity) * granularity
 
     @staticmethod
     def billed_s(
@@ -27,7 +34,7 @@ class Billing:
         query, considering the billing threshold and granularity.
 
         Parameters:
-            query_intervals: Tthe execution intervals of the queries.
+            query_intervals: The execution intervals of the queries.
             threshold_s: The billing threshold in seconds. This is the minimum
                 time that will be billed - i.e. all smaller intervals are
                 rounded up to this threshold.
@@ -45,12 +52,68 @@ class Billing:
             return 0.0
         total_billed_s = sum(iv.end - iv.begin for iv in billed_intervals)
         return float(total_billed_s)
-    
+
     @staticmethod
     def _query_id(interval: Interval) -> str:
         if interval.data and "query_id" in interval.data:
             return interval.data["query_id"]
         return "unknown"
+
+    @staticmethod
+    def billed_s_from_df(
+        df: pd.DataFrame,
+        start_col_name: str = "start",
+        end_col_name: str = "end",
+        threshold_s: float = REDSHIFT_BILLING_THRESHOLD_S,
+        granularity_s: float = REDSHIFT_BILLING_GRANULARITY_S,
+    ) -> float:
+        """
+        Calculate the total billed time given a dataframe with query execution
+        intervals, considering the billing threshold and granularity.
+
+        Parameters:
+            df: A dataframe containing the query execution intervals. It must
+                have columns for the start and end times of the intervals, as
+                well as a query_id column.
+            start_col_name: The name of the column in the dataframe that
+                contains the start times of the intervals.
+            end_col_name: The name of the column in the dataframe that contains
+                the end times of the intervals.
+            threshold_s: The billing threshold in seconds. This is the minimum
+                time that will be billed - i.e. all smaller intervals are
+                rounded up to this threshold.
+            granularity_s: The billing granularity in seconds. Each billed
+                interval is rounded up to the nearest multiple of this
+                granularity.
+
+        Returns:
+            The total billed time in seconds.
+        """
+
+        query_intervals = []
+
+        # Convert start/end columns to Unix timestamps if they are datetimes.
+        if pd.api.types.is_datetime64_any_dtype(df[start_col_name]):
+            df[start_col_name] = (
+                df[start_col_name] - pd.Timestamp("1970-01-01")
+            ) / pd.Timedelta("1s")
+        if pd.api.types.is_datetime64_any_dtype(df[end_col_name]):
+            df[end_col_name] = (
+                df[end_col_name] - pd.Timestamp("1970-01-01")
+            ) / pd.Timedelta("1s")
+
+        for qid, s, e in zip(
+            df["query_id"], df[start_col_name], df[end_col_name]
+        ):
+            query_id = qid if qid is not None else "unknown"
+            interval = Interval(
+                begin=s,
+                end=e,
+                data={"query_id": query_id},
+            )
+            query_intervals.append(interval)
+
+        return Billing.billed_s(query_intervals, threshold_s, granularity_s)
 
     @staticmethod
     def billed_intervals(
@@ -117,6 +180,5 @@ class Billing:
             data={"query_ids": current_query_ids},
         )
         billed_intervals.append(billed_interval)
-
 
         return billed_intervals
