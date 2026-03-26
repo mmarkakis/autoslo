@@ -412,7 +412,19 @@ class WorkloadRunner:
         )
 
     def _on_live_tear_down(self, cluster_name: str) -> None:
-        """Autoscaler callback: tear down a cluster."""
+        """Autoscaler callback: tear down a cluster.
+
+        Mirrors the simulator's ``_on_sim_tear_down`` guard: refuses to
+        tear down the last routable cluster so the run can continue.
+        """
+        ready_names = self.pool.ready_cluster_names
+        if len(ready_names) <= 1:
+            logging.debug(
+                "Skipping tear-down of %s — it is the last routable "
+                "cluster.",
+                cluster_name,
+            )
+            return
         self.pool.request_tear_down(cluster_name, self._ts())
         logging.info("Autoscaler tear-down: %s", cluster_name)
 
@@ -673,7 +685,11 @@ class WorkloadRunner:
                     "cluster_name": cluster_name,
                 }
             )
-        conn = self.pool.conn_pool(cluster_name).getconn()
+        try:
+            conn = self.pool.getconn(cluster_name)
+        except Exception as e:
+            logging.exception(f"Query {query_id} failed to acquire connection: {e}")
+            return
         try:
             with conn.cursor() as cur:
                 edited = f"--{run_id}/{query_id}\n{query_text}"
@@ -691,10 +707,7 @@ class WorkloadRunner:
                 pass
             logging.exception(f"Query {query_id} failed: {e}")
         finally:
-            try:
-                self.pool.conn_pool(cluster_name).putconn(conn)
-            except Exception:
-                pass
+            self.pool.putconn(cluster_name, conn)
         end_time = self._ts()
         latency_s = end_time - start_time
         logging.info(f"Query {query_id} finished after t={latency_s:.2f}s")
@@ -919,7 +932,10 @@ class WorkloadRunner:
                         query_text_id=query_text_id,
                     )
 
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logging.error("Query task failed: %s", r)
         finally:
             # Stop the periodic tick.
             tick_task.cancel()

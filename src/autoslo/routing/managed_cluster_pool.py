@@ -20,11 +20,13 @@ from __future__ import annotations
 import enum
 import logging
 import threading
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
 from autoslo.blueprints.cluster import Cluster
@@ -611,6 +613,65 @@ class ManagedClusterPool:
                     f"No connection pool for cluster {cluster_name!r}."
                 )
             return entry.conn_pool
+
+    _GETCONN_MAX_RETRIES = 3
+    _GETCONN_BASE_DELAY_S = 0.1  # 0.1 s, 0.2 s, 0.4 s
+
+    def getconn(self, cluster_name: str):
+        """Acquire a connection for *cluster_name* with retry.
+
+        Retries transient ``OperationalError`` failures (e.g. Redshift
+        Serverless waking from idle) up to ``_GETCONN_MAX_RETRIES``
+        times with exponential back-off.  Checks cluster state before
+        each attempt and raises immediately for non-transient errors
+        or if the cluster is no longer READY/DRAINING.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._GETCONN_MAX_RETRIES):
+            # Fail fast if the cluster has been removed.
+            with self._lock:
+                entry = self._entries[cluster_name]
+                if entry.state == _ClusterState.REMOVED:
+                    raise RuntimeError(
+                        f"Cluster {cluster_name!r} has been removed."
+                    )
+                if entry.conn_pool is None:
+                    raise ValueError(
+                        f"No connection pool for cluster {cluster_name!r}."
+                    )
+                pool = entry.conn_pool
+
+            try:
+                return pool.getconn()
+            except psycopg2.OperationalError as exc:
+                last_exc = exc
+                delay = self._GETCONN_BASE_DELAY_S * (2 ** attempt)
+                logger.warning(
+                    "getconn failed for %s (attempt %d/%d, retrying "
+                    "in %.2fs): %s",
+                    cluster_name,
+                    attempt + 1,
+                    self._GETCONN_MAX_RETRIES,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+
+        raise last_exc  # type: ignore[misc]
+
+    def putconn(self, cluster_name: str, conn) -> None:
+        """Return *conn* to the pool for *cluster_name*.
+
+        Silently ignores errors (e.g. pool already closed).
+        """
+        try:
+            with self._lock:
+                entry = self._entries[cluster_name]
+                pool = entry.conn_pool
+            if pool is not None:
+                pool.putconn(conn)
+        except Exception:
+            pass
 
     def conn_pool_map(self) -> dict[str, ThreadedConnectionPool]:
         """Return ``{cluster_name: conn_pool}`` for all READY clusters
