@@ -96,6 +96,7 @@ class WorkloadSimulator:
         abs_start_time_end: str | None = None,
         rescale_factor: float | None = None,
         closed_loop: bool = False,
+        out_dir: str | Path | None = None,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -152,6 +153,9 @@ class WorkloadSimulator:
         )
 
         self._seed: Optional[int] = None  # populated in simulate_one
+
+        # Optional caller-provided output directory override.
+        self._out_dir_override: str | Path | None = out_dir
 
         # Setup the outputs directory.
         self._out_dir = self._make_out_dir(self._run_id)
@@ -307,6 +311,7 @@ class WorkloadSimulator:
         video_frame_duration: float = cfgu.cfg_get(
             cfg, "output_config", "video_frame_duration", 1.0
         )
+        out_dir: str | None = cfgu.cfg_get(cfg, "output_config", "out_dir")
 
         return cls(
             workload_name=workload_name,
@@ -331,6 +336,7 @@ class WorkloadSimulator:
             abs_start_time_end=abs_start_time_end,
             rescale_factor=rescale_factor,
             closed_loop=closed_loop,
+            out_dir=out_dir,
         )
 
     # ------------------------------------------------------------------
@@ -378,6 +384,10 @@ class WorkloadSimulator:
     # helper: build/return the output directory path
     # ------------------------------------------------------------------
     def _make_out_dir(self, run_id: str) -> str:
+        if self._out_dir_override is not None:
+            out_dir = os.path.join(str(self._out_dir_override), run_id)
+            os.makedirs(out_dir, exist_ok=True)
+            return out_dir
         if self._experiment_name:
             experiment_dir = os.path.join(
                 pu.get_data_path(), "simulator_runs", self._experiment_name
