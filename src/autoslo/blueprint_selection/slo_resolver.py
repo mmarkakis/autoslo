@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 
 import yaml
+from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paths as pu
 from autoslo.workload_definition.query import QueryTextId, SloMetric
@@ -192,9 +193,8 @@ def slo_slack_amount_s(latency_s: float, slo_s: float) -> float:
 
 def query_interval(
     rel_start_time_s: float, latency_s: float, query_id: str
-) -> "Interval":
+) -> Interval:
     """Build an execution interval for a query."""
-    from intervaltree import Interval  # type: ignore[import]
 
     return Interval(
         begin=rel_start_time_s,

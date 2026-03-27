@@ -27,7 +27,7 @@ def inner_level_num_cpus() -> int:
     Returns:
         int: Number of CPUs to use for inner-level tasks.
     """
-    return min(1, num_cpus() // INNER_LEVEL_NUM_CPUS_CONSTANT)
+    return max(1, num_cpus() // INNER_LEVEL_NUM_CPUS_CONSTANT)
 
 
 def deg_of_paralellism() -> int:
