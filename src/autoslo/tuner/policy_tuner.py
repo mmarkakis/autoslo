@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import yaml
 from rich.console import Console
 from rich.table import Table
@@ -18,10 +20,18 @@ from autoslo.tuner.checkpoint_optimizer import (
     _checkpoints_to_config,
 )
 from autoslo.tuner.config import TunerConfig
+from autoslo.tuner.forecast_policy import (
+    RecencyWeightedForecastPolicy,
+    UniformForecastPolicy,
+)
 from autoslo.tuner.param_sweep import ParamSweep
+from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.types import PhaseResult, ScenarioResult, aggregate
+from autoslo.tuner.workload_sampler import WorkloadSampler
+from autoslo.utils.config import apply_overrides
 from autoslo.utils.structured_log import StructuredLogHandler, setup_structured_logging
+from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -110,14 +120,100 @@ class PolicyTuner:
     # ------------------------------------------------------------------
 
     def build_reservoir(self, traces: list[Path]) -> Path:
-        """Phase 1: Ingest raw traces and build the query reservoir."""
-        raise NotImplementedError("build_reservoir")
+        """Phase 1: Ingest raw traces and build the query reservoir.
+
+        Parameters
+        ----------
+        traces :
+            Parquet files containing historical workload data.
+
+        Returns
+        -------
+        Path to the directory containing the saved reservoir.
+        """
+        schema_name = (
+            (self._initial_config.get("basic_config") or {}).get(
+                "schema_name", "default"
+            )
+        )
+
+        workloads = []
+        for i, trace_path in enumerate(traces):
+            df = pd.read_parquet(trace_path)
+            wl = Workload(
+                workload_name=f"trace_{i:03d}",
+                schema_name=schema_name,
+                df=df,
+            )
+            workloads.append(wl)
+
+        reservoir = QueryReservoir.build(
+            workloads, schema_name=schema_name
+        )
+
+        reservoir_dir = self._run_dir / "reservoir"
+        reservoir.save(reservoir_dir)
+        console.print(
+            f"  Reservoir built from {len(traces)} trace(s), "
+            f"{len(reservoir.df)} rows saved to {reservoir_dir}"
+        )
+        return reservoir_dir
 
     def sample_workloads(
         self, reservoir_path: Path
-    ) -> tuple[list, list]:
-        """Phase 2: Sample train/val workloads from the reservoir."""
-        raise NotImplementedError("sample_workloads")
+    ) -> tuple[list[Path], list[Path]]:
+        """Phase 2: Sample train/val workloads from the reservoir.
+
+        Returns
+        -------
+        ``(train_paths, val_paths)`` — lists of Parquet file paths.
+        """
+        reservoir = QueryReservoir.load(reservoir_path)
+        schema_name = reservoir.meta.get("schema_name", "default")
+
+        policy_name = self._tuner_config.forecast_policy
+        if policy_name == "recency_weighted":
+            forecast_policy = RecencyWeightedForecastPolicy()
+        elif policy_name == "uniform":
+            forecast_policy = UniformForecastPolicy()
+        else:
+            raise ValueError(f"Unknown forecast policy: {policy_name!r}")
+
+        sampler = WorkloadSampler(
+            reservoir=reservoir,
+            forecast_policy=forecast_policy,
+            schema_name=schema_name,
+        )
+
+        n_train = self._tuner_config.n_train
+        n_val = self._tuner_config.n_val
+
+        train_dir = self._run_dir / "sampled_workloads" / "train"
+        val_dir = self._run_dir / "sampled_workloads" / "val"
+
+        train_paths = sampler.sample_to_disk(
+            target_start=self._tuner_config.target_start,
+            target_end=self._tuner_config.target_end,
+            n_scenarios=n_train,
+            out_dir=train_dir,
+            prefix="t",
+            seed=self._tuner_config.random_seed,
+        )
+
+        val_paths = sampler.sample_to_disk(
+            target_start=self._tuner_config.target_start,
+            target_end=self._tuner_config.target_end,
+            n_scenarios=n_val,
+            out_dir=val_dir,
+            prefix="v",
+            seed=self._tuner_config.random_seed + n_train,
+        )
+
+        console.print(
+            f"  Sampled {n_train} train + {n_val} val workloads "
+            f"to {self._run_dir / 'sampled_workloads'}"
+        )
+        return train_paths, val_paths
 
     def evaluate_baseline(
         self,
@@ -247,13 +343,87 @@ class PolicyTuner:
     def tune(self, traces: list[Path]) -> Path:
         """Execute the full tuning pipeline end-to-end.
 
-        Returns the path to the run directory.
+        Returns the path to the final optimised config file.
         """
-        raise NotImplementedError("tune")
+        self._print_banner("Phase 1: Building reservoir")
+        reservoir_path = self.build_reservoir(traces)
+
+        self._print_banner("Phase 2: Sampling workloads")
+        train_paths, val_paths = self.sample_workloads(reservoir_path)
+
+        self._print_banner("Phase 3: Baseline evaluation")
+        baseline = self.evaluate_baseline(train_paths, val_paths)
+
+        self._print_banner("Phase 4: Checkpoint optimization")
+        checkpoints = self.optimize_checkpoints(
+            train_paths, val_paths, baseline.val_violation_agg
+        )
+
+        self._print_banner("Phase 5: Autoscaler parameter sweep")
+        autoscaler_config = self.sweep_autoscaler(
+            train_paths, val_paths, checkpoints
+        )
+
+        self._print_banner("Phase 6: Routing parameter sweep")
+        routing_config = self.sweep_routing(
+            train_paths, val_paths, checkpoints, autoscaler_config
+        )
+
+        self._print_banner("Final: Writing optimized config")
+        return self._write_final_config(
+            checkpoints, autoscaler_config, routing_config
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _print_banner(message: str) -> None:
+        """Print a rich section banner."""
+        console.print()
+        console.rule(f"[bold cyan]{message}")
+        console.print()
+
+    def _write_final_config(
+        self,
+        checkpoints: list[CapacityCheckpoint],
+        autoscaler_config: dict[str, Any],
+        routing_config: dict[str, Any],
+    ) -> Path:
+        """Deep-copy initial config, overlay tuned params, and persist."""
+        cfg = copy.deepcopy(self._initial_config)
+
+        # Apply checkpoint overrides.
+        overrides = _checkpoints_to_config(checkpoints)
+        # Apply autoscaler params.
+        for k, v in autoscaler_config.items():
+            overrides[f"autoscaling_config.{k}"] = v
+        # Apply routing params.
+        for k, v in routing_config.items():
+            overrides[f"routing_config.{k}"] = v
+
+        apply_overrides(cfg, overrides)
+
+        # Write final config.
+        final_path = self._run_dir / "final_config.yml"
+        with open(final_path, "w") as f:
+            yaml.dump(cfg, f, default_flow_style=False)
+
+        # Copy to data/__run_configs/.
+        run_configs_dir = Path("data/__run_configs")
+        run_configs_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(final_path, run_configs_dir / f"tuned_{self._run_id}.yml")
+
+        # Finalize evolution log.
+        self._evolution_handler.finalize()
+
+        console.print(f"  Final config written to [bold]{final_path}[/]")
+        console.print(
+            f"  Copy saved to [bold]{run_configs_dir / f'tuned_{self._run_id}.yml'}[/]"
+        )
+
+        return final_path
 
     @staticmethod
     def _write_phase_summary(path: Path, result: PhaseResult) -> None:

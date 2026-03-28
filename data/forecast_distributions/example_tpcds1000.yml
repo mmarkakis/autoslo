@@ -3,17 +3,17 @@
 # Per (day_of_week, hour) bin: probability distribution over query templates.
 # day_of_week: 0 = Monday, 6 = Sunday.
 # Probabilities within each bin should sum to ~1.0.
+# query_count: total number of queries observed in the bin.
 #
-# Built by: scripts/build_forecast_distribution.py
+# Built by: autoslo.workload_definition.forecast_distribution
 # Source: historical query log
 #
 schema_name: ext_tpcds1000
-window_minutes: 60
-reference_rpu: 16
 
 bins:
   - day_of_week: 0
     hour: 9
+    query_count: 100
     templates:
       - template_id: "1"
         probability: 0.08
@@ -34,6 +34,7 @@ bins:
 
   - day_of_week: 0
     hour: 10
+    query_count: 80
     templates:
       - template_id: "1"
         probability: 0.10

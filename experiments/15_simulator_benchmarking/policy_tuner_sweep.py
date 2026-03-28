@@ -26,6 +26,10 @@ Usage example
         --plot
 """
 
+# DEPRECATED: This script is superseded by the new tuner CLI:
+#   python -m autoslo.tuner --config ... --tuner-config ... --traces ...
+# This file will be removed in a future release.
+
 from __future__ import annotations
 
 import argparse
@@ -33,7 +37,15 @@ import json
 import logging
 import os
 import statistics
+import warnings
 from datetime import datetime
+
+warnings.warn(
+    "policy_tuner_sweep.py is deprecated. "
+    "Use 'python -m autoslo.tuner' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import pandas as pd
 import yaml

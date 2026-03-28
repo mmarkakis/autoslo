@@ -1,6 +1,12 @@
 """
 policy_tuner.py
 ===============
+
+.. deprecated::
+    This module is superseded by :mod:`autoslo.tuner.policy_tuner`.
+    Use ``from autoslo.tuner.policy_tuner import PolicyTuner`` instead.
+    This file will be removed in a future release.
+
 Simulation-based policy tuning (Layer 3b).
 
 Sweeps a grid of policy parameters (``eta_crit``,
@@ -43,8 +49,16 @@ from __future__ import annotations
 
 import itertools
 import logging
+import warnings
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Sequence
+
+warnings.warn(
+    "autoslo.capacity.policy_tuner is deprecated. "
+    "Use autoslo.tuner.policy_tuner instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import matplotlib
 import matplotlib.pyplot as plt

@@ -36,18 +36,6 @@ class TestPolicyTunerShell:
     def test_run_id_prefix(self, tuner: PolicyTuner):
         assert tuner.run_id.startswith("tuner_")
 
-    @pytest.mark.parametrize(
-        "method,args",
-        [
-            ("build_reservoir", ([],)),
-            ("sample_workloads", (Path("."),)),
-            ("tune", ([],)),
-        ],
-    )
-    def test_stubs_raise(self, tuner: PolicyTuner, method: str, args: tuple):
-        with pytest.raises(NotImplementedError):
-            getattr(tuner, method)(*args)
-
 
 # ---------------------------------------------------------------------------
 # Shared types: aggregate
