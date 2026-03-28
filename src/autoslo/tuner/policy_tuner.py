@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -666,18 +665,10 @@ class PolicyTuner:
         with open(final_path, "w") as f:
             yaml.dump(cfg, f, default_flow_style=False)
 
-        # Copy to data/__run_configs/.
-        run_configs_dir = Path("data/__run_configs")
-        run_configs_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(final_path, run_configs_dir / f"tuned_{self._run_id}.yml")
-
         # Finalize evolution log.
         self._evolution_handler.finalize()
 
         console.print(f"  Final config written to [bold]{final_path}[/]")
-        console.print(
-            f"  Copy saved to [bold]{run_configs_dir / f'tuned_{self._run_id}.yml'}[/]"
-        )
 
         return final_path
 

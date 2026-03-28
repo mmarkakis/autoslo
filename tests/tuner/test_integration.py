@@ -289,18 +289,6 @@ class TestWriteFinalConfig:
         assert result["autoscaling_config"]["eta_crit"] == 0.5
         assert result["routing_config"]["fallback_tightness"] == 0.7
 
-    def test_copy_to_run_configs(self, tmp_path: Path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        cfg = _make_tuner_config()
-        initial = _make_initial_config()
-        tuner = PolicyTuner(initial, cfg, run_dir=tmp_path / "run")
-
-        path = tuner._write_final_config([], {}, {})
-
-        copy_path = tmp_path / "data" / "__run_configs" / f"tuned_{tuner.run_id}.yml"
-        assert copy_path.exists()
-
-
 # ---------------------------------------------------------------------------
 # Tests: __main__ CLI
 # ---------------------------------------------------------------------------

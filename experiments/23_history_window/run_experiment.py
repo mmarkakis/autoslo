@@ -37,8 +37,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        required=True,
-        help="Path to the base simulator YAML config.",
+        default=str(CONFIG_DIR / "base_config.yml"),
+        help="Path to the base simulator YAML config (default: configs/base_config.yml).",
     )
     parser.add_argument(
         "--trace",

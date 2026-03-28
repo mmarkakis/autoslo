@@ -1,0 +1,44 @@
+### Base simulator config for Experiment 23 (history-window depth).
+### Derived from data/__run_configs/test.yml with experiment-specific defaults.
+
+basic_config:
+  schema_name: ext_tpcds1000
+  experiment_name: history_window_exp
+  overwrite_experiment: true
+  iconq_model_id: "1771539369"
+
+workload_config:
+  workload_name: history_window_workload
+  closed_loop: false
+
+slo_config:
+  slo_s: 30.0
+  slo_metric: relative
+  slo_threshold: 0.05
+  slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
+
+
+managed_cluster_pool_config:
+  initial_rpus:
+    - 16
+  allowed_rpu_sizes:
+    - 4
+    - 8
+    - 16
+    - 32
+  spin_up_delay_s: 300.0
+
+routing_config:
+  routing_policy: model
+
+autoscaling_config:
+  autoscaling_policy: headroom
+  eta_crit: 0.05
+  idle_periods_before_tear_down: 20
+  capacity_poll_interval_s: 60.0
+  min_cluster_lifetime_s: 1200.0
+  capacity_checkpoints: []
+
+output_config:
+  verbose: false
+  export_video: false
