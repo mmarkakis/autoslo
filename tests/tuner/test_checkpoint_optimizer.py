@@ -216,6 +216,51 @@ class TestFindViolationWindows:
         starts = [w.start_s for w in windows]
         assert starts == sorted(starts)
 
+    def test_per_query_slo_dict(self, tmp_path: Path):
+        """Per-query SLO overrides should override the default threshold."""
+        # Template 001 has a tight SLO of 3s; template 002 keeps default 10s.
+        # Latencies: q001=5s (violates 3s SLO), q002=5s (within 10s SLO).
+        out_dir = tmp_path / "scenario_slo"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        df = pd.DataFrame(
+            {
+                "timestamp": [10.0, 20.0],
+                "source": ["simulator", "simulator"],
+                "event_type": ["completion", "completion"],
+                "query_id": ["id_0", "id_1"],
+                "query_text_id": [
+                    "ext_tpcds1000#001#001",
+                    "ext_tpcds1000#002#001",
+                ],
+                "cluster_name": ["c0", "c0"],
+                "latency_s": [5.0, 5.0],
+            }
+        )
+        df.to_parquet(out_dir / "structured_log.parquet", index=False)
+
+        r = ScenarioResult(
+            scenario_idx=0,
+            violation_rate=0.5,
+            violation_amount_s=2.0,
+            violation_relative_mean=0.0,
+            total_cost=1.0,
+            num_queries=2,
+            out_dir=out_dir,
+        )
+
+        # Without per-query SLO: default=10s → 0 violations.
+        windows_no_dict = find_violation_windows(
+            [r], window_s=300.0, slo_s=10.0, slo_dict=None
+        )
+        assert windows_no_dict[0].num_violations == 0
+
+        # With per-query SLO: template 001 → 3s → 1 violation.
+        windows_with_dict = find_violation_windows(
+            [r], window_s=300.0, slo_s=10.0, slo_dict={"001": 3.0}
+        )
+        assert windows_with_dict[0].num_violations == 1
+        assert windows_with_dict[0].violation_rate == pytest.approx(0.5)
+
 
 # ---------------------------------------------------------------------------
 # CheckpointOptimizer — greedy loop

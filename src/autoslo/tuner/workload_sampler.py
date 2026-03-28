@@ -152,6 +152,13 @@ class WorkloadSampler:
     ) -> list[dict]:
         """Sample query arrivals for one scenario across all hour bins."""
         all_rows: list[dict] = []
+        classifications = self.reservoir.meta.get("classifications", {})
+
+        # Identify windowed template IDs and their parameters.
+        windowed_templates: dict[str, dict] = {}
+        for group_id, info in classifications.items():
+            if info.get("classification") == "windowed":
+                windowed_templates[group_id] = info
 
         for bin_start, bin_end in hour_bins:
             dow = bin_start.weekday()
@@ -168,27 +175,86 @@ class WorkloadSampler:
             if reservoir_bin.empty:
                 continue
 
+            # Partition into normal and windowed templates.
+            grouping_key = "repetition_id"
+            windowed_mask = reservoir_bin[grouping_key].isin(windowed_templates)
+            normal_bin = reservoir_bin[~windowed_mask].reset_index(drop=True)
+            windowed_bin = reservoir_bin[windowed_mask].reset_index(drop=True)
+
+            # --- Windowed templates: insert at periodic positions ---
+            if not windowed_bin.empty:
+                for group_id, group_df in windowed_bin.groupby(grouping_key):
+                    info = windowed_templates.get(str(group_id), {})
+                    period_s = info.get("period_s")
+                    active_length_s = info.get("active_length_s")
+                    on_window_rel_start_s = info.get("on_window_rel_start_s", 0.0)
+
+                    if period_s is None or period_s <= 0:
+                        # Fall back to Poisson for this group.
+                        normal_bin = pd.concat(
+                            [normal_bin, group_df], ignore_index=True
+                        )
+                        continue
+
+                    # Determine periodic arrival times within this bin.
+                    # Use absolute time: find the first window start at or
+                    # after bin_start.
+                    bin_start_epoch = bin_start.timestamp()
+                    bin_end_epoch = bin_end.timestamp()
+
+                    # Compute the start of the first period window at or
+                    # after on_window_rel_start_s.  We anchor periods to
+                    # the epoch so they're absolute.
+                    first_window = on_window_rel_start_s
+                    if first_window < bin_start_epoch:
+                        # Advance to the first period start within the bin.
+                        n_periods = int(
+                            (bin_start_epoch - first_window) / period_s
+                        )
+                        first_window += n_periods * period_s
+                        if first_window < bin_start_epoch:
+                            first_window += period_s
+
+                    # Pick a representative query_text_id from this group.
+                    qtid = str(group_df["query_text_id"].iloc[0])
+
+                    window_start = first_window
+                    while window_start < bin_end_epoch:
+                        window_end = window_start + (active_length_s or 0.0)
+                        # Clip to the bin.
+                        effective_start = max(window_start, bin_start_epoch)
+                        effective_end = min(window_end, bin_end_epoch)
+                        if effective_start < effective_end:
+                            # Place one arrival at a random point within
+                            # the active window.
+                            offset = rng.uniform(
+                                effective_start - bin_start_epoch,
+                                effective_end - bin_start_epoch,
+                            )
+                            abs_time = bin_start + timedelta(seconds=float(offset))
+                            all_rows.append(
+                                {
+                                    "abs_start_time": abs_time,
+                                    "query_text_id": qtid,
+                                    "repetition_id": str(group_id),
+                                }
+                            )
+                        window_start += period_s
+
+            # --- Normal templates: Poisson process ---
+            if normal_bin.empty:
+                continue
+
             # Assign a day index to each historical observation so the
             # forecast policy can compute weighted per-day counts.
-            reservoir_bin = reservoir_bin.copy()
-            obs_days = reservoir_bin["day_of_week"].values
-            # Create unique day identifiers: we group by the actual
-            # observation date.  Since we don't store the full date, we
-            # use a cumulative index of "observation groups" - approximate
-            # by giving each unique (day_of_week, query_text_id) block a
-            # monotonic index.  A simpler approach: number distinct
-            # "observation days" using the reservoir's num_workloads.
+            normal_bin = normal_bin.copy()
             n_workloads = max(1, self.reservoir.meta.get("num_workloads", 1))
-            # Assign each row an observation-day index by evenly
-            # distributing rows across workloads.
-            reservoir_bin["__obs_day_idx"] = np.arange(len(reservoir_bin)) % n_workloads
+            normal_bin["__obs_day_idx"] = np.arange(len(normal_bin)) % n_workloads
 
             # Compute per-observation-day weights.
             weights: list[float] = []
             for day_idx in range(n_workloads):
-                # Create a proxy obs_start for weighting purposes.
-                # Spread the observation days evenly over recent history.
-                days_back = (n_workloads - day_idx) * 7  # assume weekly
+                days_back = (n_workloads - day_idx) * 7
                 obs_start = bin_start - timedelta(days=days_back)
                 obs_start = obs_start.replace(hour=hour, minute=0, second=0, microsecond=0)
                 obs_end = obs_start + timedelta(hours=1)
@@ -198,7 +264,7 @@ class WorkloadSampler:
                 weights.append(w)
 
             expected = self.forecast_policy.expected_count(
-                (bin_start, bin_end), reservoir_bin, weights
+                (bin_start, bin_end), normal_bin, weights
             )
 
             if expected <= 0:
@@ -209,18 +275,14 @@ class WorkloadSampler:
                 expected = max(1, round(expected * bin_duration_s / 3600.0))
 
             # Draw arrival times via a Poisson process.
-            rate = expected / bin_duration_s  # queries per second
+            rate = expected / bin_duration_s
             inter_arrivals = rng.exponential(1.0 / rate, size=expected * 2)
             arrival_offsets = np.cumsum(inter_arrivals)
-            # Keep only those within the bin duration.
             arrival_offsets = arrival_offsets[arrival_offsets < bin_duration_s]
-            # If we got fewer than expected, that's fine — Poisson is stochastic.
-            # If we got more, truncate.
             arrival_offsets = arrival_offsets[:expected]
 
-            # Sample query_text_ids from the reservoir bin (weighted by
-            # frequency).
-            pool = reservoir_bin["query_text_id"].values
+            # Sample query_text_ids from the normal pool.
+            pool = normal_bin["query_text_id"].values
             chosen_ids = rng.choice(pool, size=len(arrival_offsets), replace=True)
 
             for offset_s, qtid in zip(arrival_offsets, chosen_ids):

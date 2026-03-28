@@ -151,6 +151,17 @@ class PolicyTuner:
             workloads, schema_name=schema_name
         )
 
+        if self._tuner_config.classify_arrivals:
+            classifications = reservoir.classify_arrivals()
+            n_windowed = sum(
+                1 for c in classifications.values()
+                if c.get("classification") == "windowed"
+            )
+            console.print(
+                f"  Classified {len(classifications)} groups: "
+                f"{n_windowed} windowed"
+            )
+
         reservoir_dir = self._run_dir / "reservoir"
         reservoir.save(reservoir_dir)
         console.print(
@@ -370,9 +381,18 @@ class PolicyTuner:
         )
 
         self._print_banner("Final: Writing optimized config")
-        return self._write_final_config(
+        final_path = self._write_final_config(
             checkpoints, autoscaler_config, routing_config
         )
+
+        self._print_banner("Final evaluation with tuned config")
+        tuned = self._evaluate_final(
+            train_paths, val_paths,
+            checkpoints, autoscaler_config, routing_config,
+        )
+        self._print_comparison(baseline, tuned)
+
+        return final_path
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -384,6 +404,102 @@ class PolicyTuner:
         console.print()
         console.rule(f"[bold cyan]{message}")
         console.print()
+
+    def _evaluate_final(
+        self,
+        train_paths: list[Path],
+        val_paths: list[Path],
+        checkpoints: list[CapacityCheckpoint],
+        autoscaler_config: dict[str, Any],
+        routing_config: dict[str, Any],
+    ) -> PhaseResult:
+        """Re-run evaluation with the fully-tuned config."""
+        metric = self._tuner_config.aggregation_metric
+        overrides = _checkpoints_to_config(checkpoints)
+        for k, v in autoscaler_config.items():
+            overrides[f"autoscaling_config.{k}"] = v
+        for k, v in routing_config.items():
+            overrides[f"routing_config.{k}"] = v
+
+        train_results = self._evaluator.evaluate(
+            workload_paths=train_paths,
+            config_overrides=overrides,
+            phase="final",
+            grid_point="tuned",
+            out_subdir=self._run_dir / "final" / "train",
+        )
+        train_viol, train_cost = aggregate(train_results, metric)
+
+        val_results = self._evaluator.evaluate(
+            workload_paths=val_paths,
+            config_overrides=overrides,
+            phase="final",
+            grid_point="tuned",
+            out_subdir=self._run_dir / "final" / "val",
+        )
+        val_viol, val_cost = aggregate(val_results, metric)
+
+        result = PhaseResult(
+            params=overrides,
+            train_results=train_results,
+            val_results=val_results,
+            train_violation_agg=train_viol,
+            train_cost_agg=train_cost,
+            val_violation_agg=val_viol,
+            val_cost_agg=val_cost,
+        )
+        summary_dir = self._run_dir / "final"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        self._write_phase_summary(summary_dir / "summary.yml", result)
+        return result
+
+    @staticmethod
+    def _print_comparison(baseline: PhaseResult, tuned: PhaseResult) -> None:
+        """Print baseline vs tuned metrics side-by-side."""
+        table = Table(
+            title="Baseline vs. Tuned Performance", show_lines=True
+        )
+        table.add_column("Metric", justify="left")
+        table.add_column("Baseline", justify="right")
+        table.add_column("Tuned", justify="right")
+        table.add_column("Δ", justify="right")
+
+        rows = [
+            (
+                "Train Violation",
+                baseline.train_violation_agg,
+                tuned.train_violation_agg,
+            ),
+            (
+                "Train Cost ($)",
+                baseline.train_cost_agg,
+                tuned.train_cost_agg,
+            ),
+        ]
+        if baseline.val_violation_agg is not None and tuned.val_violation_agg is not None:
+            rows.append((
+                "Val Violation",
+                baseline.val_violation_agg,
+                tuned.val_violation_agg,
+            ))
+        if baseline.val_cost_agg is not None and tuned.val_cost_agg is not None:
+            rows.append((
+                "Val Cost ($)",
+                baseline.val_cost_agg,
+                tuned.val_cost_agg,
+            ))
+
+        for label, base_val, tuned_val in rows:
+            delta = tuned_val - base_val
+            sign = "+" if delta >= 0 else ""
+            style = "green" if delta <= 0 else "red"
+            table.add_row(
+                label,
+                f"{base_val:.4f}",
+                f"{tuned_val:.4f}",
+                f"[{style}]{sign}{delta:.4f}[/{style}]",
+            )
+        console.print(table)
 
     def _write_final_config(
         self,

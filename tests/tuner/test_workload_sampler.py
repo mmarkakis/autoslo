@@ -247,3 +247,136 @@ class TestPreview:
         preview = sampler.preview(start, end)
         # At least some bins should have positive expected counts.
         assert preview["expected_count"].sum() > 0
+
+
+# ------------------------------------------------------------------
+# Windowed-template sampling
+# ------------------------------------------------------------------
+
+
+def _build_reservoir_with_windowed(
+    schema: str = "ext_tpcds1000",
+) -> QueryReservoir:
+    """Build a reservoir with one windowed and one normal template."""
+    rows = []
+    # Normal template: 40 arrivals spread across hour 9.
+    for i in range(40):
+        rows.append(
+            {
+                "day_of_week": 0,
+                "hour": 9,
+                "timestamp_within_hour": float(i * 90),
+                "query_text_id": f"{schema}#002#001",
+                "repetition_id": "rep_normal",
+            }
+        )
+    # Windowed template: 20 arrivals.
+    for i in range(20):
+        rows.append(
+            {
+                "day_of_week": 0,
+                "hour": 9,
+                "timestamp_within_hour": float(i * 180),
+                "query_text_id": f"{schema}#001#001",
+                "repetition_id": "rep_windowed",
+            }
+        )
+
+    df = pd.DataFrame(rows, columns=QueryReservoir.COLUMNS)
+
+    # Mark rep_windowed as a windowed template with a 1800s period
+    # and a 300s active window anchored at epoch 0.
+    classifications = {
+        "rep_windowed": {
+            "classification": "windowed",
+            "num_samples": 20,
+            "period_s": 1800.0,
+            "active_length_s": 300.0,
+            "on_window_rel_start_s": 0.0,
+        },
+        "rep_normal": {
+            "classification": "normal",
+            "num_samples": 40,
+        },
+    }
+
+    meta = {
+        "schema_name": schema,
+        "num_workloads": 1,
+        "num_arrivals": len(df),
+        "classifications": classifications,
+    }
+    return QueryReservoir(df, meta)
+
+
+class TestWindowedTemplateSampling:
+    """Tests that windowed templates are sampled at periodic positions."""
+
+    def test_windowed_arrivals_present(self):
+        """Windowed templates should produce arrivals in the sampled workload."""
+        reservoir = _build_reservoir_with_windowed()
+        policy = UniformForecastPolicy()
+        sampler = WorkloadSampler(reservoir, policy, "ext_tpcds1000")
+
+        start = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 6, 3, 10, 0, tzinfo=timezone.utc)
+
+        workloads = sampler.sample(start, end, n_scenarios=3, seed=42)
+        for wl in workloads:
+            windowed_rows = wl.df[
+                wl.df["repetition_id"] == "rep_windowed"
+            ]
+            assert len(windowed_rows) > 0, "Expected windowed template arrivals"
+
+    def test_windowed_and_normal_both_present(self):
+        """Both windowed and normal templates should appear."""
+        reservoir = _build_reservoir_with_windowed()
+        policy = UniformForecastPolicy()
+        sampler = WorkloadSampler(reservoir, policy, "ext_tpcds1000")
+
+        start = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 6, 3, 10, 0, tzinfo=timezone.utc)
+
+        workloads = sampler.sample(start, end, n_scenarios=1, seed=42)
+        wl = workloads[0]
+        rep_ids = set(wl.df["repetition_id"].unique())
+        assert "rep_windowed" in rep_ids
+        # Normal templates get repetition_id = query_text_id
+        normal_rows = wl.df[wl.df["repetition_id"] != "rep_windowed"]
+        assert len(normal_rows) > 0, "Expected normal template arrivals"
+
+    def test_windowed_arrivals_within_active_window(self):
+        """Windowed arrivals should fall within the active window bounds."""
+        reservoir = _build_reservoir_with_windowed()
+        policy = UniformForecastPolicy()
+        sampler = WorkloadSampler(reservoir, policy, "ext_tpcds1000")
+
+        start = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 6, 3, 10, 0, tzinfo=timezone.utc)
+        period_s = 1800.0
+        active_s = 300.0
+        bin_start_epoch = start.timestamp()
+
+        workloads = sampler.sample(start, end, n_scenarios=5, seed=0)
+        for wl in workloads:
+            windowed_rows = wl.df[wl.df["repetition_id"] == "rep_windowed"]
+            for _, row in windowed_rows.iterrows():
+                t = row["abs_start_time"].timestamp()
+                # Find which period window this falls in.
+                offset = (t - 0.0) % period_s  # anchored at epoch 0
+                assert offset < active_s + 1e-6, (
+                    f"Windowed arrival at offset {offset:.1f}s within period "
+                    f"exceeds active window {active_s}s"
+                )
+
+    def test_no_classifications_falls_back_to_poisson(self):
+        """With empty classifications, all templates use Poisson sampling."""
+        reservoir = _build_reservoir(n_queries=100, n_workloads=1)
+        assert reservoir.meta.get("classifications") == {}
+        policy = UniformForecastPolicy()
+        sampler = WorkloadSampler(reservoir, policy, "ext_tpcds1000")
+
+        start = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 6, 3, 12, 0, tzinfo=timezone.utc)
+        workloads = sampler.sample(start, end, n_scenarios=2, seed=42)
+        assert all(len(wl.df) > 0 for wl in workloads)

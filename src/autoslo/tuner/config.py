@@ -39,6 +39,9 @@ class TunerConfig:
     # -- Routing sweep (step 6) -------------------------------------------
     routing_ranges: dict[str, list] = field(default_factory=dict)
 
+    # -- Reservoir --------------------------------------------------------
+    classify_arrivals: bool = True
+
     # -- Execution --------------------------------------------------------
     parallelism: int | str = "auto"  # "auto" or explicit int
 
