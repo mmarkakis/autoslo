@@ -13,8 +13,12 @@ from rich.console import Console
 from rich.table import Table
 
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
-from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
+from autoslo.tuner.checkpoint_optimizer import (
+    CheckpointOptimizer,
+    _checkpoints_to_config,
+)
 from autoslo.tuner.config import TunerConfig
+from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.types import PhaseResult, ScenarioResult, aggregate
 from autoslo.utils.structured_log import StructuredLogHandler, setup_structured_logging
@@ -190,16 +194,55 @@ class PolicyTuner:
         )
 
     def sweep_autoscaler(
-        self, train: list, val: list, checkpoints: list
-    ) -> dict:
+        self,
+        train_paths: list[Path],
+        val_paths: list[Path],
+        checkpoints: list[CapacityCheckpoint],
+    ) -> dict[str, Any]:
         """Phase 5: Grid-search autoscaler hyper-parameters."""
-        raise NotImplementedError("sweep_autoscaler")
+        base_overrides = _checkpoints_to_config(checkpoints)
+
+        sweeper = ParamSweep(
+            evaluator=self._evaluator,
+            tuner_config=self._tuner_config,
+            base_overrides=base_overrides,
+            run_dir=self._run_dir,
+            phase_name="autoscaler",
+        )
+
+        return sweeper.sweep(
+            train_paths=train_paths,
+            val_paths=val_paths,
+            param_ranges=self._tuner_config.autoscaler_ranges,
+            config_section="autoscaling_config",
+        )
 
     def sweep_routing(
-        self, train: list, val: list, checkpoints: list, autoscaler_config: dict
-    ) -> dict:
+        self,
+        train_paths: list[Path],
+        val_paths: list[Path],
+        checkpoints: list[CapacityCheckpoint],
+        autoscaler_config: dict[str, Any],
+    ) -> dict[str, Any]:
         """Phase 6: Grid-search routing hyper-parameters."""
-        raise NotImplementedError("sweep_routing")
+        base_overrides = _checkpoints_to_config(checkpoints)
+        for k, v in autoscaler_config.items():
+            base_overrides[f"autoscaling_config.{k}"] = v
+
+        sweeper = ParamSweep(
+            evaluator=self._evaluator,
+            tuner_config=self._tuner_config,
+            base_overrides=base_overrides,
+            run_dir=self._run_dir,
+            phase_name="routing",
+        )
+
+        return sweeper.sweep(
+            train_paths=train_paths,
+            val_paths=val_paths,
+            param_ranges=self._tuner_config.routing_ranges,
+            config_section="routing_config",
+        )
 
     def tune(self, traces: list[Path]) -> Path:
         """Execute the full tuning pipeline end-to-end.
