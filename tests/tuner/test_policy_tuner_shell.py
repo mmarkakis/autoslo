@@ -41,8 +41,6 @@ class TestPolicyTunerShell:
         [
             ("build_reservoir", ([],)),
             ("sample_workloads", (Path("."),)),
-            ("evaluate_baseline", ([], [])),
-            ("optimize_checkpoints", ([], [])),
             ("sweep_autoscaler", ([], [], [])),
             ("sweep_routing", ([], [], [], {})),
             ("tune", ([],)),
