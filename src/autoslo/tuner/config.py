@@ -42,6 +42,13 @@ class TunerConfig:
     # -- Reservoir --------------------------------------------------------
     classify_arrivals: bool = True
 
+    # -- History window ---------------------------------------------------
+    history_start: datetime | None = None
+    history_end: datetime | None = None
+
+    # -- Holdout ----------------------------------------------------------
+    holdout_evaluation: bool = False
+
     # -- Execution --------------------------------------------------------
     parallelism: int | str = "auto"  # "auto" or explicit int
 
@@ -73,8 +80,15 @@ def load_tuner_config(path: str | Path) -> TunerConfig:
     if "end" in tp:
         raw.setdefault("target_end", tp["end"])
 
+    # Flatten nested "history_period" into top-level start/end.
+    hp = raw.pop("history_period", {})
+    if "start" in hp:
+        raw.setdefault("history_start", hp["start"])
+    if "end" in hp:
+        raw.setdefault("history_end", hp["end"])
+
     # Parse datetime strings.
-    for key in ("target_start", "target_end"):
+    for key in ("target_start", "target_end", "history_start", "history_end"):
         val = raw.get(key)
         if isinstance(val, str):
             raw[key] = datetime.fromisoformat(val)

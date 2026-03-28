@@ -1,0 +1,26 @@
+# History-window experiment: previous day only (May 26)
+target_period:
+  start: "2024-05-27T00:00:00"
+  end: "2024-05-28T00:00:00"
+history_period:
+  start: "2024-05-26T00:00:00"
+  end: "2024-05-27T00:00:00"
+
+num_scenarios: 20
+train_fraction: 0.6
+random_seed: 42
+forecast_policy: uniform          # only 1 day — uniform is appropriate
+aggregation_metric: p90
+holdout_evaluation: true
+classify_arrivals: true
+parallelism: auto
+
+checkpoint_budget: 5
+checkpoint_epsilon: 0.01
+sliding_window_s: 300.0
+violation_threshold: 0.1
+
+autoscaler_ranges:
+  eta_crit: [0.05, 0.10, 0.20]
+  idle_periods_before_tear_down: [5, 10, 15]
+routing_ranges: {}

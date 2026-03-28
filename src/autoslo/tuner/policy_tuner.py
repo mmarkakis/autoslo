@@ -145,7 +145,33 @@ class PolicyTuner:
                 schema_name=schema_name,
                 df=df,
             )
+
+            # Restrict to history window when configured.
+            if self._tuner_config.history_start is not None:
+                wl.slice_by_abs_time(
+                    start=self._tuner_config.history_start.isoformat()
+                )
+            if self._tuner_config.history_end is not None:
+                wl.slice_by_abs_time(
+                    end=self._tuner_config.history_end.isoformat()
+                )
+            if len(wl.df) == 0:
+                logger.warning(
+                    "Trace %s has 0 rows after history-window slicing",
+                    trace_path,
+                )
+                continue
+
             workloads.append(wl)
+
+        if self._tuner_config.history_start or self._tuner_config.history_end:
+            h_start = self._tuner_config.history_start or "start"
+            h_end = self._tuner_config.history_end or "end"
+            total = sum(len(w.df) for w in workloads)
+            console.print(
+                f"  History window: {h_start} → {h_end} "
+                f"({total:,} arrivals from {len(workloads)} trace(s))"
+            )
 
         reservoir = QueryReservoir.build(
             workloads, schema_name=schema_name
@@ -392,6 +418,12 @@ class PolicyTuner:
         )
         self._print_comparison(baseline, tuned)
 
+        if self._tuner_config.holdout_evaluation:
+            self._print_banner("Holdout: real-data evaluation")
+            self._evaluate_holdout(
+                traces, checkpoints, autoscaler_config, routing_config,
+            )
+
         return final_path
 
     # ------------------------------------------------------------------
@@ -452,6 +484,114 @@ class PolicyTuner:
         summary_dir.mkdir(parents=True, exist_ok=True)
         self._write_phase_summary(summary_dir / "summary.yml", result)
         return result
+
+    def _evaluate_holdout(
+        self,
+        traces: list[Path],
+        checkpoints: list[CapacityCheckpoint],
+        autoscaler_config: dict[str, Any],
+        routing_config: dict[str, Any],
+    ) -> None:
+        """Evaluate baseline and tuned configs on real held-out data."""
+        schema_name = (
+            (self._initial_config.get("basic_config") or {}).get(
+                "schema_name", "default"
+            )
+        )
+        metric = self._tuner_config.aggregation_metric
+
+        # Extract target-period slice from traces.
+        holdout_dir = self._run_dir / "holdout" / "workloads"
+        holdout_dir.mkdir(parents=True, exist_ok=True)
+        holdout_paths: list[Path] = []
+
+        for i, trace_path in enumerate(traces):
+            df = pd.read_parquet(trace_path)
+            wl = Workload(f"holdout_{i:03d}", schema_name, df=df)
+            wl.slice_by_abs_time(
+                start=self._tuner_config.target_start.isoformat(),
+                end=self._tuner_config.target_end.isoformat(),
+            )
+            if len(wl.df) == 0:
+                continue
+            out_path = holdout_dir / f"holdout_{i:03d}.parquet"
+            wl.df.to_parquet(out_path)
+            holdout_paths.append(out_path)
+
+        if not holdout_paths:
+            console.print(
+                "[yellow]  No real data in target period; "
+                "skipping holdout evaluation.[/yellow]"
+            )
+            return
+
+        total_queries = sum(
+            len(pd.read_parquet(p)) for p in holdout_paths
+        )
+        console.print(
+            f"  Holdout: {total_queries:,} real queries from target period"
+        )
+
+        # Evaluate baseline on real data.
+        baseline_results = self._evaluator.evaluate(
+            workload_paths=holdout_paths,
+            config_overrides={},
+            phase="holdout",
+            grid_point="baseline",
+            out_subdir=self._run_dir / "holdout" / "baseline",
+        )
+        base_viol, base_cost = aggregate(baseline_results, metric)
+
+        # Build tuned overrides.
+        overrides = _checkpoints_to_config(checkpoints)
+        for k, v in autoscaler_config.items():
+            overrides[f"autoscaling_config.{k}"] = v
+        for k, v in routing_config.items():
+            overrides[f"routing_config.{k}"] = v
+
+        # Evaluate tuned config on real data.
+        tuned_results = self._evaluator.evaluate(
+            workload_paths=holdout_paths,
+            config_overrides=overrides,
+            phase="holdout",
+            grid_point="tuned",
+            out_subdir=self._run_dir / "holdout" / "tuned",
+        )
+        tuned_viol, tuned_cost = aggregate(tuned_results, metric)
+
+        # Build PhaseResults for comparison and persistence.
+        baseline_phase = PhaseResult(
+            params={},
+            train_results=baseline_results,
+            val_results=None,
+            train_violation_agg=base_viol,
+            train_cost_agg=base_cost,
+            val_violation_agg=None,
+            val_cost_agg=None,
+        )
+        tuned_phase = PhaseResult(
+            params=overrides,
+            train_results=tuned_results,
+            val_results=None,
+            train_violation_agg=tuned_viol,
+            train_cost_agg=tuned_cost,
+            val_violation_agg=None,
+            val_cost_agg=None,
+        )
+
+        summary_dir = self._run_dir / "holdout"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        holdout_summary: dict[str, Any] = {
+            "num_holdout_queries": total_queries,
+            "baseline_violation": base_viol,
+            "baseline_cost": base_cost,
+            "tuned_violation": tuned_viol,
+            "tuned_cost": tuned_cost,
+        }
+        with open(summary_dir / "summary.yml", "w") as f:
+            yaml.dump(holdout_summary, f, default_flow_style=False)
+
+        self._print_comparison(baseline_phase, tuned_phase)
 
     @staticmethod
     def _print_comparison(baseline: PhaseResult, tuned: PhaseResult) -> None:

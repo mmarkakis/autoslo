@@ -100,3 +100,42 @@ class TestLoadTunerConfig:
         cfg = load_tuner_config(yaml_path)
         assert cfg.target_start == datetime(2025, 1, 15, 8, 0, 0)
         assert cfg.target_end == datetime(2025, 1, 16, 8, 0, 0)
+
+    def test_history_period_parsed(self, tmp_path: Path):
+        raw = {
+            "history_period": {
+                "start": "2024-05-20T00:00:00",
+                "end": "2024-05-27T00:00:00",
+            },
+            "holdout_evaluation": True,
+        }
+        yaml_path = tmp_path / "tuner_config.yml"
+        with open(yaml_path, "w") as f:
+            yaml.dump(raw, f)
+
+        cfg = load_tuner_config(yaml_path)
+        assert cfg.history_start == datetime(2024, 5, 20)
+        assert cfg.history_end == datetime(2024, 5, 27)
+        assert cfg.holdout_evaluation is True
+
+    def test_history_defaults_to_none(self, tmp_path: Path):
+        yaml_path = tmp_path / "tuner_config.yml"
+        yaml_path.write_text("num_scenarios: 10\n")
+
+        cfg = load_tuner_config(yaml_path)
+        assert cfg.history_start is None
+        assert cfg.history_end is None
+        assert cfg.holdout_evaluation is False
+
+    def test_flat_history_start_end(self, tmp_path: Path):
+        raw = {
+            "history_start": "2024-04-01T00:00:00",
+            "history_end": "2024-05-01T00:00:00",
+        }
+        yaml_path = tmp_path / "tuner_config.yml"
+        with open(yaml_path, "w") as f:
+            yaml.dump(raw, f)
+
+        cfg = load_tuner_config(yaml_path)
+        assert cfg.history_start == datetime(2024, 4, 1)
+        assert cfg.history_end == datetime(2024, 5, 1)
