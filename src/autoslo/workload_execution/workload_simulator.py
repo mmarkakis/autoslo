@@ -97,6 +97,7 @@ class WorkloadSimulator:
         rescale_factor: float | None = None,
         closed_loop: bool = False,
         out_dir: str | Path | None = None,
+        workload: "Workload | None" = None,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
@@ -129,24 +130,28 @@ class WorkloadSimulator:
         self._overwrite_experiment = overwrite_experiment
         self._schema_name = schema_name
         self._workload: Workload
-        if workload_name.startswith("redset"):
-            from autoslo.workload_definition.redset_workload import (
-                RedsetWorkload,
-            )  # noqa: PLC0415
-
-            self._workload = RedsetWorkload.load(workload_name)
+        if workload is not None:
+            # Caller-provided workload (e.g. policy tuner) — use as-is.
+            self._workload = workload
         else:
-            self._workload = Workload(
-                workload_name=workload_name,
-                schema_name=schema_name,
-            )
-        if abs_start_time_start is not None or abs_start_time_end is not None:
-            self._workload.slice_by_abs_time(
-                abs_start_time_start, abs_start_time_end
-            )
-        self._workload.set_rel_start_times_from_zero()
-        if rescale_factor is not None:
-            self._workload.rescale_rel_start_times(rescale_factor)
+            if workload_name.startswith("redset"):
+                from autoslo.workload_definition.redset_workload import (
+                    RedsetWorkload,
+                )  # noqa: PLC0415
+
+                self._workload = RedsetWorkload.load(workload_name)
+            else:
+                self._workload = Workload(
+                    workload_name=workload_name,
+                    schema_name=schema_name,
+                )
+            if abs_start_time_start is not None or abs_start_time_end is not None:
+                self._workload.slice_by_abs_time(
+                    abs_start_time_start, abs_start_time_end
+                )
+            self._workload.set_rel_start_times_from_zero()
+            if rescale_factor is not None:
+                self._workload.rescale_rel_start_times(rescale_factor)
 
         self._run_id = simulator_run_id or str(
             int(datetime.now().timestamp() * 1000)
@@ -209,8 +214,21 @@ class WorkloadSimulator:
         return cls.from_config_dict(cfg)
 
     @classmethod
-    def from_config_dict(cls, cfg: dict) -> "WorkloadSimulator":
+    def from_config_dict(
+        cls, cfg: dict, workload: "Workload | None" = None,
+    ) -> "WorkloadSimulator":
         """Create a :class:`WorkloadSimulator` from an already-loaded config dict.
+
+        Parameters
+        ----------
+        cfg :
+            Parsed YAML configuration dictionary.
+        workload :
+            When provided, this pre-built :class:`Workload` is used
+            directly instead of loading one from disk.  Time-slicing,
+            rescaling, and ``set_rel_start_times_from_zero`` are
+            **skipped** — the caller is responsible for preparing the
+            workload beforehand.
 
         Nested sections
         ---------------
@@ -337,6 +355,7 @@ class WorkloadSimulator:
             rescale_factor=rescale_factor,
             closed_loop=closed_loop,
             out_dir=out_dir,
+            workload=workload,
         )
 
     # ------------------------------------------------------------------

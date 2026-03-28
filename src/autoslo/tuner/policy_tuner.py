@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from autoslo.tuner.config import TunerConfig
+from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.types import PhaseResult
 from autoslo.utils.structured_log import StructuredLogHandler, setup_structured_logging
 
@@ -71,6 +72,14 @@ class PolicyTuner:
             filename="evolution.parquet",
         )
 
+        # Scenario evaluator — shared by all tuning phases.
+        self._evaluator = ScenarioEvaluator(
+            initial_config=initial_config,
+            tuner_config=tuner_config,
+            tuner_run_id=self._run_id,
+            evolution_logger=self._evolution_handler,
+        )
+
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
@@ -82,6 +91,10 @@ class PolicyTuner:
     @property
     def run_dir(self) -> Path:
         return self._run_dir
+
+    @property
+    def evaluator(self) -> ScenarioEvaluator:
+        return self._evaluator
 
     # ------------------------------------------------------------------
     # Pipeline steps (stubs — implemented in later phases)

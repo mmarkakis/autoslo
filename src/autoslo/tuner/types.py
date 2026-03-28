@@ -5,9 +5,13 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+import pandas as pd
+import yaml
 
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
 # Per-scenario result
@@ -118,3 +122,68 @@ def compute_pareto_front(
             best_cost = cost
     front.sort()
     return front
+
+
+# ---------------------------------------------------------------------------
+# Result extraction from simulator output
+# ---------------------------------------------------------------------------
+
+
+def extract_scenario_result(
+    out_dir: str | Path,
+    scenario_idx: int,
+    slo_s: float,
+    slo_dict: dict[str, float] | None = None,
+) -> ScenarioResult:
+    """Build a :class:`ScenarioResult` from files written by ``simulate_one``.
+
+    Reads ``billing_interval_analysis.yml`` for cost and
+    ``structured_log.parquet`` for violation statistics — the same logic
+    used by :meth:`WorkloadSimulator._write_experiment_meta`.
+    """
+
+    out_dir = Path(out_dir)
+
+    # -- cost --
+    total_cost = 0.0
+    billing_path = out_dir / "billing_interval_analysis.yml"
+    if billing_path.exists():
+        with open(billing_path) as f:
+            billing: dict[str, Any] = yaml.safe_load(f) or {}
+        for cluster_data in billing.values():
+            total_cost += cluster_data.get("total_billed_cost", 0.0)
+
+    # -- violations --
+    violation_rate = 0.0
+    violation_amount_s = 0.0
+    violation_relative_mean = 0.0
+    num_queries = 0
+
+    log_path = out_dir / "structured_log.parquet"
+    if log_path.exists():
+        log = pd.read_parquet(log_path)
+        completions = log[log["event_type"] == "completion"].copy()
+        num_queries = len(completions)
+        if num_queries > 0:
+            resolver = SloResolver.from_dict(slo_s, slo_dict or {})
+            durations = completions["latency_s"].fillna(0.0)
+            per_row_slo = (
+                completions["query_text_id"].map(resolver.resolve).fillna(slo_s)
+            )
+            violations = durations > per_row_slo
+            violation_rate = float(violations.mean())
+            violation_amount_s = float(
+                (durations - per_row_slo).clip(lower=0.0).sum()
+            )
+            relative = ((durations - per_row_slo) / per_row_slo).clip(lower=0.0)
+            violation_relative_mean = float(relative.mean())
+
+    return ScenarioResult(
+        scenario_idx=scenario_idx,
+        violation_rate=violation_rate,
+        violation_amount_s=violation_amount_s,
+        violation_relative_mean=violation_relative_mean,
+        total_cost=total_cost,
+        num_queries=num_queries,
+        out_dir=out_dir,
+    )
