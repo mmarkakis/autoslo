@@ -166,14 +166,14 @@ class Autoscaler:
             })
 
         if not gap:
-            logger.info(
+            logger.debug(
                 "Checkpoint t=%.1f: already satisfied (current %s).",
                 cp.time_s,
                 dict(current),
             )
             return
 
-        logger.info(
+        logger.debug(
             "Checkpoint t=%.1f: gap %s — spinning up.",
             cp.time_s,
             dict(gap),

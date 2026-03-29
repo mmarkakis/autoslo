@@ -391,7 +391,7 @@ class HeadroomPolicy(AutoscalingPolicy):
                 else "capacity_pressure_signal"
             )
             rpu = self._select_rpu(current_time_s)
-            logger.info("Spin-up triggered: %s (rpu=%d)", reason, rpu)
+            logger.debug("Spin-up triggered: %s (rpu=%d)", reason, rpu)
             self._pending_count += 1
             return AutoscalingAction(
                 spin_ups=[SpinUpRequest(rpu=rpu, reason=reason)],
@@ -445,7 +445,7 @@ class HeadroomPolicy(AutoscalingPolicy):
                         )
                         continue
 
-                    logger.info(
+                    logger.debug(
                         "Tear-down triggered for cluster %s "
                         "(idle for %d periods).",
                         cn,

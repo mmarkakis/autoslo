@@ -111,7 +111,7 @@ class SimulatedProvisioner(ClusterProvisioner):
         """
         cluster = Cluster.new(rpu=rpu)
         self._spun_up.append((cluster, current_time_s))
-        logger.info(
+        logger.debug(
             "SimulatedProvisioner: spun up %s (%d RPU) at time %.2f",
             cluster.name,
             rpu,
@@ -122,7 +122,7 @@ class SimulatedProvisioner(ClusterProvisioner):
     def tear_down(self, cluster_name: str, current_time_s: float) -> None:
         """Record a tear-down (no-op for simulation)."""
         self._torn_down.append((cluster_name, current_time_s))
-        logger.info(
+        logger.debug(
             "SimulatedProvisioner: tore down %s at time %.2f",
             cluster_name,
             current_time_s,

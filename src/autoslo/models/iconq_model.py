@@ -181,6 +181,7 @@ class IconqModel:
         device: torch.device = torch.device("cpu"),
         parent_save_dir: Optional[str] = None,
         model_id: Optional[str] = None,
+        _skip_save: bool = False,
     ) -> None:
         """
         Initializes the LSTM model.
@@ -277,8 +278,10 @@ class IconqModel:
         else:
             self._loss_type = LossType.SENSITIVE_Q_ERROR
 
-        # Save initial model parameters.
-        self._save_params()
+        # Save initial model parameters (skip when loading from disk to
+        # avoid a write that races with concurrent readers).
+        if not _skip_save:
+            self._save_params()
 
     @property
     def stage_model(self) -> StageModel:
@@ -622,6 +625,16 @@ class IconqModel:
         with open(param_path, "r") as f:
             params = yaml.safe_load(f)
 
+        if not isinstance(params, dict):
+            raise ValueError(
+                f"IconqModel params.yml is invalid (got {type(params).__name__}): "
+                f"{param_path}"
+            )
+        if params.get("init_config") is None:
+            raise ValueError(
+                f"IconqModel params.yml missing 'init_config': {param_path}"
+            )
+
         model = IconqModel(
             init_config=IconqModelInitConfig(**params["init_config"]),
             train_config_sequence=[
@@ -631,6 +644,7 @@ class IconqModel:
             device=torch.device(params["device"]),
             parent_save_dir=parent_load_dir,
             model_id=model_id,
+            _skip_save=True,
         )
 
         # Load the model checkpoint

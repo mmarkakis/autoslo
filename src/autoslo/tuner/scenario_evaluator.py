@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,13 @@ def _run_scenario(
     The workload DataFrame is read from *workload_path* (a parquet file
     persisted under ``sampled_workloads/`` in the tuner run directory).
     """
+    # Suppress worker-process console output so it does not collide with
+    # the parent's rich progress bars.  Structured logs in the simulator
+    # still capture useful data to disk.
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
+    logging.disable(logging.WARNING)
+
     # Restrict internal parallelism (PyTorch, BLAS, etc.) so that
     # multiple workers can coexist without over-subscribing cores.
     ncpus = str(inner_level_num_cpus())
