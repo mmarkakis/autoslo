@@ -13,6 +13,8 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from autoslo.utils.yaml_helpers import dump_config
+
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.checkpoint_optimizer import (
     CheckpointOptimizer,
@@ -73,15 +75,14 @@ class PolicyTuner:
 
         # Persist configs for reproducibility.
         with open(self._run_dir / "initial_config.yml", "w") as f:
-            yaml.dump(initial_config, f, default_flow_style=False)
+            dump_config(initial_config, f)
         with open(self._run_dir / "tuner_config.yml", "w") as f:
-            yaml.dump(
+            dump_config(
                 {
                     k: (v.isoformat() if isinstance(v, datetime) else v)
                     for k, v in tuner_config.__dict__.items()
                 },
                 f,
-                default_flow_style=False,
             )
 
         # Set up structured log for the evolution ledger.
@@ -588,7 +589,7 @@ class PolicyTuner:
             "tuned_cost": tuned_cost,
         }
         with open(summary_dir / "summary.yml", "w") as f:
-            yaml.dump(holdout_summary, f, default_flow_style=False)
+            dump_config(holdout_summary, f)
 
         self._print_comparison(baseline_phase, tuned_phase)
 
@@ -663,7 +664,7 @@ class PolicyTuner:
         # Write final config.
         final_path = self._run_dir / "final_config.yml"
         with open(final_path, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False)
+            dump_config(cfg, f)
 
         # Finalize evolution log.
         self._evolution_handler.finalize()
@@ -700,7 +701,7 @@ class PolicyTuner:
                 for r in result.val_results
             ]
         with open(path, "w") as f:
-            yaml.dump(summary, f, default_flow_style=False)
+            dump_config(summary, f)
 
     @staticmethod
     def _print_phase_summary(label: str, result: PhaseResult) -> None:

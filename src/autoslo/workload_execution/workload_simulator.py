@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
+from autoslo.utils.yaml_helpers import dump_config
 from autoslo.blueprint_selection import log_timeline_builder
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
@@ -442,7 +443,7 @@ class WorkloadSimulator:
                 "seed": self._seed,
                 "closed_loop": self._closed_loop,
             }
-            yaml.safe_dump(d, f, sort_keys=False)
+            dump_config(d, f, sort_keys=False)
 
     def reset(self, simulator_run_id: Optional[str] = None) -> None:
         """
@@ -895,7 +896,7 @@ class WorkloadSimulator:
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         with open(mapping_out_path, "w") as f:
-            yaml.safe_dump(seq_num_to_cluster_name, f, sort_keys=False)
+            dump_config(seq_num_to_cluster_name, f, sort_keys=False)
 
         if self._experiment_name:
             self._write_experiment_meta()
@@ -1059,7 +1060,7 @@ class WorkloadSimulator:
 
         out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
         with open(out_path, "w") as f:
-            yaml.safe_dump(d, f, sort_keys=False)
+            dump_config(d, f, sort_keys=False)
 
     def _write_experiment_meta(self) -> None:
         """

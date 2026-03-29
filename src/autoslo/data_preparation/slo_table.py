@@ -14,6 +14,7 @@ import pandas as pd
 import yaml
 
 import autoslo.utils.paths as pu
+from autoslo.utils.yaml_helpers import dump_config
 from autoslo.workload_execution.trace import Trace
 
 _DEFAULT_DATA_SUBDIR = "slos"
@@ -175,22 +176,7 @@ def dump_slo_table(
         "slo_dict": slo_dict,
     }
 
-    # Use a private Dumper subclass that quotes digit-only strings so
-    # zero-padded template keys like "008" survive a YAML round-trip
-    # (bare ``008`` is parsed as int 8 by yaml.safe_load).
-    class _SLODumper(yaml.Dumper):
-        pass
-
-    def _maybe_quote(dumper: yaml.Dumper, data: str) -> yaml.ScalarNode:
-        if data.isdigit():
-            return dumper.represent_scalar(
-                "tag:yaml.org,2002:str", data, style="'"
-            )
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-    _SLODumper.add_representer(str, _maybe_quote)
-
     with open(output_path, "w") as f:
-        yaml.dump(meta, f, Dumper=_SLODumper, default_flow_style=False, sort_keys=False)
+        dump_config(meta, f, sort_keys=False)
 
     return slo_dict
