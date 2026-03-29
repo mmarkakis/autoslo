@@ -5,7 +5,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import yaml
 from filelock import FileLock
@@ -740,6 +740,7 @@ class WorkloadSimulator:
     def simulate_one(
         self,
         sampling_spec: "Optional[RedsetWorkloadSamplingSpec]" = None,
+        progress_callback: "Optional[Callable[[int, int], None]]" = None,
     ) -> None:
         """
         First pass: route queries as they come in, preferring active endpoints
@@ -775,7 +776,20 @@ class WorkloadSimulator:
 
         closed_loop_clock = 0.0  # tracks effective wall-clock in closed-loop
 
-        for i, query in tqdm(enumerate(queries), total=total_queries):
+        # When a progress_callback is supplied (tuner workers), report
+        # progress every _PROGRESS_INTERVAL queries instead of using tqdm.
+        _PROGRESS_INTERVAL = 10
+        _use_callback = progress_callback is not None
+        iterator = (
+            enumerate(queries)
+            if _use_callback
+            else tqdm(enumerate(queries), total=total_queries)
+        )
+
+        if _use_callback:
+            progress_callback(0, total_queries)
+
+        for i, query in iterator:
 
             # In closed-loop mode the next query starts only after the
             # previous one finishes, ignoring the original inter-arrival times.
@@ -889,6 +903,14 @@ class WorkloadSimulator:
             # Advance the closed-loop clock past this query's completion.
             if self._closed_loop:
                 closed_loop_clock = start_s + self_latency_s
+
+            # Report progress to the parent process.
+            if _use_callback and (i + 1) % _PROGRESS_INTERVAL == 0:
+                progress_callback(i + 1, total_queries)
+
+        # Final progress report.
+        if _use_callback:
+            progress_callback(total_queries, total_queries)
 
         all_completed = [
             q

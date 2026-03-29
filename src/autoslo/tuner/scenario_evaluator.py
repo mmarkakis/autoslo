@@ -6,7 +6,8 @@ import copy
 import logging
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from multiprocessing import Manager, get_context
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,11 @@ from rich.progress import (
 
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.types import ScenarioResult, extract_scenario_result
-from autoslo.utils.paralellism import deg_of_paralellism, inner_level_num_cpus
+from autoslo.utils.paralellism import (
+    _init_worker,
+    deg_of_paralellism,
+    inner_level_num_cpus,
+)
 from autoslo.utils.structured_log import StructuredLogHandler, emit_structured
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,7 @@ def _run_scenario(
     scenario_idx: int,
     slo_s: float,
     slo_dict: dict[str, float] | None,
+    progress_dict: dict[int, tuple[int, int]] | None = None,
 ) -> ScenarioResult:
     """Execute a single simulation inside a worker process.
 
@@ -58,13 +64,19 @@ def _run_scenario(
 
     # Restrict internal parallelism (PyTorch, BLAS, etc.) so that
     # multiple workers can coexist without over-subscribing cores.
+    # With spawn context the _init_worker initializer already set the
+    # env vars before any heavy imports; these are kept as defence-in-depth.
     ncpus = str(inner_level_num_cpus())
     os.environ["OMP_NUM_THREADS"] = ncpus
     os.environ["MKL_NUM_THREADS"] = ncpus
-    os.environ["TORCH_NUM_THREADS"] = ncpus
+    os.environ["OPENBLAS_NUM_THREADS"] = ncpus
 
     from autoslo.workload_definition.workload import Workload
     from autoslo.workload_execution.workload_simulator import WorkloadSimulator
+
+    # Runtime API — effective even if PyTorch was already imported.
+    import torch
+    torch.set_num_threads(int(ncpus))
 
     # Load the pre-sampled workload from disk.
     workload_df = pd.read_parquet(workload_path)
@@ -76,8 +88,15 @@ def _run_scenario(
     # with the correct workload from the start.
     sim = WorkloadSimulator.from_config_dict(config_dict, workload=workload)
 
+    # Build a progress callback that writes into the shared dict.
+    def _progress_cb(current: int, total: int) -> None:
+        if progress_dict is not None:
+            progress_dict[scenario_idx] = (current, total)
+
     # Run the simulation.
-    sim.simulate_one()
+    sim.simulate_one(
+        progress_callback=_progress_cb if progress_dict is not None else None,
+    )
 
     # Extract metrics from the output files.
     return extract_scenario_result(
@@ -201,7 +220,16 @@ class ScenarioEvaluator:
         )
 
         results: list[ScenarioResult] = []
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        mgr = Manager()
+        progress_dict = mgr.dict()
+
+        ctx = get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=ctx,
+            initializer=_init_worker,
+            initargs=(inner_level_num_cpus(),),
+        ) as pool:
             futures = {
                 pool.submit(
                     _run_scenario,
@@ -212,6 +240,7 @@ class ScenarioEvaluator:
                     scenario_idx=wu["scenario_idx"],
                     slo_s=slo_s,
                     slo_dict=slo_dict,
+                    progress_dict=progress_dict,
                 ): wu["scenario_idx"]
                 for wu in work_units
             }
@@ -223,24 +252,51 @@ class ScenarioEvaluator:
                 MofNCompleteColumn(),
                 transient=True,
             ) as progress:
-                task = progress.add_task(
+                main_task = progress.add_task(
                     f"[cyan]{phase} gp={grid_point}", total=len(futures)
                 )
-                for future in as_completed(futures):
-                    idx = futures[future]
-                    try:
-                        result = future.result()
-                    except Exception:
-                        logger.exception("Scenario %d failed", idx)
-                        raise
-                    results.append(result)
+                # Map scenario_idx → Rich task id for sub-tasks.
+                sub_tasks: dict[int, int] = {}
+                pending = set(futures.keys())
 
-                    # Log to the evolution ledger.
-                    self._log_result(
-                        result, phase, grid_point, config_overrides
+                while pending:
+                    done, pending = wait(
+                        pending, timeout=0.3, return_when=FIRST_COMPLETED
                     )
 
-                    progress.advance(task)
+                    # Update sub-task progress bars from shared dict.
+                    for idx, (current, total) in list(
+                        progress_dict.items()
+                    ):
+                        if idx not in sub_tasks:
+                            sub_tasks[idx] = progress.add_task(
+                                f"    scenario {idx}",
+                                total=total,
+                            )
+                        progress.update(
+                            sub_tasks[idx], completed=current, total=total
+                        )
+
+                    # Handle completed futures.
+                    for future in done:
+                        idx = futures[future]
+                        try:
+                            result = future.result()
+                        except Exception:
+                            logger.exception("Scenario %d failed", idx)
+                            raise
+                        results.append(result)
+                        self._log_result(
+                            result, phase, grid_point, config_overrides
+                        )
+                        progress.advance(main_task)
+
+                        # Remove the sub-task for this scenario.
+                        if idx in sub_tasks:
+                            progress.remove_task(sub_tasks.pop(idx))
+                        progress_dict.pop(idx, None)
+
+        mgr.shutdown()
 
         # Sort by scenario_idx for deterministic ordering.
         results.sort(key=lambda r: r.scenario_idx)
