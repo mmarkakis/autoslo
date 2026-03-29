@@ -71,6 +71,7 @@ def build_routing_policy(
     slo_s: float,
     slo_resolver: SloResolver,
     slo_metric: SloMetric,
+    iconq_model: Optional["IconqModel"] = None,
 ) -> RoutingPolicy:
     """Construct a :class:`RoutingPolicy` from the ``routing_config`` section."""
     routing_cfg: dict = cfg.get("routing_config") or {}
@@ -88,6 +89,7 @@ def build_routing_policy(
             default_slo_s=slo_s,
             slo_overrides=slo_resolver.slo_dict,
             slo_metric=slo_metric,
+            iconq_model=iconq_model,
         )
     elif policy_type == "round_robin":
         return RoundRobinPolicy()
@@ -113,6 +115,7 @@ def build_routing_policy(
             fallback_tightness=float(
                 routing_cfg.get("fallback_tightness", 0.5)
             ),
+            iconq_model=iconq_model,
         )
     else:
         raise ValueError(
@@ -146,6 +149,7 @@ def build_autoscaling_policy(
     iconq_model_id: Optional[str],
     routing_policy: RoutingPolicy,
     allowed_rpu_sizes: list[int],
+    iconq_model: Optional["IconqModel"] = None,
 ) -> AutoscalingPolicy:
     """Construct an :class:`AutoscalingPolicy` from ``autoscaling_config``."""
     policy_type: str = cfg_get(
@@ -175,7 +179,9 @@ def build_autoscaling_policy(
             ),
             allowed_rpu_sizes=allowed_rpu_sizes,
             iconq_model=(
-                IconqModel.load(iconq_model_id) if iconq_model_id else None
+                iconq_model
+                if iconq_model is not None
+                else (IconqModel.load(iconq_model_id) if iconq_model_id else None)
             ),
             routing_policy=routing_policy,
             slo_threshold=slo_threshold,

@@ -57,13 +57,18 @@ class ModelPolicy(RoutingPolicy):
         slo_overrides: Optional[dict[str, float]] = None,
         slo_metric: SloMetric = SloMetric.RELATIVE,
         *args: Any,
+        iconq_model: Optional[IconqModel] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
 
         # Model ---------------------------------------------------------------
         self._iconq_model_id = iconq_model_id
-        self._iconq_model = IconqModel.load(model_id=iconq_model_id)
+        self._iconq_model = (
+            iconq_model
+            if iconq_model is not None
+            else IconqModel.load(model_id=iconq_model_id)
+        )
 
         # SLO -----------------------------------------------------------------
         self._slo_resolver = SloResolver.from_dict(

@@ -29,6 +29,7 @@ from autoslo.routing.routing_core import RoutingCore, RoutingResult
 from autoslo.workload_definition.query import QueryTextId, SloMetric
 
 if TYPE_CHECKING:
+    from autoslo.models.iconq_model import IconqModel
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 logger = logging.getLogger(__name__)
@@ -77,12 +78,14 @@ class CacheAwarePolicy(ModelPolicy):
         cache_decay_strategy: str = "exponential",
         cache_decay_params: Optional[dict[str, Any]] = None,
         fallback_tightness: float = 0.5,
+        iconq_model: Optional["IconqModel"] = None,
     ) -> None:
         super().__init__(
             iconq_model_id=iconq_model_id,
             default_slo_s=default_slo_s,
             slo_overrides=slo_overrides,
             slo_metric=slo_metric,
+            iconq_model=iconq_model,
         )
 
         self._lambda = cache_risk_lambda

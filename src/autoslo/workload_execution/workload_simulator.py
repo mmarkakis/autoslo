@@ -99,10 +99,15 @@ class WorkloadSimulator:
         closed_loop: bool = False,
         out_dir: str | Path | None = None,
         workload: "Workload | None" = None,
+        iconq_model: "IconqModel | None" = None,
     ):
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
-        self._iconq_model = IconqModel.load(iconq_model_id)
+        self._iconq_model = (
+            iconq_model
+            if iconq_model is not None
+            else IconqModel.load(iconq_model_id)
+        )
         self._slo_s = slo_s
         self._slo_dict_filename = slo_dict_filename
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
@@ -292,6 +297,11 @@ class WorkloadSimulator:
         )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
+        # ── Load the IconqModel once and share across all consumers ──────────
+        _iconq_model: IconqModel | None = (
+            IconqModel.load(iconq_model_id) if iconq_model_id else None
+        )
+
         # ── shared policy / pool construction ────────────────────────────────
         routing_policy = cfgu.build_routing_policy(
             cfg,
@@ -299,6 +309,7 @@ class WorkloadSimulator:
             slo_s,
             slo_resolver,
             slo_metric,
+            iconq_model=_iconq_model,
         )
         mcp = cfgu.build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
@@ -314,6 +325,7 @@ class WorkloadSimulator:
             iconq_model_id,
             routing_policy,
             allowed_rpus,
+            iconq_model=_iconq_model,
         )
         poll_s: float = float(
             cfgu.cfg_get(
@@ -357,6 +369,7 @@ class WorkloadSimulator:
             closed_loop=closed_loop,
             out_dir=out_dir,
             workload=workload,
+            iconq_model=_iconq_model,
         )
 
     # ------------------------------------------------------------------
