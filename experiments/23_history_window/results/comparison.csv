@@ -1,0 +1,4 @@
+scenario,label,reservoir_arrivals,holdout_queries,holdout_baseline_violation,holdout_tuned_violation,holdout_baseline_cost,holdout_tuned_cost,final_train_violation,final_val_violation,final_train_cost,final_val_cost,num_checkpoints,checkpoint_details,tuned_capacity_poll_interval_s,tuned_eta_crit
+prev_day,1 day,1236,1392,0.0,0.0,23.812916666666673,25.155000000000005,0.0,0.0,35.05416666666667,36.55583333333334,0,,120.0,0.1
+prev_week,1 week,7333,1392,0.0,0.0,23.812916666666673,25.16583333333333,0.0,0.0,36.67020833333334,36.79858333333334,0,,30.0,0.2
+prev_month,1 month,32516,1392,0.0,0.0,23.812916666666673,23.19375000000001,0.0,0.0,100.384875,108.17408333333334,0,,,0.2

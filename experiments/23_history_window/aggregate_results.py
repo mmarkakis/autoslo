@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 from rich.console import Console
@@ -37,6 +39,61 @@ def _load_yaml(path: Path) -> dict | None:
         return None
     with open(path) as f:
         return yaml.safe_load(f) or {}
+
+
+def _flatten_dict(
+    d: dict[str, Any], prefix: str = ""
+) -> dict[str, Any]:
+    """Recursively flatten a nested dict to dot-path keys."""
+    items: dict[str, Any] = {}
+    for k, v in d.items():
+        key = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
+        if isinstance(v, dict):
+            items.update(_flatten_dict(v, key))
+        else:
+            items[key] = v
+    return items
+
+
+def _load_config_pair(
+    scenario_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Load initial and final configs, return as flat dicts."""
+    init_cfg = _load_yaml(scenario_dir / "initial_config.yml")
+    final_cfg = _load_yaml(scenario_dir / "final_config.yml")
+    if init_cfg is None or final_cfg is None:
+        return None
+    return _flatten_dict(init_cfg), _flatten_dict(final_cfg)
+
+
+_CHECKPOINT_KEY = "autoscaling_config.capacity_checkpoints"
+
+
+def _diff_configs(
+    base_flat: dict[str, Any], tuned_flat: dict[str, Any]
+) -> list[tuple[str, Any, Any]]:
+    """Return (key, base_val, tuned_val) for keys that differ.
+
+    Excludes ``capacity_checkpoints`` (shown in its own table).
+    """
+    diffs: list[tuple[str, Any, Any]] = []
+    all_keys = sorted(set(base_flat) | set(tuned_flat))
+    for k in all_keys:
+        if k == _CHECKPOINT_KEY:
+            continue
+        bv = base_flat.get(k)
+        tv = tuned_flat.get(k)
+        if bv != tv:
+            diffs.append((k, bv, tv))
+    return diffs
+
+
+def _extract_checkpoints(tuned_flat: dict[str, Any]) -> list[dict]:
+    """Return the capacity_checkpoints list from the flat config."""
+    raw = tuned_flat.get(_CHECKPOINT_KEY)
+    if isinstance(raw, list):
+        return raw
+    return []
 
 
 def main() -> None:
@@ -129,15 +186,122 @@ def main() -> None:
 
     console.print(table)
 
+    # ---- Configuration diff tables --------------------------------------
+    param_diff_rows: list[tuple[str, str, Any, Any]] = []  # (label, key, base, tuned)
+    checkpoint_rows: list[dict] = []  # per-scenario checkpoint summary
+
+    for scenario in SCENARIOS:
+        scenario_dir = run_root / scenario
+        label = LABELS[scenario]
+        pair = _load_config_pair(scenario_dir)
+        if pair is None:
+            checkpoint_rows.append({"label": label, "checkpoints": []})
+            continue
+        base_flat, tuned_flat = pair
+        for key, bv, tv in _diff_configs(base_flat, tuned_flat):
+            param_diff_rows.append((label, key, bv, tv))
+        checkpoint_rows.append(
+            {"label": label, "checkpoints": _extract_checkpoints(tuned_flat)}
+        )
+
+    if param_diff_rows:
+        ptable = Table(
+            title="Parameter Changes (Baseline → Tuned)",
+            show_lines=True,
+        )
+        ptable.add_column("Scenario", justify="left")
+        ptable.add_column("Parameter", justify="left")
+        ptable.add_column("Baseline", justify="right")
+        ptable.add_column("Tuned", justify="right")
+        prev_label = None
+        for label, key, bv, tv in param_diff_rows:
+            display_label = label if label != prev_label else ""
+            prev_label = label
+            ptable.add_row(
+                display_label,
+                key,
+                str(bv) if bv is not None else "—",
+                str(tv) if tv is not None else "—",
+            )
+        console.print()
+        console.print(ptable)
+
+        param_csv_path = RESULTS_DIR / "param_changes.csv"
+        with open(param_csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["scenario", "parameter", "baseline", "tuned"])
+            writer.writerows(param_diff_rows)
+        console.print(f"Param changes written to: {param_csv_path}")
+    else:
+        console.print("\n[yellow]No config diffs found (initial_config.yml / "
+                       "final_config.yml may be missing).[/yellow]")
+
+    if any(cr["checkpoints"] for cr in checkpoint_rows):
+        ctable = Table(
+            title="Capacity Checkpoints Added by Tuner",
+            show_lines=True,
+        )
+        ctable.add_column("Scenario", justify="left")
+        ctable.add_column("# Checkpts", justify="right")
+        ctable.add_column("Times (s)", justify="left")
+        ctable.add_column("RPU Sizes", justify="left")
+        for cr in checkpoint_rows:
+            cps = cr["checkpoints"]
+            if not cps:
+                ctable.add_row(cr["label"], "0", "—", "—")
+            else:
+                times = ", ".join(str(cp.get("time_s", "?")) for cp in cps)
+                rpus = ", ".join(str(cp.get("min_rpus", "?")) for cp in cps)
+                ctable.add_row(cr["label"], str(len(cps)), times, rpus)
+        console.print()
+        console.print(ctable)
+
+        ckpt_csv_path = RESULTS_DIR / "checkpoints.csv"
+        with open(ckpt_csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["scenario", "checkpoint_idx", "time_s", "min_rpus"])
+            for cr in checkpoint_rows:
+                for i, cp in enumerate(cr["checkpoints"]):
+                    writer.writerow([
+                        cr["label"],
+                        i,
+                        cp.get("time_s", ""),
+                        json.dumps(cp.get("min_rpus", [])),
+                    ])
+        console.print(f"Checkpoints written to: {ckpt_csv_path}")
+
+    # Extend row dicts with config-diff info for CSV.
+    for row in rows:
+        scenario_dir = run_root / row["scenario"]
+        pair = _load_config_pair(scenario_dir)
+        if pair is None:
+            row["num_checkpoints"] = None
+            row["checkpoint_details"] = None
+            continue
+        _base_flat, tuned_flat = pair
+        cps = _extract_checkpoints(tuned_flat)
+        row["num_checkpoints"] = len(cps)
+        row["checkpoint_details"] = json.dumps(cps) if cps else ""
+        diffs = _diff_configs(_base_flat, tuned_flat)
+        for key, _bv, tv in diffs:
+            col = "tuned_" + key.rsplit(".", 1)[-1]
+            row[col] = tv
+
     # ---- CSV ------------------------------------------------------------
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     csv_path = RESULTS_DIR / "comparison.csv"
+    # Collect all tuned_* columns dynamically.
+    tuned_cols = sorted(
+        {k for r in rows for k in r if k.startswith("tuned_")}
+    )
     fieldnames = [
         "scenario", "label", "reservoir_arrivals", "holdout_queries",
         "holdout_baseline_violation", "holdout_tuned_violation",
         "holdout_baseline_cost", "holdout_tuned_cost",
         "final_train_violation", "final_val_violation",
         "final_train_cost", "final_val_cost",
+        "num_checkpoints", "checkpoint_details",
+        *tuned_cols,
     ]
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
