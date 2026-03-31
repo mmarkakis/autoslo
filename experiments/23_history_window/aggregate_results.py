@@ -41,9 +41,7 @@ def _load_yaml(path: Path) -> dict | None:
         return yaml.safe_load(f) or {}
 
 
-def _flatten_dict(
-    d: dict[str, Any], prefix: str = ""
-) -> dict[str, Any]:
+def _flatten_dict(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     """Recursively flatten a nested dict to dot-path keys."""
     items: dict[str, Any] = {}
     for k, v in d.items():
@@ -115,7 +113,9 @@ def main() -> None:
         scenario_dir = run_root / scenario
         holdout = _load_yaml(scenario_dir / "holdout" / "summary.yml")
         final = _load_yaml(scenario_dir / "final" / "summary.yml")
-        reservoir_meta = _load_yaml(scenario_dir / "reservoir" / "reservoir_meta.yml")
+        reservoir_meta = _load_yaml(
+            scenario_dir / "reservoir" / "reservoir_meta.yml"
+        )
 
         row = {
             "scenario": scenario,
@@ -126,7 +126,9 @@ def main() -> None:
         }
 
         if holdout:
-            row["holdout_baseline_violation"] = holdout.get("baseline_violation")
+            row["holdout_baseline_violation"] = holdout.get(
+                "baseline_violation"
+            )
             row["holdout_baseline_cost"] = holdout.get("baseline_cost")
             row["holdout_tuned_violation"] = holdout.get("tuned_violation")
             row["holdout_tuned_cost"] = holdout.get("tuned_cost")
@@ -175,7 +177,11 @@ def main() -> None:
 
         table.add_row(
             r["label"],
-            f"{r.get('reservoir_arrivals', '?'):,}" if r.get("reservoir_arrivals") else "?",
+            (
+                f"{r.get('reservoir_arrivals', '?'):,}"
+                if r.get("reservoir_arrivals")
+                else "?"
+            ),
             f"{bv:.4f}" if bv is not None else "—",
             f"{tv:.4f}" if tv is not None else "—",
             dv_str or "—",
@@ -187,7 +193,9 @@ def main() -> None:
     console.print(table)
 
     # ---- Configuration diff tables --------------------------------------
-    param_diff_rows: list[tuple[str, str, Any, Any]] = []  # (label, key, base, tuned)
+    param_diff_rows: list[tuple[str, str, Any, Any]] = (
+        []
+    )  # (label, key, base, tuned)
     checkpoint_rows: list[dict] = []  # per-scenario checkpoint summary
 
     for scenario in SCENARIOS:
@@ -233,8 +241,10 @@ def main() -> None:
             writer.writerows(param_diff_rows)
         console.print(f"Param changes written to: {param_csv_path}")
     else:
-        console.print("\n[yellow]No config diffs found (initial_config.yml / "
-                       "final_config.yml may be missing).[/yellow]")
+        console.print(
+            "\n[yellow]No config diffs found (initial_config.yml / "
+            "final_config.yml may be missing).[/yellow]"
+        )
 
     if any(cr["checkpoints"] for cr in checkpoint_rows):
         ctable = Table(
@@ -259,15 +269,19 @@ def main() -> None:
         ckpt_csv_path = RESULTS_DIR / "checkpoints.csv"
         with open(ckpt_csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["scenario", "checkpoint_idx", "time_s", "min_rpus"])
+            writer.writerow(
+                ["scenario", "checkpoint_idx", "time_s", "min_rpus"]
+            )
             for cr in checkpoint_rows:
                 for i, cp in enumerate(cr["checkpoints"]):
-                    writer.writerow([
-                        cr["label"],
-                        i,
-                        cp.get("time_s", ""),
-                        json.dumps(cp.get("min_rpus", [])),
-                    ])
+                    writer.writerow(
+                        [
+                            cr["label"],
+                            i,
+                            cp.get("time_s", ""),
+                            json.dumps(cp.get("min_rpus", [])),
+                        ]
+                    )
         console.print(f"Checkpoints written to: {ckpt_csv_path}")
 
     # Extend row dicts with config-diff info for CSV.
@@ -291,16 +305,22 @@ def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     csv_path = RESULTS_DIR / "comparison.csv"
     # Collect all tuned_* columns dynamically.
-    tuned_cols = sorted(
-        {k for r in rows for k in r if k.startswith("tuned_")}
-    )
+    tuned_cols = sorted({k for r in rows for k in r if k.startswith("tuned_")})
     fieldnames = [
-        "scenario", "label", "reservoir_arrivals", "holdout_queries",
-        "holdout_baseline_violation", "holdout_tuned_violation",
-        "holdout_baseline_cost", "holdout_tuned_cost",
-        "final_train_violation", "final_val_violation",
-        "final_train_cost", "final_val_cost",
-        "num_checkpoints", "checkpoint_details",
+        "scenario",
+        "label",
+        "reservoir_arrivals",
+        "holdout_queries",
+        "holdout_baseline_violation",
+        "holdout_tuned_violation",
+        "holdout_baseline_cost",
+        "holdout_tuned_cost",
+        "final_train_violation",
+        "final_val_violation",
+        "final_train_cost",
+        "final_val_cost",
+        "num_checkpoints",
+        "checkpoint_details",
         *tuned_cols,
     ]
     with open(csv_path, "w", newline="") as f:
@@ -309,54 +329,158 @@ def main() -> None:
         writer.writerows(rows)
     console.print(f"\nCSV written to: {csv_path}")
 
-    # ---- Bar chart (optional, needs matplotlib) -------------------------
+    # ---- Scatter plot (optional, needs matplotlib) -----------------------
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        from autoslo.utils.colors import Palette
+        from autoslo.utils.plotting import (
+            ScatterPoint,
+            cost_vs_compliance_scatter,
+        )
     except ImportError:
-        console.print("[yellow]matplotlib not installed; skipping plot.[/yellow]")
+        console.print(
+            "[yellow]matplotlib not installed; skipping plot.[/yellow]"
+        )
         return
 
-    labels = [r["label"] for r in rows]
     has_holdout = all(
         r.get("holdout_tuned_violation") is not None for r in rows
     )
     if not has_holdout:
-        console.print("[yellow]Holdout data missing for some scenarios; "
-                       "skipping plot.[/yellow]")
+        console.print(
+            "[yellow]Holdout data missing for some scenarios; "
+            "skipping plot.[/yellow]"
+        )
         return
 
-    baseline_viol = [r["holdout_baseline_violation"] for r in rows]
-    tuned_viol = [r["holdout_tuned_violation"] for r in rows]
-    baseline_cost = [r["holdout_baseline_cost"] for r in rows]
-    tuned_cost = [r["holdout_tuned_cost"] for r in rows]
+    scenario_colors = {
+        "prev_day": Palette.light_blue,
+        "prev_week": Palette.dark_blue,
+        "prev_month": Palette.dark_green,
+    }
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    x = range(len(labels))
-    width = 0.35
+    points: list[ScatterPoint] = []
 
-    ax1.bar([i - width / 2 for i in x], baseline_viol, width, label="Baseline")
-    ax1.bar([i + width / 2 for i in x], tuned_viol, width, label="Tuned")
-    ax1.set_ylabel("Violation Rate")
-    ax1.set_title("Holdout Violation Rate")
-    ax1.set_xticks(list(x))
-    ax1.set_xticklabels(labels)
-    ax1.legend()
+    # Baseline point — use the average across scenarios.
+    baseline_viols = [r["holdout_baseline_violation"] for r in rows]
+    baseline_costs = [r["holdout_baseline_cost"] for r in rows]
+    points.append(
+        ScatterPoint(
+            label="Baseline",
+            x=sum(baseline_viols) / len(baseline_viols),
+            y=sum(baseline_costs) / len(baseline_costs),
+            color=Palette.gray,
+            marker="x",
+        )
+    )
 
-    ax2.bar([i - width / 2 for i in x], baseline_cost, width, label="Baseline")
-    ax2.bar([i + width / 2 for i in x], tuned_cost, width, label="Tuned")
-    ax2.set_ylabel("Cost ($)")
-    ax2.set_title("Holdout Cost")
-    ax2.set_xticks(list(x))
-    ax2.set_xticklabels(labels)
-    ax2.legend()
+    for r in rows:
+        points.append(
+            ScatterPoint(
+                label=r["label"],
+                x=r["holdout_tuned_violation"],
+                y=r["holdout_tuned_cost"],
+                color=scenario_colors.get(r["scenario"], Palette.dark_orange),
+            )
+        )
 
-    fig.suptitle("History-Window Experiment: Holdout Performance", fontsize=14)
-    fig.tight_layout()
+    # ---- Static baselines (D-SB7: deduplicate across scenarios) ---------
+    _STATIC_TOL = 1e-6  # tolerance for cross-scenario consistency check
+
+    static_lists: list[list[dict]] = []
+    for scenario in SCENARIOS:
+        holdout = _load_yaml(run_root / scenario / "holdout" / "summary.yml")
+        if holdout and holdout.get("static_baselines"):
+            static_lists.append(holdout["static_baselines"])
+
+    if static_lists:
+        # Use the first scenario's results as the reference.
+        ref = static_lists[0]
+
+        # Verify consistency across scenarios.
+        for idx, sl in enumerate(static_lists[1:], start=1):
+            if len(sl) != len(ref):
+                console.print(
+                    f"[yellow]Warning: static_baselines count differs in "
+                    f"{SCENARIOS[idx]} ({len(sl)}) vs {SCENARIOS[0]} "
+                    f"({len(ref)}). Using {SCENARIOS[0]}.[/yellow]"
+                )
+                continue
+            for j, (r_entry, s_entry) in enumerate(zip(ref, sl)):
+                for metric in ("violation", "cost"):
+                    rv = r_entry.get(metric, 0.0)
+                    sv = s_entry.get(metric, 0.0)
+                    if abs(rv - sv) > _STATIC_TOL:
+                        console.print(
+                            f"[yellow]Warning: static baseline "
+                            f"'{r_entry.get('label', j)}' {metric} differs: "
+                            f"{SCENARIOS[0]}={rv}, "
+                            f"{SCENARIOS[idx]}={sv}. "
+                            f"Using {SCENARIOS[0]}.[/yellow]"
+                        )
+
+        # Use distinct markers and warm colours for static baselines.
+        static_colors = [
+            Palette.light_orange,
+            Palette.dark_orange,
+            Palette.light_red,
+            Palette.dark_red,
+        ]
+        for i, entry in enumerate(ref):
+            points.append(
+                ScatterPoint(
+                    label=entry.get("label", f"Static {i}"),
+                    x=entry.get("violation", 0.0),
+                    y=entry.get("cost", 0.0),
+                    color=static_colors[i % len(static_colors)],
+                    marker="s",
+                )
+            )
+
+    # Read SLO config from the first scenario's initial config.
+    base_cfg = _load_yaml(run_root / SCENARIOS[0] / "initial_config.yml")
+    slo_section = (base_cfg or {}).get("slo_config", {})
+    slo_metric = slo_section.get("slo_metric", "binary")
+    slo_threshold = slo_section.get("slo_threshold")
+    slo_s = slo_section.get("slo_s")
+    slo_dict_filename = slo_section.get("slo_dict_filename")
+
+    _METRIC_LABELS = {
+        "binary": "SLO Violation Rate",
+        "absolute_s": "Total SLO Violation Amount (s)",
+        "relative": "Mean Relative SLO Violation",
+    }
+    xlabel = _METRIC_LABELS.get(slo_metric, f"SLO Violation ({slo_metric})")
+
+    # Build the threshold label.
+    if slo_threshold is not None:
+        viol_threshold = float(slo_threshold)
+        if slo_metric == "absolute_s":
+            threshold_label = f"Target (≤{viol_threshold}s)"
+        else:
+            threshold_label = f"Target (≤{viol_threshold})"
+    else:
+        raise ValueError(
+            "slo_threshold is required in slo_config for plotting."
+        )
+
+    slo_info = f"SLO: {slo_s}s" if (slo_s and not slo_dict_filename) else ""
+    title_suffix = f" ({slo_info}, metric={slo_metric})" if slo_info else ""
+
+    fig, ax = cost_vs_compliance_scatter(
+        points,
+        xlabel=xlabel,
+        ylabel="Cost ($)",
+        title=f"History-Window Experiment: Cost vs Compliance{title_suffix}",
+        x_threshold=viol_threshold,
+        x_threshold_label=threshold_label,
+    )
 
     plot_path = RESULTS_DIR / "holdout_comparison.png"
-    fig.savefig(plot_path, dpi=150)
+    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     console.print(f"Plot written to: {plot_path}")
 

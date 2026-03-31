@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from dataclasses import dataclass
 from multiprocessing import Manager, get_context
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ def _run_scenario(
     slo_s: float,
     slo_dict: dict[str, float] | None,
     progress_dict: dict[int, tuple[int, int]] | None = None,
+    rescale_factor: float | None = None,
 ) -> ScenarioResult:
     """Execute a single simulation inside a worker process.
 
@@ -57,10 +59,12 @@ def _run_scenario(
     """
     # Suppress worker-process console output so it does not collide with
     # the parent's rich progress bars.  Structured logs in the simulator
-    # still capture useful data to disk.
+    # still capture useful data to disk (the structured logger has
+    # propagate=False and its own level, so it is unaffected by the root
+    # logger level change below).
     sys.stdout = open(os.devnull, "w")
     sys.stderr = open(os.devnull, "w")
-    logging.disable(logging.WARNING)
+    logging.getLogger().setLevel(logging.CRITICAL)
 
     # Restrict internal parallelism (PyTorch, BLAS, etc.) so that
     # multiple workers can coexist without over-subscribing cores.
@@ -82,6 +86,15 @@ def _run_scenario(
     workload_df = pd.read_parquet(workload_path)
     workload = Workload(workload_name, schema_name, df=workload_df)
     workload.set_rel_start_times_from_zero()
+
+    if rescale_factor is not None:
+        if (config_dict.get("workload_config") or {}).get("closed_loop", False):
+            logging.getLogger(__name__).warning(
+                "Rescaling workload times with closed_loop=True — "
+                "inter-arrival gaps will shrink but closed-loop "
+                "feedback may distort the intended speedup."
+            )
+        workload.rescale_rel_start_times(rescale_factor)
 
     # Build the simulator with the workload injected at construction time
     # so that all internal counters / tracking state are initialised
@@ -105,6 +118,25 @@ def _run_scenario(
         slo_s=slo_s,
         slo_dict=slo_dict,
     )
+
+
+# ---------------------------------------------------------------------------
+# EvalSpec — describes one evaluation within a batch
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvalSpec:
+    """Specification for a single evaluation within a batch.
+
+    Used by :meth:`ScenarioEvaluator.evaluate_batch` to run multiple
+    configurations in a single process pool.
+    """
+
+    label: str
+    config_overrides: dict[str, Any]
+    grid_point: str
+    out_subdir: Path
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +273,7 @@ class ScenarioEvaluator:
                     slo_s=slo_s,
                     slo_dict=slo_dict,
                     progress_dict=progress_dict,
+                    rescale_factor=self._tuner_config.rescale_factor,
                 ): wu["scenario_idx"]
                 for wu in work_units
             }
@@ -301,6 +334,186 @@ class ScenarioEvaluator:
         # Sort by scenario_idx for deterministic ordering.
         results.sort(key=lambda r: r.scenario_idx)
         return results
+
+    def evaluate_batch(
+        self,
+        workload_paths: list[Path],
+        specs: list[EvalSpec],
+        phase: str = "holdout",
+        schema_name: str | None = None,
+    ) -> list[list[ScenarioResult]]:
+        """Evaluate multiple configs in a single pool with unified progress.
+
+        Parameters
+        ----------
+        workload_paths :
+            Paths to workload parquet files (shared across all specs).
+        specs :
+            Evaluation specifications — one per config to evaluate.
+        phase :
+            Label for the tuning phase (default ``"holdout"``).
+        schema_name :
+            Override for the workload schema name.
+
+        Returns
+        -------
+        A list of :class:`ScenarioResult` lists, one per *spec*, in the
+        same order as *specs*.
+        """
+        if not specs:
+            return []
+
+        # Pre-extract SLO info (shared across all specs).
+        slo_s: float = float(
+            (self._initial_config.get("slo_config") or {}).get("slo_s", 10.0)
+        )
+        slo_dict: dict[str, float] | None = None
+        slo_dict_filename: str | None = (
+            self._initial_config.get("slo_config") or {}
+        ).get("slo_dict_filename")
+        if slo_dict_filename:
+            try:
+                from autoslo.blueprint_selection.slo_resolver import SloResolver
+
+                resolver = SloResolver(slo_s, slo_dict_filename)
+                slo_dict = resolver.slo_dict
+            except Exception:
+                logger.warning(
+                    "Could not pre-load SLO dict %r; using default SLO.",
+                    slo_dict_filename,
+                )
+
+        schema = schema_name or (
+            (self._initial_config.get("basic_config") or {}).get(
+                "schema_name", "default"
+            )
+        )
+        max_workers = self._resolve_parallelism()
+        n_per_spec = len(workload_paths)
+
+        # Build work units for every spec with globally-unique scenario
+        # indices so that progress_dict keys don't collide.
+        all_work_units: list[dict[str, Any]] = []
+        # global_idx → (spec_idx, original local scenario idx)
+        idx_map: dict[int, tuple[int, int]] = {}
+        global_idx = 0
+        for spec_idx, spec in enumerate(specs):
+            units = self._build_work_units(
+                workload_paths=workload_paths,
+                config_overrides=spec.config_overrides,
+                phase=phase,
+                grid_point=spec.grid_point,
+                out_subdir=Path(spec.out_subdir),
+                schema_name=schema,
+            )
+            for wu in units:
+                local_idx = wu["scenario_idx"]
+                wu["scenario_idx"] = global_idx
+                idx_map[global_idx] = (spec_idx, local_idx)
+                all_work_units.append(wu)
+                global_idx += 1
+
+        results_by_spec: list[list[ScenarioResult]] = [[] for _ in specs]
+        mgr = Manager()
+        progress_dict = mgr.dict()
+
+        ctx = get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=ctx,
+            initializer=_init_worker,
+            initargs=(inner_level_num_cpus(),),
+        ) as pool:
+            futures: dict[Any, int] = {}
+            for wu in all_work_units:
+                f = pool.submit(
+                    _run_scenario,
+                    config_dict=wu["config_dict"],
+                    workload_path=wu["workload_path"],
+                    workload_name=wu["workload_name"],
+                    schema_name=wu["schema_name"],
+                    scenario_idx=wu["scenario_idx"],
+                    slo_s=slo_s,
+                    slo_dict=slo_dict,
+                    progress_dict=progress_dict,
+                    rescale_factor=self._tuner_config.rescale_factor,
+                )
+                futures[f] = wu["scenario_idx"]
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                transient=True,
+            ) as progress:
+                main_task = progress.add_task(
+                    f"[cyan]{phase}", total=len(futures)
+                )
+                spec_tasks = {
+                    si: progress.add_task(
+                        f"  [bold]{spec.label}[/bold]", total=n_per_spec
+                    )
+                    for si, spec in enumerate(specs)
+                }
+                sub_tasks: dict[int, int] = {}
+                pending = set(futures.keys())
+
+                while pending:
+                    done, pending = wait(
+                        pending, timeout=0.3, return_when=FIRST_COMPLETED
+                    )
+
+                    # Update per-scenario sub-task bars.
+                    for gidx, (current, total) in list(
+                        progress_dict.items()
+                    ):
+                        if gidx not in sub_tasks:
+                            si, li = idx_map[gidx]
+                            sub_tasks[gidx] = progress.add_task(
+                                f"      scenario {li}",
+                                total=total,
+                            )
+                        progress.update(
+                            sub_tasks[gidx], completed=current, total=total
+                        )
+
+                    for future in done:
+                        gidx = futures[future]
+                        si, li = idx_map[gidx]
+                        spec = specs[si]
+                        try:
+                            result = future.result()
+                        except Exception:
+                            logger.exception(
+                                "Scenario %d of '%s' failed",
+                                li,
+                                spec.label,
+                            )
+                            raise
+                        # Restore the local scenario index.
+                        result.scenario_idx = li
+                        results_by_spec[si].append(result)
+                        self._log_result(
+                            result,
+                            phase,
+                            spec.grid_point,
+                            spec.config_overrides,
+                        )
+                        progress.advance(main_task)
+                        progress.advance(spec_tasks[si])
+
+                        if gidx in sub_tasks:
+                            progress.remove_task(sub_tasks.pop(gidx))
+                        progress_dict.pop(gidx, None)
+
+        mgr.shutdown()
+
+        # Sort each spec's results by scenario_idx.
+        for results_list in results_by_spec:
+            results_list.sort(key=lambda r: r.scenario_idx)
+
+        return results_by_spec
 
     # ------------------------------------------------------------------
     # Internals

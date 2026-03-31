@@ -14,6 +14,7 @@ aggregation_metric: p90
 holdout_evaluation: true
 classify_arrivals: true
 parallelism: auto
+rescale_factor: 0.1666667  # 24h → 4h (factor = 1/6)
 
 checkpoint_budget: 5
 checkpoint_epsilon: 0.01
@@ -26,3 +27,29 @@ autoscaler_ranges:
   capacity_poll_interval_s: [30.0, 60.0, 120.0]
   min_cluster_lifetime_s: [1200.0, 3600.0]
 routing_ranges: {}
+
+static_baselines:
+  - label: "4 RPU"
+    overrides:
+      managed_cluster_pool_config.initial_rpus: [4]
+      autoscaling_config.autoscaling_policy: "noop"
+      autoscaling_config.capacity_checkpoints: []
+      routing_config.routing_policy: "round_robin"
+  - label: "8 RPU"
+    overrides:
+      managed_cluster_pool_config.initial_rpus: [8]
+      autoscaling_config.autoscaling_policy: "noop"
+      autoscaling_config.capacity_checkpoints: []
+      routing_config.routing_policy: "round_robin"
+  - label: "16 RPU"
+    overrides:
+      managed_cluster_pool_config.initial_rpus: [16]
+      autoscaling_config.autoscaling_policy: "noop"
+      autoscaling_config.capacity_checkpoints: []
+      routing_config.routing_policy: "round_robin"
+  - label: "32 RPU"
+    overrides:
+      managed_cluster_pool_config.initial_rpus: [32]
+      autoscaling_config.autoscaling_policy: "noop"
+      autoscaling_config.capacity_checkpoints: []
+      routing_config.routing_policy: "round_robin"

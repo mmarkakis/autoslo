@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ from autoslo.tuner.forecast_policy import (
 )
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.reservoir import QueryReservoir
-from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
 from autoslo.tuner.types import PhaseResult, ScenarioResult, aggregate
 from autoslo.tuner.workload_sampler import WorkloadSampler
 from autoslo.utils.config import apply_overrides
@@ -382,6 +383,36 @@ class PolicyTuner:
 
         Returns the path to the final optimised config file.
         """
+        final_path = self._run_dir / "final_config.yml"
+        overrides_path = self._run_dir / "tuned_overrides.yml"
+
+        # Skip-retuning: if final_config already exists and
+        # force_retuning is not set, jump straight to holdout.
+        if not self._tuner_config.force_retuning and final_path.exists():
+            console.print(
+                "[bold yellow]Skipping tuning phases 1-7 "
+                "(final_config.yml already exists). "
+                "Set force_retuning: true to re-run.[/bold yellow]"
+            )
+            if overrides_path.exists():
+                with open(overrides_path) as f:
+                    overrides: dict[str, Any] = yaml.safe_load(f) or {}
+            else:
+                # Legacy run: reconstruct overrides by diffing configs.
+                overrides = self._rebuild_overrides(final_path)
+                with open(overrides_path, "w") as f:
+                    dump_config(overrides, f)
+                console.print(
+                    "  [dim]Reconstructed tuned_overrides.yml from "
+                    "config diff.[/dim]"
+                )
+
+            if self._tuner_config.holdout_evaluation:
+                self._print_banner("Holdout: real-data evaluation")
+                self._evaluate_holdout(traces, overrides)
+
+            return final_path
+
         self._print_banner("Phase 1: Building reservoir")
         reservoir_path = self.build_reservoir(traces)
 
@@ -418,11 +449,16 @@ class PolicyTuner:
         )
         self._print_comparison(baseline, tuned)
 
+        # Build overrides for holdout (same structure as tuned_overrides.yml).
+        overrides = _checkpoints_to_config(checkpoints)
+        for k, v in autoscaler_config.items():
+            overrides[f"autoscaling_config.{k}"] = v
+        for k, v in routing_config.items():
+            overrides[f"routing_config.{k}"] = v
+
         if self._tuner_config.holdout_evaluation:
             self._print_banner("Holdout: real-data evaluation")
-            self._evaluate_holdout(
-                traces, checkpoints, autoscaler_config, routing_config,
-            )
+            self._evaluate_holdout(traces, overrides)
 
         return final_path
 
@@ -485,22 +521,20 @@ class PolicyTuner:
         self._write_phase_summary(summary_dir / "summary.yml", result)
         return result
 
-    def _evaluate_holdout(
+    def _prepare_holdout_workloads(
         self,
         traces: list[Path],
-        checkpoints: list[CapacityCheckpoint],
-        autoscaler_config: dict[str, Any],
-        routing_config: dict[str, Any],
-    ) -> None:
-        """Evaluate baseline and tuned configs on real held-out data."""
+    ) -> list[Path]:
+        """Slice real target-period data from traces and write to disk.
+
+        Returns the list of holdout parquet paths, or an empty list if
+        no queries fall in the target period.
+        """
         schema_name = (
             (self._initial_config.get("basic_config") or {}).get(
                 "schema_name", "default"
             )
         )
-        metric = self._tuner_config.aggregation_metric
-
-        # Extract target-period slice from traces.
         holdout_dir = self._run_dir / "holdout" / "workloads"
         holdout_dir.mkdir(parents=True, exist_ok=True)
         holdout_paths: list[Path] = []
@@ -518,6 +552,59 @@ class PolicyTuner:
             wl.df.to_parquet(out_path)
             holdout_paths.append(out_path)
 
+        return holdout_paths
+
+    @staticmethod
+    def _slugify(label: str) -> str:
+        """Convert a label to a filesystem-safe slug."""
+        slug = label.lower().replace(" ", "_")
+        slug = re.sub(r"[^a-z0-9_]", "", slug)
+        return f"static_{slug}"
+
+    def _rebuild_overrides(self, final_path: Path) -> dict[str, Any]:
+        """Reconstruct tuned overrides by diffing initial and final configs."""
+        with open(final_path) as f:
+            final_cfg = yaml.safe_load(f) or {}
+
+        initial_flat = self._flatten(self._initial_config)
+        final_flat = self._flatten(final_cfg)
+
+        overrides: dict[str, Any] = {}
+        for key in sorted(set(initial_flat) | set(final_flat)):
+            iv = initial_flat.get(key)
+            fv = final_flat.get(key)
+            if iv != fv:
+                overrides[key] = fv
+        return overrides
+
+    @staticmethod
+    def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+        """Recursively flatten a nested dict to dot-path keys."""
+        items: dict[str, Any] = {}
+        for k, v in d.items():
+            key = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict):
+                items.update(PolicyTuner._flatten(v, key))
+            else:
+                items[key] = v
+        return items
+
+    def _evaluate_holdout(
+        self,
+        traces: list[Path],
+        tuned_overrides: dict[str, Any],
+    ) -> None:
+        """Evaluate baseline, tuned, and static-baseline configs on real data.
+
+        All evaluations (baseline, tuned, and static baselines) are submitted
+        to a single process pool via :meth:`evaluate_batch` for maximum
+        parallelism.
+        """
+        metric = self._tuner_config.aggregation_metric
+
+        # Extract target-period slice from traces.
+        holdout_paths = self._prepare_holdout_workloads(traces)
+
         if not holdout_paths:
             console.print(
                 "[yellow]  No real data in target period; "
@@ -532,34 +619,44 @@ class PolicyTuner:
             f"  Holdout: {total_queries:,} real queries from target period"
         )
 
-        # Evaluate baseline on real data.
-        baseline_results = self._evaluator.evaluate(
+        # Build evaluation specs: baseline + tuned + static baselines.
+        specs: list[EvalSpec] = [
+            EvalSpec(
+                label="baseline",
+                config_overrides={},
+                grid_point="baseline",
+                out_subdir=self._run_dir / "holdout" / "baseline",
+            ),
+            EvalSpec(
+                label="tuned",
+                config_overrides=tuned_overrides,
+                grid_point="tuned",
+                out_subdir=self._run_dir / "holdout" / "tuned",
+            ),
+        ]
+        static_baselines = self._tuner_config.static_baselines or []
+        for sb in static_baselines:
+            label = sb["label"]
+            slug = self._slugify(label)
+            specs.append(EvalSpec(
+                label=label,
+                config_overrides=sb.get("overrides", {}),
+                grid_point=slug,
+                out_subdir=self._run_dir / "holdout" / slug,
+            ))
+
+        # Run all evaluations in a single pool.
+        all_results = self._evaluator.evaluate_batch(
             workload_paths=holdout_paths,
-            config_overrides={},
+            specs=specs,
             phase="holdout",
-            grid_point="baseline",
-            out_subdir=self._run_dir / "holdout" / "baseline",
         )
+
+        # Extract baseline + tuned results.
+        baseline_results, tuned_results = all_results[0], all_results[1]
         base_viol, base_cost = aggregate(baseline_results, metric)
-
-        # Build tuned overrides.
-        overrides = _checkpoints_to_config(checkpoints)
-        for k, v in autoscaler_config.items():
-            overrides[f"autoscaling_config.{k}"] = v
-        for k, v in routing_config.items():
-            overrides[f"routing_config.{k}"] = v
-
-        # Evaluate tuned config on real data.
-        tuned_results = self._evaluator.evaluate(
-            workload_paths=holdout_paths,
-            config_overrides=overrides,
-            phase="holdout",
-            grid_point="tuned",
-            out_subdir=self._run_dir / "holdout" / "tuned",
-        )
         tuned_viol, tuned_cost = aggregate(tuned_results, metric)
 
-        # Build PhaseResults for comparison and persistence.
         baseline_phase = PhaseResult(
             params={},
             train_results=baseline_results,
@@ -570,7 +667,7 @@ class PolicyTuner:
             val_cost_agg=None,
         )
         tuned_phase = PhaseResult(
-            params=overrides,
+            params=tuned_overrides,
             train_results=tuned_results,
             val_results=None,
             train_violation_agg=tuned_viol,
@@ -578,7 +675,23 @@ class PolicyTuner:
             val_violation_agg=None,
             val_cost_agg=None,
         )
+        self._print_comparison(baseline_phase, tuned_phase)
 
+        # Extract static baseline summaries.
+        static_summaries: list[dict[str, Any]] = []
+        for i, sb in enumerate(static_baselines):
+            sb_results = all_results[2 + i]
+            sb_viol, sb_cost = aggregate(sb_results, metric)
+            static_summaries.append({
+                "label": sb["label"],
+                "violation": sb_viol,
+                "cost": sb_cost,
+            })
+
+        if static_summaries:
+            self._print_static_summary(static_summaries)
+
+        # --- Write holdout summary --------------------------------------
         summary_dir = self._run_dir / "holdout"
         summary_dir.mkdir(parents=True, exist_ok=True)
         holdout_summary: dict[str, Any] = {
@@ -588,10 +701,10 @@ class PolicyTuner:
             "tuned_violation": tuned_viol,
             "tuned_cost": tuned_cost,
         }
+        if static_summaries:
+            holdout_summary["static_baselines"] = static_summaries
         with open(summary_dir / "summary.yml", "w") as f:
             dump_config(holdout_summary, f)
-
-        self._print_comparison(baseline_phase, tuned_phase)
 
     @staticmethod
     def _print_comparison(baseline: PhaseResult, tuned: PhaseResult) -> None:
@@ -641,6 +754,25 @@ class PolicyTuner:
             )
         console.print(table)
 
+    @staticmethod
+    def _print_static_summary(
+        static_summaries: list[dict[str, Any]],
+    ) -> None:
+        """Print a Rich table summarising static baseline holdout results."""
+        table = Table(
+            title="Static Baselines — Holdout", show_lines=True
+        )
+        table.add_column("Label", justify="left")
+        table.add_column("Violation", justify="right")
+        table.add_column("Cost ($)", justify="right")
+        for entry in static_summaries:
+            table.add_row(
+                entry["label"],
+                f"{entry['violation']:.4f}",
+                f"{entry['cost']:.2f}",
+            )
+        console.print(table)
+
     def _write_final_config(
         self,
         checkpoints: list[CapacityCheckpoint],
@@ -661,10 +793,22 @@ class PolicyTuner:
 
         apply_overrides(cfg, overrides)
 
+        # Record the rescale factor so that downstream tooling knows
+        # the workload was time-compressed.
+        if self._tuner_config.rescale_factor is not None:
+            cfg.setdefault("workload_config", {})["rescale_factor"] = (
+                self._tuner_config.rescale_factor
+            )
+
         # Write final config.
         final_path = self._run_dir / "final_config.yml"
         with open(final_path, "w") as f:
             dump_config(cfg, f)
+
+        # Persist raw overrides so skip-retuning runs can reload them.
+        overrides_path = self._run_dir / "tuned_overrides.yml"
+        with open(overrides_path, "w") as f:
+            dump_config(overrides, f)
 
         # Finalize evolution log.
         self._evolution_handler.finalize()

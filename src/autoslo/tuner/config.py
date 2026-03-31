@@ -48,6 +48,11 @@ class TunerConfig:
 
     # -- Holdout ----------------------------------------------------------
     holdout_evaluation: bool = False
+    static_baselines: list[dict] | None = None  # [{label, overrides}, ...]
+    force_retuning: bool = False
+
+    # -- Simulation -------------------------------------------------------
+    rescale_factor: float | None = None  # e.g. 1/6 to compress 24h → 4h
 
     # -- Execution --------------------------------------------------------
     parallelism: int | str = "auto"  # "auto" or explicit int
