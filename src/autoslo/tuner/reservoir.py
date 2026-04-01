@@ -34,6 +34,7 @@ class QueryReservoir:
         "timestamp_within_hour",
         "query_text_id",
         "repetition_id",
+        "obs_date",
     ]
 
     def __init__(self, df: pd.DataFrame, meta: dict[str, Any]) -> None:
@@ -89,14 +90,27 @@ class QueryReservoir:
                         "timestamp_within_hour": ts_within_hour,
                         "query_text_id": qtid,
                         "repetition_id": rid,
+                        "obs_date": dt.strftime("%Y-%m-%d"),
                     }
                 )
 
         reservoir_df = pd.DataFrame(rows, columns=cls.COLUMNS)
 
+        # Derive the number of distinct calendar dates per day-of-week
+        # so that downstream consumers (sampler, forecast policy) can
+        # correctly average per-day arrival counts.
+        num_obs_dates = int(reservoir_df["obs_date"].nunique())
+        num_obs_dates_per_dow = (
+            reservoir_df.groupby("day_of_week")["obs_date"]
+            .nunique()
+            .to_dict()
+        )
+
         meta: dict[str, Any] = {
             "schema_name": schema_name,
-            "num_workloads": len(workloads),
+            "num_workloads": num_obs_dates,
+            "num_observation_dates": num_obs_dates,
+            "num_observation_dates_per_dow": {int(k): int(v) for k, v in num_obs_dates_per_dow.items()},
             "num_arrivals": len(reservoir_df),
             "classifications": {},
         }
@@ -218,14 +232,15 @@ class QueryReservoir:
 
         Computed as the total number of arrivals for this
         ``(day_of_week, hour)`` bin divided by the number of distinct
-        historical workloads that contributed to the reservoir.
+        calendar dates for that day-of-week in the reservoir.
         """
         mask = (self.df["day_of_week"] == day_of_week) & (
             self.df["hour"] == hour
         )
         count = int(mask.sum())
-        n_workloads = max(1, self.meta.get("num_workloads", 1))
-        return count / n_workloads
+        per_dow = self.meta.get("num_observation_dates_per_dow", {})
+        n_days = max(1, per_dow.get(day_of_week, self.meta.get("num_workloads", 1)))
+        return count / n_days
 
     def unique_query_text_ids(
         self, day_of_week: int, hour: int

@@ -247,21 +247,40 @@ class WorkloadSampler:
 
             # Assign a day index to each historical observation so the
             # forecast policy can compute weighted per-day counts.
+            # Use the obs_date column (calendar date) when available so
+            # that multi-day reservoirs are correctly averaged.
             normal_bin = normal_bin.copy()
-            n_workloads = max(1, self.reservoir.meta.get("num_workloads", 1))
-            normal_bin["__obs_day_idx"] = np.arange(len(normal_bin)) % n_workloads
+            if "obs_date" in normal_bin.columns:
+                sorted_dates = sorted(normal_bin["obs_date"].unique())
+                date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
+                normal_bin["__obs_day_idx"] = normal_bin["obs_date"].map(date_to_idx)
+                n_obs_days = len(sorted_dates)
+            else:
+                n_obs_days = max(1, self.reservoir.meta.get("num_workloads", 1))
+                normal_bin["__obs_day_idx"] = np.arange(len(normal_bin)) % n_obs_days
 
-            # Compute per-observation-day weights.
+            # Compute per-observation-day weights using actual dates.
             weights: list[float] = []
-            for day_idx in range(n_workloads):
-                days_back = (n_workloads - day_idx) * 7
-                obs_start = bin_start - timedelta(days=days_back)
-                obs_start = obs_start.replace(hour=hour, minute=0, second=0, microsecond=0)
-                obs_end = obs_start + timedelta(hours=1)
-                w = self.forecast_policy.weight(
-                    (obs_start, obs_end), (bin_start, bin_end)
-                )
-                weights.append(w)
+            if "obs_date" in normal_bin.columns:
+                for obs_date_str in sorted_dates:
+                    obs_dt = datetime.fromisoformat(obs_date_str)
+                    obs_dt = obs_dt.replace(hour=hour, minute=0, second=0, microsecond=0,
+                                            tzinfo=bin_start.tzinfo)
+                    obs_end_dt = obs_dt + timedelta(hours=1)
+                    w = self.forecast_policy.weight(
+                        (obs_dt, obs_end_dt), (bin_start, bin_end)
+                    )
+                    weights.append(w)
+            else:
+                for day_idx in range(n_obs_days):
+                    days_back = (n_obs_days - day_idx) * 7
+                    obs_start = bin_start - timedelta(days=days_back)
+                    obs_start = obs_start.replace(hour=hour, minute=0, second=0, microsecond=0)
+                    obs_end = obs_start + timedelta(hours=1)
+                    w = self.forecast_policy.weight(
+                        (obs_start, obs_end), (bin_start, bin_end)
+                    )
+                    weights.append(w)
 
             expected = self.forecast_policy.expected_count(
                 (bin_start, bin_end), normal_bin, weights
@@ -342,22 +361,39 @@ class WorkloadSampler:
                 n_unique_qtids = 0
             else:
                 reservoir_bin = reservoir_bin.copy()
-                reservoir_bin["__obs_day_idx"] = (
-                    np.arange(len(reservoir_bin)) % n_workloads
-                )
-                weights = []
-                for day_idx in range(n_workloads):
-                    days_back = (n_workloads - day_idx) * 7
-                    obs_start = bin_start - timedelta(days=days_back)
-                    obs_start = obs_start.replace(
-                        hour=hour, minute=0, second=0, microsecond=0
+                if "obs_date" in reservoir_bin.columns:
+                    sorted_dates = sorted(reservoir_bin["obs_date"].unique())
+                    date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
+                    reservoir_bin["__obs_day_idx"] = reservoir_bin["obs_date"].map(date_to_idx)
+                    weights = []
+                    for obs_date_str in sorted_dates:
+                        obs_dt = datetime.fromisoformat(obs_date_str)
+                        obs_dt = obs_dt.replace(hour=hour, minute=0, second=0, microsecond=0,
+                                                tzinfo=bin_start.tzinfo)
+                        obs_end = obs_dt + timedelta(hours=1)
+                        w = self.forecast_policy.weight(
+                            (obs_dt, obs_end),
+                            (bin_start, bin_start + timedelta(hours=1)),
+                        )
+                        weights.append(w)
+                else:
+                    n_workloads = max(1, self.reservoir.meta.get("num_workloads", 1))
+                    reservoir_bin["__obs_day_idx"] = (
+                        np.arange(len(reservoir_bin)) % n_workloads
                     )
-                    obs_end = obs_start + timedelta(hours=1)
-                    w = self.forecast_policy.weight(
-                        (obs_start, obs_end),
-                        (bin_start, bin_start + timedelta(hours=1)),
-                    )
-                    weights.append(w)
+                    weights = []
+                    for day_idx in range(n_workloads):
+                        days_back = (n_workloads - day_idx) * 7
+                        obs_start = bin_start - timedelta(days=days_back)
+                        obs_start = obs_start.replace(
+                            hour=hour, minute=0, second=0, microsecond=0
+                        )
+                        obs_end = obs_start + timedelta(hours=1)
+                        w = self.forecast_policy.weight(
+                            (obs_start, obs_end),
+                            (bin_start, bin_start + timedelta(hours=1)),
+                        )
+                        weights.append(w)
                 expected = self.forecast_policy.expected_count(
                     (bin_start, bin_start + timedelta(hours=1)),
                     reservoir_bin,

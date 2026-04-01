@@ -50,6 +50,7 @@ def _build_reservoir(
                 "timestamp_within_hour": ts_within_hour,
                 "query_text_id": qtid,
                 "repetition_id": f"rep_{template_id}",
+                "obs_date": t.strftime("%Y-%m-%d"),
             }
         )
 
@@ -268,6 +269,7 @@ def _build_reservoir_with_windowed(
                 "timestamp_within_hour": float(i * 90),
                 "query_text_id": f"{schema}#002#001",
                 "repetition_id": "rep_normal",
+                "obs_date": "2024-06-03",
             }
         )
     # Windowed template: 20 arrivals.
@@ -279,6 +281,7 @@ def _build_reservoir_with_windowed(
                 "timestamp_within_hour": float(i * 180),
                 "query_text_id": f"{schema}#001#001",
                 "repetition_id": "rep_windowed",
+                "obs_date": "2024-06-03",
             }
         )
 
