@@ -41,5 +41,5 @@ uis/**/node_modules/
 .simulator-ui-meta/
 docs/*.md
 
-data/tuner_runs/history_exp/
+data/tuner_runs/history_exp*/
 

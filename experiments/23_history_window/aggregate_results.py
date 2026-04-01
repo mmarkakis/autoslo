@@ -356,7 +356,7 @@ def main() -> None:
         writer.writerows(rows)
     console.print(f"\nCSV written to: {csv_path}")
 
-    # ---- Scatter plot (optional, needs matplotlib) -----------------------
+    # ---- Scatter plots (one per violation metric, needs matplotlib) ------
     try:
         import matplotlib
 
@@ -374,7 +374,7 @@ def main() -> None:
         return
 
     has_holdout = all(
-        r.get("holdout_tuned_violation") is not None for r in rows
+        r.get("holdout_tuned_violation_rate") is not None for r in rows
     )
     if not has_holdout:
         console.print(
@@ -383,89 +383,6 @@ def main() -> None:
         )
         return
 
-    scenario_colors = {
-        "prev_day": Palette.light_blue,
-        "prev_week": Palette.dark_blue,
-        "prev_month": Palette.dark_green,
-    }
-
-    points: list[ScatterPoint] = []
-
-    # Baseline point — use the average across scenarios.
-    baseline_viols = [r["holdout_baseline_violation"] for r in rows]
-    baseline_costs = [r["holdout_baseline_cost"] for r in rows]
-    points.append(
-        ScatterPoint(
-            label="Baseline",
-            x=sum(baseline_viols) / len(baseline_viols),
-            y=sum(baseline_costs) / len(baseline_costs),
-            color=Palette.gray,
-            marker="x",
-        )
-    )
-
-    for r in rows:
-        points.append(
-            ScatterPoint(
-                label=r["label"],
-                x=r["holdout_tuned_violation"],
-                y=r["holdout_tuned_cost"],
-                color=scenario_colors.get(r["scenario"], Palette.dark_orange),
-            )
-        )
-
-    # ---- Static baselines (D-SB7: deduplicate across scenarios) ---------
-    _STATIC_TOL = 1e-6  # tolerance for cross-scenario consistency check
-
-    static_lists: list[list[dict]] = []
-    for scenario in SCENARIOS:
-        holdout = _load_yaml(run_root / scenario / "holdout" / "summary.yml")
-        if holdout and holdout.get("static_baselines"):
-            static_lists.append(holdout["static_baselines"])
-
-    if static_lists:
-        # Use the first scenario's results as the reference.
-        ref = static_lists[0]
-
-        # Verify consistency across scenarios.
-        for idx, sl in enumerate(static_lists[1:], start=1):
-            if len(sl) != len(ref):
-                console.print(
-                    f"[yellow]Warning: static_baselines count differs in "
-                    f"{SCENARIOS[idx]} ({len(sl)}) vs {SCENARIOS[0]} "
-                    f"({len(ref)}). Using {SCENARIOS[0]}.[/yellow]"
-                )
-                continue
-            for j, (r_entry, s_entry) in enumerate(zip(ref, sl)):
-                for metric in ("violation", "cost"):
-                    rv = r_entry.get(metric, 0.0)
-                    sv = s_entry.get(metric, 0.0)
-                    if abs(rv - sv) > _STATIC_TOL:
-                        console.print(
-                            f"[yellow]Warning: static baseline "
-                            f"'{r_entry.get('label', j)}' {metric} differs: "
-                            f"{SCENARIOS[0]}={rv}, "
-                            f"{SCENARIOS[idx]}={sv}. "
-                            f"Using {SCENARIOS[0]}.[/yellow]"
-                        )
-
-        # Use distinct markers and warm colours for static baselines.
-        static_colors = [
-            Palette.light_orange,
-            Palette.dark_orange,
-            Palette.light_red,
-            Palette.dark_red,
-        ]
-        for i, entry in enumerate(ref):
-            points.append(
-                ScatterPoint(
-                    label=entry.get("label", f"Static {i}"),
-                    x=entry.get("violation", 0.0),
-                    y=entry.get("cost", 0.0),
-                    color=static_colors[i % len(static_colors)],
-                    marker="s",
-                )
-            )
     # Read SLO config from the first scenario's initial config.
     base_cfg = _load_yaml(run_root / SCENARIOS[0] / "initial_config.yml")
     slo_section = (base_cfg or {}).get("slo_config", {})
@@ -474,41 +391,121 @@ def main() -> None:
     slo_s = slo_section.get("slo_s")
     slo_dict_filename = slo_section.get("slo_dict_filename")
 
-    _METRIC_LABELS = {
-        "binary": "SLO Violation Rate",
-        "absolute_s": "Total SLO Violation Amount (s)",
-        "relative": "Mean Relative SLO Violation",
-    }
-    xlabel = _METRIC_LABELS.get(slo_metric, f"SLO Violation ({slo_metric})")
+    slo_info = f"SLO: {slo_s}s" if (slo_s and not slo_dict_filename) else ""
+    title_suffix = f" ({slo_info})" if slo_info else ""
 
-    # Build the threshold label.
-    if slo_threshold is not None:
-        viol_threshold = float(slo_threshold)
-        if slo_metric == "absolute_s":
-            threshold_label = f"Target (≤{viol_threshold}s)"
+    scenario_colors = {
+        "prev_day": Palette.light_blue,
+        "prev_week": Palette.dark_blue,
+        "prev_month": Palette.dark_green,
+    }
+
+    # Collect static baselines once (shared across all 3 plots).
+    _STATIC_TOL = 1e-6
+    static_ref: list[dict] | None = None
+    for scenario in SCENARIOS:
+        holdout = _load_yaml(run_root / scenario / "holdout" / "summary.yml")
+        if holdout and holdout.get("static_baselines"):
+            if static_ref is None:
+                static_ref = holdout["static_baselines"]
+
+    # Define the three violation metrics to plot.
+    _METRIC_SPECS: list[tuple[str, str, str]] = [
+        # (holdout_key_suffix, xlabel, slo_metric_name)
+        ("violation_rate", "SLO Violation Rate", "binary"),
+        ("violation_amount_s", "Total SLO Violation Amount (s)", "absolute_s"),
+        ("violation_relative_mean", "Mean Relative SLO Violation", "relative"),
+    ]
+
+    static_colors = [
+        Palette.light_orange,
+        Palette.dark_orange,
+        Palette.light_red,
+        Palette.dark_red,
+    ]
+
+    for metric_suffix, xlabel, metric_name in _METRIC_SPECS:
+        baseline_key = f"holdout_baseline_{metric_suffix}"
+        tuned_key = f"holdout_tuned_{metric_suffix}"
+
+        points: list[ScatterPoint] = []
+
+        # Baseline point — average across scenarios.
+        baseline_xs = [r[baseline_key] for r in rows if r.get(baseline_key) is not None]
+        baseline_costs = [r["holdout_baseline_cost"] for r in rows if r.get("holdout_baseline_cost") is not None]
+        if baseline_xs and baseline_costs:
+            points.append(
+                ScatterPoint(
+                    label="Baseline",
+                    x=sum(baseline_xs) / len(baseline_xs),
+                    y=sum(baseline_costs) / len(baseline_costs),
+                    color=Palette.gray,
+                    marker="x",
+                )
+            )
+
+        # Tuned points per scenario.
+        for r in rows:
+            xv = r.get(tuned_key)
+            yv = r.get("holdout_tuned_cost")
+            if xv is not None and yv is not None:
+                points.append(
+                    ScatterPoint(
+                        label=r["label"],
+                        x=xv,
+                        y=yv,
+                        color=scenario_colors.get(r["scenario"], Palette.dark_orange),
+                    )
+                )
+
+        # Static baselines.
+        if static_ref:
+            # Map metric_suffix to the key used in static baseline entries.
+            _STATIC_KEY_MAP = {
+                "violation_rate": "violation_rate",
+                "violation_amount_s": "violation_amount_s",
+                "violation_relative_mean": "violation_relative_mean",
+            }
+            static_x_key = _STATIC_KEY_MAP.get(metric_suffix, "violation")
+            for i, entry in enumerate(static_ref):
+                xv = entry.get(static_x_key, entry.get("violation", 0.0))
+                points.append(
+                    ScatterPoint(
+                        label=entry.get("label", f"Static {i}"),
+                        x=xv,
+                        y=entry.get("cost", 0.0),
+                        color=static_colors[i % len(static_colors)],
+                        marker="s",
+                    )
+                )
+
+        # Only shade the feasibility region on the plot matching the
+        # configured slo_metric.
+        if slo_threshold is not None and metric_name == slo_metric:
+            viol_threshold = float(slo_threshold)
+            if metric_name == "absolute_s":
+                threshold_label = f"Target (≤{viol_threshold}s)"
+            else:
+                threshold_label = f"Target (≤{viol_threshold})"
         else:
-            threshold_label = f"Target (≤{viol_threshold})"
-    else:
-        raise ValueError(
-            "slo_threshold is required in slo_config for plotting."
+            viol_threshold = None
+            threshold_label = None
+
+        fig, ax = cost_vs_compliance_scatter(
+            points,
+            xlabel=xlabel,
+            ylabel="Cost ($)",
+            title=f"History-Window Experiment: Cost vs {xlabel}{title_suffix}",
+            x_threshold=viol_threshold,
+            x_threshold_label=threshold_label,
+            xscale="log" if metric_name == "absolute_s" else "linear",
         )
 
-    slo_info = f"SLO: {slo_s}s" if (slo_s and not slo_dict_filename) else ""
-    title_suffix = f" ({slo_info}, metric={slo_metric})" if slo_info else ""
-
-    fig, ax = cost_vs_compliance_scatter(
-        points,
-        xlabel=xlabel,
-        ylabel="Cost ($)",
-        title=f"History-Window Experiment: Cost vs Compliance{title_suffix}",
-        x_threshold=viol_threshold,
-        x_threshold_label=threshold_label,
-    )
-
-    plot_path = RESULTS_DIR / "holdout_comparison.png"
-    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    console.print(f"Plot written to: {plot_path}")
+        plot_name = f"holdout_{metric_suffix}.png"
+        plot_path = RESULTS_DIR / plot_name
+        fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        console.print(f"Plot written to: {plot_path}")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ workload_config:
 slo_config:
   slo_s: 30.0
   slo_metric: relative
-  slo_threshold: 0
+  slo_threshold: 0.05
   slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
 
 ### Cluster Pool Configuration
@@ -39,10 +39,17 @@ routing_config:
 ### Autoscaling Configuration
 autoscaling_config:
   autoscaling_policy: headroom
-  eta_crit: 0.05
+  eta_crit: 0.2
   idle_periods_before_tear_down: 20
-  capacity_poll_interval_s: 60.0
+  capacity_poll_interval_s: 120.0
   min_cluster_lifetime_s: 3600.0
+  capacity_checkpoints:
+  - min_rpus:
+    - 32
+    time_s: 3000.0
+  - min_rpus:
+    - 32
+    time_s: 6000.0
 
 ### Output Configuration
 output_config:
