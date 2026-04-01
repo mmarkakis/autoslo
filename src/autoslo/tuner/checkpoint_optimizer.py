@@ -25,7 +25,15 @@ from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.types import ScenarioResult, aggregate
+from autoslo.tuner.types import (
+    AggregatedMetrics,
+    ScenarioResult,
+    SloObjective,
+    aggregate,
+    is_feasible,
+    primary_violation,
+    threshold_aware_select,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -185,6 +193,7 @@ class CheckpointOptimizer:
         tuner_config: TunerConfig,
         initial_config: dict[str, Any],
         run_dir: Path,
+        slo_objective: SloObjective | None = None,
     ) -> None:
         self._evaluator = evaluator
         self._tuner_config = tuner_config
@@ -209,6 +218,16 @@ class CheckpointOptimizer:
                 ).slo_dict
             except Exception:
                 logger.warning("Could not pre-load SLO dict; using default SLO.")
+
+        # SLO objective for threshold-aware candidate selection.
+        if slo_objective is not None:
+            self._slo_objective = slo_objective
+        else:
+            slo_cfg = initial_config.get("slo_config") or {}
+            self._slo_objective = SloObjective(
+                slo_metric=str(slo_cfg.get("slo_metric", "binary")),
+                slo_threshold=float(slo_cfg.get("slo_threshold", 1.0)),
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -286,7 +305,7 @@ class CheckpointOptimizer:
 
             # 4. Try each RPU size.
             candidates: list[
-                tuple[CapacityCheckpoint, list[ScenarioResult], float, float]
+                tuple[CapacityCheckpoint, list[ScenarioResult], AggregatedMetrics, float]
             ] = []
             for rpu in self._allowed_rpu_sizes:
                 checkpoint = CapacityCheckpoint(
@@ -306,15 +325,21 @@ class CheckpointOptimizer:
                     / f"round_{round_idx:03d}"
                     / f"rpu{rpu}",
                 )
-                viol_agg, cost_agg = aggregate(trial_results, metric)
+                agg = aggregate(trial_results, metric)
                 candidates.append(
-                    (checkpoint, trial_results, viol_agg, cost_agg)
+                    (checkpoint, trial_results, agg, agg.cost)
                 )
 
-            # 5. Pick best on training set (lowest violation).
-            best_cp, best_train_results, best_viol, best_cost = min(
-                candidates, key=lambda c: c[2]
+            # 5. Pick best on training set (threshold-aware selection).
+            best_idx = threshold_aware_select(
+                [
+                    (primary_violation(agg, self._slo_objective.slo_metric), cost)
+                    for _, _, agg, cost in candidates
+                ],
+                self._slo_objective.slo_threshold,
             )
+            best_cp, best_train_results, best_agg, best_cost = candidates[best_idx]
+            best_viol = primary_violation(best_agg, self._slo_objective.slo_metric)
 
             self._print_candidate_table(round_idx, candidates, best_cp)
 
@@ -329,15 +354,32 @@ class CheckpointOptimizer:
                 grid_point=f"round_{round_idx:03d}_val",
                 out_subdir=ckpt_dir / f"round_{round_idx:03d}" / "val",
             )
-            val_viol_agg, val_cost_agg = aggregate(val_results, metric)
+            val_agg = aggregate(val_results, metric)
+            val_primary = primary_violation(val_agg, self._slo_objective.slo_metric)
 
+            slo_metric = self._slo_objective.slo_metric
+            slo_thresh = self._slo_objective.slo_threshold
             console.print(
-                f"  Validation: violation={val_viol_agg:.4f}  "
-                f"cost=${val_cost_agg:.4f}  "
+                f"  Validation {slo_metric}={val_primary:.4f}  "
+                f"(threshold={slo_thresh:.2f})  "
+                f"cost=${val_agg.cost:.4f}  "
                 f"(prev best={best_val_violation:.4f})"
             )
 
-            if best_val_violation - val_viol_agg < self._tuner_config.checkpoint_epsilon:
+            # Threshold-aware early stopping (D-M12).
+            if is_feasible(val_primary, self._slo_objective.slo_threshold):
+                console.print(
+                    f"[green]SLO satisfied ({slo_metric} "
+                    f"{val_primary:.4f} ≤ {slo_thresh:.2f}) "
+                    f"— stopping checkpoint placement."
+                )
+                current_checkpoints.append(best_cp)
+                best_val_violation = val_primary
+                self._write_round_summary(
+                    round_idx, candidates, best_cp, val_agg,
+                )
+                break
+            if best_val_violation - val_primary < self._tuner_config.checkpoint_epsilon:
                 console.print(
                     "[yellow]Improvement below epsilon — early stopping."
                 )
@@ -345,7 +387,7 @@ class CheckpointOptimizer:
 
             # 7. Accept.
             current_checkpoints.append(best_cp)
-            best_val_violation = val_viol_agg
+            best_val_violation = val_primary
             console.print(
                 f"  [green]Accepted checkpoint: time_s={best_cp.time_s:.0f}  "
                 f"min_rpus={best_cp.min_rpus}"
@@ -353,7 +395,7 @@ class CheckpointOptimizer:
 
             # Write round summary.
             self._write_round_summary(
-                round_idx, candidates, best_cp, val_viol_agg, val_cost_agg
+                round_idx, candidates, best_cp, val_agg,
             )
 
         # Write the final selected checkpoints.
@@ -368,7 +410,7 @@ class CheckpointOptimizer:
         self,
         round_idx: int,
         candidates: list[
-            tuple[CapacityCheckpoint, list[ScenarioResult], float, float]
+            tuple[CapacityCheckpoint, list[ScenarioResult], AggregatedMetrics, float]
         ],
         best_cp: CapacityCheckpoint,
     ) -> None:
@@ -378,17 +420,21 @@ class CheckpointOptimizer:
         )
         table.add_column("RPU", justify="right")
         table.add_column("time_s", justify="right")
-        table.add_column("Train Violation", justify="right")
+        table.add_column("Viol. Rate", justify="right")
+        table.add_column("Viol. Amount (s)", justify="right")
+        table.add_column("Viol. Relative", justify="right")
         table.add_column("Train Cost ($)", justify="right")
         table.add_column("Selected", justify="center")
 
-        for cp, _, viol, cost in candidates:
+        for cp, _, agg, cost in candidates:
             is_best = cp == best_cp
             style = "bold green" if is_best else ""
             table.add_row(
                 str(cp.min_rpus[0]),
                 f"{cp.time_s:.0f}",
-                f"{viol:.4f}",
+                f"{agg.violation_rate:.4f}",
+                f"{agg.violation_amount_s:.4f}",
+                f"{agg.violation_relative_mean:.4f}",
                 f"{cost:.4f}",
                 "✓" if is_best else "",
                 style=style,
@@ -403,11 +449,10 @@ class CheckpointOptimizer:
         self,
         round_idx: int,
         candidates: list[
-            tuple[CapacityCheckpoint, list[ScenarioResult], float, float]
+            tuple[CapacityCheckpoint, list[ScenarioResult], AggregatedMetrics, float]
         ],
         best_cp: CapacityCheckpoint,
-        val_violation: float,
-        val_cost: float,
+        val_agg: AggregatedMetrics,
     ) -> None:
         round_dir = self._run_dir / "checkpoints" / f"round_{round_idx:03d}"
         round_dir.mkdir(parents=True, exist_ok=True)
@@ -417,16 +462,22 @@ class CheckpointOptimizer:
                 "time_s": best_cp.time_s,
                 "min_rpus": list(best_cp.min_rpus),
             },
-            "val_violation": val_violation,
-            "val_cost": val_cost,
+            "val_violation": primary_violation(val_agg, self._slo_objective.slo_metric),
+            "val_cost": val_agg.cost,
+            "val_violation_rate": val_agg.violation_rate,
+            "val_violation_amount_s": val_agg.violation_amount_s,
+            "val_violation_relative_mean": val_agg.violation_relative_mean,
             "candidates": [
                 {
                     "rpu": cp.min_rpus[0],
                     "time_s": cp.time_s,
-                    "train_violation": viol,
+                    "train_violation": primary_violation(agg, self._slo_objective.slo_metric),
                     "train_cost": cost,
+                    "train_violation_rate": agg.violation_rate,
+                    "train_violation_amount_s": agg.violation_amount_s,
+                    "train_violation_relative_mean": agg.violation_relative_mean,
                 }
-                for cp, _, viol, cost in candidates
+                for cp, _, agg, cost in candidates
             ],
         }
         with open(round_dir / "candidate_results.yml", "w") as f:

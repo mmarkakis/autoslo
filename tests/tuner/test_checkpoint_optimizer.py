@@ -281,7 +281,7 @@ class TestCheckpointOptimizer:
             aggregation_metric="mean",
         )
         initial_config: dict[str, Any] = {
-            "slo_config": {"slo_s": 10.0},
+            "slo_config": {"slo_s": 10.0, "slo_threshold": 0.5},
             "managed_cluster_pool_config": {
                 "allowed_rpu_sizes": [8, 16],
                 "spin_up_delay_s": 60.0,

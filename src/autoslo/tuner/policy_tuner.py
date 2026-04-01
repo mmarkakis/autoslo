@@ -29,7 +29,14 @@ from autoslo.tuner.forecast_policy import (
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
-from autoslo.tuner.types import PhaseResult, ScenarioResult, aggregate
+from autoslo.tuner.types import (
+    AggregatedMetrics,
+    PhaseResult,
+    ScenarioResult,
+    SloObjective,
+    aggregate,
+    primary_violation,
+)
 from autoslo.tuner.workload_sampler import WorkloadSampler
 from autoslo.utils.config import apply_overrides
 from autoslo.utils.structured_log import StructuredLogHandler, setup_structured_logging
@@ -98,6 +105,15 @@ class PolicyTuner:
             tuner_config=tuner_config,
             tuner_run_id=self._run_id,
             evolution_logger=self._evolution_handler,
+        )
+
+        # SLO objective — drives metric routing and threshold-aware selection.
+        slo_cfg = initial_config.get("slo_config") or {}
+        self._slo_metric = str(slo_cfg.get("slo_metric", "binary"))
+        self._slo_threshold = float(slo_cfg.get("slo_threshold", 1.0))
+        self._slo_objective = SloObjective(
+            slo_metric=self._slo_metric,
+            slo_threshold=self._slo_threshold,
         )
 
     # ------------------------------------------------------------------
@@ -276,7 +292,7 @@ class PolicyTuner:
             grid_point="base",
             out_subdir=self._run_dir / "baseline" / "train",
         )
-        train_viol, train_cost = aggregate(train_results, metric)
+        train_agg = aggregate(train_results, metric)
 
         # Validation set.
         val_results = self._evaluator.evaluate(
@@ -286,16 +302,18 @@ class PolicyTuner:
             grid_point="base",
             out_subdir=self._run_dir / "baseline" / "val",
         )
-        val_viol, val_cost = aggregate(val_results, metric)
+        val_agg = aggregate(val_results, metric)
 
         result = PhaseResult(
             params={},
             train_results=train_results,
             val_results=val_results,
-            train_violation_agg=train_viol,
-            train_cost_agg=train_cost,
-            val_violation_agg=val_viol,
-            val_cost_agg=val_cost,
+            train_violation_agg=primary_violation(train_agg, self._slo_metric),
+            train_cost_agg=train_agg.cost,
+            val_violation_agg=primary_violation(val_agg, self._slo_metric),
+            val_cost_agg=val_agg.cost,
+            train_metrics=train_agg,
+            val_metrics=val_agg,
         )
 
         # Persist summary.
@@ -320,6 +338,7 @@ class PolicyTuner:
             tuner_config=self._tuner_config,
             initial_config=self._initial_config,
             run_dir=self._run_dir,
+            slo_objective=self._slo_objective,
         )
         return optimizer.optimize(
             train_paths=train_paths,
@@ -342,6 +361,7 @@ class PolicyTuner:
             base_overrides=base_overrides,
             run_dir=self._run_dir,
             phase_name="autoscaler",
+            slo_objective=self._slo_objective,
         )
 
         return sweeper.sweep(
@@ -369,6 +389,7 @@ class PolicyTuner:
             base_overrides=base_overrides,
             run_dir=self._run_dir,
             phase_name="routing",
+            slo_objective=self._slo_objective,
         )
 
         return sweeper.sweep(
@@ -496,7 +517,7 @@ class PolicyTuner:
             grid_point="tuned",
             out_subdir=self._run_dir / "final" / "train",
         )
-        train_viol, train_cost = aggregate(train_results, metric)
+        train_agg = aggregate(train_results, metric)
 
         val_results = self._evaluator.evaluate(
             workload_paths=val_paths,
@@ -505,16 +526,18 @@ class PolicyTuner:
             grid_point="tuned",
             out_subdir=self._run_dir / "final" / "val",
         )
-        val_viol, val_cost = aggregate(val_results, metric)
+        val_agg = aggregate(val_results, metric)
 
         result = PhaseResult(
             params=overrides,
             train_results=train_results,
             val_results=val_results,
-            train_violation_agg=train_viol,
-            train_cost_agg=train_cost,
-            val_violation_agg=val_viol,
-            val_cost_agg=val_cost,
+            train_violation_agg=primary_violation(train_agg, self._slo_metric),
+            train_cost_agg=train_agg.cost,
+            val_violation_agg=primary_violation(val_agg, self._slo_metric),
+            val_cost_agg=val_agg.cost,
+            train_metrics=train_agg,
+            val_metrics=val_agg,
         )
         summary_dir = self._run_dir / "final"
         summary_dir.mkdir(parents=True, exist_ok=True)
@@ -654,26 +677,30 @@ class PolicyTuner:
 
         # Extract baseline + tuned results.
         baseline_results, tuned_results = all_results[0], all_results[1]
-        base_viol, base_cost = aggregate(baseline_results, metric)
-        tuned_viol, tuned_cost = aggregate(tuned_results, metric)
+        base_agg = aggregate(baseline_results, metric)
+        tuned_agg = aggregate(tuned_results, metric)
 
         baseline_phase = PhaseResult(
             params={},
             train_results=baseline_results,
             val_results=None,
-            train_violation_agg=base_viol,
-            train_cost_agg=base_cost,
+            train_violation_agg=primary_violation(base_agg, self._slo_metric),
+            train_cost_agg=base_agg.cost,
             val_violation_agg=None,
             val_cost_agg=None,
+            train_metrics=base_agg,
+            val_metrics=None,
         )
         tuned_phase = PhaseResult(
             params=tuned_overrides,
             train_results=tuned_results,
             val_results=None,
-            train_violation_agg=tuned_viol,
-            train_cost_agg=tuned_cost,
+            train_violation_agg=primary_violation(tuned_agg, self._slo_metric),
+            train_cost_agg=tuned_agg.cost,
             val_violation_agg=None,
             val_cost_agg=None,
+            train_metrics=tuned_agg,
+            val_metrics=None,
         )
         self._print_comparison(baseline_phase, tuned_phase)
 
@@ -681,11 +708,14 @@ class PolicyTuner:
         static_summaries: list[dict[str, Any]] = []
         for i, sb in enumerate(static_baselines):
             sb_results = all_results[2 + i]
-            sb_viol, sb_cost = aggregate(sb_results, metric)
+            sb_agg = aggregate(sb_results, metric)
             static_summaries.append({
                 "label": sb["label"],
-                "violation": sb_viol,
-                "cost": sb_cost,
+                "violation": primary_violation(sb_agg, self._slo_metric),
+                "cost": sb_agg.cost,
+                "violation_rate": sb_agg.violation_rate,
+                "violation_amount_s": sb_agg.violation_amount_s,
+                "violation_relative_mean": sb_agg.violation_relative_mean,
             })
 
         if static_summaries:
@@ -696,10 +726,17 @@ class PolicyTuner:
         summary_dir.mkdir(parents=True, exist_ok=True)
         holdout_summary: dict[str, Any] = {
             "num_holdout_queries": total_queries,
-            "baseline_violation": base_viol,
-            "baseline_cost": base_cost,
-            "tuned_violation": tuned_viol,
-            "tuned_cost": tuned_cost,
+            "baseline_violation": primary_violation(base_agg, self._slo_metric),
+            "baseline_cost": base_agg.cost,
+            "baseline_violation_rate": base_agg.violation_rate,
+            "baseline_violation_amount_s": base_agg.violation_amount_s,
+            "baseline_violation_relative_mean": base_agg.violation_relative_mean,
+            "tuned_violation": primary_violation(tuned_agg, self._slo_metric),
+            "tuned_cost": tuned_agg.cost,
+            "tuned_violation_rate": tuned_agg.violation_rate,
+            "tuned_violation_amount_s": tuned_agg.violation_amount_s,
+            "tuned_violation_relative_mean": tuned_agg.violation_relative_mean,
+            "slo_metric": self._slo_metric,
         }
         if static_summaries:
             holdout_summary["static_baselines"] = static_summaries
@@ -717,30 +754,31 @@ class PolicyTuner:
         table.add_column("Tuned", justify="right")
         table.add_column("Δ", justify="right")
 
-        rows = [
-            (
-                "Train Violation",
-                baseline.train_violation_agg,
-                tuned.train_violation_agg,
-            ),
-            (
-                "Train Cost ($)",
-                baseline.train_cost_agg,
-                tuned.train_cost_agg,
-            ),
-        ]
-        if baseline.val_violation_agg is not None and tuned.val_violation_agg is not None:
-            rows.append((
-                "Val Violation",
-                baseline.val_violation_agg,
-                tuned.val_violation_agg,
-            ))
-        if baseline.val_cost_agg is not None and tuned.val_cost_agg is not None:
-            rows.append((
-                "Val Cost ($)",
-                baseline.val_cost_agg,
-                tuned.val_cost_agg,
-            ))
+        rows: list[tuple[str, float, float]] = []
+
+        # All 3 violation metrics from train_metrics if available.
+        bm = baseline.train_metrics
+        tm = tuned.train_metrics
+        if bm is not None and tm is not None:
+            rows.append(("Train Viol. Rate", bm.violation_rate, tm.violation_rate))
+            rows.append(("Train Viol. Amount (s)", bm.violation_amount_s, tm.violation_amount_s))
+            rows.append(("Train Viol. Relative", bm.violation_relative_mean, tm.violation_relative_mean))
+            rows.append(("Train Cost ($)", bm.cost, tm.cost))
+        else:
+            rows.append(("Train Violation", baseline.train_violation_agg, tuned.train_violation_agg))
+            rows.append(("Train Cost ($)", baseline.train_cost_agg, tuned.train_cost_agg))
+
+        bvm = baseline.val_metrics
+        tvm = tuned.val_metrics
+        if bvm is not None and tvm is not None:
+            rows.append(("Val Viol. Rate", bvm.violation_rate, tvm.violation_rate))
+            rows.append(("Val Viol. Amount (s)", bvm.violation_amount_s, tvm.violation_amount_s))
+            rows.append(("Val Viol. Relative", bvm.violation_relative_mean, tvm.violation_relative_mean))
+            rows.append(("Val Cost ($)", bvm.cost, tvm.cost))
+        elif baseline.val_violation_agg is not None and tuned.val_violation_agg is not None:
+            rows.append(("Val Violation", baseline.val_violation_agg, tuned.val_violation_agg))
+            if baseline.val_cost_agg is not None and tuned.val_cost_agg is not None:
+                rows.append(("Val Cost ($)", baseline.val_cost_agg, tuned.val_cost_agg))
 
         for label, base_val, tuned_val in rows:
             delta = tuned_val - base_val
@@ -763,12 +801,16 @@ class PolicyTuner:
             title="Static Baselines — Holdout", show_lines=True
         )
         table.add_column("Label", justify="left")
-        table.add_column("Violation", justify="right")
+        table.add_column("Viol. Rate", justify="right")
+        table.add_column("Viol. Amount (s)", justify="right")
+        table.add_column("Viol. Relative", justify="right")
         table.add_column("Cost ($)", justify="right")
         for entry in static_summaries:
             table.add_row(
                 entry["label"],
-                f"{entry['violation']:.4f}",
+                f"{entry.get('violation_rate', entry.get('violation', 0.0)):.4f}",
+                f"{entry.get('violation_amount_s', 0.0):.4f}",
+                f"{entry.get('violation_relative_mean', 0.0):.4f}",
                 f"{entry['cost']:.2f}",
             )
         console.print(table)
@@ -826,20 +868,34 @@ class PolicyTuner:
             "train_cost_agg": result.train_cost_agg,
             "val_violation_agg": result.val_violation_agg,
             "val_cost_agg": result.val_cost_agg,
-            "train_scenarios": [
-                {
-                    "scenario_idx": r.scenario_idx,
-                    "violation_rate": r.violation_rate,
-                    "total_cost": r.total_cost,
-                }
-                for r in result.train_results
-            ],
         }
+        if result.train_metrics is not None:
+            tm = result.train_metrics
+            summary["train_violation_rate"] = tm.violation_rate
+            summary["train_violation_amount_s"] = tm.violation_amount_s
+            summary["train_violation_relative_mean"] = tm.violation_relative_mean
+        if result.val_metrics is not None:
+            vm = result.val_metrics
+            summary["val_violation_rate"] = vm.violation_rate
+            summary["val_violation_amount_s"] = vm.violation_amount_s
+            summary["val_violation_relative_mean"] = vm.violation_relative_mean
+        summary["train_scenarios"] = [
+            {
+                "scenario_idx": r.scenario_idx,
+                "violation_rate": r.violation_rate,
+                "violation_amount_s": r.violation_amount_s,
+                "violation_relative_mean": r.violation_relative_mean,
+                "total_cost": r.total_cost,
+            }
+            for r in result.train_results
+        ]
         if result.val_results is not None:
             summary["val_scenarios"] = [
                 {
                     "scenario_idx": r.scenario_idx,
                     "violation_rate": r.violation_rate,
+                    "violation_amount_s": r.violation_amount_s,
+                    "violation_relative_mean": r.violation_relative_mean,
                     "total_cost": r.total_cost,
                 }
                 for r in result.val_results
@@ -852,20 +908,48 @@ class PolicyTuner:
         """Print a rich table summarising a phase result."""
         table = Table(title=f"{label} Performance", show_lines=True)
         table.add_column("Split", justify="left")
-        table.add_column("Violation", justify="right")
+        table.add_column("Viol. Rate", justify="right")
+        table.add_column("Viol. Amount (s)", justify="right")
+        table.add_column("Viol. Relative", justify="right")
         table.add_column("Cost ($)", justify="right")
         table.add_column("# Scenarios", justify="right")
 
-        table.add_row(
-            "Train",
-            f"{result.train_violation_agg:.4f}",
-            f"{result.train_cost_agg:.4f}",
-            str(len(result.train_results)),
-        )
-        if result.val_results is not None:
+        tm = result.train_metrics
+        if tm is not None:
+            table.add_row(
+                "Train",
+                f"{tm.violation_rate:.4f}",
+                f"{tm.violation_amount_s:.4f}",
+                f"{tm.violation_relative_mean:.4f}",
+                f"{tm.cost:.4f}",
+                str(len(result.train_results)),
+            )
+        else:
+            table.add_row(
+                "Train",
+                f"{result.train_violation_agg:.4f}",
+                "—",
+                "—",
+                f"{result.train_cost_agg:.4f}",
+                str(len(result.train_results)),
+            )
+
+        vm = result.val_metrics
+        if vm is not None:
+            table.add_row(
+                "Val",
+                f"{vm.violation_rate:.4f}",
+                f"{vm.violation_amount_s:.4f}",
+                f"{vm.violation_relative_mean:.4f}",
+                f"{vm.cost:.4f}",
+                str(len(result.val_results)) if result.val_results else "0",
+            )
+        elif result.val_results is not None:
             table.add_row(
                 "Val",
                 f"{result.val_violation_agg:.4f}",
+                "—",
+                "—",
                 f"{result.val_cost_agg:.4f}",
                 str(len(result.val_results)),
             )

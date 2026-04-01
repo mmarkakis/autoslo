@@ -32,6 +32,83 @@ class ScenarioResult:
 
 
 # ---------------------------------------------------------------------------
+# Aggregated metrics across scenarios
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AggregatedMetrics:
+    """All three violation metrics plus cost, aggregated across scenarios."""
+
+    violation_rate: float
+    violation_amount_s: float
+    violation_relative_mean: float
+    cost: float
+
+
+# ---------------------------------------------------------------------------
+# SLO objective bundle
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SloObjective:
+    """Bundles the SLO metric name and feasibility threshold."""
+
+    slo_metric: str  # "binary", "absolute_s", or "relative"
+    slo_threshold: float
+
+
+# ---------------------------------------------------------------------------
+# Helpers for metric routing and threshold-aware selection
+# ---------------------------------------------------------------------------
+
+_METRIC_TO_FIELD = {
+    "binary": "violation_rate",
+    "absolute_s": "violation_amount_s",
+    "relative": "violation_relative_mean",
+}
+
+
+def primary_violation(agg: AggregatedMetrics, slo_metric: str) -> float:
+    """Extract the primary violation value for the given SLO metric."""
+    field_name = _METRIC_TO_FIELD.get(slo_metric)
+    if field_name is None:
+        raise ValueError(f"Unknown slo_metric: {slo_metric!r}")
+    return getattr(agg, field_name)
+
+
+def is_feasible(primary_val: float, slo_threshold: float) -> bool:
+    """Return True if *primary_val* satisfies the SLO threshold."""
+    return primary_val <= slo_threshold
+
+
+def threshold_aware_select(
+    candidates: list[tuple[float, float]],
+    slo_threshold: float,
+) -> int:
+    """Return the index of the best candidate under lexicographic selection.
+
+    1. Partition into feasible (primary ≤ threshold) and infeasible.
+    2. If any feasible: return the one with lowest cost.
+    3. If none feasible: return the one with lowest primary violation
+       (tiebreak on cost).
+    """
+    feasible = [
+        (i, pv, cost)
+        for i, (pv, cost) in enumerate(candidates)
+        if pv <= slo_threshold
+    ]
+    if feasible:
+        return min(feasible, key=lambda t: t[2])[0]
+    # None feasible — pick lowest primary violation, tiebreak cost.
+    return min(
+        range(len(candidates)),
+        key=lambda i: (candidates[i][0], candidates[i][1]),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Aggregated result for one parameter combination
 # ---------------------------------------------------------------------------
 
@@ -47,6 +124,8 @@ class PhaseResult:
     train_cost_agg: float = 0.0
     val_violation_agg: float | None = None
     val_cost_agg: float | None = None
+    train_metrics: AggregatedMetrics | None = None
+    val_metrics: AggregatedMetrics | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +135,7 @@ class PhaseResult:
 
 def aggregate(
     results: list[ScenarioResult], metric: str = "p90"
-) -> tuple[float, float]:
+) -> AggregatedMetrics:
     """Compute a summary statistic over scenario results.
 
     Parameters
@@ -68,23 +147,37 @@ def aggregate(
 
     Returns
     -------
-    (violation_agg, cost_agg)
+    AggregatedMetrics with all three violation metrics and cost.
     """
     if not results:
-        return (0.0, 0.0)
+        return AggregatedMetrics(
+            violation_rate=0.0,
+            violation_amount_s=0.0,
+            violation_relative_mean=0.0,
+            cost=0.0,
+        )
 
-    violations = [r.violation_rate for r in results]
+    rates = [r.violation_rate for r in results]
+    amounts = [r.violation_amount_s for r in results]
+    relatives = [r.violation_relative_mean for r in results]
     costs = [r.total_cost for r in results]
 
     if metric == "mean":
-        return (statistics.mean(violations), statistics.mean(costs))
+        return AggregatedMetrics(
+            violation_rate=statistics.mean(rates),
+            violation_amount_s=statistics.mean(amounts),
+            violation_relative_mean=statistics.mean(relatives),
+            cost=statistics.mean(costs),
+        )
 
     # pNN quantile
     if metric.startswith("p") and metric[1:].isdigit():
         q = int(metric[1:]) / 100.0
-        return (
-            float(np.quantile(violations, q)),
-            float(np.quantile(costs, q)),
+        return AggregatedMetrics(
+            violation_rate=float(np.quantile(rates, q)),
+            violation_amount_s=float(np.quantile(amounts, q)),
+            violation_relative_mean=float(np.quantile(relatives, q)),
+            cost=float(np.quantile(costs, q)),
         )
 
     raise ValueError(f"Unknown aggregation metric: {metric!r}")

@@ -133,11 +133,22 @@ def main() -> None:
             row["holdout_tuned_violation"] = holdout.get("tuned_violation")
             row["holdout_tuned_cost"] = holdout.get("tuned_cost")
             row["holdout_queries"] = holdout.get("num_holdout_queries")
+            # All 3 violation metrics.
+            for prefix in ("baseline", "tuned"):
+                for suffix in ("violation_rate", "violation_amount_s", "violation_relative_mean"):
+                    key = f"{prefix}_{suffix}"
+                    row[f"holdout_{key}"] = holdout.get(key)
+            row["holdout_slo_metric"] = holdout.get("slo_metric")
         if final:
             row["final_train_violation"] = final.get("train_violation_agg")
             row["final_train_cost"] = final.get("train_cost_agg")
             row["final_val_violation"] = final.get("val_violation_agg")
             row["final_val_cost"] = final.get("val_cost_agg")
+            # All 3 violation metrics.
+            for split in ("train", "val"):
+                for suffix in ("violation_rate", "violation_amount_s", "violation_relative_mean"):
+                    key = f"{split}_{suffix}"
+                    row[f"final_{key}"] = final.get(key)
 
         rows.append(row)
 
@@ -148,25 +159,25 @@ def main() -> None:
     )
     table.add_column("History", justify="left")
     table.add_column("Reservoir", justify="right")
-    table.add_column("Holdout\nBaseline Viol.", justify="right")
-    table.add_column("Holdout\nTuned Viol.", justify="right")
-    table.add_column("Δ Viol.", justify="right")
-    table.add_column("Holdout\nBaseline Cost", justify="right")
-    table.add_column("Holdout\nTuned Cost", justify="right")
+    table.add_column("Baseline\nViol. Rate", justify="right")
+    table.add_column("Tuned\nViol. Rate", justify="right")
+    table.add_column("Baseline\nViol. Amt (s)", justify="right")
+    table.add_column("Tuned\nViol. Amt (s)", justify="right")
+    table.add_column("Baseline\nViol. Rel.", justify="right")
+    table.add_column("Tuned\nViol. Rel.", justify="right")
+    table.add_column("Baseline\nCost ($)", justify="right")
+    table.add_column("Tuned\nCost ($)", justify="right")
     table.add_column("Δ Cost", justify="right")
 
     for r in rows:
-        bv = r.get("holdout_baseline_violation")
-        tv = r.get("holdout_tuned_violation")
+        bvr = r.get("holdout_baseline_violation_rate")
+        tvr = r.get("holdout_tuned_violation_rate")
+        bva = r.get("holdout_baseline_violation_amount_s")
+        tva = r.get("holdout_tuned_violation_amount_s")
+        bvl = r.get("holdout_baseline_violation_relative_mean")
+        tvl = r.get("holdout_tuned_violation_relative_mean")
         bc = r.get("holdout_baseline_cost")
         tc = r.get("holdout_tuned_cost")
-
-        dv_str = ""
-        if bv is not None and tv is not None:
-            dv = tv - bv
-            sign = "+" if dv >= 0 else ""
-            style = "green" if dv <= 0 else "red"
-            dv_str = f"[{style}]{sign}{dv:.4f}[/{style}]"
 
         dc_str = ""
         if bc is not None and tc is not None:
@@ -182,9 +193,12 @@ def main() -> None:
                 if r.get("reservoir_arrivals")
                 else "?"
             ),
-            f"{bv:.4f}" if bv is not None else "—",
-            f"{tv:.4f}" if tv is not None else "—",
-            dv_str or "—",
+            f"{bvr:.4f}" if bvr is not None else "—",
+            f"{tvr:.4f}" if tvr is not None else "—",
+            f"{bva:.4f}" if bva is not None else "—",
+            f"{tva:.4f}" if tva is not None else "—",
+            f"{bvl:.4f}" if bvl is not None else "—",
+            f"{tvl:.4f}" if tvl is not None else "—",
             f"{bc:.2f}" if bc is not None else "—",
             f"{tc:.2f}" if tc is not None else "—",
             dc_str or "—",
@@ -315,10 +329,23 @@ def main() -> None:
         "holdout_tuned_violation",
         "holdout_baseline_cost",
         "holdout_tuned_cost",
+        "holdout_baseline_violation_rate",
+        "holdout_tuned_violation_rate",
+        "holdout_baseline_violation_amount_s",
+        "holdout_tuned_violation_amount_s",
+        "holdout_baseline_violation_relative_mean",
+        "holdout_tuned_violation_relative_mean",
+        "holdout_slo_metric",
         "final_train_violation",
         "final_val_violation",
         "final_train_cost",
         "final_val_cost",
+        "final_train_violation_rate",
+        "final_val_violation_rate",
+        "final_train_violation_amount_s",
+        "final_val_violation_amount_s",
+        "final_train_violation_relative_mean",
+        "final_val_violation_relative_mean",
         "num_checkpoints",
         "checkpoint_details",
         *tuned_cols,
@@ -439,7 +466,6 @@ def main() -> None:
                     marker="s",
                 )
             )
-
     # Read SLO config from the first scenario's initial config.
     base_cfg = _load_yaml(run_root / SCENARIOS[0] / "initial_config.yml")
     slo_section = (base_cfg or {}).get("slo_config", {})

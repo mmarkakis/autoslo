@@ -20,7 +20,15 @@ from rich.table import Table
 
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.types import PhaseResult, aggregate, compute_pareto_front
+from autoslo.tuner.types import (
+    AggregatedMetrics,
+    PhaseResult,
+    SloObjective,
+    aggregate,
+    compute_pareto_front,
+    primary_violation,
+    threshold_aware_select,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -77,12 +85,16 @@ class ParamSweep:
         base_overrides: dict[str, Any],
         run_dir: Path,
         phase_name: str,
+        slo_objective: SloObjective | None = None,
     ) -> None:
         self._evaluator = evaluator
         self._tuner_config = tuner_config
         self._base_overrides = base_overrides
         self._run_dir = run_dir
         self._phase_name = phase_name
+        self._slo_objective = slo_objective or SloObjective(
+            slo_metric="binary", slo_threshold=1.0,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -136,23 +148,29 @@ class ParamSweep:
                 grid_point=gp_idx,
                 out_subdir=phase_dir / f"grid_point_{gp_idx:03d}" / "train",
             )
-            viol_agg, cost_agg = aggregate(train_results, metric)
+            train_agg = aggregate(train_results, metric)
+            train_primary = primary_violation(train_agg, self._slo_objective.slo_metric)
 
             grid_results.append(
                 {
                     "grid_point": gp_idx,
                     "params": point,
-                    "train_violation_agg": viol_agg,
-                    "train_cost_agg": cost_agg,
+                    "train_violation_agg": train_primary,
+                    "train_cost_agg": train_agg.cost,
+                    "train_metrics": train_agg,
                     "is_pareto": False,
                     "val_violation_agg": None,
                     "val_cost_agg": None,
+                    "val_metrics": None,
                 }
             )
 
+            slo_label = self._slo_objective.slo_metric
+            slo_thresh = self._slo_objective.slo_threshold
             console.print(
                 f"  [dim]gp {gp_idx:>3d}/{len(grid)}[/]  "
-                f"violation={viol_agg:.4f}  cost=${cost_agg:.4f}  "
+                f"{slo_label}={train_primary:.4f} (threshold={slo_thresh:.2f})  "
+                f"cost=${train_agg.cost:.4f}  "
                 f"params={point}"
             )
 
@@ -184,9 +202,11 @@ class ParamSweep:
                 grid_point=f"{idx}_val",
                 out_subdir=phase_dir / f"grid_point_{idx:03d}" / "val",
             )
-            val_viol, val_cost = aggregate(val_results, metric)
-            grid_results[idx]["val_violation_agg"] = val_viol
-            grid_results[idx]["val_cost_agg"] = val_cost
+            val_agg = aggregate(val_results, metric)
+            val_primary = primary_violation(val_agg, self._slo_objective.slo_metric)
+            grid_results[idx]["val_violation_agg"] = val_primary
+            grid_results[idx]["val_cost_agg"] = val_agg.cost
+            grid_results[idx]["val_metrics"] = val_agg
 
         # ── Select best ───────────────────────────────────────────
         best_idx = self._select_best(grid_results, pareto_indices)
@@ -204,15 +224,15 @@ class ParamSweep:
     # Selection logic
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _select_best(
+        self,
         grid_results: list[dict[str, Any]],
         pareto_indices: list[int],
     ) -> int:
-        """Pick the best Pareto-optimal point by validation performance.
+        """Pick the best Pareto-optimal point by threshold-aware selection.
 
-        Strategy: lowest validation violation; ties broken by lowest
-        validation cost.
+        Strategy: among validated Pareto points, apply lexicographic
+        (feasibility-first, then cheapest) selection.
         """
         # Among Pareto points that have been validated.
         validated = [
@@ -229,13 +249,14 @@ class ParamSweep:
                     grid_results[i]["train_cost_agg"],
                 ),
             )
-        return min(
-            validated,
-            key=lambda i: (
-                grid_results[i]["val_violation_agg"],
-                grid_results[i]["val_cost_agg"],
-            ),
+        candidates = [
+            (grid_results[i]["val_violation_agg"], grid_results[i]["val_cost_agg"])
+            for i in validated
+        ]
+        best_local_idx = threshold_aware_select(
+            candidates, self._slo_objective.slo_threshold,
         )
+        return validated[best_local_idx]
 
     # ------------------------------------------------------------------
     # Rich output
@@ -273,11 +294,13 @@ class ParamSweep:
             title=f"{self._phase_name} — Pareto Front Results",
             show_lines=True,
         )
+        slo_label = self._slo_objective.slo_metric
+        slo_thresh = self._slo_objective.slo_threshold
         table.add_column("GP", justify="right")
         table.add_column("Params", justify="left")
-        table.add_column("Train Viol", justify="right")
+        table.add_column(f"Train {slo_label} (≤{slo_thresh:.2f})", justify="right")
         table.add_column("Train Cost", justify="right")
-        table.add_column("Val Viol", justify="right")
+        table.add_column(f"Val {slo_label} (≤{slo_thresh:.2f})", justify="right")
         table.add_column("Val Cost", justify="right")
         table.add_column("Best", justify="center")
 
@@ -318,10 +341,25 @@ class ParamSweep:
         best_idx: int,
     ) -> None:
         phase_dir.mkdir(parents=True, exist_ok=True)
+        # Serialize grid_results, converting AggregatedMetrics to dicts.
+        serializable = []
+        for r in grid_results:
+            entry = {k: v for k, v in r.items() if k not in ("train_metrics", "val_metrics")}
+            tm = r.get("train_metrics")
+            if tm is not None:
+                entry["train_violation_rate"] = tm.violation_rate
+                entry["train_violation_amount_s"] = tm.violation_amount_s
+                entry["train_violation_relative_mean"] = tm.violation_relative_mean
+            vm = r.get("val_metrics")
+            if vm is not None:
+                entry["val_violation_rate"] = vm.violation_rate
+                entry["val_violation_amount_s"] = vm.violation_amount_s
+                entry["val_violation_relative_mean"] = vm.violation_relative_mean
+            serializable.append(entry)
         output = {
             "best_grid_point": best_idx,
             "best_params": grid_results[best_idx]["params"],
-            "grid_results": grid_results,
+            "grid_results": serializable,
         }
         with open(phase_dir / "sweep_results.json", "w") as f:
             json.dump(output, f, indent=2, default=str)
