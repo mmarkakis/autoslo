@@ -46,6 +46,7 @@ def _build_test_data():
             "timestamp_within_hour": ts_within_hour,
             "query_text_id": qtid,
             "repetition_id": f"rep_{template_id}",
+            "obs_date": t.strftime("%Y-%m-%d"),
         })
 
     df = pd.DataFrame(rows, columns=QueryReservoir.COLUMNS)
