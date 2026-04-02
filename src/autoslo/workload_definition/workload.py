@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 from rich import print
@@ -236,15 +237,21 @@ class Workload:
         self._df = self._df[mask].reset_index(drop=True)
         self._queries_cache = None
 
-    def save(self, overwrite: bool = False) -> Path:
+    def save(
+        self, out_dir: Optional[Path] = None, overwrite: bool = False
+    ) -> Path:
         """Persist the workload DataFrame to the standard file path.
 
-        The file is written to
+        If no path is given, the file is written to
         ``<data_root>/__workloads/<schema_name>/<workload_name>.parquet``.
         Parent directories are created automatically.
 
         Parameters
         ----------
+        out_dir:
+            Optional directory to write the workload file to.  
+            If *None* (default), the file is written to the standard path 
+            under the ``__workloads`` directory.
         overwrite:
             If *False* (default) and the file already exists, raises
             :class:`FileExistsError`.  Set to *True* to overwrite.
@@ -260,12 +267,13 @@ class Workload:
             If a file already exists at the target path and *overwrite* is
             *False*.
         """
-        path = (
-            Path(pu.get_data_path())
-            / "__workloads"
-            / self._schema_name
-            / f"{self._workload_name}.parquet"
-        )
+        if out_dir is None:
+            out_dir = (
+                Path(pu.get_data_path())
+                / "__workloads"
+                / self._schema_name
+            )
+        path = out_dir / f"{self._workload_name}.parquet"
         if path.exists() and not overwrite:
             raise FileExistsError(
                 f"Workload file already exists at {path}. "
