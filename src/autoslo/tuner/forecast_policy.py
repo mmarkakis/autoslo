@@ -7,169 +7,262 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
 import pandas as pd
+from autoslo.tuner.reservoir import QueryReservoir
+
+from autoslo.workload_definition.workload import Workload
+
+import numpy as np
 
 
 class ForecastPolicy(ABC):
-    """Abstract base class for forecast policies.
+    """Abstract base class for forecast policies."""
 
-    A forecast policy answers two questions:
+    def __init__(
+        self,
+        reservoir: QueryReservoir,
+        seed: int = 42,
+        *args,
+        **kwargs,
+    ) -> None:
+        """
+        Initialize the forecast policy.
 
-    1. **weight** — Given a historical observation interval and a target
-       interval we want to forecast, how relevant is that observation?
-    2. **expected_count** — Given the weighted observations that fall into
-       the same (hour-of-day, [day-of-week]) bin, how many queries should
-       we sample for the target interval?
+        Parameters
+        ----------
+        reservoir :
+            Historical query reservoir to draw observations from.
+        seed :
+            Random seed for any stochasticity in the policy.
+        """
+
+        self.reservoir = reservoir
+        self.seed = seed
+        self.schema_name = self.reservoir.schema_name
+
+    def forecast(
+        self,
+        date: pd.Timestamp,
+    ) -> Workload:
+        """Return a forcasted workload for the target interval.
+
+        Parameters
+        ----------.
+        date :
+            Date of the target interval to forecast for.
+        """
+
+        rows = []
+        query_idx = 0
+
+        for i in range(24):
+            bin_df = self._build_bin_df(date, i)
+            if bin_df.empty:
+                continue
+
+            n_samples = self._n_samples(date, i, bin_df)
+            if n_samples == 0:
+                continue
+
+            # Sample with replacement from the 'query_text_id' column, based on
+            # the relative weights of the "count" column.
+            sampled_ids = bin_df.sample(
+                n=n_samples,
+                weights="count",
+                replace=True,
+                random_state=self.seed,
+            )["query_text_id"]
+
+            # Sample N timestamps from the specified bin by following a Poisson
+            # distribution with λ equal to the observed count in that bin.
+            # This adds some variability to the forecasted workload size.
+            poisson_lambda = n_samples * 3600
+            sampled_relative_start_times = np.random.poisson(
+                lam=(1 / poisson_lambda), size=int(n_samples * 1.5)
+            ).cumsum()
+            base_start_time = date + pd.Timedelta(hours=i)
+
+            for query_text_id, rel_start_time in zip(
+                sampled_ids, sampled_relative_start_times
+            ):
+                if rel_start_time > 3600:
+                    break
+                rows.append(
+                    {
+                        "query_id": f"forecast_{query_idx:06d}",
+                        "abs_start_time": (
+                            base_start_time
+                            + pd.Timedelta(seconds=rel_start_time)
+                        ),
+                        "query_text_id": query_text_id,
+                        "repetition_id": 0,
+                    }
+                )
+
+                query_idx += 1
+
+        forecast_df = pd.DataFrame(
+            rows, columns=Workload.WORKLOAD_SCHEMA_COLUMNS
+        )
+        workload = Workload("forecast", self.schema_name, forecast_df)
+        return workload
+
+    @abstractmethod
+    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+        """Return the DataFrame of historical observations for the specified bin."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _n_samples(
+        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+    ) -> int:
+        """Return the number of samples to draw for the specified bin."""
+        raise NotImplementedError
+
+
+class OneDayForecastPolicy(ForecastPolicy):
+    """
+    Base the forecast on yesterday only.
+    Useful as a simple baseline.
     """
 
-    @abstractmethod
-    def weight(
-        self,
-        obs_interval: tuple[datetime, datetime],
-        target_interval: tuple[datetime, datetime],
-    ) -> float:
-        """Return a non-negative relevance weight.
+    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+        yesterday = date - pd.Timedelta(days=1)
+        return self.reservoir.bin_df(yesterday, hour)
 
-        Parameters
-        ----------
-        obs_interval :
-            ``(start, end)`` of a historical observation.  Its start's
-            *day_of_week* and *hour* determine the bin.
-        target_interval :
-            ``(start, end)`` of the target interval being forecast.
-        """
-
-    @abstractmethod
-    def expected_count(
-        self,
-        target_interval: tuple[datetime, datetime],
-        bin_observations: pd.DataFrame,
-        weights: list[float],
+    def _n_samples(
+        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
     ) -> int:
-        """Return the expected number of query arrivals for a target interval.
-
-        Parameters
-        ----------
-        target_interval :
-            ``(start, end)`` of the target bin.
-        bin_observations :
-            Reservoir DataFrame filtered to historical rows that share the
-            same hour as the target interval's start.
-        weights :
-            Per-unique-observation-day weight (aligned with the unique
-            observation days in *bin_observations*).
-        """
+        return int(bin_df["count"].sum())
 
 
-class RecencyWeightedForecastPolicy(ForecastPolicy):
-    """Weight historical bins by recency, with a boost for matching weekday.
+class SevenDaysFlatForecastPolicy(ForecastPolicy):
+    """
+    Base the forecast for each hour on the average of the past 7 days for that
+    hour, with equal weighting.
+    """
 
-    Parameters
-    ----------
-    half_life_days :
-        Exponential-decay half-life.  An observation from *half_life_days*
-        ago receives weight 0.5 (before the weekday boost).
-    dow_boost :
-        Multiplicative boost applied when the observed day shares the same
-        weekday as the target.
+    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+        week_start = date - pd.Timedelta(days=7)
+        superbin_list = [
+            self.reservoir.bin_df(week_start + pd.Timedelta(days=d), hour)
+            for d in range(7)
+        ]
+        return pd.concat(superbin_list)
+
+    def _n_samples(
+        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+    ) -> int:
+        num_active_days = bin_df["date"].nunique()
+        if num_active_days == 0:
+            return 0
+        return int(round(bin_df["count"].sum() / num_active_days))
+
+
+class SameDayOnceForecastPolicy(ForecastPolicy):
+    """
+    Base the forecast on the same day of the previous week.
+    If there are no observations for that day, there are two cases:
+        1) The cluster was not yet instantiated; in this case, try one day ago.
+        2) The cluster was instantiated but there were simply no queries; in
+              this case, forecast zero queries.
+    Useful as a simple baseline.
+    """
+
+    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+        one_week_ago = date - pd.Timedelta(days=7)
+        one_week_ago_bin_df = self.reservoir.bin_df(one_week_ago, hour)
+        if not one_week_ago_bin_df.empty or (
+            one_week_ago.date() >= self.reservoir.min_date
+        ):
+            return one_week_ago_bin_df
+
+        one_day_ago = date - pd.Timedelta(days=1)
+        one_day_ago_bin_df = self.reservoir.bin_df(one_day_ago, hour)
+        return one_day_ago_bin_df
+
+    def _n_samples(
+        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+    ) -> int:
+        return int(bin_df["count"].sum())
+
+
+class SameDayExponentialForecastPolicy(ForecastPolicy):
+    """
+    Base the forecast on past instances of the same day, with exponentially
+    decaying weights. If there are no observations for that day, there are two cases:
+        1) The cluster was not yet instantiated; in this case, try one day ago.
+        2) The cluster was instantiated but there were simply no queries; in
+              this case, forecast zero queries.
     """
 
     def __init__(
         self,
-        half_life_days: float = 14.0,
-        dow_boost: float = 2.0,
+        reservoir: QueryReservoir,
+        seed: int = 42,
+        decay_factor: float = 0.5,
+        *args,
+        **kwargs,
     ) -> None:
-        if half_life_days <= 0:
-            raise ValueError("half_life_days must be positive")
-        if dow_boost < 0:
-            raise ValueError("dow_boost must be non-negative")
-        self.half_life_days = half_life_days
-        self.dow_boost = dow_boost
+        super().__init__(reservoir, seed, *args, **kwargs)
+        self.decay_factor = decay_factor
 
-    def weight(
-        self,
-        obs_interval: tuple[datetime, datetime],
-        target_interval: tuple[datetime, datetime],
-    ) -> float:
-        obs_start = obs_interval[0]
-        target_start = target_interval[0]
+    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+        weight = 1.0
+        day = date - pd.Timedelta(days=7)
+        superbin_list = []
+        while day.date() >= self.reservoir.min_date:
+            bin_df = self.reservoir.bin_df(day, hour)
+            if not bin_df.empty:
+                bin_df = bin_df.copy()
+                bin_df["count"] *= weight  # apply the weight to the count
+            weight *= (
+                self.decay_factor
+            )  # decay by the specified factor every week
+            day -= pd.Timedelta(days=7)
+            superbin_list.append(bin_df)
 
-        # Only match the same hour-of-day.
-        if obs_start.hour != target_start.hour:
-            return 0.0
+        if len(superbin_list) > 0:
+            return pd.concat(superbin_list)
 
-        days_apart = abs((target_start - obs_start).total_seconds()) / 86400.0
-        w = math.exp(-math.log(2) * days_apart / self.half_life_days)
+        if (date - pd.Timedelta(days=7)).date() >= self.reservoir.min_date:
+            # Should return an empty DataFrame with the correct columns if there
+            # are no observations but the date is within the reservoir's range.
+            return pd.DataFrame(columns=self.reservoir.BIN_DF_COLUMNS)
 
-        if obs_start.weekday() == target_start.weekday():
-            w *= self.dow_boost
+        # If we get here, it means there are no observations and the date is
+        # before the reservoir's range, so we should try one day ago instead.
+        one_day_ago = date - pd.Timedelta(days=1)
+        one_day_ago_bin_df = self.reservoir.bin_df(one_day_ago, hour)
 
-        return w
+        return one_day_ago_bin_df
 
-    def expected_count(
-        self,
-        target_interval: tuple[datetime, datetime],
-        bin_observations: pd.DataFrame,
-        weights: list[float],
+    def _n_samples(
+        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
     ) -> int:
-        """Weighted average of per-day counts, rounded to the nearest int.
 
-        Each *weight* corresponds to one unique historical day that
-        contributed observations to this bin.  ``bin_observations`` has a
-        ``day_of_week`` column but we need per-observation-day counts.
-        The caller provides per-unique-day weights.
-        """
-        if not weights or sum(weights) == 0:
+        # Are we in the fallback case where we had to look at one day ago
+        # instead of one week ago?
+        if bin_df["date"].nunique() == 1 and (
+            bin_df["date"].iloc[0] == (date - pd.Timedelta(days=1)).date()
+        ):
+            return int(bin_df["count"].sum())
+
+        # Take a weighted average of the past counts, where the weights are the
+        # same as those applied in _build_bin_df.
+        total_weight = 0.0
+        weighted_count_sum = 0.0
+        weight = 1.0
+        day = date - pd.Timedelta(days=7)
+        while day.date() >= self.reservoir.min_date:
+            day_bin_df = self.reservoir.bin_df(day, hour)
+            day_count = day_bin_df["count"].sum()
+            weighted_count_sum += weight * day_count
+            total_weight += weight
+            weight *= (
+                self.decay_factor
+            )  # decay by the specified factor every week
+            day -= pd.Timedelta(days=7)
+        if total_weight == 0:
             return 0
 
-        # bin_observations must have an "__obs_day_idx" column added by the
-        # sampler so we can align per-day counts with the weight list.
-        if "__obs_day_idx" in bin_observations.columns:
-            day_counts = (
-                bin_observations.groupby("__obs_day_idx")
-                .size()
-                .to_dict()
-            )
-            total_w = 0.0
-            weighted_sum = 0.0
-            for idx, w in enumerate(weights):
-                c = day_counts.get(idx, 0)
-                weighted_sum += w * c
-                total_w += w
-        else:
-            # Fallback: just use total count / number of weights.
-            total_w = sum(weights)
-            weighted_sum = len(bin_observations) / max(1, len(weights)) * total_w
-
-        if total_w == 0:
-            return 0
-        return max(0, round(weighted_sum / total_w))
-
-
-class UniformForecastPolicy(ForecastPolicy):
-    """Equal weight for all matching historical bins (simple average).
-
-    Useful as a baseline or when recency weighting is not desired.
-    """
-
-    def weight(
-        self,
-        obs_interval: tuple[datetime, datetime],
-        target_interval: tuple[datetime, datetime],
-    ) -> float:
-        if obs_interval[0].hour != target_interval[0].hour:
-            return 0.0
-        return 1.0
-
-    def expected_count(
-        self,
-        target_interval: tuple[datetime, datetime],
-        bin_observations: pd.DataFrame,
-        weights: list[float],
-    ) -> int:
-        if not weights or sum(weights) == 0:
-            return 0
-        if "__obs_day_idx" in bin_observations.columns:
-            n_days = bin_observations["__obs_day_idx"].nunique()
-        else:
-            n_days = max(1, len(weights))
-        return max(0, round(len(bin_observations) / n_days))
+        return int(round(weighted_count_sum / total_weight))

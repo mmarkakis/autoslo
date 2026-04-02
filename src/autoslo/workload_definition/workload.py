@@ -32,6 +32,13 @@ class Workload:
     not need to call ``super().__init__()``.
     """
 
+    WORKLOAD_SCHEMA_COLUMNS: list[str] = [
+        "query_id",
+        "abs_start_time",
+        "query_text_id",
+        "repetition_id",
+    ]
+
     def __init__(
         self,
         workload_name: str,

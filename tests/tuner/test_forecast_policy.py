@@ -9,145 +9,806 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from typing import Optional
+
 from autoslo.tuner.forecast_policy import (
-    RecencyWeightedForecastPolicy,
-    UniformForecastPolicy,
+    OneDayForecastPolicy,
+    SevenDaysFlatForecastPolicy,
+    SameDayOnceForecastPolicy,
+    SameDayExponentialForecastPolicy,
 )
+from autoslo.tuner.reservoir import QueryReservoir
 
 _1H = timedelta(hours=1)
+_BASE_TIME = pd.Timestamp("2024-01-31 00:00:00", tz="UTC")
 
 
-class TestRecencyWeightedWeight:
-    def test_same_hour_nonzero(self):
-        policy = RecencyWeightedForecastPolicy(half_life_days=14.0, dow_boost=2.0)
-        obs = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)  # Mon 09:00
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)  # Mon 09:00 +1wk
-        w = policy.weight((obs, obs + _1H), (target, target + _1H))
-        assert w > 0
+def _create_df(
+    start_time: pd.Timestamp = _BASE_TIME,
+    num_days: int = 1,
+    hour_to_hour_increase: int = 0,
+    day_to_day_increase: int = 0,
+    template_to_frequency: dict[int, int] = {1: 1},
+    initial_count: int = 10,
+    force_day_idx_empty: Optional[int] = None,
+) -> pd.DataFrame:
+    """Create a workload dataframe"""
 
-    def test_different_hour_zero(self):
-        policy = RecencyWeightedForecastPolicy()
-        obs = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
-        target = datetime(2024, 6, 3, 10, 0, tzinfo=timezone.utc)  # different hour
-        assert policy.weight((obs, obs + _1H), (target, target + _1H)) == 0.0
+    template_rng = np.random.default_rng(42)
+    total_freq = sum(template_to_frequency.values())
+    template_to_normalized_freq = {
+        template_id: freq / total_freq
+        for template_id, freq in template_to_frequency.items()
+    }
+    rows = []
+    for d in range(num_days):
+        initial_count_for_day = initial_count + (day_to_day_increase * d)
+        date = start_time + timedelta(days=d)
 
-    def test_recency_decay(self):
-        policy = RecencyWeightedForecastPolicy(half_life_days=14.0, dow_boost=1.0)
-        target = datetime(2024, 6, 17, 9, 0, tzinfo=timezone.utc)
+        if force_day_idx_empty is not None and d == force_day_idx_empty:
+            continue
 
-        obs_recent = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)  # 7 days ago
-        obs_old = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)  # 14 days ago
-
-        w_recent = policy.weight((obs_recent, obs_recent + _1H), (target, target + _1H))
-        w_old = policy.weight((obs_old, obs_old + _1H), (target, target + _1H))
-
-        assert w_recent > w_old
-        # At half-life, weight should be 0.5 (modulo dow_boost=1).
-        assert abs(w_old - 0.5) < 0.01
-
-    def test_dow_boost(self):
-        policy = RecencyWeightedForecastPolicy(half_life_days=14.0, dow_boost=2.0)
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)  # Monday
-
-        # Same weekday (Monday, 7 days ago).
-        obs_same_dow = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
-        # Different weekday (Tuesday, 8 days ago).
-        obs_diff_dow = datetime(2024, 6, 4, 9, 0, tzinfo=timezone.utc)
-
-        w_same = policy.weight((obs_same_dow, obs_same_dow + _1H), (target, target + _1H))
-        w_diff = policy.weight((obs_diff_dow, obs_diff_dow + _1H), (target, target + _1H))
-
-        # The same-dow weight should be roughly double (modulo slight recency diff).
-        ratio = w_same / w_diff if w_diff > 0 else float("inf")
-        assert ratio > 1.5  # should be close to 2.0
-        assert ratio < 3.0
-
-    def test_invalid_half_life(self):
-        with pytest.raises(ValueError, match="half_life_days"):
-            RecencyWeightedForecastPolicy(half_life_days=0)
-
-    def test_invalid_dow_boost(self):
-        with pytest.raises(ValueError, match="dow_boost"):
-            RecencyWeightedForecastPolicy(dow_boost=-1)
-
-
-class TestRecencyWeightedExpectedCount:
-    def _make_bin_obs(self, counts_per_day: list[int]) -> pd.DataFrame:
-        """Create a bin_observations DF with __obs_day_idx."""
-        rows = []
-        for day_idx, count in enumerate(counts_per_day):
-            for _ in range(count):
+        for h in range(24):
+            count = initial_count_for_day + (hour_to_hour_increase * h)
+            for i in range(count):
+                template_id = template_rng.choice(
+                    list(template_to_normalized_freq.keys()),
+                    p=list(template_to_normalized_freq.values()),
+                )
                 rows.append(
                     {
-                        "day_of_week": 0,
-                        "hour": 9,
-                        "timestamp_within_hour": 0.0,
-                        "query_text_id": "s#1#001",
+                        "query_id": f"q_{d}_{h}_{i:04d}",
+                        "abs_start_time": date + pd.Timedelta(hours=h),
+                        "query_text_id": f"s#{template_id:02d}#001",
                         "repetition_id": "r1",
-                        "__obs_day_idx": day_idx,
                     }
                 )
-        return pd.DataFrame(rows)
-
-    def test_uniform_weights(self):
-        policy = RecencyWeightedForecastPolicy(half_life_days=14.0, dow_boost=1.0)
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)
-        # Two days with 10 and 20 queries respectively, equal weights.
-        obs = self._make_bin_obs([10, 20])
-        result = policy.expected_count((target, target + _1H), obs, [1.0, 1.0])
-        assert result == 15  # weighted avg of 10 and 20 with equal weights
-
-    def test_weighted_average(self):
-        policy = RecencyWeightedForecastPolicy()
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)
-        # Day 0: 10 queries (weight 1.0), Day 1: 30 queries (weight 3.0).
-        obs = self._make_bin_obs([10, 30])
-        result = policy.expected_count((target, target + _1H), obs, [1.0, 3.0])
-        # weighted_avg = (1*10 + 3*30) / (1+3) = 100/4 = 25
-        assert result == 25
-
-    def test_empty_weights(self):
-        policy = RecencyWeightedForecastPolicy()
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)
-        obs = self._make_bin_obs([])
-        assert policy.expected_count((target, target + _1H), obs, []) == 0
-
-    def test_zero_weights(self):
-        policy = RecencyWeightedForecastPolicy()
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)
-        obs = self._make_bin_obs([10, 20])
-        assert policy.expected_count((target, target + _1H), obs, [0.0, 0.0]) == 0
+    df = pd.DataFrame(rows)
+    return df
 
 
-class TestUniformForecastPolicy:
-    def test_weight_same_hour(self):
-        policy = UniformForecastPolicy()
-        obs = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)
-        assert policy.weight((obs, obs + _1H), (target, target + _1H)) == 1.0
+def _create_reservoir(
+    start_time: pd.Timestamp = _BASE_TIME,
+    num_days: int = 1,
+    hour_to_hour_increase: int = 0,
+    day_to_day_increase: int = 0,
+    template_to_frequency: dict[int, int] = {1: 1},
+    initial_count: int = 10,
+    force_day_idx_empty: Optional[int] = None,
+) -> QueryReservoir:
+    """Create a reservoir."""
 
-    def test_weight_different_hour(self):
-        policy = UniformForecastPolicy()
-        obs = datetime(2024, 6, 3, 9, 0, tzinfo=timezone.utc)
-        target = datetime(2024, 6, 3, 10, 0, tzinfo=timezone.utc)
-        assert policy.weight((obs, obs + _1H), (target, target + _1H)) == 0.0
+    df = _create_df(
+        start_time=start_time,
+        num_days=num_days,
+        hour_to_hour_increase=hour_to_hour_increase,
+        day_to_day_increase=day_to_day_increase,
+        template_to_frequency=template_to_frequency,
+        initial_count=initial_count,
+        force_day_idx_empty=force_day_idx_empty,
+    )
+    return QueryReservoir(df=df)
 
-    def test_expected_count_averages(self):
-        policy = UniformForecastPolicy()
-        target = datetime(2024, 6, 10, 9, 0, tzinfo=timezone.utc)
-        # 30 rows from 3 unique days → expect 10 per day.
-        rows = []
-        for day_idx in range(3):
-            for _ in range(10):
-                rows.append(
-                    {
-                        "day_of_week": 0,
-                        "hour": 9,
-                        "timestamp_within_hour": 0.0,
-                        "query_text_id": "s#1#001",
-                        "repetition_id": "r1",
-                        "__obs_day_idx": day_idx,
-                    }
+
+class TestOneDayForecastPolicy:
+
+    def test_forecast_matches_yesterday_stable(self):
+        """
+        Forecast should match yesterday's counts when there is no hour-to-hour
+        or day-to-day increase.
+        """
+        reservoir = _create_reservoir(start_time=_BASE_TIME - timedelta(days=1))
+        policy = OneDayForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        # Expect 10 queries per hour, same as yesterday.
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            assert counts.get(hour, 0) == 10
+
+    def test_forecast_matches_yesterday_variable(self):
+        """
+        Forecast should match yesterday's counts when there is an hour-to-hour
+        increase, but no day-to-day increase.
+        """
+        reservoir = _create_reservoir(
+            hour_to_hour_increase=5, start_time=_BASE_TIME - timedelta(days=1)
+        )
+        policy = OneDayForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = 10 + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_extra_past_days_do_not_matter(self):
+        """
+        Forecast should match yesterday's counts even if there are multiple
+        past days in the reservoir, with a day-to-day increase.
+        """
+        reservoir = _create_reservoir(
+            day_to_day_increase=10,
+            num_days=3,
+            start_time=_BASE_TIME - timedelta(days=3),
+        )
+        policy = OneDayForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            assert counts.get(hour, 0) == 30
+
+    def test_random_seed_makes_forecast_deterministic(self):
+        """
+        A fixed random seed should make the forecast deterministic, even if
+        there is random sampling involved in the forecast.
+        """
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=1),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+        )
+        policy1 = OneDayForecastPolicy(reservoir, seed=42)
+        policy2 = OneDayForecastPolicy(reservoir, seed=42)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_different_random_seeds_make_different_forecasts(self):
+        """
+        Different random seeds should produce different forecasts, even if the
+        reservoir and other parameters are the same.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=1),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+        )
+        policy1 = OneDayForecastPolicy(reservoir, seed=42)
+        policy2 = OneDayForecastPolicy(reservoir, seed=43)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        with pytest.raises(AssertionError):
+            pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_correct_template_distribution(self):
+        """
+        In the presence of multiple templates with different frequencies, the
+        forecast should reflect the correct distribution of templates.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=1),
+            template_to_frequency={1: 1, 2: 2},
+            initial_count=100,
+        )
+        policy = OneDayForecastPolicy(reservoir, seed=42)
+        forecast = policy.forecast(_BASE_TIME)
+        template_counts = forecast.df["query_text_id"].value_counts()
+
+        total_count = template_counts.sum()
+        expected_distribution = {
+            f"s#{template_id:02d}#001": freq / 3  # total frequency is 1+2=3
+            for template_id, freq in {1: 1, 2: 2}.items()
+        }
+        for template_id, expected_freq in expected_distribution.items():
+            actual_freq = template_counts.get(template_id, 0) / total_count
+            # Allow some variability due to random sampling, but should be close.
+            assert math.isclose(
+                actual_freq, expected_freq, abs_tol=0.1
+            ), f"Template {template_id} has frequency {actual_freq:.2f}, expected {expected_freq:.2f}"
+
+
+class TestSevenDaysFlatForecastPolicy:
+
+    def test_forecast_uses_only_same_hour_from_past_days(self):
+        """
+        Forecast for each hour should be based only on the same hour from the past
+        7 days, not on other hours.
+        """
+
+        reservoir = _create_reservoir(
+            day_to_day_increase=0,
+            hour_to_hour_increase=5,
+            num_days=7,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=7),
+        )
+        policy = SevenDaysFlatForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            assert counts.get(hour, 0) == 10 + (hour * 5)
+
+    def test_forecast_matches_average_of_past_7_days(self):
+        """
+        Forecast should match the average of the past 7 days, even if there is a
+        day-to-day increase.
+        """
+
+        reservoir = _create_reservoir(
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            num_days=7,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=7),
+        )
+        policy = SevenDaysFlatForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        base_expected_count = sum(10 + (d * 10) for d in range(7)) // 7
+        for hour in range(24):
+            expected_count = base_expected_count + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_forecast_with_insufficient_history(self):
+        """
+        If there are fewer than 7 days of history, the forecast should still be
+        based on the average of whatever history is available. Importantly, it
+        should not incorrectly still divide by 7.
+        """
+
+        reservoir = _create_reservoir(
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            num_days=3,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=3),
+        )
+        policy = SevenDaysFlatForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        base_expected_count = sum(10 + (d * 10) for d in range(3)) // 3
+        for hour in range(24):
+            expected_count = base_expected_count + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_extra_past_days_do_not_matter(self):
+        """
+        Having more than 7 days of history should not change the forecast.
+        """
+
+        reservoir = _create_reservoir(
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            num_days=14,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=14),
+        )
+        policy = SevenDaysFlatForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        base_expected_count = sum(10 + 7 * 10 + (d * 10) for d in range(7)) // 7
+        for hour in range(24):
+            expected_count = base_expected_count + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_random_seed_makes_forecast_deterministic(self):
+        """
+        A fixed random seed should make the forecast deterministic, even if there
+        is random sampling involved in the forecast.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+            num_days=7,
+        )
+        policy1 = SevenDaysFlatForecastPolicy(reservoir, seed=42)
+        policy2 = SevenDaysFlatForecastPolicy(reservoir, seed=42)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_different_random_seeds_make_different_forecasts(self):
+        """
+        Different random seeds should produce different forecasts, even if the
+        reservoir and other parameters are the same.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+            num_days=7,
+        )
+        policy1 = SevenDaysFlatForecastPolicy(reservoir, seed=42)
+        policy2 = SevenDaysFlatForecastPolicy(reservoir, seed=43)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        with pytest.raises(AssertionError):
+            pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_correct_template_distribution(self):
+        """
+        In the presence of multiple templates with different frequencies, the
+        forecast should reflect the correct distribution of templates.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2},
+            initial_count=100,
+            num_days=7,
+        )
+        policy = SevenDaysFlatForecastPolicy(reservoir, seed=42)
+        forecast = policy.forecast(_BASE_TIME)
+        template_counts = forecast.df["query_text_id"].value_counts()
+
+        total_count = template_counts.sum()
+        expected_distribution = {
+            f"s#{template_id:02d}#001": freq / 3  # total frequency is 1+2=3
+            for template_id, freq in {1: 1, 2: 2}.items()
+        }
+        for template_id, expected_freq in expected_distribution.items():
+            actual_freq = template_counts.get(template_id, 0) / total_count
+            # Allow some variability due to random sampling, but should be close.
+            assert math.isclose(
+                actual_freq, expected_freq, abs_tol=0.1
+            ), f"Template {template_id} has frequency {actual_freq:.2f}, expected {expected_freq:.2f}"
+
+
+class TestSameDayOnceForecastPolicy:
+
+    def test_forecast_matches_same_day(self):
+        """
+        Forecast should match the same day's counts.
+        """
+        reservoir = _create_reservoir(
+            num_days=7,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=7),
+        )
+        policy = SameDayOnceForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = 10 + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_forecast_empty_if_empty_with_enough_history(self):
+        """
+        If there is an empty day but the cluster was active before it, we
+        should return an empty forecast.
+        """
+
+        reservoir = _create_reservoir(
+            num_days=8,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=8),
+            force_day_idx_empty=1,
+        )
+        policy = SameDayOnceForecastPolicy(reservoir)
+
+        bin_df = policy._build_bin_df(_BASE_TIME, 0)
+        assert bin_df.empty, "Expected empty bin_df"
+        assert (
+            bin_df.columns.tolist() == QueryReservoir.BIN_DF_COLUMNS
+        ), f"Expected columns {QueryReservoir.BIN_DF_COLUMNS}, got {bin_df.columns.tolist()}"
+
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        assert forecast_workload.df.empty, "Expected empty forecast workload"
+
+    def test_forecast_fallback_if_empty_with_insufficient_history(self):
+        """
+        If there is an empty day and the cluster was not active before it, we
+        should fall back to using the previous day's data for the forecast.
+        """
+
+        reservoir = _create_reservoir(
+            num_days=1,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=1),
+        )
+        policy = SameDayOnceForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = 10 + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_extra_past_days_do_not_matter(self):
+        """
+        Having more than 7 days of history should not change the forecast,
+        even if some are the same day of week.
+        """
+
+        reservoir = _create_reservoir(
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            num_days=14,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=14),
+        )
+        policy = SameDayOnceForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        one_week_in_base_count = 10 + (7 * 10)
+        for hour in range(24):
+            expected_count = one_week_in_base_count + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_random_seed_makes_forecast_deterministic(self):
+        """
+        A fixed random seed should make the forecast deterministic, even if there
+        is random sampling involved in the forecast.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+            num_days=7,
+        )
+        policy1 = SameDayOnceForecastPolicy(reservoir, seed=42)
+        policy2 = SameDayOnceForecastPolicy(reservoir, seed=42)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_different_random_seeds_make_different_forecasts(self):
+        """
+        Different random seeds should produce different forecasts, even if the
+        reservoir and other parameters are the same.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+            num_days=7,
+        )
+        policy1 = SameDayOnceForecastPolicy(reservoir, seed=42)
+        policy2 = SameDayOnceForecastPolicy(reservoir, seed=43)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        with pytest.raises(AssertionError):
+            pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_correct_template_distribution(self):
+        """
+        In the presence of multiple templates with different frequencies, the
+        forecast should reflect the correct distribution of templates.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2},
+            initial_count=100,
+            num_days=7,
+        )
+        policy = SameDayOnceForecastPolicy(reservoir, seed=42)
+        forecast = policy.forecast(_BASE_TIME)
+        template_counts = forecast.df["query_text_id"].value_counts()
+
+        total_count = template_counts.sum()
+        expected_distribution = {
+            f"s#{template_id:02d}#001": freq / 3  # total frequency is 1+2=3
+            for template_id, freq in {1: 1, 2: 2}.items()
+        }
+        for template_id, expected_freq in expected_distribution.items():
+            actual_freq = template_counts.get(template_id, 0) / total_count
+            # Allow some variability due to random sampling, but should be close.
+            assert math.isclose(
+                actual_freq, expected_freq, abs_tol=0.1
+            ), f"Template {template_id} has frequency {actual_freq:.2f}, expected {expected_freq:.2f}"
+
+
+class TestSameDayExponentialForecastPolicy:
+
+    def test_forecast_matches_same_day(self):
+        """
+        Forecast should match the same day's counts.
+        """
+        reservoir = _create_reservoir(
+            num_days=7,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=7),
+        )
+        policy = SameDayExponentialForecastPolicy(reservoir, seed=42)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = 10 + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_forecast_applies_decay_on_older_day(self):
+        """
+        For older instances of the target weekday, we should apply decay.
+        """
+        decay = 0.2
+        reservoir = _create_reservoir(
+            num_days=14,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=14),
+            force_day_idx_empty=7,
+        )
+        policy = SameDayExponentialForecastPolicy(
+            reservoir, seed=42, decay_factor=decay
+        )
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = int(round((10 + (hour * 5)) * decay / (1 + decay)))
+            assert counts.get(hour, 0) == expected_count
+
+    def test_forecast_with_multiple_decayed_days(self):
+        """
+        If there are multiple past instances of the same day, we should apply
+        decay to all of them.
+        """
+        decay = 0.2
+        reservoir = _create_reservoir(
+            num_days=21,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=21),
+        )
+        policy = SameDayExponentialForecastPolicy(
+            reservoir, seed=42, decay_factor=decay
+        )
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = int(
+                round(
+                    (
+                        ((10 + (hour * 5)) * decay**2)
+                        + ((10 + 7 * 10 + (hour * 5)) * decay)
+                        + (10 + 14 * 10 + (hour * 5))
+                    )
+                    / (1 + decay + decay**2)
                 )
-        obs = pd.DataFrame(rows)
-        assert policy.expected_count((target, target + _1H), obs, [1.0, 1.0, 1.0]) == 10
+            )
+            assert counts.get(hour, 0) == expected_count
+
+    def test_forecast_empty_if_empty_with_enough_history(self):
+        """
+        If there is an empty day but the cluster was active before it, we
+        should return an empty forecast.
+        """
+
+        reservoir = _create_reservoir(
+            num_days=8,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=8),
+            force_day_idx_empty=1,
+        )
+        policy = SameDayExponentialForecastPolicy(reservoir)
+
+        bin_df = policy._build_bin_df(_BASE_TIME, 0)
+        assert bin_df.empty, "Expected empty bin_df"
+        assert (
+            bin_df.columns.tolist() == QueryReservoir.BIN_DF_COLUMNS
+        ), f"Expected columns {QueryReservoir.BIN_DF_COLUMNS}, got {bin_df.columns.tolist()}"
+
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        assert forecast_workload.df.empty, "Expected empty forecast workload"
+
+    def test_forecast_fallback_if_empty_with_insufficient_history(self):
+        """
+        If there is an empty day and the cluster was not active before it, we
+        should fallback to the previous day's data.
+        """
+
+        reservoir = _create_reservoir(
+            num_days=1,
+            day_to_day_increase=10,
+            hour_to_hour_increase=5,
+            initial_count=10,
+            start_time=_BASE_TIME - timedelta(days=1),
+        )
+        policy = SameDayExponentialForecastPolicy(reservoir, seed=42)
+        forecast_workload = policy.forecast(
+            _BASE_TIME,
+        )
+        counts = forecast_workload.df.groupby(
+            forecast_workload.df["abs_start_time"].dt.hour
+        ).size()
+        for hour in range(24):
+            expected_count = 10 + (hour * 5)
+            assert counts.get(hour, 0) == expected_count
+
+    def test_random_seed_makes_forecast_deterministic(self):
+        """
+        A fixed random seed should make the forecast deterministic, even if there
+        is random sampling involved in the forecast.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+            num_days=7,
+        )
+        policy1 = SameDayExponentialForecastPolicy(reservoir, seed=42)
+        policy2 = SameDayExponentialForecastPolicy(reservoir, seed=42)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_different_random_seeds_make_different_forecasts(self):
+        """
+        Different random seeds should produce different forecasts, even if the
+        reservoir and other parameters are the same.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2, 3: 3},
+            num_days=7,
+        )
+        policy1 = SameDayExponentialForecastPolicy(reservoir, seed=42)
+        policy2 = SameDayExponentialForecastPolicy(reservoir, seed=43)
+        forecast1 = policy1.forecast(_BASE_TIME)
+        forecast2 = policy2.forecast(_BASE_TIME)
+        with pytest.raises(AssertionError):
+            pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
+
+    def test_correct_template_distribution(self):
+        """
+        In the presence of multiple templates with different frequencies, the
+        forecast should reflect the correct distribution of templates.
+        """
+
+        reservoir = _create_reservoir(
+            start_time=_BASE_TIME - timedelta(days=7),
+            template_to_frequency={1: 1, 2: 2},
+            initial_count=100,
+            num_days=7,
+        )
+        policy = SameDayExponentialForecastPolicy(reservoir, seed=42)
+        forecast = policy.forecast(_BASE_TIME)
+        template_counts = forecast.df["query_text_id"].value_counts()
+
+        total_count = template_counts.sum()
+        expected_distribution = {
+            f"s#{template_id:02d}#001": freq / 3  # total frequency is 1+2=3
+            for template_id, freq in {1: 1, 2: 2}.items()
+        }
+        for template_id, expected_freq in expected_distribution.items():
+            actual_freq = template_counts.get(template_id, 0) / total_count
+            # Allow some variability due to random sampling, but should be close.
+            assert math.isclose(
+                actual_freq, expected_freq, abs_tol=0.1
+            ), f"Template {template_id} has frequency {actual_freq:.2f}, expected {expected_freq:.2f}"
+
+    def test_decay_influences_template_distribution(self):
+        """
+        The decay factor should influence the template distribution in the
+        forecast, since it changes the relative contribution of different days
+        which may have different template distributions.
+        """
+
+        df1 = _create_df(
+            start_time=_BASE_TIME - timedelta(days=14),
+            num_days=7,
+            hour_to_hour_increase=0,
+            day_to_day_increase=0,
+            template_to_frequency={1: 1},
+            initial_count=100,
+        )
+        df2 = _create_df(
+            start_time=_BASE_TIME - timedelta(days=7),
+            num_days=7,
+            hour_to_hour_increase=0,
+            day_to_day_increase=0,
+            template_to_frequency={2: 1},
+            initial_count=100,
+        )
+        reservoir = QueryReservoir(df=pd.concat([df1, df2]))
+
+        # Without decay
+        policy_no_decay = SameDayExponentialForecastPolicy(
+            reservoir, seed=42, decay_factor=1.0
+        )
+        forecast_no_decay = policy_no_decay.forecast(_BASE_TIME)
+        template_counts_no_decay = forecast_no_decay.df[
+            "query_text_id"
+        ].value_counts()
+        total_count_no_decay = template_counts_no_decay.sum()
+        expected_distribution_no_decay = {
+            f"s#{template_id:02d}#001": freq / 2  # total frequency is 1+1=2
+            for template_id, freq in {1: 1, 2: 1}.items()
+        }
+        for (
+            template_id,
+            expected_freq,
+        ) in expected_distribution_no_decay.items():
+            actual_freq = (
+                template_counts_no_decay.get(template_id, 0)
+                / total_count_no_decay
+            )
+            assert math.isclose(
+                actual_freq, expected_freq, abs_tol=0.1
+            ), f"No decay: Template {template_id} has frequency {actual_freq:.2f}, expected {expected_freq:.2f}"
+
+        # With decay, the older day (template 1) should have less influence.
+        decay = 0.5
+        policy_with_decay = SameDayExponentialForecastPolicy(
+            reservoir, seed=42, decay_factor=decay
+        )
+        forecast_with_decay = policy_with_decay.forecast(_BASE_TIME)
+        template_counts_with_decay = forecast_with_decay.df[
+            "query_text_id"
+        ].value_counts()
+        total_count_with_decay = template_counts_with_decay.sum()
+        expected_distribution_with_decay = {
+            f"s#01#001": (1 * decay)
+            / (1 + decay),  # template 1 is from the older day
+            f"s#02#001": 1
+            / (1 + decay),  # template 2 is from the more recent day
+        }
+        for (
+            template_id,
+            expected_freq,
+        ) in expected_distribution_with_decay.items():
+            actual_freq = (
+                template_counts_with_decay.get(template_id, 0)
+                / total_count_with_decay
+            )
+            assert math.isclose(
+                actual_freq, expected_freq, abs_tol=0.1
+            ), f"With decay: Template {template_id} has frequency {actual_freq:.2f}, expected {expected_freq:.2f}"
