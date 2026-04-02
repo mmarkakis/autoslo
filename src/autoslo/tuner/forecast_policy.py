@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import date
 
 import pandas as pd
 from autoslo.tuner.reservoir import QueryReservoir
@@ -16,8 +16,10 @@ from pathlib import Path
 
 from typing import Optional
 
+from autoslo.utils.class_with_factory import ClassWithFactory
 
-class ForecastPolicy(ABC):
+
+class ForecastPolicy(ClassWithFactory):
     """Abstract base class for forecast policies."""
 
     def __init__(
@@ -40,7 +42,7 @@ class ForecastPolicy(ABC):
 
     def forecast(
         self,
-        date: pd.Timestamp,
+        target_date: date,
         seed: int = 42,
         workload_name: str = "forecast",
     ) -> Workload:
@@ -48,7 +50,7 @@ class ForecastPolicy(ABC):
 
         Parameters
         ----------.
-        date :
+        target_date :
             Date of the target interval to forecast for.
         seed :
             Random seed for reproducibility.
@@ -60,11 +62,11 @@ class ForecastPolicy(ABC):
         query_idx = 0
 
         for i in range(24):
-            bin_df = self._build_bin_df(date, i)
+            bin_df = self._build_bin_df(target_date, i)
             if bin_df.empty:
                 continue
 
-            n_samples = self._n_samples(date, i, bin_df)
+            n_samples = self._n_samples(target_date, i, bin_df)
             if n_samples == 0:
                 continue
 
@@ -77,14 +79,12 @@ class ForecastPolicy(ABC):
                 random_state=seed,
             )["query_text_id"]
 
-            # Sample N timestamps from the specified bin by following a Poisson
-            # distribution with λ equal to the observed count in that bin.
-            # This adds some variability to the forecasted workload size.
-            poisson_lambda = n_samples * 3600
-            sampled_relative_start_times = np.random.poisson(
-                lam=(1 / poisson_lambda), size=int(n_samples * 1.5)
-            ).cumsum()
-            base_start_time = date + pd.Timedelta(hours=i)
+            # Given the number of arrivals, the arrival times for a Poisson
+            # process are uniformly distributed within the hour.
+            sampled_relative_start_times = sorted(
+                np.random.default_rng(seed).uniform(0, 3600, size=n_samples)
+            )
+            base_start_time = pd.Timestamp(target_date) + pd.Timedelta(hours=i)
 
             for query_text_id, rel_start_time in zip(
                 sampled_ids, sampled_relative_start_times
@@ -113,7 +113,7 @@ class ForecastPolicy(ABC):
 
     def forecast_n_scenarios(
         self,
-        date: pd.Timestamp,
+        target_date: date,
         n_scenarios: int,
         initial_seed: int = 42,
         workload_name_prefix: str = "f",
@@ -125,7 +125,7 @@ class ForecastPolicy(ABC):
 
         Parameters
         ----------.
-        date :
+        target_date :
            Date of the target day to forecast for.
         n_scenarios :
             Number of independent forecasted workloads to generate for the
@@ -157,7 +157,7 @@ class ForecastPolicy(ABC):
             workload_name = f"{workload_name_prefix}_{i}"
             workload_seed = initial_seed + i
             workload = self.forecast(
-                date, seed=workload_seed, workload_name=workload_name
+                target_date, seed=workload_seed, workload_name=workload_name
             )
             workloads.append(workload)
 
@@ -172,13 +172,13 @@ class ForecastPolicy(ABC):
         return workloads, paths
 
     @abstractmethod
-    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+    def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         """Return the DataFrame of historical observations for the specified bin."""
         raise NotImplementedError
 
     @abstractmethod
     def _n_samples(
-        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+        self, target_date: date, hour: int, bin_df: pd.DataFrame
     ) -> int:
         """Return the number of samples to draw for the specified bin."""
         raise NotImplementedError
@@ -190,12 +190,16 @@ class OneDayForecastPolicy(ForecastPolicy):
     Useful as a simple baseline.
     """
 
-    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
-        yesterday = date - pd.Timedelta(days=1)
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
+
+    def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
+        yesterday = target_date - pd.Timedelta(days=1)
         return self.reservoir.bin_df(yesterday, hour)
 
     def _n_samples(
-        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+        self, target_date: date, hour: int, bin_df: pd.DataFrame
     ) -> int:
         return int(bin_df["count"].sum())
 
@@ -206,8 +210,12 @@ class SevenDaysFlatForecastPolicy(ForecastPolicy):
     hour, with equal weighting.
     """
 
-    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
-        week_start = date - pd.Timedelta(days=7)
+    @property
+    def name(self):
+        return self.__class__.__name__
+
+    def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
+        week_start = target_date - pd.Timedelta(days=7)
         superbin_list = [
             self.reservoir.bin_df(week_start + pd.Timedelta(days=d), hour)
             for d in range(7)
@@ -215,7 +223,7 @@ class SevenDaysFlatForecastPolicy(ForecastPolicy):
         return pd.concat(superbin_list)
 
     def _n_samples(
-        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+        self, target_date: date, hour: int, bin_df: pd.DataFrame
     ) -> int:
         num_active_days = bin_df["date"].nunique()
         if num_active_days == 0:
@@ -233,20 +241,24 @@ class SameDayOnceForecastPolicy(ForecastPolicy):
     Useful as a simple baseline.
     """
 
-    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
-        one_week_ago = date - pd.Timedelta(days=7)
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
+
+    def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
+        one_week_ago = target_date - pd.Timedelta(days=7)
         one_week_ago_bin_df = self.reservoir.bin_df(one_week_ago, hour)
         if not one_week_ago_bin_df.empty or (
-            one_week_ago.date() >= self.reservoir.min_date
+            one_week_ago >= self.reservoir.min_date
         ):
             return one_week_ago_bin_df
 
-        one_day_ago = date - pd.Timedelta(days=1)
+        one_day_ago = target_date - pd.Timedelta(days=1)
         one_day_ago_bin_df = self.reservoir.bin_df(one_day_ago, hour)
         return one_day_ago_bin_df
 
     def _n_samples(
-        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+        self, target_date: date, hour: int, bin_df: pd.DataFrame
     ) -> int:
         return int(bin_df["count"].sum())
 
@@ -270,11 +282,11 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
         super().__init__(reservoir, *args, **kwargs)
         self.decay_factor = decay_factor
 
-    def _build_bin_df(self, date: pd.Timestamp, hour: int) -> pd.DataFrame:
+    def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         weight = 1.0
-        day = date - pd.Timedelta(days=7)
+        day = target_date - pd.Timedelta(days=7)
         superbin_list = []
-        while day.date() >= self.reservoir.min_date:
+        while day >= self.reservoir.min_date:
             bin_df = self.reservoir.bin_df(day, hour)
             if not bin_df.empty:
                 bin_df = bin_df.copy()
@@ -288,26 +300,30 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
         if len(superbin_list) > 0:
             return pd.concat(superbin_list)
 
-        if (date - pd.Timedelta(days=7)).date() >= self.reservoir.min_date:
+        if (target_date - pd.Timedelta(days=7)) >= self.reservoir.min_date:
             # Should return an empty DataFrame with the correct columns if there
             # are no observations but the date is within the reservoir's range.
             return pd.DataFrame(columns=self.reservoir.BIN_DF_COLUMNS)
 
         # If we get here, it means there are no observations and the date is
         # before the reservoir's range, so we should try one day ago instead.
-        one_day_ago = date - pd.Timedelta(days=1)
+        one_day_ago = target_date - pd.Timedelta(days=1)
         one_day_ago_bin_df = self.reservoir.bin_df(one_day_ago, hour)
 
         return one_day_ago_bin_df
 
+    @property
+    def name(self) -> str:
+        return f"{self.__class__.__name__}(decay_factor={self.decay_factor})"
+
     def _n_samples(
-        self, date: pd.Timestamp, hour: int, bin_df: pd.DataFrame
+        self, target_date: date, hour: int, bin_df: pd.DataFrame
     ) -> int:
 
         # Are we in the fallback case where we had to look at one day ago
         # instead of one week ago?
         if bin_df["date"].nunique() == 1 and (
-            bin_df["date"].iloc[0] == (date - pd.Timedelta(days=1)).date()
+            bin_df["date"].iloc[0] == (target_date - pd.Timedelta(days=1))
         ):
             return int(bin_df["count"].sum())
 
@@ -316,8 +332,8 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
         total_weight = 0.0
         weighted_count_sum = 0.0
         weight = 1.0
-        day = date - pd.Timedelta(days=7)
-        while day.date() >= self.reservoir.min_date:
+        day = target_date - pd.Timedelta(days=7)
+        while day >= self.reservoir.min_date:
             day_bin_df = self.reservoir.bin_df(day, hour)
             day_count = day_bin_df["count"].sum()
             weighted_count_sum += weight * day_count

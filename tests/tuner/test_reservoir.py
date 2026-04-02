@@ -139,9 +139,9 @@ class TestQueryReservoirIO:
         df = _make_workload_df(n=20)
         reservoir = QueryReservoir(df=df)
 
-        count_df_path = reservoir.save(tmp_path / "reservoir")
+        reservoir.save(tmp_path / "reservoir")
+        count_df_path = tmp_path / "reservoir" / "reservoir.parquet"
         assert count_df_path.exists()
-        assert count_df_path.name == "reservoir.parquet"
 
         read_df = pd.read_parquet(count_df_path)
         assert read_df.equals(reservoir.count_df)
@@ -212,7 +212,7 @@ class TestQueryReservoirCounts:
         df = pd.DataFrame(rows)
         r = QueryReservoir(df=df)
 
-        bin_9 = r.bin_df(base_date, 9)
+        bin_9 = r.bin_df(base_date.date(), 9)
         print(bin_9)
         print(r.count_df)
         assert bin_9.shape[0] == 2  # two unique query_text_ids

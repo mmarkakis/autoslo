@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 
 import numpy as np
 import pandas as pd
@@ -19,8 +19,10 @@ from autoslo.tuner.forecast_policy import (
 )
 from autoslo.tuner.reservoir import QueryReservoir
 
+from scipy import stats
+
 _1H = timedelta(hours=1)
-_BASE_TIME = pd.Timestamp("2024-01-31 00:00:00", tz="UTC")
+_BASE_DATE = date(2024, 1, 31)
 
 # ------------------------------------------------------------------
 # Helpers
@@ -28,7 +30,7 @@ _BASE_TIME = pd.Timestamp("2024-01-31 00:00:00", tz="UTC")
 
 
 def _create_df(
-    start_time: pd.Timestamp = _BASE_TIME,
+    start_date: date = _BASE_DATE,
     num_days: int = 1,
     hour_to_hour_increase: int = 0,
     day_to_day_increase: int = 0,
@@ -45,9 +47,10 @@ def _create_df(
         for template_id, freq in template_to_frequency.items()
     }
     rows = []
+    start_time = pd.Timestamp(start_date)
     for d in range(num_days):
         initial_count_for_day = initial_count + (day_to_day_increase * d)
-        date = start_time + timedelta(days=d)
+        current_time = start_time + pd.Timedelta(days=d)
 
         if force_day_idx_empty is not None and d == force_day_idx_empty:
             continue
@@ -62,7 +65,7 @@ def _create_df(
                 rows.append(
                     {
                         "query_id": f"q_{d}_{h}_{i:04d}",
-                        "abs_start_time": date + pd.Timedelta(hours=h),
+                        "abs_start_time": current_time + pd.Timedelta(hours=h),
                         "query_text_id": f"s#{template_id:02d}#001",
                         "repetition_id": "r1",
                     }
@@ -72,7 +75,7 @@ def _create_df(
 
 
 def _create_reservoir(
-    start_time: pd.Timestamp = _BASE_TIME,
+    start_date: date = _BASE_DATE,
     num_days: int = 1,
     hour_to_hour_increase: int = 0,
     day_to_day_increase: int = 0,
@@ -83,7 +86,7 @@ def _create_reservoir(
     """Create a reservoir."""
 
     df = _create_df(
-        start_time=start_time,
+        start_date=start_date,
         num_days=num_days,
         hour_to_hour_increase=hour_to_hour_increase,
         day_to_day_increase=day_to_day_increase,
@@ -106,10 +109,10 @@ class TestOneDayForecastPolicy:
         Forecast should match yesterday's counts when there is no hour-to-hour
         or day-to-day increase.
         """
-        reservoir = _create_reservoir(start_time=_BASE_TIME - timedelta(days=1))
+        reservoir = _create_reservoir(start_date=_BASE_DATE - timedelta(days=1))
         policy = OneDayForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         # Expect 10 queries per hour, same as yesterday.
         counts = forecast_workload.df.groupby(
@@ -124,11 +127,11 @@ class TestOneDayForecastPolicy:
         increase, but no day-to-day increase.
         """
         reservoir = _create_reservoir(
-            hour_to_hour_increase=5, start_time=_BASE_TIME - timedelta(days=1)
+            hour_to_hour_increase=5, start_date=_BASE_DATE - timedelta(days=1)
         )
         policy = OneDayForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -136,6 +139,42 @@ class TestOneDayForecastPolicy:
         for hour in range(24):
             expected_count = 10 + (hour * 5)
             assert counts.get(hour, 0) == expected_count
+
+    def test_start_times_are_roughly_poisson(self):
+        """
+        The inter-arrival times in the forecast should
+        be roughly Poisson, i.e. exponentially distributed.
+        """
+        reservoir = _create_reservoir(
+            start_date=_BASE_DATE - timedelta(days=1), initial_count=1000
+        )
+        policy = OneDayForecastPolicy(reservoir)
+        forecast_workload = policy.forecast(
+            _BASE_DATE,
+        )
+        forecast_workload.df.sort_values("abs_start_time", inplace=True)
+        for h in range(24):
+            hour_df = forecast_workload.df[
+                forecast_workload.df["abs_start_time"].dt.hour == h
+            ]
+            if len(hour_df) < 2:
+                continue  # not enough data to test distribution
+            inter_arrival_times = (
+                hour_df["abs_start_time"].diff().dropna().dt.total_seconds()
+            )
+            # Test that inter-arrival times are roughly exponentially distributed.
+            # We allow some tolerance since this is a stochastic test.
+            mean_inter_arrival = inter_arrival_times.mean()
+            assert (
+                mean_inter_arrival > 0
+            ), "Mean inter-arrival time should be positive"
+            # Check that the distribution of inter-arrival times is not too far from exponential.
+            ks_statistic, p_value = stats.kstest(
+                inter_arrival_times, "expon", args=(0, mean_inter_arrival)
+            )
+            assert (
+                p_value > 0.01
+            ), f"Inter-arrival times for hour {h} do not appear to be exponentially distributed (KS p-value={p_value:.3f})"
 
     def test_extra_past_days_do_not_matter(self):
         """
@@ -145,11 +184,11 @@ class TestOneDayForecastPolicy:
         reservoir = _create_reservoir(
             day_to_day_increase=10,
             num_days=3,
-            start_time=_BASE_TIME - timedelta(days=3),
+            start_date=_BASE_DATE - timedelta(days=3),
         )
         policy = OneDayForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -163,12 +202,12 @@ class TestOneDayForecastPolicy:
         there is random sampling involved in the forecast.
         """
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=1),
+            start_date=_BASE_DATE - timedelta(days=1),
             template_to_frequency={1: 1, 2: 2, 3: 3},
         )
         policy = OneDayForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=42)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=42)
         pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
     def test_different_random_seeds_make_different_forecasts(self):
@@ -178,12 +217,12 @@ class TestOneDayForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=1),
+            start_date=_BASE_DATE - timedelta(days=1),
             template_to_frequency={1: 1, 2: 2, 3: 3},
         )
         policy = OneDayForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=43)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=43)
         with pytest.raises(AssertionError):
             pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
@@ -193,12 +232,12 @@ class TestOneDayForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=1),
+            start_date=_BASE_DATE - timedelta(days=1),
             template_to_frequency={1: 1, 2: 2, 3: 3},
         )
         policy = OneDayForecastPolicy(reservoir)
         workloads, paths = policy.forecast_n_scenarios(
-            _BASE_TIME, n_scenarios=5, initial_seed=42
+            _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
         assert paths is None
@@ -216,12 +255,12 @@ class TestOneDayForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=1),
+            start_date=_BASE_DATE - timedelta(days=1),
             template_to_frequency={1: 1, 2: 2},
             initial_count=100,
         )
         policy = OneDayForecastPolicy(reservoir)
-        forecast = policy.forecast(_BASE_TIME, seed=42)
+        forecast = policy.forecast(_BASE_DATE, seed=42)
         template_counts = forecast.df["query_text_id"].value_counts()
 
         total_count = template_counts.sum()
@@ -250,11 +289,11 @@ class TestSevenDaysFlatForecastPolicy:
             hour_to_hour_increase=5,
             num_days=7,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -273,11 +312,11 @@ class TestSevenDaysFlatForecastPolicy:
             hour_to_hour_increase=5,
             num_days=7,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -299,11 +338,11 @@ class TestSevenDaysFlatForecastPolicy:
             hour_to_hour_increase=5,
             num_days=3,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=3),
+            start_date=_BASE_DATE - timedelta(days=3),
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -323,11 +362,11 @@ class TestSevenDaysFlatForecastPolicy:
             hour_to_hour_increase=5,
             num_days=14,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=14),
+            start_date=_BASE_DATE - timedelta(days=14),
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -344,13 +383,13 @@ class TestSevenDaysFlatForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
             num_days=7,
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=42)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=42)
         pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
     def test_different_random_seeds_make_different_forecasts(self):
@@ -360,13 +399,13 @@ class TestSevenDaysFlatForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
             num_days=7,
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=43)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=43)
         with pytest.raises(AssertionError):
             pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
@@ -376,12 +415,12 @@ class TestSevenDaysFlatForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
         workloads, paths = policy.forecast_n_scenarios(
-            _BASE_TIME, n_scenarios=5, initial_seed=42
+            _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
         assert paths is None
@@ -399,13 +438,13 @@ class TestSevenDaysFlatForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2},
             initial_count=100,
             num_days=7,
         )
         policy = SevenDaysFlatForecastPolicy(reservoir)
-        forecast = policy.forecast(_BASE_TIME, seed=42)
+        forecast = policy.forecast(_BASE_DATE, seed=42)
         template_counts = forecast.df["query_text_id"].value_counts()
 
         total_count = template_counts.sum()
@@ -432,11 +471,11 @@ class TestSameDayOnceForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
         )
         policy = SameDayOnceForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -456,19 +495,19 @@ class TestSameDayOnceForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=8),
+            start_date=_BASE_DATE - timedelta(days=8),
             force_day_idx_empty=1,
         )
         policy = SameDayOnceForecastPolicy(reservoir)
 
-        bin_df = policy._build_bin_df(_BASE_TIME, 0)
+        bin_df = policy._build_bin_df(_BASE_DATE, 0)
         assert bin_df.empty, "Expected empty bin_df"
         assert (
             bin_df.columns.tolist() == QueryReservoir.BIN_DF_COLUMNS
         ), f"Expected columns {QueryReservoir.BIN_DF_COLUMNS}, got {bin_df.columns.tolist()}"
 
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         assert forecast_workload.df.empty, "Expected empty forecast workload"
 
@@ -483,11 +522,11 @@ class TestSameDayOnceForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=1),
+            start_date=_BASE_DATE - timedelta(days=1),
         )
         policy = SameDayOnceForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -507,11 +546,11 @@ class TestSameDayOnceForecastPolicy:
             hour_to_hour_increase=5,
             num_days=14,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=14),
+            start_date=_BASE_DATE - timedelta(days=14),
         )
         policy = SameDayOnceForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -528,13 +567,13 @@ class TestSameDayOnceForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
             num_days=7,
         )
         policy = SameDayOnceForecastPolicy(reservoir, seed=42)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=42)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=42)
         pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
     def test_different_random_seeds_make_different_forecasts(self):
@@ -544,13 +583,13 @@ class TestSameDayOnceForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
             num_days=7,
         )
         policy = SameDayOnceForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=43)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=43)
         with pytest.raises(AssertionError):
             pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
@@ -560,12 +599,12 @@ class TestSameDayOnceForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
         )
         policy = SameDayOnceForecastPolicy(reservoir, seed=42)
         workloads, paths = policy.forecast_n_scenarios(
-            _BASE_TIME, n_scenarios=5, initial_seed=42
+            _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
         assert paths is None
@@ -583,13 +622,13 @@ class TestSameDayOnceForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2},
             initial_count=100,
             num_days=7,
         )
         policy = SameDayOnceForecastPolicy(reservoir)
-        forecast = policy.forecast(_BASE_TIME, seed=42)
+        forecast = policy.forecast(_BASE_DATE, seed=42)
         template_counts = forecast.df["query_text_id"].value_counts()
 
         total_count = template_counts.sum()
@@ -616,11 +655,11 @@ class TestSameDayExponentialForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
         )
         policy = SameDayExponentialForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
@@ -639,11 +678,11 @@ class TestSameDayExponentialForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=14),
+            start_date=_BASE_DATE - timedelta(days=14),
             force_day_idx_empty=7,
         )
         policy = SameDayExponentialForecastPolicy(reservoir, decay_factor=decay)
-        forecast_workload = policy.forecast(_BASE_TIME, seed=42)
+        forecast_workload = policy.forecast(_BASE_DATE, seed=42)
         counts = forecast_workload.df.groupby(
             forecast_workload.df["abs_start_time"].dt.hour
         ).size()
@@ -662,11 +701,11 @@ class TestSameDayExponentialForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=21),
+            start_date=_BASE_DATE - timedelta(days=21),
         )
         policy = SameDayExponentialForecastPolicy(reservoir, decay_factor=decay)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
             seed=42,
         )
         counts = forecast_workload.df.groupby(
@@ -696,19 +735,19 @@ class TestSameDayExponentialForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=8),
+            start_date=_BASE_DATE - timedelta(days=8),
             force_day_idx_empty=1,
         )
         policy = SameDayExponentialForecastPolicy(reservoir)
 
-        bin_df = policy._build_bin_df(_BASE_TIME, 0)
+        bin_df = policy._build_bin_df(_BASE_DATE, 0)
         assert bin_df.empty, "Expected empty bin_df"
         assert (
             bin_df.columns.tolist() == QueryReservoir.BIN_DF_COLUMNS
         ), f"Expected columns {QueryReservoir.BIN_DF_COLUMNS}, got {bin_df.columns.tolist()}"
 
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
         )
         assert forecast_workload.df.empty, "Expected empty forecast workload"
 
@@ -723,11 +762,11 @@ class TestSameDayExponentialForecastPolicy:
             day_to_day_increase=10,
             hour_to_hour_increase=5,
             initial_count=10,
-            start_time=_BASE_TIME - timedelta(days=1),
+            start_date=_BASE_DATE - timedelta(days=1),
         )
         policy = SameDayExponentialForecastPolicy(reservoir)
         forecast_workload = policy.forecast(
-            _BASE_TIME,
+            _BASE_DATE,
             seed=42,
         )
         counts = forecast_workload.df.groupby(
@@ -744,13 +783,13 @@ class TestSameDayExponentialForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
             num_days=7,
         )
         policy = SameDayExponentialForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=42)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=42)
         pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
     def test_different_random_seeds_make_different_forecasts(self):
@@ -760,13 +799,13 @@ class TestSameDayExponentialForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2, 3: 3},
             num_days=7,
         )
         policy = SameDayExponentialForecastPolicy(reservoir)
-        forecast1 = policy.forecast(_BASE_TIME, seed=42)
-        forecast2 = policy.forecast(_BASE_TIME, seed=43)
+        forecast1 = policy.forecast(_BASE_DATE, seed=42)
+        forecast2 = policy.forecast(_BASE_DATE, seed=43)
         with pytest.raises(AssertionError):
             pd.testing.assert_frame_equal(forecast1.df, forecast2.df)
 
@@ -776,12 +815,12 @@ class TestSameDayExponentialForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=14),
+            start_date=_BASE_DATE - timedelta(days=14),
             template_to_frequency={1: 1, 2: 2, 3: 3},
         )
         policy = SameDayExponentialForecastPolicy(reservoir, decay_factor=0.5)
         workloads, paths = policy.forecast_n_scenarios(
-            _BASE_TIME, n_scenarios=5, initial_seed=42
+            _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
         assert paths is None
@@ -799,13 +838,13 @@ class TestSameDayExponentialForecastPolicy:
         """
 
         reservoir = _create_reservoir(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             template_to_frequency={1: 1, 2: 2},
             initial_count=100,
             num_days=7,
         )
         policy = SameDayExponentialForecastPolicy(reservoir)
-        forecast = policy.forecast(_BASE_TIME, seed=42)
+        forecast = policy.forecast(_BASE_DATE, seed=42)
         template_counts = forecast.df["query_text_id"].value_counts()
 
         total_count = template_counts.sum()
@@ -828,7 +867,7 @@ class TestSameDayExponentialForecastPolicy:
         """
 
         df1 = _create_df(
-            start_time=_BASE_TIME - timedelta(days=14),
+            start_date=_BASE_DATE - timedelta(days=14),
             num_days=7,
             hour_to_hour_increase=0,
             day_to_day_increase=0,
@@ -836,7 +875,7 @@ class TestSameDayExponentialForecastPolicy:
             initial_count=100,
         )
         df2 = _create_df(
-            start_time=_BASE_TIME - timedelta(days=7),
+            start_date=_BASE_DATE - timedelta(days=7),
             num_days=7,
             hour_to_hour_increase=0,
             day_to_day_increase=0,
@@ -849,7 +888,7 @@ class TestSameDayExponentialForecastPolicy:
         policy_no_decay = SameDayExponentialForecastPolicy(
             reservoir, decay_factor=1.0
         )
-        forecast_no_decay = policy_no_decay.forecast(_BASE_TIME, seed=42)
+        forecast_no_decay = policy_no_decay.forecast(_BASE_DATE, seed=42)
         template_counts_no_decay = forecast_no_decay.df[
             "query_text_id"
         ].value_counts()
@@ -875,7 +914,7 @@ class TestSameDayExponentialForecastPolicy:
         policy_with_decay = SameDayExponentialForecastPolicy(
             reservoir, decay_factor=decay
         )
-        forecast_with_decay = policy_with_decay.forecast(_BASE_TIME, seed=42)
+        forecast_with_decay = policy_with_decay.forecast(_BASE_DATE, seed=42)
         template_counts_with_decay = forecast_with_decay.df[
             "query_text_id"
         ].value_counts()

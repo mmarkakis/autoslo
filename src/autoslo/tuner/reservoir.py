@@ -9,7 +9,7 @@ from typing import Optional
 import pandas as pd
 
 from autoslo.workload_definition.workload import Workload
-from datetime import datetime
+from datetime import date
 
 
 logger = logging.getLogger(__name__)
@@ -68,14 +68,14 @@ class QueryReservoir:
         return self._schema_name
 
     @property
-    def min_date(self) -> pd.Timestamp:
-        return pd.to_datetime(self._count_df["date"].min()).date()
+    def min_date(self) -> date:
+        return self._count_df["date"].min()
 
     @property
     def count_df(self) -> pd.DataFrame:
         return self._count_df
 
-    def save(self, directory: Path) -> Path:
+    def save(self, directory: Path) -> None:
         """
         Returns the paths to both files.
         """
@@ -84,8 +84,6 @@ class QueryReservoir:
 
         count_df_path = directory / "reservoir.parquet"
         self._count_df.to_parquet(count_df_path, index=False)
-
-        return count_df_path
 
     @classmethod
     def load(cls, directory: Path) -> "QueryReservoir":
@@ -99,13 +97,11 @@ class QueryReservoir:
 
         return cls(count_df=count_df)
 
-    def bin_df(self, date: pd.Timestamp|datetime, hour: int) -> pd.DataFrame:
+    def bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         if not (0 <= hour < 24):
             raise ValueError(f"Invalid hour: {hour}. Must be in [0, 23].")
 
-        date_normed = pd.to_datetime(date).date()
-
-        mask = (self._count_df["date"] == date_normed) & (
+        mask = (self._count_df["date"] == target_date) & (
             self._count_df["hour"] == hour
         )
         return self._count_df.loc[mask].reset_index(drop=True)
