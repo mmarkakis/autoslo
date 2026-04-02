@@ -4,264 +4,108 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Optional
 
 import pandas as pd
-import yaml
+
+from autoslo.workload_definition.workload import Workload
+from datetime import datetime
+
 
 logger = logging.getLogger(__name__)
 
 
 class QueryReservoir:
-    """A reservoir of historical query arrivals indexed by (day_of_week, hour).
-
-    The backing :class:`~pandas.DataFrame` has columns:
-
-    - ``day_of_week`` (int, 0 = Monday … 6 = Sunday)
-    - ``hour`` (int, 0–23)
-    - ``timestamp_within_hour`` (float, seconds 0–3600)
-    - ``query_text_id`` (str)
-    - ``repetition_id`` (str)
-
-    A YAML sidecar (``reservoir_meta.yml``) stores metadata such as the
-    schema name, time range, and per-template arrival-pattern classifications.
+    """
+    A reservoir of historical query arrivals indexed by (day_of_week, hour).
     """
 
-    # Required DataFrame columns.
-    COLUMNS = [
-        "day_of_week",
-        "hour",
-        "timestamp_within_hour",
-        "query_text_id",
-        "repetition_id",
-        "obs_date",
-    ]
+    BIN_DF_COLUMNS = ["date", "hour", "query_text_id", "count"]
 
-    def __init__(self, df: pd.DataFrame, meta: dict[str, Any]) -> None:
-        missing = [c for c in self.COLUMNS if c not in df.columns]
-        if missing:
-            raise ValueError(f"Reservoir DataFrame missing columns: {missing}")
-        self.df = df
-        self.meta = meta
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def build(
-        cls,
-        workloads: list,
-        schema_name: str,
-        use_repetition_id: bool = True,
-    ) -> "QueryReservoir":
-        """Build a reservoir from one or more historical workloads.
-
-        Parameters
-        ----------
-        workloads :
-            :class:`~autoslo.workload_definition.workload.Workload` objects
-            whose ``abs_start_time`` column contains timezone-aware datetimes.
-        schema_name :
-            Schema identifier (e.g. ``"ext_tpcds1000"``).
-        use_repetition_id :
-            When *True*, use each row's ``repetition_id`` to group recurring
-            query instances.  When *False* (or when the field is empty),
-            fall back to ``query_text_id``.
-        """
-        rows: list[dict[str, Any]] = []
-
-        for wl in workloads:
-            df = wl.df
-            for _, row in df.iterrows():
-                dt = row["abs_start_time"]  # tz-aware datetime / Timestamp
-                hour_floor = dt.replace(minute=0, second=0, microsecond=0)
-                ts_within_hour = (dt - hour_floor).total_seconds()
-
-                qtid = str(row["query_text_id"])
-
-                rid_raw = row.get("repetition_id", "")
-                rid = str(rid_raw) if (use_repetition_id and rid_raw) else qtid
-
-                rows.append(
-                    {
-                        "day_of_week": dt.weekday(),
-                        "hour": dt.hour,
-                        "timestamp_within_hour": ts_within_hour,
-                        "query_text_id": qtid,
-                        "repetition_id": rid,
-                        "obs_date": dt.strftime("%Y-%m-%d"),
-                    }
-                )
-
-        reservoir_df = pd.DataFrame(rows, columns=cls.COLUMNS)
-
-        # Derive the number of distinct calendar dates per day-of-week
-        # so that downstream consumers (sampler, forecast policy) can
-        # correctly average per-day arrival counts.
-        num_obs_dates = int(reservoir_df["obs_date"].nunique())
-        num_obs_dates_per_dow = (
-            reservoir_df.groupby("day_of_week")["obs_date"]
-            .nunique()
-            .to_dict()
-        )
-
-        meta: dict[str, Any] = {
-            "schema_name": schema_name,
-            "num_workloads": num_obs_dates,
-            "num_observation_dates": num_obs_dates,
-            "num_observation_dates_per_dow": {int(k): int(v) for k, v in num_obs_dates_per_dow.items()},
-            "num_arrivals": len(reservoir_df),
-            "classifications": {},
-        }
-
-        return cls(reservoir_df, meta)
-
-    # ------------------------------------------------------------------
-    # Arrival classification
-    # ------------------------------------------------------------------
-
-    def classify_arrivals(
+    def __init__(
         self,
-        grouping_key: str = "repetition_id",
-        min_samples: int = 10,
-    ) -> dict[str, dict[str, Any]]:
-        """Classify per-group arrival patterns using the forecasting detectors.
+        df: Optional[pd.DataFrame] = None,
+        workload: Optional[Workload] = None,
+        count_df: Optional[pd.DataFrame] = None,
+    ) -> None:
 
-        Groups query arrivals by *grouping_key* and runs
-        :class:`~autoslo.forecasting.windowed_template_detector.WindowedTemplateDetector`
-        on each group.  Results are stored in ``self.meta["classifications"]``
-        and returned.
+        # When loading, don't do anything else.
+        self._count_df: pd.DataFrame
+        self._schema_name = "ext_tpcds1000"
+        if count_df is not None:
+            self._count_df = count_df
+            return
 
-        Parameters
-        ----------
-        grouping_key :
-            Column to group by (``"repetition_id"`` or ``"query_text_id"``).
-        min_samples :
-            Minimum number of arrivals required for a group to be classified;
-            groups below this threshold are labelled ``"too_few_samples"``.
-        """
-        from autoslo.forecasting.windowed_template_detector import (
-            WindowedTemplateDetector,
-        )
-        from autoslo.workload_definition.query import Query, QueryTextId
-
-        classifications: dict[str, dict[str, Any]] = {}
-
-        for group_id, group_df in self.df.groupby(grouping_key):
-            group_id_str = str(group_id)
-            if len(group_df) < min_samples:
-                classifications[group_id_str] = {
-                    "classification": "too_few_samples",
-                    "num_samples": len(group_df),
-                }
-                continue
-
-            # Build lightweight Query objects just for the detector.
-            queries = [
-                Query(
-                    query_id=f"res_{i}",
-                    query_text_id=QueryTextId(row["query_text_id"]),
-                    rel_start_time_s=float(row["timestamp_within_hour"]),
-                )
-                for i, (_, row) in enumerate(group_df.iterrows())
-            ]
-
-            detector = WindowedTemplateDetector(
-                queries, min_samples=min_samples
-            )
-            result = detector.detect()
-
-            if result.get("is_windowed"):
-                classifications[group_id_str] = {
-                    "classification": "windowed",
-                    "num_samples": len(group_df),
-                    "period_s": result.get("period_s"),
-                    "active_length_s": result.get("active_length_s"),
-                    "on_window_rel_start_s": result.get(
-                        "on_window_rel_start_s"
-                    ),
-                }
+        # Input parsing/validation.
+        if df is None:
+            if workload is None:
+                raise ValueError("Either `workload` or `df` must be provided.")
             else:
-                classifications[group_id_str] = {
-                    "classification": "normal",
-                    "num_samples": len(group_df),
-                }
+                df = workload.df
+        if ("abs_start_time" not in df.columns) or (
+            "query_text_id" not in df.columns
+        ):
+            raise ValueError(
+                f"Columns `abs_start_time` and `query_text_id` are required in "
+                f"the reservoir DataFrame."
+            )
+        if df.empty:
+            raise ValueError("Cannot build reservoir from empty DataFrame.")
 
-        self.meta["classifications"] = classifications
-        return classifications
+        # Set up bins.
+        # Key is (date, hour_of_day), Monday is 0
+        # Value is a dictionary from query_text_id to query count
+        df["date"] = df["abs_start_time"].dt.date
+        df["hour"] = df["abs_start_time"].dt.hour
+        self._count_df = (
+            df.groupby(["date", "hour", "query_text_id"])
+            .size()
+            .reset_index(name="count")
+        )
 
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
+    @property
+    def schema_name(self) -> str:
+        return self._schema_name
 
-    def save(self, directory: Path) -> tuple[Path, Path]:
-        """Write ``reservoir.parquet`` and ``reservoir_meta.yml``.
+    @property
+    def min_date(self) -> pd.Timestamp:
+        return pd.to_datetime(self._count_df["date"].min()).date()
 
+    @property
+    def count_df(self) -> pd.DataFrame:
+        return self._count_df
+
+    def save(self, directory: Path) -> Path:
+        """
         Returns the paths to both files.
         """
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
-        parquet_path = directory / "reservoir.parquet"
-        self.df.to_parquet(parquet_path, index=False)
+        count_df_path = directory / "reservoir.parquet"
+        self._count_df.to_parquet(count_df_path, index=False)
 
-        meta_path = directory / "reservoir_meta.yml"
-        with open(meta_path, "w") as f:
-            yaml.dump(self.meta, f, default_flow_style=False, sort_keys=False)
-
-        return parquet_path, meta_path
+        return count_df_path
 
     @classmethod
     def load(cls, directory: Path) -> "QueryReservoir":
-        """Load a reservoir from ``reservoir.parquet`` + ``reservoir_meta.yml``."""
         directory = Path(directory)
-        df = pd.read_parquet(directory / "reservoir.parquet")
-        with open(directory / "reservoir_meta.yml") as f:
-            meta = yaml.safe_load(f) or {}
-        return cls(df, meta)
+        count_df_path = directory / "reservoir.parquet"
+        if not count_df_path.exists():
+            raise FileNotFoundError(
+                f"Reservoir file not found at {count_df_path}"
+            )
+        count_df = pd.read_parquet(count_df_path)
 
-    # ------------------------------------------------------------------
-    # Convenience queries
-    # ------------------------------------------------------------------
+        return cls(count_df=count_df)
 
-    def query_rate_per_hour(
-        self, day_of_week: int, hour: int
-    ) -> float:
-        """Return the mean query arrival rate (queries / hour) for a bin.
+    def bin_df(self, date: pd.Timestamp|datetime, hour: int) -> pd.DataFrame:
+        if not (0 <= hour < 24):
+            raise ValueError(f"Invalid hour: {hour}. Must be in [0, 23].")
 
-        Computed as the total number of arrivals for this
-        ``(day_of_week, hour)`` bin divided by the number of distinct
-        calendar dates for that day-of-week in the reservoir.
-        """
-        mask = (self.df["day_of_week"] == day_of_week) & (
-            self.df["hour"] == hour
+        date_normed = pd.to_datetime(date).date()
+
+        mask = (self._count_df["date"] == date_normed) & (
+            self._count_df["hour"] == hour
         )
-        count = int(mask.sum())
-        per_dow = self.meta.get("num_observation_dates_per_dow", {})
-        n_days = max(1, per_dow.get(day_of_week, self.meta.get("num_workloads", 1)))
-        return count / n_days
-
-    def unique_query_text_ids(
-        self, day_of_week: int, hour: int
-    ) -> list[str]:
-        """Return the distinct ``query_text_id`` values for a bin."""
-        mask = (self.df["day_of_week"] == day_of_week) & (
-            self.df["hour"] == hour
-        )
-        return sorted(self.df.loc[mask, "query_text_id"].unique().tolist())
-
-    def bin_df(self, day_of_week: int, hour: int) -> pd.DataFrame:
-        """Return the reservoir rows for a specific (day_of_week, hour) bin."""
-        mask = (self.df["day_of_week"] == day_of_week) & (
-            self.df["hour"] == hour
-        )
-        return self.df.loc[mask].reset_index(drop=True)
-
-    def summary(self) -> pd.DataFrame:
-        """Return a summary table of (day_of_week, hour) → count."""
-        return (
-            self.df.groupby(["day_of_week", "hour"])
-            .size()
-            .reset_index(name="count")
-        )
+        return self._count_df.loc[mask].reset_index(drop=True)
