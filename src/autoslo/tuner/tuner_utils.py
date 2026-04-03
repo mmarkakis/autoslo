@@ -143,7 +143,7 @@ def aggregate(
     results :
         Per-scenario results to aggregate.
     metric :
-        ``"mean"``, ``"p90"``, ``"p99"``, or any ``"pNN"`` quantile.
+        ``"mean"``, ``"max"``, ``"p90"``, ``"p99"``, or any ``"pNN"`` quantile.
 
     Returns
     -------
@@ -168,6 +168,13 @@ def aggregate(
             violation_amount_s=statistics.mean(amounts),
             violation_relative_mean=statistics.mean(relatives),
             cost=statistics.mean(costs),
+        )
+    if metric == "max":
+        return AggregatedMetrics(
+            violation_rate=max(rates),
+            violation_amount_s=max(amounts),
+            violation_relative_mean=max(relatives),
+            cost=max(costs),
         )
 
     # pNN quantile
