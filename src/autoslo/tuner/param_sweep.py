@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.table import Table
 
 from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedMetrics,
     PhaseResult,
@@ -190,19 +190,27 @@ class ParamSweep:
         )
 
         # ── Validate Pareto-optimal points ─────────────────────────
+        specs: list[EvalSpec] = []
+        phase = self._phase_name
         for idx in pareto_indices:
             point = grid_results[idx]["params"]
             overrides = dict(self._base_overrides)
             overrides = cfgu.apply_overrides(overrides, point)
-
-            val_results = self._evaluator.evaluate(
-                workload_paths=val_paths,
+            grid_point = f"{idx}_val"
+            spec = EvalSpec(
+                label=f"{phase} gp={grid_point}",
                 config_overrides=overrides,
-                phase=self._phase_name,
-                grid_point=f"{idx}_val",
+                grid_point=grid_point,
                 out_subdir=phase_dir / f"grid_point_{idx:03d}" / "val",
             )
-            val_agg = aggregate(val_results, metric)
+            specs.append(spec)
+        all_val_results = self._evaluator.evaluate_batch(
+            workload_paths=val_paths,
+            specs=specs,
+            phase=phase,
+        )
+        for i, idx in enumerate(pareto_indices):
+            val_agg = aggregate(all_val_results[i], metric)
             val_primary = primary_violation(
                 val_agg, self._slo_objective.slo_metric
             )

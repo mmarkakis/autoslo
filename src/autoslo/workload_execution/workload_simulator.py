@@ -778,7 +778,7 @@ class WorkloadSimulator:
 
         # When a progress_callback is supplied (tuner workers), report
         # progress every _PROGRESS_INTERVAL queries instead of using tqdm.
-        _PROGRESS_INTERVAL = 25
+        _PROGRESS_INTERVAL = 100
         _use_callback = progress_callback is not None
         iterator = (
             enumerate(queries)
