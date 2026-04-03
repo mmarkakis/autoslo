@@ -19,11 +19,9 @@ from autoslo.utils.yaml_helpers import dump_config
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.checkpoint_optimizer import (
     CheckpointOptimizer,
-    CheckpointOptimizerResult,
     _checkpoints_to_config,
-    _result_to_config,
+    result_to_config,
 )
-from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.reservoir import QueryReservoir
@@ -412,7 +410,7 @@ class PolicyTuner:
         existing_initial_rpus = tuple(
             self._cfgd("managed_cluster_pool_config.initial_rpus", [8])
         )
-        base_overrides = _result_to_config(opt_result, existing_initial_rpus)
+        base_overrides = result_to_config(opt_result, existing_initial_rpus)
         checkpoints = opt_result.checkpoints
 
         return

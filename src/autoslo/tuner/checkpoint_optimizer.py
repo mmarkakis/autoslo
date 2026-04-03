@@ -85,7 +85,7 @@ def _checkpoints_to_config(
     }
 
 
-def _result_to_config(
+def result_to_config(
     result: CheckpointOptimizerResult,
     existing_initial_rpus: tuple[int, ...],
 ) -> dict[str, Any]:
@@ -367,7 +367,8 @@ class CheckpointOptimizer:
         for round_idx in range(checkpoint_budget):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
 
-            # 1. Simulate training scenarios with current checkpoints.
+            # 1. Simulate training scenarios with current checkpoints. 
+            # TODO: Later can copy these over.
             overrides = _checkpoints_to_config(current_checkpoints)
             train_results = self._evaluator.evaluate(
                 workload_paths=train_paths,
