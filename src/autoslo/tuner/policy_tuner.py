@@ -22,10 +22,7 @@ from autoslo.tuner.checkpoint_optimizer import (
     _checkpoints_to_config,
 )
 from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.forecast_policy import (
-    RecencyWeightedForecastPolicy,
-    UniformForecastPolicy,
-)
+from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
@@ -37,9 +34,13 @@ from autoslo.tuner.tuner_utils import (
     aggregate,
     primary_violation,
 )
-from autoslo.tuner.workload_sampler import WorkloadSampler
+import autoslo.utils.config as cfgu
+
 from autoslo.utils.config import apply_overrides
-from autoslo.utils.structured_log import StructuredLogHandler, setup_structured_logging
+from autoslo.utils.structured_log import (
+    StructuredLogHandler,
+    setup_structured_logging,
+)
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -47,51 +48,37 @@ console = Console()
 
 
 class PolicyTuner:
-    """Orchestrates the end-to-end policy tuning pipeline.
-
-    Parameters
-    ----------
-    initial_config :
-        The base simulator configuration dict (as produced by reading
-        a ``conn.yml`` / ``blueprints.yml`` style YAML).
-    tuner_config :
-        Hyper-parameters for the tuning process.
-    run_dir :
-        Optional explicit root directory for this tuner run.  If *None*,
-        a timestamped directory under ``data/tuner_runs/`` is created.
-    """
+    """Orchestrates the end-to-end policy tuning pipeline."""
 
     def __init__(
         self,
-        initial_config: dict[str, Any],
-        tuner_config: TunerConfig,
-        run_dir: Path | None = None,
+        config: dict,
     ) -> None:
-        self._initial_config = initial_config
-        self._tuner_config = tuner_config
+        self._config = config
 
-        # Generate a unique run id.
+        # Find or generate a unique run ID and set up output directory.
         ts = int(datetime.now().timestamp() * 1000)
-        self._run_id = f"tuner_{ts}"
+        self._run_id = self._cfgd("basic_config.run_id", f"tuner_{ts}")
+        self._run_dir = Path("data/tuner_runs") / self._run_id
+        if self._cfgd("basic_config.experiment_name") is not None:
+            experiment_name = self._cfgd("basic_config.experiment_name")
+            self._run_dir = (
+                Path("data/tuner_runs") / experiment_name / self._run_id
+            )
 
-        # Set up run directory.
-        if run_dir is not None:
-            self._run_dir = Path(run_dir)
-        else:
-            self._run_dir = Path("data/tuner_runs") / self._run_id
+        # Check overwrite setting and dump config.
+        if self._run_dir.exists() and not self._cfgd(
+            "basic_config.overwrite", False
+        ):
+            raise FileExistsError(
+                f"Output directory {self._run_dir} already exists. "
+                "Set basic_config.overwrite: true to overwrite."
+            )
         self._run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Persist configs for reproducibility.
-        with open(self._run_dir / "initial_config.yml", "w") as f:
-            dump_config(initial_config, f)
-        with open(self._run_dir / "tuner_config.yml", "w") as f:
-            dump_config(
-                {
-                    k: (v.isoformat() if isinstance(v, datetime) else v)
-                    for k, v in tuner_config.__dict__.items()
-                },
-                f,
-            )
+        # Persist config for reproducibility.
+        with open(self._run_dir / "config.yml", "w") as f:
+            dump_config(config, f)
 
         # Set up structured log for the evolution ledger.
         self._evolution_handler = setup_structured_logging(
@@ -101,16 +88,18 @@ class PolicyTuner:
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator(
-            initial_config=initial_config,
-            tuner_config=tuner_config,
+            config=config,
             tuner_run_id=self._run_id,
             evolution_logger=self._evolution_handler,
         )
 
         # SLO objective — drives metric routing and threshold-aware selection.
-        slo_cfg = initial_config.get("slo_config") or {}
-        self._slo_metric = str(slo_cfg.get("slo_metric", "binary"))
-        self._slo_threshold = float(slo_cfg.get("slo_threshold", 1.0))
+        self._slo_metric = str(
+            cfgu.cfg_getd(self._config, "slo.config.slo_metric", "binary")
+        )
+        self._slo_threshold = float(
+            cfgu.cfg_getd(self._config, "slo.config.slo_threshold", 1.0)
+        )
         self._slo_objective = SloObjective(
             slo_metric=self._slo_metric,
             slo_threshold=self._slo_threshold,
@@ -133,146 +122,116 @@ class PolicyTuner:
         return self._evaluator
 
     # ------------------------------------------------------------------
-    # Pipeline steps (stubs — implemented in later phases)
+    # Pipeline steps
     # ------------------------------------------------------------------
 
-    def build_reservoir(self, traces: list[Path]) -> Path:
-        """Phase 1: Ingest raw traces and build the query reservoir.
-
-        Parameters
-        ----------
-        traces :
-            Parquet files containing historical workload data.
-
-        Returns
-        -------
-        Path to the directory containing the saved reservoir.
+    def build_reservoir(self) -> None:
         """
-        schema_name = (
-            (self._initial_config.get("basic_config") or {}).get(
-                "schema_name", "default"
-            )
-        )
+        Phase 1: Build or load the query reservoir.
+        """
 
-        workloads = []
-        for i, trace_path in enumerate(traces):
-            df = pd.read_parquet(trace_path)
-            wl = Workload(
-                workload_name=f"trace_{i:03d}",
-                schema_name=schema_name,
-                df=df,
-            )
-
-            # Restrict to history window when configured.
-            if self._tuner_config.history_start is not None:
-                wl.slice_by_abs_time(
-                    start=self._tuner_config.history_start.isoformat()
-                )
-            if self._tuner_config.history_end is not None:
-                wl.slice_by_abs_time(
-                    end=self._tuner_config.history_end.isoformat()
-                )
-            if len(wl.df) == 0:
-                logger.warning(
-                    "Trace %s has 0 rows after history-window slicing",
-                    trace_path,
-                )
-                continue
-
-            workloads.append(wl)
-
-        if self._tuner_config.history_start or self._tuner_config.history_end:
-            h_start = self._tuner_config.history_start or "start"
-            h_end = self._tuner_config.history_end or "end"
-            total = sum(len(w.df) for w in workloads)
+        # Load from disk if it already exists, to save time on re-runs.
+        save_dir = self._run_dir / "reservoir"
+        if save_dir.exists():
             console.print(
-                f"  History window: {h_start} → {h_end} "
-                f"({total:,} arrivals from {len(workloads)} trace(s))"
+                f"  Reservoir already exists at {save_dir}; loading from disk."
             )
+            self._reservoir = QueryReservoir.load(save_dir)
+            return
 
-        reservoir = QueryReservoir.build(
-            workloads, schema_name=schema_name
+        # Build reservoir from workload.
+        schema_name = self._cfgd("basic_config.schema_name", "def_schema")
+        workload_name = self._cfgd(
+            "workload_config.workload_name", "def_workload"
         )
+        workload = Workload(workload_name, schema_name)
+        start = self._cfgd(
+            "tuner_config.forecast_config.history_abs_start_time_start"
+        )
+        end = self._cfgd(
+            "tuner_config.forecast_config.history_abs_start_time_end"
+        )
+        if start or end:
+            workload.slice_by_abs_time(start=start, end=end)
+        self._reservoir = QueryReservoir(workload=workload)
+        self._reservoir.save(save_dir)
 
-        if self._tuner_config.classify_arrivals:
-            classifications = reservoir.classify_arrivals()
-            n_windowed = sum(
-                1 for c in classifications.values()
-                if c.get("classification") == "windowed"
-            )
-            console.print(
-                f"  Classified {len(classifications)} groups: "
-                f"{n_windowed} windowed"
-            )
-
-        reservoir_dir = self._run_dir / "reservoir"
-        reservoir.save(reservoir_dir)
+        # TODO: Have the reservoir itself generate a nice `rich` summary.
         console.print(
-            f"  Reservoir built from {len(traces)} trace(s), "
-            f"{len(reservoir.df)} rows saved to {reservoir_dir}"
+            f"  Built reservoir based on workload {workload_name} over the "
+            f"period {start} to {end}, and saved to {save_dir}."
         )
-        return reservoir_dir
 
     def sample_workloads(
-        self, reservoir_path: Path
+        self,
     ) -> tuple[list[Path], list[Path]]:
-        """Phase 2: Sample train/val workloads from the reservoir.
-
-        Returns
-        -------
-        ``(train_paths, val_paths)`` — lists of Parquet file paths.
         """
-        reservoir = QueryReservoir.load(reservoir_path)
-        schema_name = reservoir.meta.get("schema_name", "default")
+        Phase 2: Sample train/val workloads from the reservoir.
 
-        policy_name = self._tuner_config.forecast_policy
-        if policy_name == "recency_weighted":
-            forecast_policy = RecencyWeightedForecastPolicy()
-        elif policy_name == "uniform":
-            forecast_policy = UniformForecastPolicy()
-        else:
-            raise ValueError(f"Unknown forecast policy: {policy_name!r}")
+        Returns the lists of train and val workload paths.
+        """
 
-        sampler = WorkloadSampler(
-            reservoir=reservoir,
-            forecast_policy=forecast_policy,
-            schema_name=schema_name,
+        # Set up forecast policy for sampling.
+        self._forecast_policy_name = self._cfgd(
+            "tuner_config.forecast_config.forecast_policy",
+            "OneDayForecastPolicy",
+        )
+        self._forecast_policy_params = self._cfgd(
+            "tuner_config.forecast_config", {}
+        )
+        self._forecast_policy = ForecastPolicy.from_name(
+            name=self._forecast_policy_name,
+            reservoir=self._reservoir,
+            **self._forecast_policy_params,
         )
 
-        n_train = self._tuner_config.n_train
-        n_val = self._tuner_config.n_val
+        # Sample.
+        num_scenarios = self._cfgd(
+            "tuner_config.forecast_config.num_scenarios", 20
+        )
+        train_fraction = self._cfgd(
+            "tuner_config.forecast_config.train_fraction", 0.6
+        )
+        n_train = int(num_scenarios * train_fraction)
+        n_val = num_scenarios - n_train
 
         train_dir = self._run_dir / "sampled_workloads" / "train"
         val_dir = self._run_dir / "sampled_workloads" / "val"
 
-        train_paths = sampler.sample_to_disk(
-            target_start=self._tuner_config.target_start,
-            target_end=self._tuner_config.target_end,
+        target_date = pd.Timestamp(
+            self._cfgd(
+                "workload_config.abs_start_time_start",
+                "2024-01-01T00:00:00",
+            )
+        ).date()
+
+        initial_seed = self._cfgd(
+            "tuner_config.forecast_config.initial_seed", 42
+        )
+        _, train_paths = self._forecast_policy.forecast_n_scenarios(
+            target_date=target_date,
             n_scenarios=n_train,
+            initial_seed=initial_seed,
+            workload_name_prefix="t",
             out_dir=train_dir,
-            prefix="t",
-            seed=self._tuner_config.random_seed,
         )
-
-        val_paths = sampler.sample_to_disk(
-            target_start=self._tuner_config.target_start,
-            target_end=self._tuner_config.target_end,
+        _, val_paths = self._forecast_policy.forecast_n_scenarios(
+            target_date=target_date,
             n_scenarios=n_val,
+            initial_seed=initial_seed + n_train,
+            workload_name_prefix="v",
             out_dir=val_dir,
-            prefix="v",
-            seed=self._tuner_config.random_seed + n_train,
         )
-
         console.print(
             f"  Sampled {n_train} train + {n_val} val workloads "
             f"to {self._run_dir / 'sampled_workloads'}"
         )
+
+        assert train_paths and val_paths, "No workload paths returned."
         return train_paths, val_paths
 
     def evaluate_baseline(
-        self,
-        train_paths: list[Path],
-        val_paths: list[Path],
+        self, train_paths: list[Path], val_paths: list[Path]
     ) -> PhaseResult:
         """Phase 3: Evaluate the initial config as a baseline.
 
@@ -280,7 +239,9 @@ class PolicyTuner:
         initial config, aggregates metrics, writes a summary, and
         prints a rich table.
         """
-        metric = self._tuner_config.aggregation_metric
+        metric = self._cfgd(
+            "tuner_config.forecast_config.aggregation_metric", "p90"
+        )
 
         console.rule("[bold cyan]Baseline evaluation")
 
@@ -322,39 +283,78 @@ class PolicyTuner:
         self._write_phase_summary(summary_dir / "summary.yml", result)
 
         # Rich table.
-        self._print_phase_summary("Baseline", result)
+        self._print_phase_summary("Baseline", result, agg_method=metric)
 
         return result
 
-    def optimize_checkpoints(
-        self,
-        train_paths: list[Path],
-        val_paths: list[Path],
-        baseline_val_violation: float,
-    ) -> list[CapacityCheckpoint]:
-        """Phase 4: Greedy capacity-checkpoint optimisation."""
+    def tune(self) -> Path:
+        """Execute the full tuning pipeline end-to-end.
+
+        Returns the path to the final optimised config file.
+        """
+        final_path = self._run_dir / "final_config.yml"
+        overrides_path = self._run_dir / "tuned_overrides.yml"
+
+        # Skip-retuning: if final_config already exists and
+        # force_retuning is not set, jump straight to holdout.
+        # if not self._tuner_config.force_retuning and final_path.exists():
+        #     console.print(
+        #         "[bold yellow]Skipping tuning phases 1-7 "
+        #         "(final_config.yml already exists). "
+        #         "Set force_retuning: true to re-run.[/bold yellow]"
+        #     )
+        #     if overrides_path.exists():
+        #         with open(overrides_path) as f:
+        #             overrides: dict[str, Any] = yaml.safe_load(f) or {}
+        #     else:
+        #         # Legacy run: reconstruct overrides by diffing configs.
+        #         overrides = self._rebuild_overrides(final_path)
+        #         with open(overrides_path, "w") as f:
+        #             dump_config(overrides, f)
+        #         console.print(
+        #             "  [dim]Reconstructed tuned_overrides.yml from "
+        #             "config diff.[/dim]"
+        #         )
+
+        #     if self._tuner_config.holdout_evaluation:
+        #         self._print_banner("Holdout: real-data evaluation")
+        #         self._evaluate_holdout(traces, overrides)
+
+        #     return final_path
+
+        ### Phase 1: Build reservoir
+        self._print_banner("Phase 1: Building reservoir")
+        self.build_reservoir()
+
+        ### Phase 2: Sampling workloads
+        self._print_banner("Phase 2: Sampling workloads")
+        train_paths, val_paths = self.sample_workloads()
+
+        ### Phase 3: Baseline evaluation
+        self._print_banner("Phase 3: Baseline evaluation")
+        baseline = self.evaluate_baseline(train_paths, val_paths)
+
+        ### Phase 4: Checkpoint optimization
+        self._print_banner("Phase 4: Checkpoint optimization")
         optimizer = CheckpointOptimizer(
             evaluator=self._evaluator,
-            tuner_config=self._tuner_config,
-            initial_config=self._initial_config,
+            config=self._config,
             run_dir=self._run_dir,
-            slo_objective=self._slo_objective,
         )
-        return optimizer.optimize(
+        assert (
+            baseline.val_violation_agg is not None
+        ), "Baseline violation agg is None"
+        checkpoints = optimizer.optimize(
             train_paths=train_paths,
             val_paths=val_paths,
-            baseline_val_violation=baseline_val_violation,
+            baseline_val_violation=baseline.val_violation_agg,
         )
-
-    def sweep_autoscaler(
-        self,
-        train_paths: list[Path],
-        val_paths: list[Path],
-        checkpoints: list[CapacityCheckpoint],
-    ) -> dict[str, Any]:
-        """Phase 5: Grid-search autoscaler hyper-parameters."""
         base_overrides = _checkpoints_to_config(checkpoints)
 
+        return
+
+        ### Phase 5: Autoscaler parameter
+        self._print_banner("Phase 5: Autoscaler parameter sweep")
         sweeper = ParamSweep(
             evaluator=self._evaluator,
             tuner_config=self._tuner_config,
@@ -363,23 +363,15 @@ class PolicyTuner:
             phase_name="autoscaler",
             slo_objective=self._slo_objective,
         )
-
-        return sweeper.sweep(
+        autoscaler_config = sweeper.sweep(
             train_paths=train_paths,
             val_paths=val_paths,
             param_ranges=self._tuner_config.autoscaler_ranges,
             config_section="autoscaling_config",
         )
 
-    def sweep_routing(
-        self,
-        train_paths: list[Path],
-        val_paths: list[Path],
-        checkpoints: list[CapacityCheckpoint],
-        autoscaler_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Phase 6: Grid-search routing hyper-parameters."""
-        base_overrides = _checkpoints_to_config(checkpoints)
+        ### Phase 6: Routing parameter sweep
+        self._print_banner("Phase 6: Routing parameter sweep")
         for k, v in autoscaler_config.items():
             base_overrides[f"autoscaling_config.{k}"] = v
 
@@ -392,70 +384,11 @@ class PolicyTuner:
             slo_objective=self._slo_objective,
         )
 
-        return sweeper.sweep(
+        routing_config = sweeper.sweep(
             train_paths=train_paths,
             val_paths=val_paths,
             param_ranges=self._tuner_config.routing_ranges,
             config_section="routing_config",
-        )
-
-    def tune(self, traces: list[Path]) -> Path:
-        """Execute the full tuning pipeline end-to-end.
-
-        Returns the path to the final optimised config file.
-        """
-        final_path = self._run_dir / "final_config.yml"
-        overrides_path = self._run_dir / "tuned_overrides.yml"
-
-        # Skip-retuning: if final_config already exists and
-        # force_retuning is not set, jump straight to holdout.
-        if not self._tuner_config.force_retuning and final_path.exists():
-            console.print(
-                "[bold yellow]Skipping tuning phases 1-7 "
-                "(final_config.yml already exists). "
-                "Set force_retuning: true to re-run.[/bold yellow]"
-            )
-            if overrides_path.exists():
-                with open(overrides_path) as f:
-                    overrides: dict[str, Any] = yaml.safe_load(f) or {}
-            else:
-                # Legacy run: reconstruct overrides by diffing configs.
-                overrides = self._rebuild_overrides(final_path)
-                with open(overrides_path, "w") as f:
-                    dump_config(overrides, f)
-                console.print(
-                    "  [dim]Reconstructed tuned_overrides.yml from "
-                    "config diff.[/dim]"
-                )
-
-            if self._tuner_config.holdout_evaluation:
-                self._print_banner("Holdout: real-data evaluation")
-                self._evaluate_holdout(traces, overrides)
-
-            return final_path
-
-        self._print_banner("Phase 1: Building reservoir")
-        reservoir_path = self.build_reservoir(traces)
-
-        self._print_banner("Phase 2: Sampling workloads")
-        train_paths, val_paths = self.sample_workloads(reservoir_path)
-
-        self._print_banner("Phase 3: Baseline evaluation")
-        baseline = self.evaluate_baseline(train_paths, val_paths)
-
-        self._print_banner("Phase 4: Checkpoint optimization")
-        checkpoints = self.optimize_checkpoints(
-            train_paths, val_paths, baseline.val_violation_agg
-        )
-
-        self._print_banner("Phase 5: Autoscaler parameter sweep")
-        autoscaler_config = self.sweep_autoscaler(
-            train_paths, val_paths, checkpoints
-        )
-
-        self._print_banner("Phase 6: Routing parameter sweep")
-        routing_config = self.sweep_routing(
-            train_paths, val_paths, checkpoints, autoscaler_config
         )
 
         self._print_banner("Final: Writing optimized config")
@@ -465,8 +398,11 @@ class PolicyTuner:
 
         self._print_banner("Final evaluation with tuned config")
         tuned = self._evaluate_final(
-            train_paths, val_paths,
-            checkpoints, autoscaler_config, routing_config,
+            train_paths,
+            val_paths,
+            checkpoints,
+            autoscaler_config,
+            routing_config,
         )
         self._print_comparison(baseline, tuned)
 
@@ -477,7 +413,7 @@ class PolicyTuner:
         for k, v in routing_config.items():
             overrides[f"routing_config.{k}"] = v
 
-        if self._tuner_config.holdout_evaluation:
+        if self._cfgd("tuner_config.holdout_evaluation", False):
             self._print_banner("Holdout: real-data evaluation")
             self._evaluate_holdout(traces, overrides)
 
@@ -486,6 +422,10 @@ class PolicyTuner:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
+        """Helper to get config values from the initial config."""
+        return cfgu.cfg_getd(self._config, dot_delimited_key, default)
 
     @staticmethod
     def _print_banner(message: str) -> None:
@@ -503,7 +443,9 @@ class PolicyTuner:
         routing_config: dict[str, Any],
     ) -> PhaseResult:
         """Re-run evaluation with the fully-tuned config."""
-        metric = self._tuner_config.aggregation_metric
+        metric = self._cfgd(
+            "tuner_config.forecast_config.aggregation_metric", metric
+        )
         overrides = _checkpoints_to_config(checkpoints)
         for k, v in autoscaler_config.items():
             overrides[f"autoscaling_config.{k}"] = v
@@ -553,10 +495,8 @@ class PolicyTuner:
         Returns the list of holdout parquet paths, or an empty list if
         no queries fall in the target period.
         """
-        schema_name = (
-            (self._initial_config.get("basic_config") or {}).get(
-                "schema_name", "default"
-            )
+        schema_name = (self._initial_config.get("basic_config") or {}).get(
+            "schema_name", "default"
         )
         holdout_dir = self._run_dir / "holdout" / "workloads"
         holdout_dir.mkdir(parents=True, exist_ok=True)
@@ -635,9 +575,7 @@ class PolicyTuner:
             )
             return
 
-        total_queries = sum(
-            len(pd.read_parquet(p)) for p in holdout_paths
-        )
+        total_queries = sum(len(pd.read_parquet(p)) for p in holdout_paths)
         console.print(
             f"  Holdout: {total_queries:,} real queries from target period"
         )
@@ -661,12 +599,14 @@ class PolicyTuner:
         for sb in static_baselines:
             label = sb["label"]
             slug = self._slugify(label)
-            specs.append(EvalSpec(
-                label=label,
-                config_overrides=sb.get("overrides", {}),
-                grid_point=slug,
-                out_subdir=self._run_dir / "holdout" / slug,
-            ))
+            specs.append(
+                EvalSpec(
+                    label=label,
+                    config_overrides=sb.get("overrides", {}),
+                    grid_point=slug,
+                    out_subdir=self._run_dir / "holdout" / slug,
+                )
+            )
 
         # Run all evaluations in a single pool.
         all_results = self._evaluator.evaluate_batch(
@@ -709,14 +649,16 @@ class PolicyTuner:
         for i, sb in enumerate(static_baselines):
             sb_results = all_results[2 + i]
             sb_agg = aggregate(sb_results, metric)
-            static_summaries.append({
-                "label": sb["label"],
-                "violation": primary_violation(sb_agg, self._slo_metric),
-                "cost": sb_agg.cost,
-                "violation_rate": sb_agg.violation_rate,
-                "violation_amount_s": sb_agg.violation_amount_s,
-                "violation_relative_mean": sb_agg.violation_relative_mean,
-            })
+            static_summaries.append(
+                {
+                    "label": sb["label"],
+                    "violation": primary_violation(sb_agg, self._slo_metric),
+                    "cost": sb_agg.cost,
+                    "violation_rate": sb_agg.violation_rate,
+                    "violation_amount_s": sb_agg.violation_amount_s,
+                    "violation_relative_mean": sb_agg.violation_relative_mean,
+                }
+            )
 
         if static_summaries:
             self._print_static_summary(static_summaries)
@@ -746,9 +688,7 @@ class PolicyTuner:
     @staticmethod
     def _print_comparison(baseline: PhaseResult, tuned: PhaseResult) -> None:
         """Print baseline vs tuned metrics side-by-side."""
-        table = Table(
-            title="Baseline vs. Tuned Performance", show_lines=True
-        )
+        table = Table(title="Baseline vs. Tuned Performance", show_lines=True)
         table.add_column("Metric", justify="left")
         table.add_column("Baseline", justify="right")
         table.add_column("Tuned", justify="right")
@@ -760,25 +700,79 @@ class PolicyTuner:
         bm = baseline.train_metrics
         tm = tuned.train_metrics
         if bm is not None and tm is not None:
-            rows.append(("Train Viol. Rate", bm.violation_rate, tm.violation_rate))
-            rows.append(("Train Viol. Amount (s)", bm.violation_amount_s, tm.violation_amount_s))
-            rows.append(("Train Viol. Relative", bm.violation_relative_mean, tm.violation_relative_mean))
+            rows.append(
+                ("Train Viol. Rate", bm.violation_rate, tm.violation_rate)
+            )
+            rows.append(
+                (
+                    "Train Viol. Amount (s)",
+                    bm.violation_amount_s,
+                    tm.violation_amount_s,
+                )
+            )
+            rows.append(
+                (
+                    "Train Viol. Relative",
+                    bm.violation_relative_mean,
+                    tm.violation_relative_mean,
+                )
+            )
             rows.append(("Train Cost ($)", bm.cost, tm.cost))
         else:
-            rows.append(("Train Violation", baseline.train_violation_agg, tuned.train_violation_agg))
-            rows.append(("Train Cost ($)", baseline.train_cost_agg, tuned.train_cost_agg))
+            rows.append(
+                (
+                    "Train Violation",
+                    baseline.train_violation_agg,
+                    tuned.train_violation_agg,
+                )
+            )
+            rows.append(
+                (
+                    "Train Cost ($)",
+                    baseline.train_cost_agg,
+                    tuned.train_cost_agg,
+                )
+            )
 
         bvm = baseline.val_metrics
         tvm = tuned.val_metrics
         if bvm is not None and tvm is not None:
-            rows.append(("Val Viol. Rate", bvm.violation_rate, tvm.violation_rate))
-            rows.append(("Val Viol. Amount (s)", bvm.violation_amount_s, tvm.violation_amount_s))
-            rows.append(("Val Viol. Relative", bvm.violation_relative_mean, tvm.violation_relative_mean))
+            rows.append(
+                ("Val Viol. Rate", bvm.violation_rate, tvm.violation_rate)
+            )
+            rows.append(
+                (
+                    "Val Viol. Amount (s)",
+                    bvm.violation_amount_s,
+                    tvm.violation_amount_s,
+                )
+            )
+            rows.append(
+                (
+                    "Val Viol. Relative",
+                    bvm.violation_relative_mean,
+                    tvm.violation_relative_mean,
+                )
+            )
             rows.append(("Val Cost ($)", bvm.cost, tvm.cost))
-        elif baseline.val_violation_agg is not None and tuned.val_violation_agg is not None:
-            rows.append(("Val Violation", baseline.val_violation_agg, tuned.val_violation_agg))
-            if baseline.val_cost_agg is not None and tuned.val_cost_agg is not None:
-                rows.append(("Val Cost ($)", baseline.val_cost_agg, tuned.val_cost_agg))
+        elif (
+            baseline.val_violation_agg is not None
+            and tuned.val_violation_agg is not None
+        ):
+            rows.append(
+                (
+                    "Val Violation",
+                    baseline.val_violation_agg,
+                    tuned.val_violation_agg,
+                )
+            )
+            if (
+                baseline.val_cost_agg is not None
+                and tuned.val_cost_agg is not None
+            ):
+                rows.append(
+                    ("Val Cost ($)", baseline.val_cost_agg, tuned.val_cost_agg)
+                )
 
         for label, base_val, tuned_val in rows:
             delta = tuned_val - base_val
@@ -797,9 +791,7 @@ class PolicyTuner:
         static_summaries: list[dict[str, Any]],
     ) -> None:
         """Print a Rich table summarising static baseline holdout results."""
-        table = Table(
-            title="Static Baselines — Holdout", show_lines=True
-        )
+        table = Table(title="Static Baselines — Holdout", show_lines=True)
         table.add_column("Label", justify="left")
         table.add_column("Viol. Rate", justify="right")
         table.add_column("Viol. Amount (s)", justify="right")
@@ -838,9 +830,9 @@ class PolicyTuner:
         # Record the rescale factor so that downstream tooling knows
         # the workload was time-compressed.
         if self._tuner_config.rescale_factor is not None:
-            cfg.setdefault("workload_config", {})["rescale_factor"] = (
-                self._tuner_config.rescale_factor
-            )
+            cfg.setdefault("workload_config", {})[
+                "rescale_factor"
+            ] = self._tuner_config.rescale_factor
 
         # Write final config.
         final_path = self._run_dir / "final_config.yml"
@@ -873,7 +865,9 @@ class PolicyTuner:
             tm = result.train_metrics
             summary["train_violation_rate"] = tm.violation_rate
             summary["train_violation_amount_s"] = tm.violation_amount_s
-            summary["train_violation_relative_mean"] = tm.violation_relative_mean
+            summary["train_violation_relative_mean"] = (
+                tm.violation_relative_mean
+            )
         if result.val_metrics is not None:
             vm = result.val_metrics
             summary["val_violation_rate"] = vm.violation_rate
@@ -904,7 +898,21 @@ class PolicyTuner:
             dump_config(summary, f)
 
     @staticmethod
-    def _print_phase_summary(label: str, result: PhaseResult) -> None:
+    def _fmt_cell(
+        agg_val: float,
+        scenario_vals: list[float],
+    ) -> str:
+        """Format a metric cell: aggregated value with dim min–max range."""
+        main = f"{agg_val:.4f}"
+        if len(scenario_vals) >= 2:
+            lo, hi = min(scenario_vals), max(scenario_vals)
+            main += f"\n[dim]{lo:.4f} … {hi:.4f}[/dim]"
+        return main
+
+    @staticmethod
+    def _print_phase_summary(
+        label: str, result: PhaseResult, agg_method: str = "p90"
+    ) -> None:
         """Print a rich table summarising a phase result."""
         table = Table(title=f"{label} Performance", show_lines=True)
         table.add_column("Split", justify="left")
@@ -913,16 +921,21 @@ class PolicyTuner:
         table.add_column("Viol. Relative", justify="right")
         table.add_column("Cost ($)", justify="right")
         table.add_column("# Scenarios", justify="right")
+        table.add_column("Agg.", justify="center")
+
+        fmt = PolicyTuner._fmt_cell
 
         tm = result.train_metrics
+        tr = result.train_results
         if tm is not None:
             table.add_row(
                 "Train",
-                f"{tm.violation_rate:.4f}",
-                f"{tm.violation_amount_s:.4f}",
-                f"{tm.violation_relative_mean:.4f}",
-                f"{tm.cost:.4f}",
-                str(len(result.train_results)),
+                fmt(tm.violation_rate, [r.violation_rate for r in tr]),
+                fmt(tm.violation_amount_s, [r.violation_amount_s for r in tr]),
+                fmt(tm.violation_relative_mean, [r.violation_relative_mean for r in tr]),
+                fmt(tm.cost, [r.total_cost for r in tr]),
+                str(len(tr)),
+                agg_method,
             )
         else:
             table.add_row(
@@ -931,18 +944,21 @@ class PolicyTuner:
                 "—",
                 "—",
                 f"{result.train_cost_agg:.4f}",
-                str(len(result.train_results)),
+                str(len(tr)),
+                agg_method,
             )
 
         vm = result.val_metrics
+        vr = result.val_results or []
         if vm is not None:
             table.add_row(
                 "Val",
-                f"{vm.violation_rate:.4f}",
-                f"{vm.violation_amount_s:.4f}",
-                f"{vm.violation_relative_mean:.4f}",
-                f"{vm.cost:.4f}",
-                str(len(result.val_results)) if result.val_results else "0",
+                fmt(vm.violation_rate, [r.violation_rate for r in vr]),
+                fmt(vm.violation_amount_s, [r.violation_amount_s for r in vr]),
+                fmt(vm.violation_relative_mean, [r.violation_relative_mean for r in vr]),
+                fmt(vm.cost, [r.total_cost for r in vr]),
+                str(len(vr)),
+                agg_method,
             )
         elif result.val_results is not None:
             table.add_row(
@@ -951,6 +967,15 @@ class PolicyTuner:
                 "—",
                 "—",
                 f"{result.val_cost_agg:.4f}",
-                str(len(result.val_results)),
+                str(len(vr)),
+                agg_method,
             )
         console.print(table)
+
+
+if __name__ == "__main__":
+    cfg, config_path = cfgu.load_config_from_cli(
+        "Run queries from a workload using a YAML config file.",
+    )
+    pt = PolicyTuner(cfg)
+    pt.tune()

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import torch
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -21,6 +22,7 @@ from rich.progress import (
     TextColumn,
 )
 
+import autoslo.utils.config as cfgu
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.tuner_utils import ScenarioResult, extract_scenario_result
 from autoslo.utils.paralellism import (
@@ -29,6 +31,8 @@ from autoslo.utils.paralellism import (
     inner_level_num_cpus,
 )
 from autoslo.utils.structured_log import StructuredLogHandler, emit_structured
+from autoslo.workload_definition.workload import Workload
+from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +79,7 @@ def _run_scenario(
     os.environ["MKL_NUM_THREADS"] = ncpus
     os.environ["OPENBLAS_NUM_THREADS"] = ncpus
 
-    from autoslo.workload_definition.workload import Workload
-    from autoslo.workload_execution.workload_simulator import WorkloadSimulator
-
     # Runtime API — effective even if PyTorch was already imported.
-    import torch
     torch.set_num_threads(int(ncpus))
 
     # Load the pre-sampled workload from disk.
@@ -149,10 +149,9 @@ class ScenarioEvaluator:
 
     Parameters
     ----------
-    initial_config :
-        The base simulator config dict (deep-copied before each scenario).
-    tuner_config :
-        Tuner hyper-parameters (parallelism, aggregation metric, etc.).
+    config :
+        The configuration dict loaded from the YAML file for this tuner run,
+        which is used to configure the simulator and tuner parameters.
     tuner_run_id :
         Unique identifier for the parent tuner run (used to build per-
         scenario ``simulator_run_id`` values).
@@ -163,15 +162,17 @@ class ScenarioEvaluator:
 
     def __init__(
         self,
-        initial_config: dict[str, Any],
-        tuner_config: TunerConfig,
+        config: dict[str, Any],
         tuner_run_id: str,
         evolution_logger: StructuredLogHandler,
     ) -> None:
-        self._initial_config = initial_config
-        self._tuner_config = tuner_config
+        self._config = config
         self._tuner_run_id = tuner_run_id
         self._evolution_logger = evolution_logger
+
+    def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
+        """Helper to get config values from the initial config."""
+        return cfgu.cfg_getd(self._config, dot_delimited_key, default)
 
     # ------------------------------------------------------------------
     # Public API
@@ -184,7 +185,6 @@ class ScenarioEvaluator:
         phase: str,
         grid_point: int | str,
         out_subdir: Path,
-        schema_name: str | None = None,
     ) -> list[ScenarioResult]:
         """Simulate workloads in parallel and return per-scenario results.
 
@@ -203,144 +203,24 @@ class ScenarioEvaluator:
             Identifier for the current grid/sweep point.
         out_subdir :
             Directory under which per-scenario output dirs are created.
-        schema_name :
-            Override for the schema name used to construct the
-            ``Workload``.  When *None*, falls back to
-            ``basic_config.schema_name`` from the initial config.
         """
-        out_subdir = Path(out_subdir)
-        out_subdir.mkdir(parents=True, exist_ok=True)
-
-        # Pre-extract SLO info from config for the result extractor.
-        slo_s: float = float(
-            (self._initial_config.get("slo_config") or {}).get("slo_s", 10.0)
-        )
-        slo_dict_filename: str | None = (
-            self._initial_config.get("slo_config") or {}
-        ).get("slo_dict_filename")
-        # We can't easily pass the filename across processes (it depends on
-        # the data path).  But the resolver in the worker already handles
-        # violations during simulate_one; here we only need the dict for
-        # extract_scenario_result.  Pass None — the worker will recompute.
-        slo_dict: dict[str, float] | None = None
-        if slo_dict_filename:
-            # Try to load the dict now so extract_scenario_result gets it.
-            try:
-                from autoslo.blueprint_selection.slo_resolver import SloResolver
-
-                resolver = SloResolver(slo_s, slo_dict_filename)
-                slo_dict = resolver.slo_dict
-            except Exception:
-                logger.warning(
-                    "Could not pre-load SLO dict %r; violations will use default SLO only.",
-                    slo_dict_filename,
-                )
-
-        schema = schema_name or (
-            (self._initial_config.get("basic_config") or {}).get("schema_name", "default")
-        )
-
-        max_workers = self._resolve_parallelism()
-
-        work_units = self._build_work_units(
-            workload_paths=workload_paths,
+        spec = EvalSpec(
+            label=f"{phase} gp={grid_point}",
             config_overrides=config_overrides,
-            phase=phase,
-            grid_point=grid_point,
-            out_subdir=out_subdir,
-            schema_name=schema,
+            grid_point=str(grid_point),
+            out_subdir=Path(out_subdir),
         )
-
-        results: list[ScenarioResult] = []
-        mgr = Manager()
-        progress_dict = mgr.dict()
-
-        ctx = get_context("spawn")
-        with ProcessPoolExecutor(
-            max_workers=max_workers,
-            mp_context=ctx,
-            initializer=_init_worker,
-            initargs=(inner_level_num_cpus(),),
-        ) as pool:
-            futures = {
-                pool.submit(
-                    _run_scenario,
-                    config_dict=wu["config_dict"],
-                    workload_path=wu["workload_path"],
-                    workload_name=wu["workload_name"],
-                    schema_name=wu["schema_name"],
-                    scenario_idx=wu["scenario_idx"],
-                    slo_s=slo_s,
-                    slo_dict=slo_dict,
-                    progress_dict=progress_dict,
-                    rescale_factor=self._tuner_config.rescale_factor,
-                ): wu["scenario_idx"]
-                for wu in work_units
-            }
-
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                transient=True,
-            ) as progress:
-                main_task = progress.add_task(
-                    f"[cyan]{phase} gp={grid_point}", total=len(futures)
-                )
-                # Map scenario_idx → Rich task id for sub-tasks.
-                sub_tasks: dict[int, int] = {}
-                pending = set(futures.keys())
-
-                while pending:
-                    done, pending = wait(
-                        pending, timeout=0.3, return_when=FIRST_COMPLETED
-                    )
-
-                    # Update sub-task progress bars from shared dict.
-                    for idx, (current, total) in list(
-                        progress_dict.items()
-                    ):
-                        if idx not in sub_tasks:
-                            sub_tasks[idx] = progress.add_task(
-                                f"    scenario {idx}",
-                                total=total,
-                            )
-                        progress.update(
-                            sub_tasks[idx], completed=current, total=total
-                        )
-
-                    # Handle completed futures.
-                    for future in done:
-                        idx = futures[future]
-                        try:
-                            result = future.result()
-                        except Exception:
-                            logger.exception("Scenario %d failed", idx)
-                            raise
-                        results.append(result)
-                        self._log_result(
-                            result, phase, grid_point, config_overrides
-                        )
-                        progress.advance(main_task)
-
-                        # Remove the sub-task for this scenario.
-                        if idx in sub_tasks:
-                            progress.remove_task(sub_tasks.pop(idx))
-                        progress_dict.pop(idx, None)
-
-        mgr.shutdown()
-
-        # Sort by scenario_idx for deterministic ordering.
-        results.sort(key=lambda r: r.scenario_idx)
-        return results
+        return self.evaluate_batch(
+            workload_paths=workload_paths,
+            specs=[spec],
+            phase=phase,
+        )[0]
 
     def evaluate_batch(
         self,
         workload_paths: list[Path],
         specs: list[EvalSpec],
         phase: str = "holdout",
-        schema_name: str | None = None,
     ) -> list[list[ScenarioResult]]:
         """Evaluate multiple configs in a single pool with unified progress.
 
@@ -352,8 +232,6 @@ class ScenarioEvaluator:
             Evaluation specifications — one per config to evaluate.
         phase :
             Label for the tuning phase (default ``"holdout"``).
-        schema_name :
-            Override for the workload schema name.
 
         Returns
         -------
@@ -364,13 +242,11 @@ class ScenarioEvaluator:
             return []
 
         # Pre-extract SLO info (shared across all specs).
-        slo_s: float = float(
-            (self._initial_config.get("slo_config") or {}).get("slo_s", 10.0)
-        )
+        slo_s: float = float(self._cfgd("slo_config.slo_s", 30.0))
         slo_dict: dict[str, float] | None = None
-        slo_dict_filename: str | None = (
-            self._initial_config.get("slo_config") or {}
-        ).get("slo_dict_filename")
+        slo_dict_filename: str | None = self._cfgd(
+            "slo_config.slo_dict_filename", None
+        )
         if slo_dict_filename:
             try:
                 from autoslo.blueprint_selection.slo_resolver import SloResolver
@@ -383,11 +259,8 @@ class ScenarioEvaluator:
                     slo_dict_filename,
                 )
 
-        schema = schema_name or (
-            (self._initial_config.get("basic_config") or {}).get(
-                "schema_name", "default"
-            )
-        )
+        schema_name = self._cfgd("basic_config.schema_name", "default")
+
         max_workers = self._resolve_parallelism()
         n_per_spec = len(workload_paths)
 
@@ -398,13 +271,15 @@ class ScenarioEvaluator:
         idx_map: dict[int, tuple[int, int]] = {}
         global_idx = 0
         for spec_idx, spec in enumerate(specs):
+            out_subdir = Path(spec.out_subdir)
+            out_subdir.mkdir(parents=True, exist_ok=True)
             units = self._build_work_units(
                 workload_paths=workload_paths,
                 config_overrides=spec.config_overrides,
                 phase=phase,
                 grid_point=spec.grid_point,
-                out_subdir=Path(spec.out_subdir),
-                schema_name=schema,
+                out_subdir=out_subdir,
+                schema_name=schema_name,
             )
             for wu in units:
                 local_idx = wu["scenario_idx"]
@@ -418,6 +293,8 @@ class ScenarioEvaluator:
         progress_dict = mgr.dict()
 
         ctx = get_context("spawn")
+        rescale_factor = self._cfgd("workload_config.rescale_factor", None)
+
         with ProcessPoolExecutor(
             max_workers=max_workers,
             mp_context=ctx,
@@ -436,7 +313,7 @@ class ScenarioEvaluator:
                     slo_s=slo_s,
                     slo_dict=slo_dict,
                     progress_dict=progress_dict,
-                    rescale_factor=self._tuner_config.rescale_factor,
+                    rescale_factor=rescale_factor,
                 )
                 futures[f] = wu["scenario_idx"]
 
@@ -465,9 +342,7 @@ class ScenarioEvaluator:
                     )
 
                     # Update per-scenario sub-task bars.
-                    for gidx, (current, total) in list(
-                        progress_dict.items()
-                    ):
+                    for gidx, (current, total) in list(progress_dict.items()):
                         if gidx not in sub_tasks:
                             si, li = idx_map[gidx]
                             sub_tasks[gidx] = progress.add_task(
@@ -520,7 +395,7 @@ class ScenarioEvaluator:
     # ------------------------------------------------------------------
 
     def _resolve_parallelism(self) -> int:
-        p = self._tuner_config.parallelism
+        p = self._cfgd("tuner_config.parallelism", "auto")
         if p == "auto":
             return max(1, deg_of_paralellism())
         return int(p)
@@ -540,7 +415,7 @@ class ScenarioEvaluator:
         units: list[dict[str, Any]] = []
 
         for idx, wl_path in enumerate(workload_paths):
-            cfg = copy.deepcopy(self._initial_config)
+            cfg = copy.deepcopy(self._config)
             apply_overrides(cfg, config_overrides)
 
             # Set per-scenario identifiers.

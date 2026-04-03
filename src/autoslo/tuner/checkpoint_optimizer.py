@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -34,32 +34,20 @@ from autoslo.tuner.tuner_utils import (
     primary_violation,
     threshold_aware_select,
 )
+from autoslo.blueprint_selection.slo_resolver import (
+    SloResolver,
+    slo_relative_violation,
+)
+import autoslo.utils.config as cfgu
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 console = Console()
 
 
 # ---------------------------------------------------------------------------
-# Violation window dataclass
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ViolationWindow:
-    """A time window with aggregated violation statistics."""
-
-    start_s: float
-    end_s: float
-    violation_rate: float
-    num_violations: int
-    num_queries: int
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-DEFAULT_SPIN_UP_DELAY_S = 120.0
 
 
 def _checkpoints_to_config(
@@ -74,97 +62,130 @@ def _checkpoints_to_config(
     }
 
 
-def _get_spin_up_delay(initial_config: dict[str, Any]) -> float:
-    """Read spin_up_delay_s from the managed_cluster_pool_config section."""
-    mcp = initial_config.get("managed_cluster_pool_config") or {}
-    return float(mcp.get("spin_up_delay_s", DEFAULT_SPIN_UP_DELAY_S))
-
-
-def _get_allowed_rpu_sizes(initial_config: dict[str, Any]) -> list[int]:
-    """Read allowed_rpu_sizes from the managed_cluster_pool_config section."""
-    mcp = initial_config.get("managed_cluster_pool_config") or {}
-    sizes = mcp.get("allowed_rpu_sizes", Cluster.ALL_ALLOWED_RPU_SIZES)
-    return [int(s) for s in sizes]
-
-
-def find_violation_windows(
-    results: list[ScenarioResult],
-    window_s: float,
-    slo_s: float,
-    slo_dict: dict[str, float] | None = None,
-) -> list[ViolationWindow]:
-    """Compute sliding-window violation rates across training scenarios.
-
-    For each scenario, read its ``structured_log.parquet``, filter
-    completion events, bin them into non-overlapping windows of
-    *window_s* seconds, compute per-window violation rates, then
-    average across scenarios.
-
-    Returns windows sorted chronologically.
+def find_next_checkpoint_time(
+    results: list[ScenarioResult],  # TODO: Feed dfs for easier testing
+    slo_resolver: SloResolver,
+    threshold: float,
+    spin_up_delay_s: float,
+) -> Optional[float]:
     """
-    from autoslo.blueprint_selection.slo_resolver import SloResolver
+    Find the next time at which to insert a capacity checkpoint, or None
+    if no such time can be found through the process below. The process is:
 
-    # Collect per-scenario window stats: {window_start: [rate, n_viol, n_q]}
-    per_scenario: list[dict[float, tuple[float, int, int]]] = []
+    1. For each of the scenarios in *results*, compute the start and end time
+        of each query from the structured logs. Also label each query by its
+        relative SLO violation rate. Union the query start and query end events
+        across all scenarios into a single timeline.
+    2.  For each interval in this timeline, calculate the
+        mean relative SLO violation rate for active queries, first taking the
+        mean within each scenario and then averaging across scenarios to get a
+        single value.
+    3. Find the earliest interval where the mean relative SLO violation rate
+        exceeds *threshold*. If no such interval exists, return None.
+    4. Among the running queries in this interval, find the earliest query start
+        time.
+    5. Return this time minus *spin_up_delay_s*.
 
-    for result in results:
+    """
+
+    # 1. Create events per scenario and aggregate.
+    events = []
+    for scenario_id, result in enumerate(results):
         log_path = result.out_dir / "structured_log.parquet"
         if not log_path.exists():
-            continue
-        log = pd.read_parquet(log_path)
+            raise FileNotFoundError(f"Missing log file: {log_path}")
+
+        # Read in log and compute violations.
+        log = pd.read_parquet(
+            log_path,
+            columns=[
+                "timestamp",
+                "event_type",
+                "query_id",
+                "query_text_id",
+                "latency_s",
+            ],
+        )
         completions = log[log["event_type"] == "completion"].copy()
         if completions.empty:
-            continue
+            raise ValueError(f"No completion events in log: {log_path}")
 
-        resolver = SloResolver.from_dict(slo_s, slo_dict or {})
-        durations = completions["latency_s"].fillna(0.0)
-        per_row_slo = (
-            completions["query_text_id"].map(resolver.resolve).fillna(slo_s)
+        completions["latency_s"] = completions["latency_s"].fillna(0.0)
+        completions["start_time"] = (
+            completions["timestamp"] - completions["latency_s"]
         )
-        completions["violated"] = durations > per_row_slo
-
-        # Use the completion timestamp (= end_time_s) to assign windows.
-        completions["window_start"] = (
-            np.floor(completions["timestamp"].astype(float) / window_s) * window_s
+        completions["slo_s"] = (
+            completions["query_text_id"].map(slo_resolver.resolve).fillna(0.0)
+        )
+        completions["slo_relative_violation"] = completions.apply(
+            lambda row: slo_relative_violation(row["latency_s"], row["slo_s"]),
+            axis=1,
         )
 
-        windows: dict[float, tuple[float, int, int]] = {}
-        for ws, grp in completions.groupby("window_start"):
-            n_q = len(grp)
-            n_v = int(grp["violated"].sum())
-            vr = n_v / n_q if n_q else 0.0
-            windows[float(ws)] = (vr, n_v, n_q)
-        per_scenario.append(windows)
+        # 1. Create events per scenario.
+        for _, row in completions.iterrows():
+            events.append(
+                (
+                    row["start_time"],
+                    "start",
+                    row["slo_relative_violation"],
+                    scenario_id,
+                    row["query_id"],
+                )
+            )
+            events.append(
+                (
+                    row["timestamp"],
+                    "end",
+                    row["slo_relative_violation"],
+                    scenario_id,
+                    row["query_id"],
+                )
+            )
+    events.sort(key=lambda x: x[0])  # Sort by timestamp
 
-    if not per_scenario:
-        return []
+    # 2. Compute mean violation rate in each interval and
+    # 3. Find earliest interval with mean violation above threshold.
+    active_queries: dict[int, dict[str, tuple[float, float]]] = defaultdict(
+        dict
+    )  # scenario_id -> query_id -> (start_time, violation)
+    mean_relative_violation_per_scenario: dict[int, float] = {
+        scenario_id: 0.0 for scenario_id in range(len(results))
+    }
+    for i in range(len(events) - 1):
+        timestamp, event_type, violation, scenario_id, query_id = events[i]
+        if event_type == "start":
+            active_queries[scenario_id][query_id] = (timestamp, violation)
+        else:
+            active_queries[scenario_id].pop(query_id, None)
+        mean_relative_violation_per_scenario[scenario_id] = float(
+            np.mean([tup[1] for tup in active_queries[scenario_id].values()])
+        )
+        mean_relative_violation_across_scenarios = float(
+            np.mean(list(mean_relative_violation_per_scenario.values()))
+        )
+        if mean_relative_violation_across_scenarios > threshold:
+            min_seen = np.inf
+            for scenario_queries in active_queries.values():
+                for query_id, (timestamp, _) in scenario_queries.items():
+                    min_seen = min(min_seen, timestamp)
+            spinup_time = min_seen - spin_up_delay_s
+            console.print(
+                f"[green]Found violating interval: "
+                f"{timestamp:.0f}s to {events[i+1][0]:.0f}s  "
+                f"with mean relative violation "
+                f"{mean_relative_violation_across_scenarios:.4f} "
+                f"(threshold={threshold:.2f})  "
+                f"returning checkpoint time {spinup_time:.0f}s"
+            )
+            return min_seen - spin_up_delay_s
 
-    # Gather all window starts across scenarios.
-    all_starts = sorted(
-        {ws for scenario in per_scenario for ws in scenario}
+    console.print(
+        f" [green]No interval with mean relative violation above {threshold} "
+        f"found."
     )
 
-    # Average across scenarios.
-    aggregated: list[ViolationWindow] = []
-    for ws in all_starts:
-        rates, viols, queries = [], [], []
-        for scenario in per_scenario:
-            if ws in scenario:
-                r, v, q = scenario[ws]
-                rates.append(r)
-                viols.append(v)
-                queries.append(q)
-        aggregated.append(
-            ViolationWindow(
-                start_s=ws,
-                end_s=ws + window_s,
-                violation_rate=float(np.mean(rates)) if rates else 0.0,
-                num_violations=int(np.sum(viols)),
-                num_queries=int(np.sum(queries)),
-            )
-        )
-
-    return aggregated
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +200,9 @@ class CheckpointOptimizer:
     ----------
     evaluator :
         The shared scenario evaluator.
-    tuner_config :
-        Tuner hyper-parameters (budget, epsilon, window size, threshold).
-    initial_config :
-        Base simulator config (used to read RPU sizes, spin-up delay, SLO).
+    config :
+        The configuration dict loaded from the YAML file for this tuner run,
+        which is used to configure the simulator and tuner parameters.
     run_dir :
         Root directory for the current tuner run.
     """
@@ -190,44 +210,38 @@ class CheckpointOptimizer:
     def __init__(
         self,
         evaluator: ScenarioEvaluator,
-        tuner_config: TunerConfig,
-        initial_config: dict[str, Any],
+        config: dict[str, Any],
         run_dir: Path,
-        slo_objective: SloObjective | None = None,
     ) -> None:
         self._evaluator = evaluator
-        self._tuner_config = tuner_config
-        self._initial_config = initial_config
+        self._config = config
         self._run_dir = run_dir
 
-        self._allowed_rpu_sizes = _get_allowed_rpu_sizes(initial_config)
-        self._spin_up_delay_s = _get_spin_up_delay(initial_config)
-        self._slo_s = float(
-            (initial_config.get("slo_config") or {}).get("slo_s", 10.0)
+        self._allowed_rpu_sizes = self._cfgd(
+            "managed_cluster_pool_config.allowed_rpu_sizes",
+            Cluster.ALL_ALLOWED_RPU_SIZES,
         )
-        self._slo_dict: dict[str, float] | None = None
-        slo_dict_filename = (initial_config.get("slo_config") or {}).get(
-            "slo_dict_filename"
+        self._spin_up_delay_s = self._cfgd(
+            "managed_cluster_pool_config.spin_up_delay_s",
+            Cluster.DEFAULT_SPIN_UP_DELAY_S,
         )
-        if slo_dict_filename:
-            try:
-                from autoslo.blueprint_selection.slo_resolver import SloResolver
 
-                self._slo_dict = SloResolver(
-                    self._slo_s, slo_dict_filename
-                ).slo_dict
-            except Exception:
-                logger.warning("Could not pre-load SLO dict; using default SLO.")
+        # SLO Resolver
+        slo_s = self._cfgd("slo_config.slo_s", 30.0)
+        slo_dict_filename = self._cfgd("slo_config.slo_dict_filename", None)
+        self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
         # SLO objective for threshold-aware candidate selection.
-        if slo_objective is not None:
-            self._slo_objective = slo_objective
-        else:
-            slo_cfg = initial_config.get("slo_config") or {}
-            self._slo_objective = SloObjective(
-                slo_metric=str(slo_cfg.get("slo_metric", "binary")),
-                slo_threshold=float(slo_cfg.get("slo_threshold", 1.0)),
-            )
+        slo_metric = self._cfgd("tuner_config.slo_metric", "binary")
+        slo_threshold = self._cfgd("tuner_config.slo_threshold", 1.0)
+        self._slo_objective = SloObjective(
+            slo_metric=str(slo_metric),
+            slo_threshold=float(slo_threshold),
+        )
+
+    def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
+        """Helper to read from the config dict with dot-delimited keys."""
+        return cfgu.cfg_getd(self._config, dot_delimited_key, default)
 
     # ------------------------------------------------------------------
     # Public API
@@ -255,12 +269,24 @@ class CheckpointOptimizer:
         -------
         The selected list of capacity checkpoints.
         """
-        metric = self._tuner_config.aggregation_metric
+        metric = self._cfgd(
+            "tuner_config.forecast_config.aggregation_metric", "p90"
+        )
+        checkpoint_budget = self._cfgd(
+            "tuner_config.checkpoint_phase.checkpoint_budget", 5
+        )
+        violation_threshold = self._cfgd(
+            "tuner_config.checkpoint_phase.violation_threshold", 0.1
+        )
+        checkpoint_epsilon = self._cfgd(
+            "tuner_config.checkpoint_phase.checkpoint_epsilon", 0.01
+        )
+
         current_checkpoints: list[CapacityCheckpoint] = []
         best_val_violation = baseline_val_violation
         ckpt_dir = self._run_dir / "checkpoints"
 
-        for round_idx in range(self._tuner_config.checkpoint_budget):
+        for round_idx in range(checkpoint_budget):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
 
             # 1. Simulate training scenarios with current checkpoints.
@@ -273,75 +299,61 @@ class CheckpointOptimizer:
                 out_subdir=ckpt_dir / f"round_{round_idx:03d}" / "base",
             )
 
-            # 2. Find violation windows.
-            windows = find_violation_windows(
+            # 2. Find earliest promising checkpoint time.
+            next_checkpoint_time = find_next_checkpoint_time(
                 train_results,
-                window_s=self._tuner_config.sliding_window_s,
-                slo_s=self._slo_s,
-                slo_dict=self._slo_dict,
+                slo_resolver=self._slo_resolver,
+                threshold=violation_threshold,
+                spin_up_delay_s=self._spin_up_delay_s,
             )
 
-            # 3. Find earliest window above threshold.
-            target_window = next(
-                (
-                    w
-                    for w in windows
-                    if w.violation_rate > self._tuner_config.violation_threshold
-                ),
-                None,
-            )
-            if target_window is None:
-                console.print(
-                    "[green]No violation window above threshold — stopping."
-                )
+            if next_checkpoint_time is None:
+                s = "[green]No promising checkpoint time found — stopping."
+                console.print(s)
                 break
 
-            console.print(
-                f"  Target window: [{target_window.start_s:.0f}s, "
-                f"{target_window.end_s:.0f}s)  "
-                f"violation_rate={target_window.violation_rate:.3f}  "
-                f"({target_window.num_violations}/{target_window.num_queries} queries)"
-            )
-
-            # 4. Try each RPU size.
-            candidates: list[
-                tuple[CapacityCheckpoint, list[ScenarioResult], AggregatedMetrics, float]
-            ] = []
+            # 3. Try each RPU size.
+            cands: list[tuple[CapacityCheckpoint, AggregatedMetrics]] = []
+            checkpoints = []
+            specs: list[EvalSpec] = []
+            phase = "checkpoints"
             for rpu in self._allowed_rpu_sizes:
                 checkpoint = CapacityCheckpoint(
-                    time_s=max(
-                        0.0, target_window.start_s - self._spin_up_delay_s
-                    ),
+                    time_s=max(0.0, next_checkpoint_time),
                     min_rpus=(rpu,),
                 )
+                checkpoints.append(checkpoint)
                 trial_checkpoints = current_checkpoints + [checkpoint]
                 trial_overrides = _checkpoints_to_config(trial_checkpoints)
-                trial_results = self._evaluator.evaluate(
-                    workload_paths=train_paths,
+                grid_point = f"round_{round_idx:03d}_rpu{rpu}"
+                spec = EvalSpec(
+                    label=f"{phase} gp={grid_point}",
                     config_overrides=trial_overrides,
-                    phase="checkpoints",
-                    grid_point=f"round_{round_idx:03d}_rpu{rpu}",
-                    out_subdir=ckpt_dir
-                    / f"round_{round_idx:03d}"
-                    / f"rpu{rpu}",
+                    grid_point=str(grid_point),
+                    out_subdir=(
+                        ckpt_dir / f"round_{round_idx:03d}" / f"rpu{rpu}"
+                    ),
                 )
-                agg = aggregate(trial_results, metric)
-                candidates.append(
-                    (checkpoint, trial_results, agg, agg.cost)
-                )
+                specs.append(spec)
+            all_trial_results = self._evaluator.evaluate_batch(
+                workload_paths=train_paths, specs=specs, phase=phase
+            )
+            for i in range(len(self._allowed_rpu_sizes)):
+                checkpoint = checkpoints[i]
+                trial_result = all_trial_results[i]
+                agg = aggregate(trial_result, metric)
+                cands.append((checkpoint, agg))
 
             # 5. Pick best on training set (threshold-aware selection).
+            sm = self._slo_objective.slo_metric
+            st = self._slo_objective.slo_threshold
             best_idx = threshold_aware_select(
-                [
-                    (primary_violation(agg, self._slo_objective.slo_metric), cost)
-                    for _, _, agg, cost in candidates
-                ],
-                self._slo_objective.slo_threshold,
+                [(primary_violation(agg, sm), agg.cost) for _, agg in cands],
+                st,
             )
-            best_cp, best_train_results, best_agg, best_cost = candidates[best_idx]
-            best_viol = primary_violation(best_agg, self._slo_objective.slo_metric)
+            best_cp, _ = cands[best_idx]
 
-            self._print_candidate_table(round_idx, candidates, best_cp)
+            self._print_candidate_table(round_idx, cands, best_cp)
 
             # 6. Validate.
             val_overrides = _checkpoints_to_config(
@@ -355,31 +367,32 @@ class CheckpointOptimizer:
                 out_subdir=ckpt_dir / f"round_{round_idx:03d}" / "val",
             )
             val_agg = aggregate(val_results, metric)
-            val_primary = primary_violation(val_agg, self._slo_objective.slo_metric)
+            val_primary = primary_violation(val_agg, sm)
 
-            slo_metric = self._slo_objective.slo_metric
-            slo_thresh = self._slo_objective.slo_threshold
             console.print(
-                f"  Validation {slo_metric}={val_primary:.4f}  "
-                f"(threshold={slo_thresh:.2f})  "
+                f"  Validation {sm}={val_primary:.4f}  "
+                f"(threshold={st:.2f})  "
                 f"cost=${val_agg.cost:.4f}  "
                 f"(prev best={best_val_violation:.4f})"
             )
 
-            # Threshold-aware early stopping (D-M12).
-            if is_feasible(val_primary, self._slo_objective.slo_threshold):
+            # Threshold-aware early stopping.
+            if is_feasible(val_primary, st):
                 console.print(
-                    f"[green]SLO satisfied ({slo_metric} "
-                    f"{val_primary:.4f} ≤ {slo_thresh:.2f}) "
+                    f"[green]SLO satisfied ({sm} "
+                    f"{val_primary:.4f} ≤ {st:.2f}) "
                     f"— stopping checkpoint placement."
                 )
                 current_checkpoints.append(best_cp)
                 best_val_violation = val_primary
                 self._write_round_summary(
-                    round_idx, candidates, best_cp, val_agg,
+                    round_idx,
+                    cands,
+                    best_cp,
+                    val_agg,
                 )
                 break
-            if best_val_violation - val_primary < self._tuner_config.checkpoint_epsilon:
+            if best_val_violation - val_primary < checkpoint_epsilon:
                 console.print(
                     "[yellow]Improvement below epsilon — early stopping."
                 )
@@ -395,7 +408,10 @@ class CheckpointOptimizer:
 
             # Write round summary.
             self._write_round_summary(
-                round_idx, candidates, best_cp, val_agg,
+                round_idx,
+                cands,
+                best_cp,
+                val_agg,
             )
 
         # Write the final selected checkpoints.
@@ -410,7 +426,10 @@ class CheckpointOptimizer:
         self,
         round_idx: int,
         candidates: list[
-            tuple[CapacityCheckpoint, list[ScenarioResult], AggregatedMetrics, float]
+            tuple[
+                CapacityCheckpoint,
+                AggregatedMetrics,
+            ]
         ],
         best_cp: CapacityCheckpoint,
     ) -> None:
@@ -426,7 +445,7 @@ class CheckpointOptimizer:
         table.add_column("Train Cost ($)", justify="right")
         table.add_column("Selected", justify="center")
 
-        for cp, _, agg, cost in candidates:
+        for cp, agg in candidates:
             is_best = cp == best_cp
             style = "bold green" if is_best else ""
             table.add_row(
@@ -435,7 +454,7 @@ class CheckpointOptimizer:
                 f"{agg.violation_rate:.4f}",
                 f"{agg.violation_amount_s:.4f}",
                 f"{agg.violation_relative_mean:.4f}",
-                f"{cost:.4f}",
+                f"{agg.cost:.4f}",
                 "✓" if is_best else "",
                 style=style,
             )
@@ -449,7 +468,10 @@ class CheckpointOptimizer:
         self,
         round_idx: int,
         candidates: list[
-            tuple[CapacityCheckpoint, list[ScenarioResult], AggregatedMetrics, float]
+            tuple[
+                CapacityCheckpoint,
+                AggregatedMetrics,
+            ]
         ],
         best_cp: CapacityCheckpoint,
         val_agg: AggregatedMetrics,
@@ -462,7 +484,9 @@ class CheckpointOptimizer:
                 "time_s": best_cp.time_s,
                 "min_rpus": list(best_cp.min_rpus),
             },
-            "val_violation": primary_violation(val_agg, self._slo_objective.slo_metric),
+            "val_violation": primary_violation(
+                val_agg, self._slo_objective.slo_metric
+            ),
             "val_cost": val_agg.cost,
             "val_violation_rate": val_agg.violation_rate,
             "val_violation_amount_s": val_agg.violation_amount_s,
@@ -471,13 +495,15 @@ class CheckpointOptimizer:
                 {
                     "rpu": cp.min_rpus[0],
                     "time_s": cp.time_s,
-                    "train_violation": primary_violation(agg, self._slo_objective.slo_metric),
-                    "train_cost": cost,
+                    "train_violation": primary_violation(
+                        agg, self._slo_objective.slo_metric
+                    ),
+                    "train_cost": agg.cost,
                     "train_violation_rate": agg.violation_rate,
                     "train_violation_amount_s": agg.violation_amount_s,
                     "train_violation_relative_mean": agg.violation_relative_mean,
                 }
-                for cp, _, agg, cost in candidates
+                for cp, agg in candidates
             ],
         }
         with open(round_dir / "candidate_results.yml", "w") as f:
