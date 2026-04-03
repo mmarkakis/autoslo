@@ -270,8 +270,6 @@ class PolicyTuner:
             "tuner_config.forecast_config.aggregation_metric", "p90"
         )
 
-        console.rule("[bold cyan]Baseline evaluation")
-
         # Training set.
         console.print(
             f"Evaluating baseline on {len(train_paths)} training scenarios..."
@@ -444,14 +442,14 @@ class PolicyTuner:
             train_paths, val_paths, baseline.val_violation_agg
         )
 
-        ### Phase 5: Autoscaler parameter
+        ### Phase 5: Autoscaler parameter sweep
         self._print_banner("Phase 5: Autoscaler parameter sweep")
         sweeper = ParamSweep(
             evaluator=self._evaluator,
             config=self._config,
             base_overrides=base_overrides,
             run_dir=self._run_dir,
-            phase_name="autoscaler",
+            phase_name="autoscaler parameter sweep",
             slo_objective=self._slo_objective,
         )
         autoscaler_config = sweeper.sweep(
@@ -468,7 +466,7 @@ class PolicyTuner:
             config=self._config,
             base_overrides=base_overrides,
             run_dir=self._run_dir,
-            phase_name="routing",
+            phase_name="routing parameter sweep",
             slo_objective=self._slo_objective,
         )
 

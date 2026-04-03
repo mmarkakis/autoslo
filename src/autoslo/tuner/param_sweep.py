@@ -91,7 +91,7 @@ class ParamSweep:
     ) -> None:
         self._evaluator = evaluator
         self._config = config
-        self._base_overrides = base_overrides
+        self._base_overrides =  cfgu.apply_overrides({}, base_overrides)
         self._run_dir = run_dir
         self._phase_name = phase_name
         self._slo_objective = slo_objective
@@ -134,45 +134,43 @@ class ParamSweep:
         self._print_preflight(param_ranges, grid, len(train_paths))
 
         # ── Training sweep ──────────────────────────────────────────
+        console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results: list[dict[str, Any]] = []
-
-        for gp_idx, point in enumerate(grid):
-            overrides = dict(self._base_overrides)
-            overrides = cfgu.apply_overrides(overrides, point)
-
-            train_results = self._evaluator.evaluate(
-                workload_paths=train_paths,
+        train_specs : list[EvalSpec] = []
+        phase = self._phase_name
+        for idx in range(len(grid)):
+            point = grid[idx]
+            overrides = cfgu.apply_overrides(self._base_overrides, point)
+            grid_point = f"grid_point_{idx}"
+            spec = EvalSpec(
+                label=grid_point,
                 config_overrides=overrides,
-                phase=self._phase_name,
-                grid_point=gp_idx,
-                out_subdir=phase_dir / f"grid_point_{gp_idx:03d}" / "train",
-            )
-            train_agg = aggregate(train_results, metric)
+                grid_point=grid_point,
+                out_subdir=phase_dir / f"grid_point_{idx:03d}" / "train",
+             )
+            train_specs.append(spec)
+        all_train_results = self._evaluator.evaluate_batch(
+            workload_paths=train_paths,
+            specs=train_specs,
+            phase=phase,
+        )
+        for idx in range(len(grid)):
+            train_agg = aggregate(all_train_results[idx], metric)
             train_primary = primary_violation(
                 train_agg, self._slo_objective.slo_metric
             )
-
             grid_results.append(
                 {
-                    "grid_point": gp_idx,
-                    "params": point,
+                    "grid_point": idx,
+                    "params": grid[idx],
                     "train_violation_agg": train_primary,
                     "train_cost_agg": train_agg.cost,
                     "train_metrics": train_agg,
                     "is_pareto": False,
-                    "val_violation_agg": None,
+                    "val_primary_violation_agg": None,
                     "val_cost_agg": None,
                     "val_metrics": None,
                 }
-            )
-
-            slo_label = self._slo_objective.slo_metric
-            slo_thresh = self._slo_objective.slo_threshold
-            console.print(
-                f"  [dim]gp {gp_idx:>3d}/{len(grid)}[/]  "
-                f"{slo_label}={train_primary:.4f} (threshold={slo_thresh:.2f})  "
-                f"cost=${train_agg.cost:.4f}  "
-                f"params={point}"
             )
 
         # ── Pareto front ───────────────────────────────────────────
@@ -190,23 +188,23 @@ class ParamSweep:
         )
 
         # ── Validate Pareto-optimal points ─────────────────────────
-        specs: list[EvalSpec] = []
+        console.print(f"\n[bold cyan]Validation sweep:[/]")
+        val_specs: list[EvalSpec] = []
         phase = self._phase_name
         for idx in pareto_indices:
-            point = grid_results[idx]["params"]
-            overrides = dict(self._base_overrides)
-            overrides = cfgu.apply_overrides(overrides, point)
-            grid_point = f"{idx}_val"
+            point = grid[idx]
+            overrides = cfgu.apply_overrides(self._base_overrides, point)
+            grid_point = f"grid_point_{idx}"
             spec = EvalSpec(
-                label=f"{phase} gp={grid_point}",
+                label=grid_point,
                 config_overrides=overrides,
                 grid_point=grid_point,
                 out_subdir=phase_dir / f"grid_point_{idx:03d}" / "val",
             )
-            specs.append(spec)
+            val_specs.append(spec)
         all_val_results = self._evaluator.evaluate_batch(
             workload_paths=val_paths,
-            specs=specs,
+            specs=val_specs,
             phase=phase,
         )
         for i, idx in enumerate(pareto_indices):
@@ -214,13 +212,13 @@ class ParamSweep:
             val_primary = primary_violation(
                 val_agg, self._slo_objective.slo_metric
             )
-            grid_results[idx]["val_violation_agg"] = val_primary
+            grid_results[idx]["val_primary_violation_agg"] = val_primary
             grid_results[idx]["val_cost_agg"] = val_agg.cost
             grid_results[idx]["val_metrics"] = val_agg
 
         # ── Select best ───────────────────────────────────────────
         best_idx = self._select_best(grid_results, pareto_indices)
-        best_params = grid_results[best_idx]["params"]
+        best_params = grid[best_idx]
 
         # ── Rich summary table ─────────────────────────────────────
         self._print_pareto_table(grid_results, pareto_indices, best_idx)
@@ -244,33 +242,18 @@ class ParamSweep:
         Strategy: among validated Pareto points, apply lexicographic
         (feasibility-first, then cheapest) selection.
         """
-        # Among Pareto points that have been validated.
-        validated = [
-            idx
-            for idx in pareto_indices
-            if grid_results[idx]["val_violation_agg"] is not None
-        ]
-        if not validated:
-            # Fallback: pick the Pareto point with lowest training violation.
-            return min(
-                pareto_indices,
-                key=lambda i: (
-                    grid_results[i]["train_violation_agg"],
-                    grid_results[i]["train_cost_agg"],
-                ),
-            )
         candidates = [
             (
-                grid_results[i]["val_violation_agg"],
+                grid_results[i]["val_primary_violation_agg"],
                 grid_results[i]["val_cost_agg"],
             )
-            for i in validated
+            for i in pareto_indices
         ]
         best_local_idx = threshold_aware_select(
             candidates,
             self._slo_objective.slo_threshold,
         )
-        return validated[best_local_idx]
+        return pareto_indices[best_local_idx]
 
     # ------------------------------------------------------------------
     # Rich output
@@ -282,8 +265,6 @@ class ParamSweep:
         grid: list[dict[str, Any]],
         n_train: int,
     ) -> None:
-        console.rule(f"[bold cyan]{self._phase_name} sweep")
-
         table = Table(title="Parameter Ranges", show_lines=True)
         table.add_column("Parameter", justify="left")
         table.add_column("Values", justify="left")
@@ -327,8 +308,8 @@ class ParamSweep:
             is_best = idx == best_idx
             style = "bold green" if is_best else ""
             val_v = (
-                f"{r['val_violation_agg']:.4f}"
-                if r["val_violation_agg"] is not None
+                f"{r['val_primary_violation_agg']:.4f}"
+                if r["val_primary_violation_agg"] is not None
                 else "—"
             )
             val_c = (

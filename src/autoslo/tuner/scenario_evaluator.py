@@ -20,6 +20,7 @@ from rich.progress import (
     Progress,
     SpinnerColumn,
     TextColumn,
+    TimeElapsedColumn,
 )
 
 import autoslo.utils.config as cfgu
@@ -306,12 +307,15 @@ class ScenarioEvaluator:
                 )
                 futures[f] = wu["scenario_idx"]
 
+            # Add a timer column with projected remaining time.
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 MofNCompleteColumn(),
-                transient=True,
+                TimeElapsedColumn(),
+                transient=False,
+                refresh_per_second=1,
             ) as progress:
                 main_task = progress.add_task(
                     f"[cyan]{phase}", total=len(futures)
@@ -335,7 +339,7 @@ class ScenarioEvaluator:
                         if gidx not in sub_tasks:
                             si, li = idx_map[gidx]
                             sub_tasks[gidx] = progress.add_task(
-                                f"      scenario {li}",
+                                f"    {specs[si].label} - scenario {li}",
                                 total=total,
                             )
                         progress.update(
@@ -370,6 +374,10 @@ class ScenarioEvaluator:
                         if gidx in sub_tasks:
                             progress.remove_task(sub_tasks.pop(gidx))
                         progress_dict.pop(gidx, None)
+
+                        if len(results_by_spec[si]) == n_per_spec:
+                            # All scenarios for this spec are done — remove the spec task.
+                            progress.remove_task(spec_tasks[si])
 
         mgr.shutdown()
 
