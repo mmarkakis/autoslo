@@ -55,7 +55,7 @@ tuner_config:
     num_scenarios: 20
     train_fraction: 0.6
     initial_seed: 42
-    aggregation_metric: max
+    aggregation_metric: mean
   
   parallelism: auto
   holdout_evaluation: true

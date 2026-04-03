@@ -95,10 +95,10 @@ class PolicyTuner:
 
         # SLO objective — drives metric routing and threshold-aware selection.
         self._slo_metric = str(
-            cfgu.cfg_getd(self._config, "slo.config.slo_metric", "binary")
+            cfgu.cfg_getd(self._config, "slo_config.slo_metric", "binary")
         )
         self._slo_threshold = float(
-            cfgu.cfg_getd(self._config, "slo.config.slo_threshold", 1.0)
+            cfgu.cfg_getd(self._config, "slo_config.slo_threshold", 1.0)
         )
         self._slo_objective = SloObjective(
             slo_metric=self._slo_metric,
@@ -246,6 +246,9 @@ class PolicyTuner:
         console.rule("[bold cyan]Baseline evaluation")
 
         # Training set.
+        console.print(
+            f"Evaluating baseline on {len(train_paths)} training scenarios..."
+        )
         train_results = self._evaluator.evaluate(
             workload_paths=train_paths,
             config_overrides={},
@@ -256,6 +259,9 @@ class PolicyTuner:
         train_agg = aggregate(train_results, metric)
 
         # Validation set.
+        console.print(
+            f"Evaluating baseline on {len(val_paths)} validation scenarios..."
+        )
         val_results = self._evaluator.evaluate(
             workload_paths=val_paths,
             config_overrides={},
@@ -932,7 +938,10 @@ class PolicyTuner:
                 "Train",
                 fmt(tm.violation_rate, [r.violation_rate for r in tr]),
                 fmt(tm.violation_amount_s, [r.violation_amount_s for r in tr]),
-                fmt(tm.violation_relative_mean, [r.violation_relative_mean for r in tr]),
+                fmt(
+                    tm.violation_relative_mean,
+                    [r.violation_relative_mean for r in tr],
+                ),
                 fmt(tm.cost, [r.total_cost for r in tr]),
                 str(len(tr)),
                 agg_method,
@@ -955,7 +964,10 @@ class PolicyTuner:
                 "Val",
                 fmt(vm.violation_rate, [r.violation_rate for r in vr]),
                 fmt(vm.violation_amount_s, [r.violation_amount_s for r in vr]),
-                fmt(vm.violation_relative_mean, [r.violation_relative_mean for r in vr]),
+                fmt(
+                    vm.violation_relative_mean,
+                    [r.violation_relative_mean for r in vr],
+                ),
                 fmt(vm.cost, [r.total_cost for r in vr]),
                 str(len(vr)),
                 agg_method,

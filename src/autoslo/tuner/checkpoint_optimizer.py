@@ -268,8 +268,8 @@ class CheckpointOptimizer:
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
         # SLO objective for threshold-aware candidate selection.
-        slo_metric = self._cfgd("tuner_config.slo_metric", "binary")
-        slo_threshold = self._cfgd("tuner_config.slo_threshold", 1.0)
+        slo_metric = self._cfgd("slo_config.slo_metric", "binary")
+        slo_threshold = self._cfgd("slo_config.slo_threshold", 1.0)
         self._slo_objective = SloObjective(
             slo_metric=str(slo_metric),
             slo_threshold=float(slo_threshold),
@@ -415,7 +415,7 @@ class CheckpointOptimizer:
             # Threshold-aware early stopping.
             if is_feasible(val_primary, st):
                 console.print(
-                    f"[green]SLO satisfied ({sm} "
+                    f"[green]SLO satisfied on validation set ({sm} "
                     f"{val_primary:.4f} ≤ {st:.2f}) "
                     f"— stopping checkpoint placement."
                 )
@@ -430,7 +430,7 @@ class CheckpointOptimizer:
                 break
             if best_val_violation - val_primary < checkpoint_epsilon:
                 console.print(
-                    "[yellow]Improvement below epsilon — early stopping."
+                    "[yellow]Improvement below epsilon on validation set — early stopping."
                 )
                 break
 
