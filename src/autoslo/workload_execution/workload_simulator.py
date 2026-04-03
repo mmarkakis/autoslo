@@ -216,7 +216,7 @@ class WorkloadSimulator:
         path = Path(config_path)
         with open(path) as f:
             cfg = yaml.safe_load(f)
-        cfgu.apply_overrides(cfg, overrides)
+        cfg = cfgu.apply_overrides(cfg, overrides)
         return cls.from_config_dict(cfg)
 
     @classmethod

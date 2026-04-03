@@ -61,19 +61,18 @@ tuner_config:
     initial_seed: 42
     aggregation_metric: mean
   
-  
   checkpoint_phase:
     checkpoint_budget: 5
     checkpoint_epsilon: 0.01
     violation_threshold: 0.1
 
-  autoscaler_sweep_phase:
-    eta_crit: [0.05, 0.10, 0.20]
-    idle_periods_before_tear_down: [5, 10, 20]
-    capacity_poll_interval_s: [30.0, 60.0, 120.0]
-    min_cluster_lifetime_s: [1200.0, 3600.0]
-
-  routing_sweep_phase: {}
+  autoscaling_sweep_phase:
+    'autoscaling_config.eta_crit': [0.05, 0.20]
+    'autoscaling_config.idle_periods_before_tear_down': [5,  20]
+    'autoscaling_config.capacity_poll_interval_s': [30.0,  120.0]
+    'autoscaling_config.min_cluster_lifetime_s': [1200.0, 3600.0]
+  routing_sweep_phase:
+    {}
 
   static_baselines:
     - label: "4 RPU"

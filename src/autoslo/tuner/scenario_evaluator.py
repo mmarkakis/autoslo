@@ -404,8 +404,7 @@ class ScenarioEvaluator:
         units: list[dict[str, Any]] = []
 
         for idx, wl_path in enumerate(workload_paths):
-            cfg = copy.deepcopy(self._config)
-            apply_overrides(cfg, config_overrides)
+            cfg = apply_overrides(self._config, config_overrides)
 
             # Set per-scenario identifiers.
             run_id = f"{self._tuner_run_id}_{phase}_{grid_point}_{idx:03d}"

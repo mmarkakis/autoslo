@@ -67,6 +67,32 @@ class CheckpointOptimizerResult:
     additional_initial_rpus: tuple[int, ...]
     """RPU sizes extracted from time-zero checkpoints."""
 
+    @staticmethod
+    def from_checkpoints(
+        checkpoints: list[CapacityCheckpoint] | list[dict[str, Any]]
+    ) -> CheckpointOptimizerResult:
+        """Helper to convert a list of checkpoints into a CheckpointOptimizerResult."""
+
+        zero_rpus: list[int] = []
+        real_checkpoints: list[CapacityCheckpoint] = []
+        for cp_raw in checkpoints:
+            if isinstance(cp_raw, dict):
+                cp = CapacityCheckpoint(
+                    time_s=cp_raw["time_s"],
+                    min_rpus=tuple(cp_raw["min_rpus"]),
+                )
+            else:
+                cp = cp_raw
+
+            if cp.time_s == 0:
+                zero_rpus.extend(cp.min_rpus)
+            else:
+                real_checkpoints.append(cp)
+        return CheckpointOptimizerResult(
+            checkpoints=real_checkpoints,
+            additional_initial_rpus=tuple(zero_rpus),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -367,7 +393,7 @@ class CheckpointOptimizer:
         for round_idx in range(checkpoint_budget):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
 
-            # 1. Simulate training scenarios with current checkpoints. 
+            # 1. Simulate training scenarios with current checkpoints.
             # TODO: Later can copy these over.
             overrides = _checkpoints_to_config(current_checkpoints)
             train_results = self._evaluator.evaluate(
@@ -493,28 +519,9 @@ class CheckpointOptimizer:
                 val_agg,
             )
 
-        # Partition: absorb time-zero checkpoints into initial_rpus.
-        real_checkpoints = [
-            cp for cp in current_checkpoints if cp.time_s > 0
-        ]
-        zero_rpus: list[int] = []
-        for cp in current_checkpoints:
-            if cp.time_s == 0:
-                zero_rpus.extend(cp.min_rpus)
-
-        if zero_rpus:
-            console.print(
-                f"  [yellow]Absorbed {len(zero_rpus)} time-zero "
-                f"checkpoint(s) into additional_initial_rpus: "
-                f"{tuple(zero_rpus)}"
-            )
-
         # Write the final selected checkpoints.
         self._write_selected_checkpoints(current_checkpoints)
-        return CheckpointOptimizerResult(
-            checkpoints=real_checkpoints,
-            additional_initial_rpus=tuple(zero_rpus),
-        )
+        return CheckpointOptimizerResult.from_checkpoints(current_checkpoints)
 
     # ------------------------------------------------------------------
     # Rich output helpers

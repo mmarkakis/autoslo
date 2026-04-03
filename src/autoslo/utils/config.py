@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 from typing import Optional
 
@@ -25,20 +26,22 @@ from autoslo.workload_definition.query import SloMetric
 # ── pure utilities ────────────────────────────────────────────────────────
 
 
-def apply_overrides(cfg: dict, overrides: dict[str, object]) -> None:
-    """Apply dot-delimited key overrides to a nested config dict *in place*.
+def apply_overrides(cfg: dict, overrides: dict[str, object]) -> dict:
+    """Apply dot-delimited key overrides to a nested config dict *out of place*.
 
     Example::
 
         apply_overrides(cfg, {"slo_config.slo_s": 5.0})
         # equivalent to  cfg["slo_config"]["slo_s"] = 5.0
     """
+    internal_cfg = copy.deepcopy(cfg)
     for dotted_key, value in overrides.items():
         parts = dotted_key.split(".")
-        d = cfg
+        d = internal_cfg
         for part in parts[:-1]:
             d = d.setdefault(part, {})
         d[parts[-1]] = value
+    return internal_cfg
 
 
 def cfg_get(
@@ -61,7 +64,8 @@ def cfg_get(
         )
     return default
 
-def cfg_getd(cfg: dict, dotted_key:str, default=None):
+
+def cfg_getd(cfg: dict, dotted_key: str, default=None):
     """Read a dot-delimited key from a nested config dict."""
     parts = dotted_key.split(".")
     d = cfg
@@ -191,7 +195,9 @@ def build_autoscaling_policy(
             iconq_model=(
                 iconq_model
                 if iconq_model is not None
-                else (IconqModel.load(iconq_model_id) if iconq_model_id else None)
+                else (
+                    IconqModel.load(iconq_model_id) if iconq_model_id else None
+                )
             ),
             routing_policy=routing_policy,
             slo_threshold=slo_threshold,
@@ -259,6 +265,6 @@ def load_config_from_cli(description: str) -> tuple[dict, str]:
                 f"Invalid --set format: {item!r}  (expected KEY=VALUE)"
             )
         overrides[key] = yaml.safe_load(val)
-    apply_overrides(cfg, overrides)
+    cfg = apply_overrides(cfg, overrides)
 
     return cfg, args.config

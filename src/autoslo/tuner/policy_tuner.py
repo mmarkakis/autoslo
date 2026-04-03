@@ -7,7 +7,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import yaml
@@ -19,6 +19,7 @@ from autoslo.utils.yaml_helpers import dump_config
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.checkpoint_optimizer import (
     CheckpointOptimizer,
+    CheckpointOptimizerResult,
     _checkpoints_to_config,
     result_to_config,
 )
@@ -345,6 +346,51 @@ class PolicyTuner:
 
         return result
 
+    def find_checkpoints(
+        self,
+        train_paths: list[Path],
+        val_paths: list[Path],
+        baseline_val_violation: Optional[float],
+    ) -> dict[str, Any]:
+        """
+        Phase 4: Find promising checkpoints via optimization.
+        """
+        result_file_path = (
+            self._run_dir / "checkpoints" / "selected_checkpoints.yml"
+        )
+        result: CheckpointOptimizerResult
+        if result_file_path.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Checkpoint optimization results already exist at "
+                f"{result_file_path}; loading from disk."
+            )
+            with open(result_file_path) as f:
+                cps = yaml.safe_load(f) or {}
+            result = CheckpointOptimizerResult.from_checkpoints(
+                cps
+            )  # type: ignore
+        else:
+            optimizer = CheckpointOptimizer(
+                evaluator=self._evaluator,
+                config=self._config,
+                run_dir=self._run_dir,
+            )
+            assert (
+                baseline_val_violation is not None
+            ), "Baseline violation agg is None"
+            result = optimizer.optimize(
+                train_paths=train_paths,
+                val_paths=val_paths,
+                baseline_val_violation=baseline_val_violation,
+            )
+        existing_initial_rpus = tuple(
+            self._cfgd("managed_cluster_pool_config.initial_rpus", [8])
+        )
+        base_overrides = result_to_config(result, existing_initial_rpus)
+        return base_overrides
+
     def tune(self) -> Path:
         """Execute the full tuning pipeline end-to-end.
 
@@ -394,32 +440,15 @@ class PolicyTuner:
 
         ### Phase 4: Checkpoint optimization
         self._print_banner("Phase 4: Checkpoint optimization")
-        optimizer = CheckpointOptimizer(
-            evaluator=self._evaluator,
-            config=self._config,
-            run_dir=self._run_dir,
+        base_overrides = self.find_checkpoints(
+            train_paths, val_paths, baseline.val_violation_agg
         )
-        assert (
-            baseline.val_violation_agg is not None
-        ), "Baseline violation agg is None"
-        opt_result = optimizer.optimize(
-            train_paths=train_paths,
-            val_paths=val_paths,
-            baseline_val_violation=baseline.val_violation_agg,
-        )
-        existing_initial_rpus = tuple(
-            self._cfgd("managed_cluster_pool_config.initial_rpus", [8])
-        )
-        base_overrides = result_to_config(opt_result, existing_initial_rpus)
-        checkpoints = opt_result.checkpoints
-
-        return
 
         ### Phase 5: Autoscaler parameter
         self._print_banner("Phase 5: Autoscaler parameter sweep")
         sweeper = ParamSweep(
             evaluator=self._evaluator,
-            tuner_config=self._tuner_config,
+            config=self._config,
             base_overrides=base_overrides,
             run_dir=self._run_dir,
             phase_name="autoscaler",
@@ -428,18 +457,15 @@ class PolicyTuner:
         autoscaler_config = sweeper.sweep(
             train_paths=train_paths,
             val_paths=val_paths,
-            param_ranges=self._tuner_config.autoscaler_ranges,
-            config_section="autoscaling_config",
+            param_ranges=self._cfgd("tuner_config.autoscaling_sweep_phase", {}),
         )
 
         ### Phase 6: Routing parameter sweep
         self._print_banner("Phase 6: Routing parameter sweep")
-        for k, v in autoscaler_config.items():
-            base_overrides[f"autoscaling_config.{k}"] = v
-
+        base_overrides = apply_overrides(base_overrides, autoscaler_config)
         sweeper = ParamSweep(
             evaluator=self._evaluator,
-            tuner_config=self._tuner_config,
+            config=self._config,
             base_overrides=base_overrides,
             run_dir=self._run_dir,
             phase_name="routing",
@@ -449,10 +475,11 @@ class PolicyTuner:
         routing_config = sweeper.sweep(
             train_paths=train_paths,
             val_paths=val_paths,
-            param_ranges=self._tuner_config.routing_ranges,
-            config_section="routing_config",
+            param_ranges=self._cfgd("tuner_config.routing_sweep_phase", {}),
         )
 
+        return
+        checkpoints = ...
         self._print_banner("Final: Writing optimized config")
         final_path = self._write_final_config(
             checkpoints, autoscaler_config, routing_config
@@ -881,13 +908,11 @@ class PolicyTuner:
         # Apply checkpoint overrides.
         overrides = _checkpoints_to_config(checkpoints)
         # Apply autoscaler params.
-        for k, v in autoscaler_config.items():
-            overrides[f"autoscaling_config.{k}"] = v
+        overrides = apply_overrides(overrides, autoscaler_config)
         # Apply routing params.
-        for k, v in routing_config.items():
-            overrides[f"routing_config.{k}"] = v
+        overrides = apply_overrides(overrides, routing_config)
 
-        apply_overrides(cfg, overrides)
+        cfg = apply_overrides(cfg, overrides)
 
         # Record the rescale factor so that downstream tooling knows
         # the workload was time-compressed.

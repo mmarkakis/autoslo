@@ -80,7 +80,7 @@ def main() -> None:
                 f"Invalid --set format: {item!r}  (expected KEY=VALUE)"
             )
         overrides[key] = yaml.safe_load(val)
-    apply_overrides(cfg, overrides)
+    cfg = apply_overrides(cfg, overrides)
 
     # Load tuner config.
     tuner_config = load_tuner_config(args.tuner_config)

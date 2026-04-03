@@ -29,6 +29,7 @@ from autoslo.tuner.tuner_utils import (
     primary_violation,
     threshold_aware_select,
 )
+import autoslo.utils.config as cfgu
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -66,8 +67,9 @@ class ParamSweep:
     ----------
     evaluator :
         Shared scenario evaluator for running simulations.
-    tuner_config :
-        Tuner hyper-parameters (aggregation metric, etc.).
+    config :
+        Configuration for this tuner run, including the aggregation metric and
+        other hyperparameters.
     base_overrides :
         Config overrides that are applied to *every* grid point (e.g.
         optimised checkpoints from a previous phase).
@@ -81,20 +83,18 @@ class ParamSweep:
     def __init__(
         self,
         evaluator: ScenarioEvaluator,
-        tuner_config: TunerConfig,
+        config: dict[str, Any],
         base_overrides: dict[str, Any],
         run_dir: Path,
         phase_name: str,
-        slo_objective: SloObjective | None = None,
+        slo_objective: SloObjective,
     ) -> None:
         self._evaluator = evaluator
-        self._tuner_config = tuner_config
+        self._config = config
         self._base_overrides = base_overrides
         self._run_dir = run_dir
         self._phase_name = phase_name
-        self._slo_objective = slo_objective or SloObjective(
-            slo_metric="binary", slo_threshold=1.0,
-        )
+        self._slo_objective = slo_objective
 
     # ------------------------------------------------------------------
     # Public API
@@ -105,7 +105,6 @@ class ParamSweep:
         train_paths: list[Path],
         val_paths: list[Path],
         param_ranges: dict[str, list],
-        config_section: str,
     ) -> dict[str, Any]:
         """Run a full grid sweep and return the best parameter dict.
 
@@ -118,15 +117,16 @@ class ParamSweep:
         param_ranges :
             Parameter names → candidate values.  The Cartesian product
             forms the grid.
-        config_section :
-            Config section prefix for dot-key overrides (e.g.
-            ``"autoscaling_config"`` or ``"routing_config"``).
 
         Returns
         -------
         The best parameter dict (keys without the section prefix).
         """
-        metric = self._tuner_config.aggregation_metric
+        metric = cfgu.cfg_getd(
+            self._config,
+            "tuner_config.forecast_config.aggregation_metric",
+            "p90",
+        )
         grid = build_grid(param_ranges)
         phase_dir = self._run_dir / self._phase_name
 
@@ -138,8 +138,7 @@ class ParamSweep:
 
         for gp_idx, point in enumerate(grid):
             overrides = dict(self._base_overrides)
-            for k, v in point.items():
-                overrides[f"{config_section}.{k}"] = v
+            overrides = cfgu.apply_overrides(overrides, point)
 
             train_results = self._evaluator.evaluate(
                 workload_paths=train_paths,
@@ -149,7 +148,9 @@ class ParamSweep:
                 out_subdir=phase_dir / f"grid_point_{gp_idx:03d}" / "train",
             )
             train_agg = aggregate(train_results, metric)
-            train_primary = primary_violation(train_agg, self._slo_objective.slo_metric)
+            train_primary = primary_violation(
+                train_agg, self._slo_objective.slo_metric
+            )
 
             grid_results.append(
                 {
@@ -192,8 +193,7 @@ class ParamSweep:
         for idx in pareto_indices:
             point = grid_results[idx]["params"]
             overrides = dict(self._base_overrides)
-            for k, v in point.items():
-                overrides[f"{config_section}.{k}"] = v
+            overrides = cfgu.apply_overrides(overrides, point)
 
             val_results = self._evaluator.evaluate(
                 workload_paths=val_paths,
@@ -203,7 +203,9 @@ class ParamSweep:
                 out_subdir=phase_dir / f"grid_point_{idx:03d}" / "val",
             )
             val_agg = aggregate(val_results, metric)
-            val_primary = primary_violation(val_agg, self._slo_objective.slo_metric)
+            val_primary = primary_violation(
+                val_agg, self._slo_objective.slo_metric
+            )
             grid_results[idx]["val_violation_agg"] = val_primary
             grid_results[idx]["val_cost_agg"] = val_agg.cost
             grid_results[idx]["val_metrics"] = val_agg
@@ -250,11 +252,15 @@ class ParamSweep:
                 ),
             )
         candidates = [
-            (grid_results[i]["val_violation_agg"], grid_results[i]["val_cost_agg"])
+            (
+                grid_results[i]["val_violation_agg"],
+                grid_results[i]["val_cost_agg"],
+            )
             for i in validated
         ]
         best_local_idx = threshold_aware_select(
-            candidates, self._slo_objective.slo_threshold,
+            candidates,
+            self._slo_objective.slo_threshold,
         )
         return validated[best_local_idx]
 
@@ -298,9 +304,13 @@ class ParamSweep:
         slo_thresh = self._slo_objective.slo_threshold
         table.add_column("GP", justify="right")
         table.add_column("Params", justify="left")
-        table.add_column(f"Train {slo_label} (≤{slo_thresh:.2f})", justify="right")
+        table.add_column(
+            f"Train {slo_label} (≤{slo_thresh:.2f})", justify="right"
+        )
         table.add_column("Train Cost", justify="right")
-        table.add_column(f"Val {slo_label} (≤{slo_thresh:.2f})", justify="right")
+        table.add_column(
+            f"Val {slo_label} (≤{slo_thresh:.2f})", justify="right"
+        )
         table.add_column("Val Cost", justify="right")
         table.add_column("Best", justify="center")
 
@@ -344,17 +354,25 @@ class ParamSweep:
         # Serialize grid_results, converting AggregatedMetrics to dicts.
         serializable = []
         for r in grid_results:
-            entry = {k: v for k, v in r.items() if k not in ("train_metrics", "val_metrics")}
+            entry = {
+                k: v
+                for k, v in r.items()
+                if k not in ("train_metrics", "val_metrics")
+            }
             tm = r.get("train_metrics")
             if tm is not None:
                 entry["train_violation_rate"] = tm.violation_rate
                 entry["train_violation_amount_s"] = tm.violation_amount_s
-                entry["train_violation_relative_mean"] = tm.violation_relative_mean
+                entry["train_violation_relative_mean"] = (
+                    tm.violation_relative_mean
+                )
             vm = r.get("val_metrics")
             if vm is not None:
                 entry["val_violation_rate"] = vm.violation_rate
                 entry["val_violation_amount_s"] = vm.violation_amount_s
-                entry["val_violation_relative_mean"] = vm.violation_relative_mean
+                entry["val_violation_relative_mean"] = (
+                    vm.violation_relative_mean
+                )
             serializable.append(entry)
         output = {
             "best_grid_point": best_idx,
