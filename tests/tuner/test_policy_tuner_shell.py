@@ -6,7 +6,7 @@ import pytest
 
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.policy_tuner import PolicyTuner
-from autoslo.tuner.types import (
+from autoslo.tuner.tuner_utils import (
     AggregatedMetrics,
     PhaseResult,
     ScenarioResult,

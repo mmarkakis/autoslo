@@ -11,7 +11,7 @@ import pytest
 
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.param_sweep import ParamSweep, build_grid
-from autoslo.tuner.types import ScenarioResult, SloObjective
+from autoslo.tuner.tuner_utils import ScenarioResult, SloObjective
 
 
 # ---------------------------------------------------------------------------

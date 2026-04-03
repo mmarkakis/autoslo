@@ -22,7 +22,7 @@ from rich.progress import (
 )
 
 from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.types import ScenarioResult, extract_scenario_result
+from autoslo.tuner.tuner_utils import ScenarioResult, extract_scenario_result
 from autoslo.utils.paralellism import (
     _init_worker,
     deg_of_paralellism,

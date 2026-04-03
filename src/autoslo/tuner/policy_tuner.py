@@ -29,7 +29,7 @@ from autoslo.tuner.forecast_policy import (
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
-from autoslo.tuner.types import (
+from autoslo.tuner.tuner_utils import (
     AggregatedMetrics,
     PhaseResult,
     ScenarioResult,

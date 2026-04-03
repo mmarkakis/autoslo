@@ -24,8 +24,8 @@ from rich.table import Table
 from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.types import (
+from autoslo.tuner.scenario_evaluator import ScenarioEvaluator, EvalSpec
+from autoslo.tuner.tuner_utils import (
     AggregatedMetrics,
     ScenarioResult,
     SloObjective,

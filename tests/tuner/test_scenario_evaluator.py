@@ -11,7 +11,7 @@ import yaml
 
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator, _run_scenario
-from autoslo.tuner.types import ScenarioResult, extract_scenario_result
+from autoslo.tuner.tuner_utils import ScenarioResult, extract_scenario_result
 from autoslo.utils.structured_log import StructuredLogHandler
 
 

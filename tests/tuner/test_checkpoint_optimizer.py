@@ -22,7 +22,7 @@ from autoslo.tuner.checkpoint_optimizer import (
     find_violation_windows,
 )
 from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.types import ScenarioResult
+from autoslo.tuner.tuner_utils import ScenarioResult
 
 
 # ---------------------------------------------------------------------------

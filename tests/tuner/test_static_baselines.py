@@ -15,7 +15,7 @@ from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.config import TunerConfig, load_tuner_config
 from autoslo.tuner.policy_tuner import PolicyTuner
 from autoslo.tuner.scenario_evaluator import EvalSpec
-from autoslo.tuner.types import ScenarioResult
+from autoslo.tuner.tuner_utils import ScenarioResult
 
 
 # ---------------------------------------------------------------------------

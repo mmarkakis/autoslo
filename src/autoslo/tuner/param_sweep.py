@@ -20,7 +20,7 @@ from rich.table import Table
 
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.types import (
+from autoslo.tuner.tuner_utils import (
     AggregatedMetrics,
     PhaseResult,
     SloObjective,
