@@ -225,8 +225,14 @@ class ManagedClusterPool:
                     f"Cannot mark {cluster_name!r} as ready — "
                     f"state is {entry.state.value}, expected 'pending'."
                 )
-            entry.state = _ClusterState.READY
+
+        # Build connection pool if possible.
+        if entry.cluster.conn_info is not None and entry.conn_pool is None:
+            entry.conn_pool = self._make_conn_pool(entry.cluster.conn_info)
+
+        with self._lock:
             entry.ready_at_s = ready_time_s
+            entry.state = _ClusterState.READY
             self._lifecycle_log.append(
                 {
                     "timestamp": ready_time_s,
@@ -235,9 +241,6 @@ class ManagedClusterPool:
                     "rpu": entry.cluster.rpu,
                 }
             )
-            # Build connection pool if possible.
-            if entry.cluster.conn_info is not None and entry.conn_pool is None:
-                entry.conn_pool = self._make_conn_pool(entry.cluster.conn_info)
 
     def request_tear_down(
         self,
@@ -645,7 +648,7 @@ class ManagedClusterPool:
                 return pool.getconn()
             except psycopg2.OperationalError as exc:
                 last_exc = exc
-                delay = self._GETCONN_BASE_DELAY_S * (2 ** attempt)
+                delay = self._GETCONN_BASE_DELAY_S * (2**attempt)
                 logger.warning(
                     "getconn failed for %s (attempt %d/%d, retrying "
                     "in %.2fs): %s",

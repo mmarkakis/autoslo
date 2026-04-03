@@ -157,6 +157,9 @@ class WorkloadRunner:
         )
         self._capacity_poll_interval_s = capacity_poll_interval_s
 
+        # Futures for in-flight background spin-ups (see _on_live_spin_up).
+        self._pending_spin_ups: list[asyncio.Future] = []
+
     # ------------------------------------------------------------------
     # Async checkpoint reconciliation (live runner)
     # ------------------------------------------------------------------
@@ -338,11 +341,22 @@ class WorkloadRunner:
     # ------------------------------------------------------------------
 
     def _on_live_spin_up(self, reason: str, rpu: int) -> None:
-        """Autoscaler callback: spin up a new cluster."""
+        """Autoscaler callback: spin up a new cluster (non-blocking).
+
+        Offloads the blocking provisioning to a background thread so
+        that the asyncio event loop remains responsive for query
+        scheduling.  The autoscaler is notified via
+        :meth:`notify_cluster_ready` once the cluster is available.
+        """
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(
+            None, self._do_spin_up, reason, rpu
+        )
+        self._pending_spin_ups.append(future)
+
+    def _do_spin_up(self, reason: str, rpu: int) -> None:
+        """Blocking spin-up executed in a thread-pool worker."""
         name = self.pool.request_spin_up(rpu, self._ts())
-        # The live provisioner blocks until the cluster is AVAILABLE,
-        # so it is already READY at this point.  Notify the autoscaler
-        # to decrement pending_count and record the ready time.
         ready_ts = self._ts()
         self.autoscaler.notify_cluster_ready(name, rpu, ready_ts)
         logging.info(
@@ -876,6 +890,16 @@ class WorkloadRunner:
             for r in results:
                 if isinstance(r, Exception):
                     logging.error("Query task failed: %s", r)
+
+            # Wait for any in-flight background spin-ups to finish
+            # before tearing down clusters.
+            if self._pending_spin_ups:
+                spin_up_results = await asyncio.gather(
+                    *self._pending_spin_ups, return_exceptions=True
+                )
+                for r in spin_up_results:
+                    if isinstance(r, Exception):
+                        logging.error("Background spin-up failed: %s", r)
         finally:
             # Stop the periodic tick.
             tick_task.cancel()
