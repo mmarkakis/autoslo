@@ -19,7 +19,9 @@ from autoslo.utils.yaml_helpers import dump_config
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.checkpoint_optimizer import (
     CheckpointOptimizer,
+    CheckpointOptimizerResult,
     _checkpoints_to_config,
+    _result_to_config,
 )
 from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.forecast_policy import ForecastPolicy
@@ -350,12 +352,16 @@ class PolicyTuner:
         assert (
             baseline.val_violation_agg is not None
         ), "Baseline violation agg is None"
-        checkpoints = optimizer.optimize(
+        opt_result = optimizer.optimize(
             train_paths=train_paths,
             val_paths=val_paths,
             baseline_val_violation=baseline.val_violation_agg,
         )
-        base_overrides = _checkpoints_to_config(checkpoints)
+        existing_initial_rpus = tuple(
+            self._cfgd("managed_cluster_pool_config.initial_rpus", [8])
+        )
+        base_overrides = _result_to_config(opt_result, existing_initial_rpus)
+        checkpoints = opt_result.checkpoints
 
         return
 

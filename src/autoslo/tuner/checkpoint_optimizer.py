@@ -46,6 +46,29 @@ console = Console()
 
 
 # ---------------------------------------------------------------------------
+# Result dataclass
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CheckpointOptimizerResult:
+    """Output of :meth:`CheckpointOptimizer.optimize`.
+
+    Checkpoints whose ``time_s`` was clamped to zero are absorbed into
+    :attr:`additional_initial_rpus` so that the caller can merge them
+    into ``managed_cluster_pool_config.initial_rpus`` (instant start)
+    rather than treating them as timed checkpoints subject to spin-up
+    delay.
+    """
+
+    checkpoints: list[CapacityCheckpoint]
+    """Checkpoints with ``time_s > 0``."""
+
+    additional_initial_rpus: tuple[int, ...]
+    """RPU sizes extracted from time-zero checkpoints."""
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -60,6 +83,25 @@ def _checkpoints_to_config(
             for cp in checkpoints
         ]
     }
+
+
+def _result_to_config(
+    result: CheckpointOptimizerResult,
+    existing_initial_rpus: tuple[int, ...],
+) -> dict[str, Any]:
+    """Serialise a :class:`CheckpointOptimizerResult` into config overrides.
+
+    Merges :attr:`~CheckpointOptimizerResult.additional_initial_rpus`
+    with *existing_initial_rpus* and emits both the checkpoint list and
+    the updated ``initial_rpus``.
+    """
+    overrides = _checkpoints_to_config(result.checkpoints)
+    merged_rpus = list(existing_initial_rpus) + list(
+        result.additional_initial_rpus
+    )
+    if result.additional_initial_rpus:
+        overrides["managed_cluster_pool_config.initial_rpus"] = merged_rpus
+    return overrides
 
 
 def find_next_checkpoint_time(
@@ -196,7 +238,7 @@ def find_next_checkpoint_time_df(
         # Don't make decisions based on zero-length intervals.
         next_event_time = events[i + 1][0]
         if next_event_time == timestamp:
-            continue 
+            continue
 
         if mean_relative_violation_across_scenarios > threshold:
             min_seen = np.inf
@@ -213,8 +255,6 @@ def find_next_checkpoint_time_df(
                 f"returning checkpoint time {spinup_time:.0f}s"
             )
             return max(0, min_seen - spin_up_delay_s)
-        
-    # TODO: Handle checkpoints at zero by adding to initial clusters. 
 
     console.print(
         f" [green]No interval with mean relative violation above {threshold} "
@@ -288,7 +328,7 @@ class CheckpointOptimizer:
         train_paths: list[Path],
         val_paths: list[Path],
         baseline_val_violation: float,
-    ) -> list[CapacityCheckpoint]:
+    ) -> CheckpointOptimizerResult:
         """Run the greedy checkpoint placement loop.
 
         Parameters
@@ -303,7 +343,9 @@ class CheckpointOptimizer:
 
         Returns
         -------
-        The selected list of capacity checkpoints.
+        A :class:`CheckpointOptimizerResult` containing the selected
+        checkpoints (``time_s > 0``) and any RPU sizes that should be
+        added to ``initial_rpus`` (from time-zero checkpoints).
         """
         metric = self._cfgd(
             "tuner_config.forecast_config.aggregation_metric", "p90"
@@ -450,9 +492,28 @@ class CheckpointOptimizer:
                 val_agg,
             )
 
+        # Partition: absorb time-zero checkpoints into initial_rpus.
+        real_checkpoints = [
+            cp for cp in current_checkpoints if cp.time_s > 0
+        ]
+        zero_rpus: list[int] = []
+        for cp in current_checkpoints:
+            if cp.time_s == 0:
+                zero_rpus.extend(cp.min_rpus)
+
+        if zero_rpus:
+            console.print(
+                f"  [yellow]Absorbed {len(zero_rpus)} time-zero "
+                f"checkpoint(s) into additional_initial_rpus: "
+                f"{tuple(zero_rpus)}"
+            )
+
         # Write the final selected checkpoints.
         self._write_selected_checkpoints(current_checkpoints)
-        return current_checkpoints
+        return CheckpointOptimizerResult(
+            checkpoints=real_checkpoints,
+            additional_initial_rpus=tuple(zero_rpus),
+        )
 
     # ------------------------------------------------------------------
     # Rich output helpers
