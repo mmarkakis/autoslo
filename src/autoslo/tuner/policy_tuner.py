@@ -250,7 +250,7 @@ class PolicyTuner:
             workload_paths=train_paths,
             config_overrides={},
             phase="baseline",
-            grid_point="base",
+            grid_point="base-train",
             out_subdir=self._run_dir / "baseline" / "train",
         )
         train_agg = aggregate(train_results, metric)
@@ -260,7 +260,7 @@ class PolicyTuner:
             workload_paths=val_paths,
             config_overrides={},
             phase="baseline",
-            grid_point="base",
+            grid_point="base-val",
             out_subdir=self._run_dir / "baseline" / "val",
         )
         val_agg = aggregate(val_results, metric)

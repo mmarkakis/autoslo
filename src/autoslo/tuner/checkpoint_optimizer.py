@@ -87,10 +87,8 @@ def find_next_checkpoint_time(
     5. Return this time minus *spin_up_delay_s*.
 
     """
-
-    # 1. Create events per scenario and aggregate.
-    events = []
-    for scenario_id, result in enumerate(results):
+    completion_structured_logs = []
+    for result in results:
         log_path = result.out_dir / "structured_log.parquet"
         if not log_path.exists():
             raise FileNotFoundError(f"Missing log file: {log_path}")
@@ -109,6 +107,30 @@ def find_next_checkpoint_time(
         completions = log[log["event_type"] == "completion"].copy()
         if completions.empty:
             raise ValueError(f"No completion events in log: {log_path}")
+        completion_structured_logs.append(completions)
+
+    return find_next_checkpoint_time_df(
+        completion_structured_logs=completion_structured_logs,
+        slo_resolver=slo_resolver,
+        threshold=threshold,
+        spin_up_delay_s=spin_up_delay_s,
+    )
+
+
+def find_next_checkpoint_time_df(
+    completion_structured_logs: list[pd.DataFrame],
+    slo_resolver: SloResolver,
+    threshold: float,
+    spin_up_delay_s: float,
+) -> Optional[float]:
+    """
+    Internal helper for find_next_checkpoint_time that takes pre-loaded
+    structured logs, for easier testing.
+    """
+
+    # 1. Create events per scenario and aggregate.
+    events = []
+    for scenario_id, completions in enumerate(completion_structured_logs):
 
         completions["latency_s"] = completions["latency_s"].fillna(0.0)
         completions["start_time"] = (
@@ -150,7 +172,8 @@ def find_next_checkpoint_time(
         dict
     )  # scenario_id -> query_id -> (start_time, violation)
     mean_relative_violation_per_scenario: dict[int, float] = {
-        scenario_id: 0.0 for scenario_id in range(len(results))
+        scenario_id: 0.0
+        for scenario_id in range(len(completion_structured_logs))
     }
     for i in range(len(events) - 1):
         timestamp, event_type, violation, scenario_id, query_id = events[i]
@@ -158,12 +181,23 @@ def find_next_checkpoint_time(
             active_queries[scenario_id][query_id] = (timestamp, violation)
         else:
             active_queries[scenario_id].pop(query_id, None)
-        mean_relative_violation_per_scenario[scenario_id] = float(
-            np.mean([tup[1] for tup in active_queries[scenario_id].values()])
-        )
+
+        scenario_active_queries = active_queries[scenario_id].values()
+        if len(scenario_active_queries) > 0:
+            mean_relative_violation_per_scenario[scenario_id] = float(
+                np.mean([tup[1] for tup in scenario_active_queries])
+            )
+        else:
+            mean_relative_violation_per_scenario[scenario_id] = 0.0
         mean_relative_violation_across_scenarios = float(
             np.mean(list(mean_relative_violation_per_scenario.values()))
         )
+
+        # Don't make decisions based on zero-length intervals.
+        next_event_time = events[i + 1][0]
+        if next_event_time == timestamp:
+            continue 
+
         if mean_relative_violation_across_scenarios > threshold:
             min_seen = np.inf
             for scenario_queries in active_queries.values():
@@ -178,7 +212,9 @@ def find_next_checkpoint_time(
                 f"(threshold={threshold:.2f})  "
                 f"returning checkpoint time {spinup_time:.0f}s"
             )
-            return min_seen - spin_up_delay_s
+            return max(0, min_seen - spin_up_delay_s)
+        
+    # TODO: Handle checkpoints at zero by adding to initial clusters. 
 
     console.print(
         f" [green]No interval with mean relative violation above {threshold} "
