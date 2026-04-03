@@ -144,7 +144,7 @@ class SloResolver:
 
 
 # -----------------------------------------------------------------------
-# Free SLO helper functions (previously methods on Query)
+# Free SLO helper functions 
 # -----------------------------------------------------------------------
 
 

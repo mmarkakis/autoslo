@@ -22,6 +22,7 @@ class Cluster:
     ONE_HOUR_S: ClassVar[int] = 3600
     UP_TO_32_RPU_SIZES: ClassVar[list[int]] = [4, 8, 16, 32]
     ALL_ALLOWED_RPU_SIZES: ClassVar[list[int]] = UP_TO_32_RPU_SIZES
+    DEFAULT_SPIN_UP_DELAY_S: ClassVar[int] = 300
 
     _new_counter: ClassVar[itertools.count] = itertools.count()
 

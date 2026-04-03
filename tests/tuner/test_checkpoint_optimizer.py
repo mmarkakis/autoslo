@@ -744,7 +744,7 @@ class TestPolicyTunerBaseline:
     def test_evaluate_baseline_returns_phase_result(self, tmp_path: Path):
         """evaluate_baseline collects results and writes summary.yml."""
         from autoslo.tuner.policy_tuner import PolicyTuner
-        from autoslo.tuner.types import PhaseResult
+        from autoslo.tuner.tuner_utils import PhaseResult
 
         tuner_config = TunerConfig(
             aggregation_metric="mean",

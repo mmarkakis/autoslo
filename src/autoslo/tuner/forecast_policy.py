@@ -167,7 +167,7 @@ class ForecastPolicy(ClassWithFactory):
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = []
         for i, workload in enumerate(workloads):
-            path = workload.save(out_dir=out_dir)
+            path = workload.save(out_dir=out_dir, overwrite=True)
             paths.append(path)
         return workloads, paths
 

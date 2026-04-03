@@ -61,6 +61,16 @@ def cfg_get(
         )
     return default
 
+def cfg_getd(cfg: dict, dotted_key:str, default=None):
+    """Read a dot-delimited key from a nested config dict."""
+    parts = dotted_key.split(".")
+    d = cfg
+    for part in parts:
+        if not isinstance(d, dict) or part not in d:
+            return default
+        d = d[part]
+    return d
+
 
 # ── policy builders ──────────────────────────────────────────────────────
 
