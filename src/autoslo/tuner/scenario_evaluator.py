@@ -33,6 +33,7 @@ from autoslo.utils.paralellism import (
 from autoslo.utils.structured_log import StructuredLogHandler, emit_structured
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_simulator import WorkloadSimulator
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,7 @@ def _run_scenario(
     workload_name: str,
     schema_name: str,
     scenario_idx: int,
-    slo_s: float,
-    slo_dict: dict[str, float] | None,
+    slo_resolver: SloResolver,
     progress_dict: dict[int, tuple[int, int]] | None = None,
     rescale_factor: float | None = None,
 ) -> ScenarioResult:
@@ -115,8 +115,7 @@ def _run_scenario(
     return extract_scenario_result(
         out_dir=sim._out_dir,
         scenario_idx=scenario_idx,
-        slo_s=slo_s,
-        slo_dict=slo_dict,
+        slo_resolver=slo_resolver,
     )
 
 
@@ -243,21 +242,12 @@ class ScenarioEvaluator:
 
         # Pre-extract SLO info (shared across all specs).
         slo_s: float = float(self._cfgd("slo_config.slo_s", 30.0))
-        slo_dict: dict[str, float] | None = None
         slo_dict_filename: str | None = self._cfgd(
             "slo_config.slo_dict_filename", None
         )
-        if slo_dict_filename:
-            try:
-                from autoslo.blueprint_selection.slo_resolver import SloResolver
-
-                resolver = SloResolver(slo_s, slo_dict_filename)
-                slo_dict = resolver.slo_dict
-            except Exception:
-                logger.warning(
-                    "Could not pre-load SLO dict %r; using default SLO.",
-                    slo_dict_filename,
-                )
+        slo_resolver = SloResolver(
+            default_slo_s=slo_s, slo_dict_filename=slo_dict_filename
+        )
 
         schema_name = self._cfgd("basic_config.schema_name", "default")
 
@@ -310,8 +300,7 @@ class ScenarioEvaluator:
                     workload_name=wu["workload_name"],
                     schema_name=wu["schema_name"],
                     scenario_idx=wu["scenario_idx"],
-                    slo_s=slo_s,
-                    slo_dict=slo_dict,
+                    slo_resolver=slo_resolver,
                     progress_dict=progress_dict,
                     rescale_factor=rescale_factor,
                 )

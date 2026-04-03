@@ -30,6 +30,23 @@ class ScenarioResult:
     num_queries: int
     out_dir: Path
 
+    @staticmethod
+    def load_batch(
+        batch_dir: str | Path, slo_resolver: SloResolver
+    ) -> list[ScenarioResult]:
+        """Load all scenario results from the given directory."""
+        batch_dir = Path(batch_dir)
+        results: list[ScenarioResult] = []
+        for scenario_subdir in batch_dir.iterdir():
+            if scenario_subdir.is_dir():
+                result = extract_scenario_result(
+                    out_dir=scenario_subdir,
+                    scenario_idx=int(scenario_subdir.name.split("_")[-1]),
+                    slo_resolver=slo_resolver,
+                )
+                results.append(result)
+        return results
+
 
 # ---------------------------------------------------------------------------
 # Aggregated metrics across scenarios
@@ -232,8 +249,7 @@ def compute_pareto_front(
 def extract_scenario_result(
     out_dir: str | Path,
     scenario_idx: int,
-    slo_s: float,
-    slo_dict: dict[str, float] | None = None,
+    slo_resolver: SloResolver,
 ) -> ScenarioResult:
     """Build a :class:`ScenarioResult` from files written by ``simulate_one``.
 
@@ -265,10 +281,11 @@ def extract_scenario_result(
         completions = log[log["event_type"] == "completion"].copy()
         num_queries = len(completions)
         if num_queries > 0:
-            resolver = SloResolver.from_dict(slo_s, slo_dict or {})
             durations = completions["latency_s"].fillna(0.0)
             per_row_slo = (
-                completions["query_text_id"].map(resolver.resolve).fillna(slo_s)
+                completions["query_text_id"]
+                .map(slo_resolver.resolve)
+                .fillna(0.0)
             )
             violations = durations > per_row_slo
             violation_rate = float(violations.mean())

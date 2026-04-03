@@ -44,6 +44,7 @@ from autoslo.utils.structured_log import (
     setup_structured_logging,
 )
 from autoslo.workload_definition.workload import Workload
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -107,6 +108,15 @@ class PolicyTuner:
             slo_threshold=self._slo_threshold,
         )
 
+        # SLO Resolver - shared by all phases for consistent SLO evaluation.
+        slo_s = float(self._cfgd("slo_config.slo_s", 30.0))
+        slo_dict_filename: str | None = self._cfgd(
+            "slo_config.slo_dict_filename", None
+        )
+        self._slo_resolver = SloResolver(
+            default_slo_s=slo_s, slo_dict_filename=slo_dict_filename
+        )
+
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
@@ -134,7 +144,7 @@ class PolicyTuner:
 
         # Load from disk if it already exists, to save time on re-runs.
         save_dir = self._run_dir / "reservoir"
-        if save_dir.exists():
+        if save_dir.exists() and not self._cfgd("tuner_config.force", False):
             console.print(
                 f"  Reservoir already exists at {save_dir}; loading from disk."
             )
@@ -207,9 +217,23 @@ class PolicyTuner:
             )
         ).date()
 
+        if (
+            train_dir.exists()
+            and val_dir.exists()
+            and not self._cfgd("tuner_config.force", False)
+        ):
+            train_paths = sorted(train_dir.glob("*.parquet"))
+            val_paths = sorted(val_dir.glob("*.parquet"))
+            console.print(
+                f"  Sampled workloads already exist; found {len(train_paths)} "
+                f"train and {len(val_paths)} val workloads. Loading from disk."
+            )
+            return train_paths, val_paths
+
         initial_seed = self._cfgd(
             "tuner_config.forecast_config.initial_seed", 42
         )
+
         _, train_paths = self._forecast_policy.forecast_n_scenarios(
             target_date=target_date,
             n_scenarios=n_train,
@@ -233,7 +257,9 @@ class PolicyTuner:
         return train_paths, val_paths
 
     def evaluate_baseline(
-        self, train_paths: list[Path], val_paths: list[Path]
+        self,
+        train_paths: list[Path],
+        val_paths: list[Path],
     ) -> PhaseResult:
         """Phase 3: Evaluate the initial config as a baseline.
 
@@ -251,26 +277,52 @@ class PolicyTuner:
         console.print(
             f"Evaluating baseline on {len(train_paths)} training scenarios..."
         )
-        train_results = self._evaluator.evaluate(
-            workload_paths=train_paths,
-            config_overrides={},
-            phase="baseline",
-            grid_point="base-train",
-            out_subdir=self._run_dir / "baseline" / "train",
-        )
+        train_out_subdir = self._run_dir / "baseline" / "train"
+        train_results: list[ScenarioResult]
+        if train_out_subdir.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Baseline train results already exist at {train_out_subdir}; "
+                "loading from disk."
+            )
+            train_results = ScenarioResult.load_batch(
+                train_out_subdir, self._slo_resolver
+            )
+        else:
+            train_results = self._evaluator.evaluate(
+                workload_paths=train_paths,
+                config_overrides={},
+                phase="baseline",
+                grid_point="base-train",
+                out_subdir=train_out_subdir,
+            )
         train_agg = aggregate(train_results, metric)
 
         # Validation set.
         console.print(
             f"Evaluating baseline on {len(val_paths)} validation scenarios..."
         )
-        val_results = self._evaluator.evaluate(
-            workload_paths=val_paths,
-            config_overrides={},
-            phase="baseline",
-            grid_point="base-val",
-            out_subdir=self._run_dir / "baseline" / "val",
-        )
+        val_out_subdir = self._run_dir / "baseline" / "val"
+        val_results: list[ScenarioResult]
+        if val_out_subdir.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Baseline val results already exist at {val_out_subdir}; "
+                "loading from disk."
+            )
+            val_results = ScenarioResult.load_batch(
+                val_out_subdir, self._slo_resolver
+            )
+        else:
+            val_results = self._evaluator.evaluate(
+                workload_paths=val_paths,
+                config_overrides={},
+                phase="baseline",
+                grid_point="base-val",
+                out_subdir=val_out_subdir,
+            )
         val_agg = aggregate(val_results, metric)
 
         result = PhaseResult(

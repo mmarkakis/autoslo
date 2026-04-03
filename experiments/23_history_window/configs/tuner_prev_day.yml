@@ -47,6 +47,10 @@ output_config:
 
 
 tuner_config:
+  force: false
+  parallelism: auto
+  holdout_evaluation: true
+
   forecast_config:
     history_abs_start_time_start: "2024-05-26T00:00:00"
     history_abs_start_time_end: "2024-05-27T00:00:00"
@@ -57,9 +61,7 @@ tuner_config:
     initial_seed: 42
     aggregation_metric: mean
   
-  parallelism: auto
-  holdout_evaluation: true
-
+  
   checkpoint_phase:
     checkpoint_budget: 5
     checkpoint_epsilon: 0.01
