@@ -46,74 +46,13 @@ console = Console()
 
 
 # ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class CheckpointOptimizerResult:
-    """Output of :meth:`CheckpointOptimizer.optimize`.
-
-    Checkpoints whose ``time_s`` was clamped to zero are absorbed into
-    :attr:`additional_initial_rpus` so that the caller can merge them
-    into ``managed_cluster_pool_config.initial_rpus`` (instant start)
-    rather than treating them as timed checkpoints subject to spin-up
-    delay.
-    """
-
-    checkpoints: list[CapacityCheckpoint]
-    """Checkpoints with ``time_s > 0``."""
-
-    additional_initial_rpus: tuple[int, ...]
-    """RPU sizes extracted from time-zero checkpoints."""
-
-    @staticmethod
-    def from_checkpoints(
-        checkpoints: list[CapacityCheckpoint] | list[dict[str, Any]]
-    ) -> CheckpointOptimizerResult:
-        """Helper to convert a list of checkpoints into a CheckpointOptimizerResult."""
-
-        zero_rpus: list[int] = []
-        real_checkpoints: list[CapacityCheckpoint] = []
-        for cp_raw in checkpoints:
-            if isinstance(cp_raw, dict):
-                cp = CapacityCheckpoint(
-                    time_s=cp_raw["time_s"],
-                    min_rpus=tuple(cp_raw["min_rpus"]),
-                )
-            else:
-                cp = cp_raw
-
-            if cp.time_s == 0:
-                zero_rpus.extend(cp.min_rpus)
-            else:
-                real_checkpoints.append(cp)
-        return CheckpointOptimizerResult(
-            checkpoints=real_checkpoints,
-            additional_initial_rpus=tuple(zero_rpus),
-        )
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _checkpoints_to_config(
+def checkpoints_to_overrides(
+    initial_config: dict[str, Any],
     checkpoints: list[CapacityCheckpoint],
-) -> dict[str, Any]:
-    """Serialise checkpoints into a config-override dict."""
-    return {
-        "autoscaling_config.capacity_checkpoints": [
-            {"time_s": cp.time_s, "min_rpus": list(cp.min_rpus)}
-            for cp in checkpoints
-        ]
-    }
-
-
-def result_to_config(
-    result: CheckpointOptimizerResult,
-    existing_initial_rpus: tuple[int, ...],
 ) -> dict[str, Any]:
     """Serialise a :class:`CheckpointOptimizerResult` into config overrides.
 
@@ -121,12 +60,32 @@ def result_to_config(
     with *existing_initial_rpus* and emits both the checkpoint list and
     the updated ``initial_rpus``.
     """
-    overrides = _checkpoints_to_config(result.checkpoints)
-    merged_rpus = list(existing_initial_rpus) + list(
-        result.additional_initial_rpus
-    )
-    if result.additional_initial_rpus:
-        overrides["managed_cluster_pool_config.initial_rpus"] = merged_rpus
+
+    additional_initial_rpus: list[int] = []
+    nonzero_checkpoints: list[dict[str, Any]] = []
+
+    for cp in checkpoints:
+        if cp.time_s == 0:
+            additional_initial_rpus.extend(cp.min_rpus)
+        else:
+            nonzero_checkpoints.append(
+                {"time_s": cp.time_s, "min_rpus": list(cp.min_rpus)}
+            )
+
+    overrides: dict[str, Any] = {}
+    if additional_initial_rpus:
+        dot_delimited_key = "managed_cluster_pool_config.initial_rpus"
+        initial_rpus = cfgu.cfg_getd(initial_config, dot_delimited_key, [])
+        overrides = cfgu.apply_overrides(
+            overrides,
+            {dot_delimited_key: sorted(initial_rpus + additional_initial_rpus)},
+        )
+
+    if nonzero_checkpoints:
+        dot_delimited_key = "autoscaling_config.capacity_checkpoints"
+        overrides = cfgu.apply_overrides(
+            overrides, {dot_delimited_key: nonzero_checkpoints}
+        )
     return overrides
 
 
@@ -354,7 +313,7 @@ class CheckpointOptimizer:
         train_paths: list[Path],
         val_paths: list[Path],
         baseline_val_violation: float,
-    ) -> CheckpointOptimizerResult:
+    ) -> dict[str, Any]:
         """Run the greedy checkpoint placement loop.
 
         Parameters
@@ -369,9 +328,8 @@ class CheckpointOptimizer:
 
         Returns
         -------
-        A :class:`CheckpointOptimizerResult` containing the selected
-        checkpoints (``time_s > 0``) and any RPU sizes that should be
-        added to ``initial_rpus`` (from time-zero checkpoints).
+        A dictionary of the overrides to be applied to the initial config for
+        the best checkpoint configuration found.
         """
         metric = self._cfgd(
             "tuner_config.forecast_config.aggregation_metric", "p90"
@@ -395,7 +353,9 @@ class CheckpointOptimizer:
 
             # 1. Simulate training scenarios with current checkpoints.
             # TODO: Later can copy these over.
-            overrides = _checkpoints_to_config(current_checkpoints)
+            overrides = checkpoints_to_overrides(
+                initial_config=self._config, checkpoints=current_checkpoints
+            )
             train_results = self._evaluator.evaluate(
                 workload_paths=train_paths,
                 config_overrides=overrides,
@@ -429,7 +389,9 @@ class CheckpointOptimizer:
                 )
                 checkpoints.append(checkpoint)
                 trial_checkpoints = current_checkpoints + [checkpoint]
-                trial_overrides = _checkpoints_to_config(trial_checkpoints)
+                trial_overrides = checkpoints_to_overrides(
+                    initial_config=self._config, checkpoints=trial_checkpoints
+                )
                 grid_point = f"round_{round_idx:03d}_rpu{rpu}"
                 spec = EvalSpec(
                     label=f"{phase} gp={grid_point}",
@@ -461,8 +423,9 @@ class CheckpointOptimizer:
             self._print_candidate_table(round_idx, cands, best_cp)
 
             # 6. Validate.
-            val_overrides = _checkpoints_to_config(
-                current_checkpoints + [best_cp]
+            val_overrides = checkpoints_to_overrides(
+                initial_config=self._config,
+                checkpoints=current_checkpoints + [best_cp],
             )
             val_results = self._evaluator.evaluate(
                 workload_paths=val_paths,
@@ -520,8 +483,10 @@ class CheckpointOptimizer:
             )
 
         # Write the final selected checkpoints.
-        self._write_selected_checkpoints(current_checkpoints)
-        return CheckpointOptimizerResult.from_checkpoints(current_checkpoints)
+        overrides = checkpoints_to_overrides(
+            initial_config=self._config, checkpoints=current_checkpoints
+        )
+        return overrides
 
     # ------------------------------------------------------------------
     # Rich output helpers
