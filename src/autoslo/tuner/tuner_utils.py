@@ -5,7 +5,7 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -13,54 +13,167 @@ import yaml
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 
-# ---------------------------------------------------------------------------
-# Per-scenario result
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ScenarioResult:
-    """Metrics from a single ``simulate_one`` run."""
-
-    scenario_idx: int
-    violation_rate: float
-    violation_amount_s: float
-    violation_relative_mean: float
-    total_cost: float
-    num_queries: int
-    out_dir: Path
-
-    @staticmethod
-    def load_batch(
-        batch_dir: str | Path, slo_resolver: SloResolver
-    ) -> list[ScenarioResult]:
-        """Load all scenario results from the given directory."""
-        batch_dir = Path(batch_dir)
-        results: list[ScenarioResult] = []
-        for scenario_subdir in batch_dir.iterdir():
-            if scenario_subdir.is_dir():
-                result = extract_scenario_result(
-                    out_dir=scenario_subdir,
-                    scenario_idx=int(scenario_subdir.name.split("_")[-1]),
-                    slo_resolver=slo_resolver,
-                )
-                results.append(result)
-        return results
-
-
-# ---------------------------------------------------------------------------
-# Aggregated metrics across scenarios
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
-class AggregatedMetrics:
+class AggregatedSimulationResults:
     """All three violation metrics plus cost, aggregated across scenarios."""
 
     violation_rate: float
     violation_amount_s: float
     violation_relative_mean: float
     cost: float
+
+@dataclass
+class SimulationResult:
+    """Metrics from a single simulation."""
+
+    simulation_dir: Path
+    violation_rate: float
+    violation_amount_s: float
+    violation_relative_mean: float
+    total_cost: float
+    num_queries: int
+
+    @staticmethod
+    def load(
+        simulation_dir: str | Path,
+    ) -> SimulationResult:
+        """Load a SimulationResult from the output directory of a single
+        simulation.
+
+        Reads ``billing_interval_analysis.yml`` for cost and
+        ``structured_log.parquet`` for violation statistics — the same logic
+        used by :meth:`WorkloadSimulator._write_experiment_meta`.
+        """
+        simulation_dir = Path(simulation_dir)
+
+        # -- build slo resolver for this scenario from its config.yml --
+        config_path = simulation_dir / "config.yml"
+        config: dict[str, Any] = {}
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        slo_resolver = SloResolver.from_config(config)
+
+        # -- cost --
+        total_cost = 0.0
+        billing_path = simulation_dir / "billing_interval_analysis.yml"
+        if billing_path.exists():
+            with open(billing_path) as f:
+                billing: dict[str, Any] = yaml.safe_load(f) or {}
+            for cluster_data in billing.values():
+                total_cost += cluster_data.get("total_billed_cost", 0.0)
+
+        # -- violations --
+        violation_rate = 0.0
+        violation_amount_s = 0.0
+        violation_relative_mean = 0.0
+        num_queries = 0
+
+        log_path = simulation_dir / "structured_log.parquet"
+        if log_path.exists():
+            log = pd.read_parquet(log_path)
+            completions = log[log["event_type"] == "completion"].copy()
+            num_queries = len(completions)
+            if num_queries > 0:
+                durations = completions["latency_s"].fillna(0.0)
+                per_row_slo = (
+                    completions["query_text_id"]
+                    .map(slo_resolver.resolve)
+                    .fillna(0.0)
+                )
+                violations = durations > per_row_slo
+                violation_rate = float(violations.mean())
+                violation_amount_s = float(
+                    (durations - per_row_slo).clip(lower=0.0).sum()
+                )
+                relative = ((durations - per_row_slo) / per_row_slo).clip(
+                    lower=0.0
+                )
+                violation_relative_mean = float(relative.mean())
+
+        return SimulationResult(
+            simulation_dir=simulation_dir,
+            violation_rate=violation_rate,
+            violation_amount_s=violation_amount_s,
+            violation_relative_mean=violation_relative_mean,
+            total_cost=total_cost,
+            num_queries=num_queries,
+        )
+
+    @staticmethod
+    def load_batch(
+        batch_dir: str | Path,
+    ) -> list[SimulationResult]:
+        """Load all simulation results from the given directory."""
+        batch_dir = Path(batch_dir)
+        results: list[SimulationResult] = []
+        for simulation_dir in batch_dir.iterdir():
+            if simulation_dir.is_dir():
+                result = SimulationResult.load(
+                    simulation_dir=simulation_dir,
+                )
+                results.append(result)
+        return results
+
+
+    @staticmethod
+    def aggregate(
+        results: list[SimulationResult], metric: str = "p90"
+    ) -> AggregatedSimulationResults:
+        """Compute a summary statistic over scenario results.
+
+        Parameters
+        ----------
+        results :
+            Per-scenario results to aggregate.
+        metric :
+            ``"mean"``, ``"max"``, ``"p90"``, ``"p99"``, or any ``"pNN"`` quantile.
+
+        Returns
+        -------
+        AggregatedSimulationResults with all three violation metrics and cost.
+        """
+        if not results:
+            return AggregatedSimulationResults(
+                violation_rate=0.0,
+                violation_amount_s=0.0,
+                violation_relative_mean=0.0,
+                cost=0.0,
+            )
+
+        rates = [r.violation_rate for r in results]
+        amounts = [r.violation_amount_s for r in results]
+        relatives = [r.violation_relative_mean for r in results]
+        costs = [r.total_cost for r in results]
+
+        if metric == "mean":
+            return AggregatedSimulationResults(
+                violation_rate=statistics.mean(rates),
+                violation_amount_s=statistics.mean(amounts),
+                violation_relative_mean=statistics.mean(relatives),
+                cost=statistics.mean(costs),
+            )
+        if metric == "max":
+            return AggregatedSimulationResults(
+                violation_rate=max(rates),
+                violation_amount_s=max(amounts),
+                violation_relative_mean=max(relatives),
+                cost=max(costs),
+            )
+
+        # pNN quantile
+        if metric.startswith("p") and metric[1:].isdigit():
+            q = int(metric[1:]) / 100.0
+            return AggregatedSimulationResults(
+                violation_rate=float(np.quantile(rates, q)),
+                violation_amount_s=float(np.quantile(amounts, q)),
+                violation_relative_mean=float(np.quantile(relatives, q)),
+                cost=float(np.quantile(costs, q)),
+            )
+
+        raise ValueError(f"Unknown aggregation metric: {metric!r}")
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +200,7 @@ _METRIC_TO_FIELD = {
 }
 
 
-def primary_violation(agg: AggregatedMetrics, slo_metric: str) -> float:
+def primary_violation(agg: AggregatedSimulationResults, slo_metric: str) -> float:
     """Extract the primary violation value for the given SLO metric."""
     field_name = _METRIC_TO_FIELD.get(slo_metric)
     if field_name is None:
@@ -135,76 +248,15 @@ class PhaseResult:
     """Aggregated metrics across scenarios for one parameter combination."""
 
     params: dict = field(default_factory=dict)
-    train_results: list[ScenarioResult] = field(default_factory=list)
-    val_results: list[ScenarioResult] | None = None
+    train_results: list[SimulationResult] = field(default_factory=list)
+    val_results: list[SimulationResult] | None = None
     train_violation_agg: float = 0.0
     train_cost_agg: float = 0.0
     val_violation_agg: float | None = None
     val_cost_agg: float | None = None
-    train_metrics: AggregatedMetrics | None = None
-    val_metrics: AggregatedMetrics | None = None
+    train_metrics: Optional[AggregatedSimulationResults] = None
+    val_metrics: Optional[AggregatedSimulationResults] = None
 
-
-# ---------------------------------------------------------------------------
-# Aggregation helper
-# ---------------------------------------------------------------------------
-
-
-def aggregate(
-    results: list[ScenarioResult], metric: str = "p90"
-) -> AggregatedMetrics:
-    """Compute a summary statistic over scenario results.
-
-    Parameters
-    ----------
-    results :
-        Per-scenario results to aggregate.
-    metric :
-        ``"mean"``, ``"max"``, ``"p90"``, ``"p99"``, or any ``"pNN"`` quantile.
-
-    Returns
-    -------
-    AggregatedMetrics with all three violation metrics and cost.
-    """
-    if not results:
-        return AggregatedMetrics(
-            violation_rate=0.0,
-            violation_amount_s=0.0,
-            violation_relative_mean=0.0,
-            cost=0.0,
-        )
-
-    rates = [r.violation_rate for r in results]
-    amounts = [r.violation_amount_s for r in results]
-    relatives = [r.violation_relative_mean for r in results]
-    costs = [r.total_cost for r in results]
-
-    if metric == "mean":
-        return AggregatedMetrics(
-            violation_rate=statistics.mean(rates),
-            violation_amount_s=statistics.mean(amounts),
-            violation_relative_mean=statistics.mean(relatives),
-            cost=statistics.mean(costs),
-        )
-    if metric == "max":
-        return AggregatedMetrics(
-            violation_rate=max(rates),
-            violation_amount_s=max(amounts),
-            violation_relative_mean=max(relatives),
-            cost=max(costs),
-        )
-
-    # pNN quantile
-    if metric.startswith("p") and metric[1:].isdigit():
-        q = int(metric[1:]) / 100.0
-        return AggregatedMetrics(
-            violation_rate=float(np.quantile(rates, q)),
-            violation_amount_s=float(np.quantile(amounts, q)),
-            violation_relative_mean=float(np.quantile(relatives, q)),
-            cost=float(np.quantile(costs, q)),
-        )
-
-    raise ValueError(f"Unknown aggregation metric: {metric!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -239,68 +291,3 @@ def compute_pareto_front(
             best_cost = cost
     front.sort()
     return front
-
-
-# ---------------------------------------------------------------------------
-# Result extraction from simulator output
-# ---------------------------------------------------------------------------
-
-
-def extract_scenario_result(
-    out_dir: str | Path,
-    scenario_idx: int,
-    slo_resolver: SloResolver,
-) -> ScenarioResult:
-    """Build a :class:`ScenarioResult` from files written by ``simulate_one``.
-
-    Reads ``billing_interval_analysis.yml`` for cost and
-    ``structured_log.parquet`` for violation statistics — the same logic
-    used by :meth:`WorkloadSimulator._write_experiment_meta`.
-    """
-
-    out_dir = Path(out_dir)
-
-    # -- cost --
-    total_cost = 0.0
-    billing_path = out_dir / "billing_interval_analysis.yml"
-    if billing_path.exists():
-        with open(billing_path) as f:
-            billing: dict[str, Any] = yaml.safe_load(f) or {}
-        for cluster_data in billing.values():
-            total_cost += cluster_data.get("total_billed_cost", 0.0)
-
-    # -- violations --
-    violation_rate = 0.0
-    violation_amount_s = 0.0
-    violation_relative_mean = 0.0
-    num_queries = 0
-
-    log_path = out_dir / "structured_log.parquet"
-    if log_path.exists():
-        log = pd.read_parquet(log_path)
-        completions = log[log["event_type"] == "completion"].copy()
-        num_queries = len(completions)
-        if num_queries > 0:
-            durations = completions["latency_s"].fillna(0.0)
-            per_row_slo = (
-                completions["query_text_id"]
-                .map(slo_resolver.resolve)
-                .fillna(0.0)
-            )
-            violations = durations > per_row_slo
-            violation_rate = float(violations.mean())
-            violation_amount_s = float(
-                (durations - per_row_slo).clip(lower=0.0).sum()
-            )
-            relative = ((durations - per_row_slo) / per_row_slo).clip(lower=0.0)
-            violation_relative_mean = float(relative.mean())
-
-    return ScenarioResult(
-        scenario_idx=scenario_idx,
-        violation_rate=violation_rate,
-        violation_amount_s=violation_amount_s,
-        violation_relative_mean=violation_relative_mean,
-        total_cost=total_cost,
-        num_queries=num_queries,
-        out_dir=out_dir,
-    )

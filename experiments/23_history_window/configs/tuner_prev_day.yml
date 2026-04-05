@@ -66,27 +66,15 @@ tuner_config:
     checkpoint_epsilon: 0.01
     violation_threshold: 0.1
 
-  autoscaling_sweep_phase:
+  autoscaling_param_sweep:
     'autoscaling_config.eta_crit': [0.05, 0.20]
     'autoscaling_config.idle_periods_before_tear_down': [5,  20]
     'autoscaling_config.capacity_poll_interval_s': [30.0,  120.0]
     'autoscaling_config.min_cluster_lifetime_s': [1200.0, 3600.0]
-  routing_sweep_phase:
+  routing_param_sweep:
     {}
 
   static_baselines:
-    - label: "4 RPU"
-      overrides:
-        managed_cluster_pool_config.initial_rpus: [4]
-        autoscaling_config.autoscaling_policy: "noop"
-        autoscaling_config.capacity_checkpoints: []
-        routing_config.routing_policy: "round_robin"
-    - label: "8 RPU"
-      overrides:
-        managed_cluster_pool_config.initial_rpus: [8]
-        autoscaling_config.autoscaling_policy: "noop"
-        autoscaling_config.capacity_checkpoints: []
-        routing_config.routing_policy: "round_robin"
     - label: "16 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [16]

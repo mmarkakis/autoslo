@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
+import plotext as plt
 import yaml
 from rich.console import Console
 from rich.table import Table
@@ -17,27 +18,21 @@ from rich.table import Table
 from autoslo.utils.yaml_helpers import dump_config
 
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
-from autoslo.tuner.checkpoint_optimizer import (
-    CheckpointOptimizer,
-    CheckpointOptimizerResult,
-    _checkpoints_to_config,
-    result_to_config,
-)
+from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.reservoir import QueryReservoir
-from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
+from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
-    AggregatedMetrics,
+    AggregatedSimulationResults,
     PhaseResult,
-    ScenarioResult,
+    SimulationResult,
     SloObjective,
-    aggregate,
     primary_violation,
 )
 import autoslo.utils.config as cfgu
 
-from autoslo.utils.config import apply_overrides
+from autoslo.utils.config import copy_and_apply_overrides
 from autoslo.utils.structured_log import (
     StructuredLogHandler,
     setup_structured_logging,
@@ -54,9 +49,9 @@ class PolicyTuner:
 
     def __init__(
         self,
-        config: dict,
+        initial_config: dict,
     ) -> None:
-        self._config = config
+        self._initial_config = initial_config
 
         # Find or generate a unique run ID and set up output directory.
         ts = int(datetime.now().timestamp() * 1000)
@@ -79,8 +74,8 @@ class PolicyTuner:
         self._run_dir.mkdir(parents=True, exist_ok=True)
 
         # Persist config for reproducibility.
-        with open(self._run_dir / "config.yml", "w") as f:
-            dump_config(config, f)
+        with open(self._run_dir / "initial_config.yml", "w") as f:
+            dump_config(self._initial_config, f)
 
         # Set up structured log for the evolution ledger.
         self._evolution_handler = setup_structured_logging(
@@ -90,17 +85,16 @@ class PolicyTuner:
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator(
-            config=config,
             tuner_run_id=self._run_id,
             evolution_logger=self._evolution_handler,
         )
 
         # SLO objective — drives metric routing and threshold-aware selection.
         self._slo_metric = str(
-            cfgu.cfg_getd(self._config, "slo_config.slo_metric", "binary")
+            cfgu.getd(self._initial_config, "slo_config.slo_metric", "binary")
         )
         self._slo_threshold = float(
-            cfgu.cfg_getd(self._config, "slo_config.slo_threshold", 1.0)
+            cfgu.getd(self._initial_config, "slo_config.slo_threshold", 1.0)
         )
         self._slo_objective = SloObjective(
             slo_metric=self._slo_metric,
@@ -206,8 +200,8 @@ class PolicyTuner:
         n_train = int(num_scenarios * train_fraction)
         n_val = num_scenarios - n_train
 
-        train_dir = self._run_dir / "sampled_workloads" / "train"
-        val_dir = self._run_dir / "sampled_workloads" / "val"
+        train_dir = self._run_dir / "workloads" / "train"
+        val_dir = self._run_dir / "workloads" / "val"
 
         target_date = pd.Timestamp(
             self._cfgd(
@@ -216,6 +210,8 @@ class PolicyTuner:
             )
         ).date()
 
+        train_paths: list[Path]
+        val_paths: list[Path]
         if (
             train_dir.exists()
             and val_dir.exists()
@@ -249,7 +245,7 @@ class PolicyTuner:
         )
         console.print(
             f"  Sampled {n_train} train + {n_val} val workloads "
-            f"to {self._run_dir / 'sampled_workloads'}"
+            f"to {self._run_dir / 'workloads'}"
         )
 
         assert train_paths and val_paths, "No workload paths returned."
@@ -274,53 +270,54 @@ class PolicyTuner:
         console.print(
             f"Evaluating baseline on {len(train_paths)} training scenarios..."
         )
-        train_out_subdir = self._run_dir / "baseline" / "train"
-        train_results: list[ScenarioResult]
-        if train_out_subdir.exists() and not self._cfgd(
+        train_out_dir = self._run_dir / "baseline" / "train"
+        train_results: list[SimulationResult]
+        if train_out_dir.exists() and not self._cfgd(
             "tuner_config.force", False
         ):
             console.print(
-                f"  Baseline train results already exist at {train_out_subdir}; "
+                f"  Baseline train results already exist at {train_out_dir}; "
                 "loading from disk."
             )
-            train_results = ScenarioResult.load_batch(
-                train_out_subdir, self._slo_resolver
+            train_results = SimulationResult.load_batch(
+                train_out_dir / "config_0"
             )
         else:
-            train_results = self._evaluator.evaluate(
-                workload_paths=train_paths,
-                config_overrides={},
-                phase="baseline",
-                grid_point="base-train",
-                out_subdir=train_out_subdir,
+            train_results_nested_dict = (
+                self._evaluator.evaluate_batch_from_configs(
+                    phase_name="baseline_train",
+                    workload_paths=train_paths,
+                    configs=[self._initial_config],
+                    out_dir=train_out_dir,
+                )
             )
-        train_agg = aggregate(train_results, metric)
+            train_results = list(train_results_nested_dict[0].values())
+
+        train_agg = SimulationResult.aggregate(train_results, metric)
 
         # Validation set.
         console.print(
             f"Evaluating baseline on {len(val_paths)} validation scenarios..."
         )
-        val_out_subdir = self._run_dir / "baseline" / "val"
-        val_results: list[ScenarioResult]
-        if val_out_subdir.exists() and not self._cfgd(
-            "tuner_config.force", False
-        ):
+        val_out_dir = self._run_dir / "baseline" / "val"
+        val_results: list[SimulationResult]
+        if val_out_dir.exists() and not self._cfgd("tuner_config.force", False):
             console.print(
-                f"  Baseline val results already exist at {val_out_subdir}; "
+                f"  Baseline val results already exist at {val_out_dir}; "
                 "loading from disk."
             )
-            val_results = ScenarioResult.load_batch(
-                val_out_subdir, self._slo_resolver
-            )
+            val_results = SimulationResult.load_batch(val_out_dir / "config_0")
         else:
-            val_results = self._evaluator.evaluate(
-                workload_paths=val_paths,
-                config_overrides={},
-                phase="baseline",
-                grid_point="base-val",
-                out_subdir=val_out_subdir,
+            val_results_nested_dict = (
+                self._evaluator.evaluate_batch_from_configs(
+                    phase_name="baseline_val",
+                    workload_paths=val_paths,
+                    configs=[self._initial_config],
+                    out_dir=val_out_dir,
+                )
             )
-        val_agg = aggregate(val_results, metric)
+            val_results = list(val_results_nested_dict[0].values())
+        val_agg = SimulationResult.aggregate(val_results, metric)
 
         result = PhaseResult(
             params={},
@@ -339,9 +336,6 @@ class PolicyTuner:
         summary_dir.mkdir(parents=True, exist_ok=True)
         self._write_phase_summary(summary_dir / "summary.yml", result)
 
-        # Rich table.
-        self._print_phase_summary("Baseline", result, agg_method=metric)
-
         return result
 
     def find_checkpoints(
@@ -353,83 +347,79 @@ class PolicyTuner:
         """
         Phase 4: Find promising checkpoints via optimization.
         """
-        result_file_path = (
-            self._run_dir / "checkpoints" / "selected_checkpoints.yml"
+        optimizer = CheckpointOptimizer(
+            evaluator=self._evaluator,
+            config=self._initial_config,
+            run_dir=self._run_dir,
         )
-        result: CheckpointOptimizerResult
-        if result_file_path.exists() and not self._cfgd(
+        final_config_path = self._run_dir / "checkpoints" / "final_config.yml"
+        if final_config_path.exists() and not self._cfgd(
             "tuner_config.force", False
         ):
             console.print(
                 f"  Checkpoint optimization results already exist at "
-                f"{result_file_path}; loading from disk."
+                f"{final_config_path}; loading from disk."
             )
-            with open(result_file_path) as f:
-                cps = yaml.safe_load(f) or {}
-            result = CheckpointOptimizerResult.from_checkpoints(
-                cps
-            )  # type: ignore
+            with open(final_config_path) as f:
+                post_checkpoints_config = yaml.safe_load(f) or {}
         else:
-            optimizer = CheckpointOptimizer(
-                evaluator=self._evaluator,
-                config=self._config,
-                run_dir=self._run_dir,
-            )
             assert (
                 baseline_val_violation is not None
             ), "Baseline violation agg is None"
-            result = optimizer.optimize(
+            post_checkpoints_config = optimizer.optimize(
                 train_paths=train_paths,
                 val_paths=val_paths,
                 baseline_val_violation=baseline_val_violation,
             )
-        existing_initial_rpus = tuple(
-            self._cfgd("managed_cluster_pool_config.initial_rpus", [8])
+        return post_checkpoints_config
+
+    def param_sweep(
+        self,
+        train_paths: list[Path],
+        val_paths: list[Path],
+        initial_config: dict[str, Any],
+        phase_name: str,
+    ) -> dict[str, Any]:
+        """
+        Phases 5 & 6: Autoscaler and routing parameter sweeps.
+        """
+        sweeper = ParamSweep(
+            evaluator=self._evaluator,
+            initial_config=initial_config,
+            run_dir=self._run_dir,
+            phase_name=phase_name,
+            slo_objective=self._slo_objective,
         )
-        base_overrides = result_to_config(result, existing_initial_rpus)
-        return base_overrides
+        final_config_path = self._run_dir / phase_name / "final_config.yml"
+        if final_config_path.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Parameter sweep results for phase '{phase_name}' already "
+                f"exist at {final_config_path}; loading from disk."
+            )
+            with open(final_config_path) as f:
+                post_sweep_config = yaml.safe_load(f) or {}
+        else:
+            post_sweep_config = sweeper.sweep(
+                train_paths=train_paths,
+                val_paths=val_paths,
+                param_ranges=self._cfgd(f"tuner_config.{phase_name}", {}),
+            )
+        return post_sweep_config
 
     def tune(self) -> Path:
         """Execute the full tuning pipeline end-to-end.
 
         Returns the path to the final optimised config file.
         """
-        final_path = self._run_dir / "final_config.yml"
-        overrides_path = self._run_dir / "tuned_overrides.yml"
-
-        # Skip-retuning: if final_config already exists and
-        # force_retuning is not set, jump straight to holdout.
-        # if not self._tuner_config.force_retuning and final_path.exists():
-        #     console.print(
-        #         "[bold yellow]Skipping tuning phases 1-7 "
-        #         "(final_config.yml already exists). "
-        #         "Set force_retuning: true to re-run.[/bold yellow]"
-        #     )
-        #     if overrides_path.exists():
-        #         with open(overrides_path) as f:
-        #             overrides: dict[str, Any] = yaml.safe_load(f) or {}
-        #     else:
-        #         # Legacy run: reconstruct overrides by diffing configs.
-        #         overrides = self._rebuild_overrides(final_path)
-        #         with open(overrides_path, "w") as f:
-        #             dump_config(overrides, f)
-        #         console.print(
-        #             "  [dim]Reconstructed tuned_overrides.yml from "
-        #             "config diff.[/dim]"
-        #         )
-
-        #     if self._tuner_config.holdout_evaluation:
-        #         self._print_banner("Holdout: real-data evaluation")
-        #         self._evaluate_holdout(traces, overrides)
-
-        #     return final_path
 
         ### Phase 1: Build reservoir
         self._print_banner("Phase 1: Building reservoir")
         self.build_reservoir()
 
-        ### Phase 2: Sampling workloads
-        self._print_banner("Phase 2: Sampling workloads")
+        ### Phase 2: Preparing workloads
+        self._print_banner("Phase 2: Preparing workloads")
         train_paths, val_paths = self.sample_workloads()
 
         ### Phase 3: Baseline evaluation
@@ -438,71 +428,53 @@ class PolicyTuner:
 
         ### Phase 4: Checkpoint optimization
         self._print_banner("Phase 4: Checkpoint optimization")
-        base_overrides = self.find_checkpoints(
+        post_checkpoints_config = self.find_checkpoints(
             train_paths, val_paths, baseline.val_violation_agg
         )
 
         ### Phase 5: Autoscaler parameter sweep
         self._print_banner("Phase 5: Autoscaler parameter sweep")
-        sweeper = ParamSweep(
-            evaluator=self._evaluator,
-            config=self._config,
-            base_overrides=base_overrides,
-            run_dir=self._run_dir,
-            phase_name="autoscaler parameter sweep",
-            slo_objective=self._slo_objective,
-        )
-        autoscaler_config = sweeper.sweep(
+        post_first_sweep_config = self.param_sweep(
             train_paths=train_paths,
             val_paths=val_paths,
-            param_ranges=self._cfgd("tuner_config.autoscaling_sweep_phase", {}),
+            initial_config=post_checkpoints_config,
+            phase_name="autoscaling_param_sweep",
         )
 
         ### Phase 6: Routing parameter sweep
         self._print_banner("Phase 6: Routing parameter sweep")
-        base_overrides = apply_overrides(base_overrides, autoscaler_config)
-        sweeper = ParamSweep(
-            evaluator=self._evaluator,
-            config=self._config,
-            base_overrides=base_overrides,
-            run_dir=self._run_dir,
-            phase_name="routing parameter sweep",
-            slo_objective=self._slo_objective,
-        )
-
-        routing_config = sweeper.sweep(
+        post_second_sweep_config = self.param_sweep(
             train_paths=train_paths,
             val_paths=val_paths,
-            param_ranges=self._cfgd("tuner_config.routing_sweep_phase", {}),
+            initial_config=post_first_sweep_config,
+            phase_name="routing_param_sweep",
         )
 
-        return
-        checkpoints = ...
-        self._print_banner("Final: Writing optimized config")
-        final_path = self._write_final_config(
-            checkpoints, autoscaler_config, routing_config
+        ### Phase 6.5: Persist final config
+        final_config = post_second_sweep_config
+        final_path = self._run_dir / "final_config.yml"
+        with open(final_path, "w") as f:
+            dump_config(final_config, f)
+        self._evolution_handler.finalize()
+        console.print(f"  Final config written to [bold]{final_path}[/]")
+
+        ### Phase 7: Final evaluation with tuned config
+        self._print_banner("Phase 7: Final evaluation with tuned config")
+        tuned = self._evaluate_final(train_paths, val_paths, final_config)
+        metric = self._cfgd(
+            "tuner_config.forecast_config.aggregation_metric", "p90"
+        )
+        self._print_comparison(
+            ("Initial", baseline),
+            ("Final", tuned),
+            agg_method=metric,
         )
 
-        self._print_banner("Final evaluation with tuned config")
-        tuned = self._evaluate_final(
-            train_paths,
-            val_paths,
-            checkpoints,
-            autoscaler_config,
-            routing_config,
+        ### Phase 8: Evaluation on target-period data
+        self._print_banner("Phase 8: Evaluation on target-period data")
+        self._evaluate_target(
+            initial_config=self._initial_config, final_config=final_config
         )
-        self._print_comparison(baseline, tuned)
-
-        # Build overrides for holdout (same structure as tuned_overrides.yml).
-        overrides = _checkpoints_to_config(checkpoints)
-        for k, v in autoscaler_config.items():
-            overrides[f"autoscaling_config.{k}"] = v
-        for k, v in routing_config.items():
-            overrides[f"routing_config.{k}"] = v
-
-        if self._cfgd("tuner_config.holdout_evaluation", False):
-            self._print_banner("Holdout: real-data evaluation")
-            self._evaluate_holdout(traces, overrides)
 
         return final_path
 
@@ -512,7 +484,7 @@ class PolicyTuner:
 
     def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
         """Helper to get config values from the initial config."""
-        return cfgu.cfg_getd(self._config, dot_delimited_key, default)
+        return cfgu.getd(self._initial_config, dot_delimited_key, default)
 
     @staticmethod
     def _print_banner(message: str) -> None:
@@ -525,40 +497,42 @@ class PolicyTuner:
         self,
         train_paths: list[Path],
         val_paths: list[Path],
-        checkpoints: list[CapacityCheckpoint],
-        autoscaler_config: dict[str, Any],
-        routing_config: dict[str, Any],
+        final_config: dict[str, Any],
     ) -> PhaseResult:
         """Re-run evaluation with the fully-tuned config."""
         metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", metric
+            "tuner_config.forecast_config.aggregation_metric", "mean"
         )
-        overrides = _checkpoints_to_config(checkpoints)
-        for k, v in autoscaler_config.items():
-            overrides[f"autoscaling_config.{k}"] = v
-        for k, v in routing_config.items():
-            overrides[f"routing_config.{k}"] = v
+        summary_dir = self._run_dir / "final"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        summary_yml_path = summary_dir / "summary.yml"
+        if summary_yml_path.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Final evaluation results already exist at {summary_yml_path}; "
+                "loading from disk."
+            )
+            return self._parse_phase_summary(summary_yml_path)
 
-        train_results = self._evaluator.evaluate(
+        all_train_results = self._evaluator.evaluate_batch_from_configs(
+            phase_name="final",
+            out_dir=self._run_dir / "final" / "train",
             workload_paths=train_paths,
-            config_overrides=overrides,
-            phase="final",
-            grid_point="tuned",
-            out_subdir=self._run_dir / "final" / "train",
+            configs=[final_config],
         )
-        train_agg = aggregate(train_results, metric)
+        train_results = list(all_train_results[0].values())
+        train_agg = SimulationResult.aggregate(train_results, metric)
 
-        val_results = self._evaluator.evaluate(
+        all_val_results = self._evaluator.evaluate(
             workload_paths=val_paths,
-            config_overrides=overrides,
-            phase="final",
-            grid_point="tuned",
-            out_subdir=self._run_dir / "final" / "val",
+            configs=[final_config],
         )
-        val_agg = aggregate(val_results, metric)
+        val_results = list(all_val_results[0].values())
+        val_agg = SimulationResult.aggregate(val_results, metric)
 
         result = PhaseResult(
-            params=overrides,
+            params=final_config,
             train_results=train_results,
             val_results=val_results,
             train_violation_agg=primary_violation(train_agg, self._slo_metric),
@@ -568,81 +542,13 @@ class PolicyTuner:
             train_metrics=train_agg,
             val_metrics=val_agg,
         )
-        summary_dir = self._run_dir / "final"
-        summary_dir.mkdir(parents=True, exist_ok=True)
         self._write_phase_summary(summary_dir / "summary.yml", result)
         return result
 
-    def _prepare_holdout_workloads(
+    def _evaluate_target(
         self,
-        traces: list[Path],
-    ) -> list[Path]:
-        """Slice real target-period data from traces and write to disk.
-
-        Returns the list of holdout parquet paths, or an empty list if
-        no queries fall in the target period.
-        """
-        schema_name = (self._initial_config.get("basic_config") or {}).get(
-            "schema_name", "default"
-        )
-        holdout_dir = self._run_dir / "holdout" / "workloads"
-        holdout_dir.mkdir(parents=True, exist_ok=True)
-        holdout_paths: list[Path] = []
-
-        for i, trace_path in enumerate(traces):
-            df = pd.read_parquet(trace_path)
-            wl = Workload(f"holdout_{i:03d}", schema_name, df=df)
-            wl.slice_by_abs_time(
-                start=self._tuner_config.target_start.isoformat(),
-                end=self._tuner_config.target_end.isoformat(),
-            )
-            if len(wl.df) == 0:
-                continue
-            out_path = holdout_dir / f"holdout_{i:03d}.parquet"
-            wl.df.to_parquet(out_path)
-            holdout_paths.append(out_path)
-
-        return holdout_paths
-
-    @staticmethod
-    def _slugify(label: str) -> str:
-        """Convert a label to a filesystem-safe slug."""
-        slug = label.lower().replace(" ", "_")
-        slug = re.sub(r"[^a-z0-9_]", "", slug)
-        return f"static_{slug}"
-
-    def _rebuild_overrides(self, final_path: Path) -> dict[str, Any]:
-        """Reconstruct tuned overrides by diffing initial and final configs."""
-        with open(final_path) as f:
-            final_cfg = yaml.safe_load(f) or {}
-
-        initial_flat = self._flatten(self._initial_config)
-        final_flat = self._flatten(final_cfg)
-
-        overrides: dict[str, Any] = {}
-        for key in sorted(set(initial_flat) | set(final_flat)):
-            iv = initial_flat.get(key)
-            fv = final_flat.get(key)
-            if iv != fv:
-                overrides[key] = fv
-        return overrides
-
-    @staticmethod
-    def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-        """Recursively flatten a nested dict to dot-path keys."""
-        items: dict[str, Any] = {}
-        for k, v in d.items():
-            key = f"{prefix}.{k}" if prefix else k
-            if isinstance(v, dict):
-                items.update(PolicyTuner._flatten(v, key))
-            else:
-                items[key] = v
-        return items
-
-    def _evaluate_holdout(
-        self,
-        traces: list[Path],
-        tuned_overrides: dict[str, Any],
+        initial_config: dict[str, Any],
+        final_config: dict[str, Any],
     ) -> None:
         """Evaluate baseline, tuned, and static-baseline configs on real data.
 
@@ -650,66 +556,70 @@ class PolicyTuner:
         to a single process pool via :meth:`evaluate_batch` for maximum
         parallelism.
         """
-        metric = self._tuner_config.aggregation_metric
 
-        # Extract target-period slice from traces.
-        holdout_paths = self._prepare_holdout_workloads(traces)
-
-        if not holdout_paths:
-            console.print(
-                "[yellow]  No real data in target period; "
-                "skipping holdout evaluation.[/yellow]"
+        ### Extract and save target day.
+        schema_name = self._cfgd("basic_config.schema_name", None)
+        target_workload_path = self._run_dir / "workloads" / "target.parquet"
+        if not target_workload_path.exists() or self._cfgd(
+            "tuner_config.force", False
+        ):
+            full_workload_name = self._cfgd(
+                "workload_config.workload_name", None
             )
-            return
-
-        total_queries = sum(len(pd.read_parquet(p)) for p in holdout_paths)
-        console.print(
-            f"  Holdout: {total_queries:,} real queries from target period"
-        )
-
-        # Build evaluation specs: baseline + tuned + static baselines.
-        specs: list[EvalSpec] = [
-            EvalSpec(
-                label="baseline",
-                config_overrides={},
-                grid_point="baseline",
-                out_subdir=self._run_dir / "holdout" / "baseline",
-            ),
-            EvalSpec(
-                label="tuned",
-                config_overrides=tuned_overrides,
-                grid_point="tuned",
-                out_subdir=self._run_dir / "holdout" / "tuned",
-            ),
-        ]
-        static_baselines = self._tuner_config.static_baselines or []
-        for sb in static_baselines:
-            label = sb["label"]
-            slug = self._slugify(label)
-            specs.append(
-                EvalSpec(
-                    label=label,
-                    config_overrides=sb.get("overrides", {}),
-                    grid_point=slug,
-                    out_subdir=self._run_dir / "holdout" / slug,
+            if (schema_name is None) or (full_workload_name is None):
+                raise ValueError(
+                    "workload_config.schema_name and workload_config.workload_name "
+                    "must be specified."
                 )
+            workload = Workload(full_workload_name, schema_name=schema_name)
+            start = self._cfgd("workload_config.abs_start_time_start", None)
+            end = self._cfgd("workload_config.abs_start_time_end", None)
+            workload = workload.slice_by_abs_time(start=start, end=end)
+            workload = workload.set_rel_start_times_from_zero()
+            rescale_factor = self._cfgd("workload_config.rescale_factor", 1.0)
+            workload = workload.rescale_rel_start_times(factor=rescale_factor)
+            workload = workload.rename_workload("target")
+            workload.save(out_dir=self._run_dir / "workloads", overwrite=True)
+            console.print(
+                f"Extracted target workload from {full_workload_name} with "
+                f"time range {start} to {end}, "
+                f"rescaled by factor {rescale_factor}, "
+                f"and saved to {target_workload_path}."
+            )
+        else:
+            console.print(
+                f"  Target workload already exists at {target_workload_path}; "
+                "loading from disk."
             )
 
-        # Run all evaluations in a single pool.
-        all_results = self._evaluator.evaluate_batch(
-            workload_paths=holdout_paths,
-            specs=specs,
-            phase="holdout",
+        # Run the initial config and the static baselines.
+        static_baselines = self._cfgd("tuner_config.static_baselines", [])
+        baseline_overrides = [
+            baseline.get("overrides", {}) for baseline in static_baselines
+        ]
+        baseline_configs = [
+            copy_and_apply_overrides(initial_config, bo)
+            for bo in baseline_overrides
+        ]
+        all_results = self._evaluator.evaluate_batch_from_configs(
+            phase_name="target",
+            out_dir=self._run_dir / "target",
+            workload_paths=[target_workload_path],
+            configs=[initial_config, final_config] + baseline_configs,
         )
 
-        # Extract baseline + tuned results.
-        baseline_results, tuned_results = all_results[0], all_results[1]
-        base_agg = aggregate(baseline_results, metric)
-        tuned_agg = aggregate(tuned_results, metric)
+        # Extract initial + final results.
+        metric = self._cfgd(
+            "tuner_config.forecast_config.aggregation_metric", "mean"
+        )
+        initial_results = list(all_results[0].values())
+        final_results = list(all_results[1].values())
+        base_agg = SimulationResult.aggregate(initial_results, metric)
+        tuned_agg = SimulationResult.aggregate(final_results, metric)
 
-        baseline_phase = PhaseResult(
+        initial_phase = PhaseResult(
             params={},
-            train_results=baseline_results,
+            train_results=initial_results,
             val_results=None,
             train_violation_agg=primary_violation(base_agg, self._slo_metric),
             train_cost_agg=base_agg.cost,
@@ -718,9 +628,9 @@ class PolicyTuner:
             train_metrics=base_agg,
             val_metrics=None,
         )
-        tuned_phase = PhaseResult(
-            params=tuned_overrides,
-            train_results=tuned_results,
+        final_phase = PhaseResult(
+            params={}
+            train_results=final_results,
             val_results=None,
             train_violation_agg=primary_violation(tuned_agg, self._slo_metric),
             train_cost_agg=tuned_agg.cost,
@@ -729,13 +639,17 @@ class PolicyTuner:
             train_metrics=tuned_agg,
             val_metrics=None,
         )
-        self._print_comparison(baseline_phase, tuned_phase)
+        comparison_entries: list[tuple[str, PhaseResult]] = [
+            ("Initial", initial_phase),
+            ("Final", final_phase),
+        ]
 
         # Extract static baseline summaries.
         static_summaries: list[dict[str, Any]] = []
+
         for i, sb in enumerate(static_baselines):
-            sb_results = all_results[2 + i]
-            sb_agg = aggregate(sb_results, metric)
+            sb_results = list(all_results[2 + i].values())
+            sb_agg = SimulationResult.aggregate(sb_results, metric)
             static_summaries.append(
                 {
                     "label": sb["label"],
@@ -746,25 +660,42 @@ class PolicyTuner:
                     "violation_relative_mean": sb_agg.violation_relative_mean,
                 }
             )
+            comparison_entries.append(
+                (
+                    sb["label"],
+                    PhaseResult(
+                        params=sb.get("overrides", {}),
+                        train_results=sb_results,
+                        val_results=None,
+                        train_violation_agg=primary_violation(
+                            sb_agg, self._slo_metric
+                        ),
+                        train_cost_agg=sb_agg.cost,
+                        val_violation_agg=None,
+                        val_cost_agg=None,
+                        train_metrics=sb_agg,
+                        val_metrics=None,
+                    ),
+                )
+            )
 
-        if static_summaries:
-            self._print_static_summary(static_summaries)
+        self._print_comparison(*comparison_entries, agg_method=metric)
+        self._print_scatter(comparison_entries, self._slo_metric)
 
         # --- Write holdout summary --------------------------------------
         summary_dir = self._run_dir / "holdout"
         summary_dir.mkdir(parents=True, exist_ok=True)
         holdout_summary: dict[str, Any] = {
-            "num_holdout_queries": total_queries,
-            "baseline_violation": primary_violation(base_agg, self._slo_metric),
-            "baseline_cost": base_agg.cost,
-            "baseline_violation_rate": base_agg.violation_rate,
-            "baseline_violation_amount_s": base_agg.violation_amount_s,
-            "baseline_violation_relative_mean": base_agg.violation_relative_mean,
-            "tuned_violation": primary_violation(tuned_agg, self._slo_metric),
-            "tuned_cost": tuned_agg.cost,
-            "tuned_violation_rate": tuned_agg.violation_rate,
-            "tuned_violation_amount_s": tuned_agg.violation_amount_s,
-            "tuned_violation_relative_mean": tuned_agg.violation_relative_mean,
+            "initial_violation": primary_violation(base_agg, self._slo_metric),
+            "initial_cost": base_agg.cost,
+            "initial_violation_rate": base_agg.violation_rate,
+            "initial_violation_amount_s": base_agg.violation_amount_s,
+            "initial_violation_relative_mean": base_agg.violation_relative_mean,
+            "final_violation": primary_violation(tuned_agg, self._slo_metric),
+            "final_cost": tuned_agg.cost,
+            "final_violation_rate": tuned_agg.violation_rate,
+            "final_violation_amount_s": tuned_agg.violation_amount_s,
+            "final_violation_relative_mean": tuned_agg.violation_relative_mean,
             "slo_metric": self._slo_metric,
         }
         if static_summaries:
@@ -773,168 +704,191 @@ class PolicyTuner:
             dump_config(holdout_summary, f)
 
     @staticmethod
-    def _print_comparison(baseline: PhaseResult, tuned: PhaseResult) -> None:
-        """Print baseline vs tuned metrics side-by-side."""
-        table = Table(title="Baseline vs. Tuned Performance", show_lines=True)
-        table.add_column("Metric", justify="left")
-        table.add_column("Baseline", justify="right")
-        table.add_column("Tuned", justify="right")
-        table.add_column("Δ", justify="right")
+    def _print_comparison(
+        *entries: tuple[str, PhaseResult],
+        agg_method: str = "p90",
+    ) -> None:
+        """Print a table comparing multiple PhaseResults side-by-side.
 
-        rows: list[tuple[str, float, float]] = []
+        Parameters
+        ----------
+        *entries :
+            ``(label, phase_result)`` pairs.  Each gets one row.
+        agg_method :
+            Aggregation method shown in the title.
+        """
+        # Decide which splits to show based on the entries.
+        has_val = any(pr.val_metrics is not None for _, pr in entries)
 
-        # All 3 violation metrics from train_metrics if available.
-        bm = baseline.train_metrics
-        tm = tuned.train_metrics
-        if bm is not None and tm is not None:
-            rows.append(
-                ("Train Viol. Rate", bm.violation_rate, tm.violation_rate)
-            )
-            rows.append(
-                (
-                    "Train Viol. Amount (s)",
-                    bm.violation_amount_s,
-                    tm.violation_amount_s,
-                )
-            )
-            rows.append(
-                (
-                    "Train Viol. Relative",
-                    bm.violation_relative_mean,
-                    tm.violation_relative_mean,
-                )
-            )
-            rows.append(("Train Cost ($)", bm.cost, tm.cost))
-        else:
-            rows.append(
-                (
-                    "Train Violation",
-                    baseline.train_violation_agg,
-                    tuned.train_violation_agg,
-                )
-            )
-            rows.append(
-                (
-                    "Train Cost ($)",
-                    baseline.train_cost_agg,
-                    tuned.train_cost_agg,
-                )
-            )
+        table = Table(
+            title=f"Comparison  [dim](agg: {agg_method})[/dim]",
+            show_lines=True,
+        )
+        table.add_column("Config", justify="left")
 
-        bvm = baseline.val_metrics
-        tvm = tuned.val_metrics
-        if bvm is not None and tvm is not None:
-            rows.append(
-                ("Val Viol. Rate", bvm.violation_rate, tvm.violation_rate)
-            )
-            rows.append(
-                (
-                    "Val Viol. Amount (s)",
-                    bvm.violation_amount_s,
-                    tvm.violation_amount_s,
-                )
-            )
-            rows.append(
-                (
-                    "Val Viol. Relative",
-                    bvm.violation_relative_mean,
-                    tvm.violation_relative_mean,
-                )
-            )
-            rows.append(("Val Cost ($)", bvm.cost, tvm.cost))
-        elif (
-            baseline.val_violation_agg is not None
-            and tuned.val_violation_agg is not None
-        ):
-            rows.append(
-                (
-                    "Val Violation",
-                    baseline.val_violation_agg,
-                    tuned.val_violation_agg,
-                )
-            )
-            if (
-                baseline.val_cost_agg is not None
-                and tuned.val_cost_agg is not None
-            ):
-                rows.append(
-                    ("Val Cost ($)", baseline.val_cost_agg, tuned.val_cost_agg)
-                )
+        metric_labels = [
+            "Viol. Rate",
+            "Viol. Amt (s)",
+            "Viol. Rel.",
+            "Cost ($)",
+        ]
+        for ml in metric_labels:
+            header = f"Train {ml}" if has_val else ml
+            table.add_column(header, justify="right")
+        if has_val:
+            for ml in metric_labels:
+                table.add_column(f"Val {ml}", justify="right")
 
-        for label, base_val, tuned_val in rows:
-            delta = tuned_val - base_val
-            sign = "+" if delta >= 0 else ""
-            style = "green" if delta <= 0 else "red"
-            table.add_row(
-                label,
-                f"{base_val:.4f}",
-                f"{tuned_val:.4f}",
-                f"[{style}]{sign}{delta:.4f}[/{style}]",
-            )
+        fmt = PolicyTuner._fmt_cell
+
+        def _extract(
+            m: AggregatedSimulationResults | None,
+            rs: list[SimulationResult] | None,
+        ) -> tuple[list[float], list[list[float]]]:
+            if m is not None and rs:
+                return (
+                    [
+                        m.violation_rate,
+                        m.violation_amount_s,
+                        m.violation_relative_mean,
+                        m.cost,
+                    ],
+                    [
+                        [r.violation_rate for r in rs],
+                        [r.violation_amount_s for r in rs],
+                        [r.violation_relative_mean for r in rs],
+                        [r.total_cost for r in rs],
+                    ],
+                )
+            return [0.0, 0.0, 0.0, 0.0], [[], [], [], []]
+
+        # Build row data: each entry → (label, train_aggs, train_per, val_aggs, val_per)
+        row_data: list[
+            tuple[
+                str,
+                list[float],
+                list[list[float]],
+                list[float],
+                list[list[float]],
+            ]
+        ] = []
+        for label, pr in entries:
+            t_agg, t_per = _extract(pr.train_metrics, pr.train_results)
+            v_agg, v_per = _extract(pr.val_metrics, pr.val_results)
+            row_data.append((label, t_agg, t_per, v_agg, v_per))
+
+        # Find the best (lowest) aggregated value per column.
+        n_metric = 4
+        n_cols = n_metric * (2 if has_val else 1)
+        best_per_col: list[int] = []
+        if row_data:
+            for c in range(n_cols):
+                if c < n_metric:
+                    best_per_col.append(
+                        min(
+                            range(len(row_data)),
+                            key=lambda i, _c=c: row_data[i][1][_c],
+                        )
+                    )
+                else:
+                    best_per_col.append(
+                        min(
+                            range(len(row_data)),
+                            key=lambda i, _c=c - n_metric: row_data[i][3][_c],
+                        )
+                    )
+
+        for row_idx, (label, t_agg, t_per, v_agg, v_per) in enumerate(row_data):
+            cells: list[str] = []
+            for c in range(n_metric):
+                cell = fmt(t_agg[c], t_per[c])
+                if len(row_data) > 1 and row_idx == best_per_col[c]:
+                    cell = f"[green]{cell}[/green]"
+                cells.append(cell)
+            if has_val:
+                for c in range(n_metric):
+                    cell = fmt(v_agg[c], v_per[c])
+                    if (
+                        len(row_data) > 1
+                        and row_idx == best_per_col[n_metric + c]
+                    ):
+                        cell = f"[green]{cell}[/green]"
+                    cells.append(cell)
+            table.add_row(label, *cells)
+
         console.print(table)
+
+    _SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
 
     @staticmethod
-    def _print_static_summary(
-        static_summaries: list[dict[str, Any]],
+    def _print_scatter(
+        entries: list[tuple[str, PhaseResult]],
+        slo_metric: str,
     ) -> None:
-        """Print a Rich table summarising static baseline holdout results."""
-        table = Table(title="Static Baselines — Holdout", show_lines=True)
-        table.add_column("Label", justify="left")
-        table.add_column("Viol. Rate", justify="right")
-        table.add_column("Viol. Amount (s)", justify="right")
-        table.add_column("Viol. Relative", justify="right")
-        table.add_column("Cost ($)", justify="right")
-        for entry in static_summaries:
-            table.add_row(
-                entry["label"],
-                f"{entry.get('violation_rate', entry.get('violation', 0.0)):.4f}",
-                f"{entry.get('violation_amount_s', 0.0):.4f}",
-                f"{entry.get('violation_relative_mean', 0.0):.4f}",
-                f"{entry['cost']:.2f}",
-            )
-        console.print(table)
+        """Print a terminal scatter plot of violation vs cost."""
+        _METRIC_LABELS = {
+            "binary": "Violation Rate",
+            "absolute_s": "Violation Amount (s)",
+            "relative": "Violation Relative Mean",
+        }
+        x_label = _METRIC_LABELS.get(slo_metric, slo_metric)
 
-    def _write_final_config(
-        self,
-        checkpoints: list[CapacityCheckpoint],
-        autoscaler_config: dict[str, Any],
-        routing_config: dict[str, Any],
-    ) -> Path:
-        """Deep-copy initial config, overlay tuned params, and persist."""
-        cfg = copy.deepcopy(self._initial_config)
+        labels: list[str] = []
+        xs: list[float] = []
+        ys: list[float] = []
+        for label, pr in entries:
+            m = pr.train_metrics
+            if m is None:
+                continue
+            labels.append(label)
+            xs.append(primary_violation(m, slo_metric))
+            ys.append(m.cost)
 
-        # Apply checkpoint overrides.
-        overrides = _checkpoints_to_config(checkpoints)
-        # Apply autoscaler params.
-        overrides = apply_overrides(overrides, autoscaler_config)
-        # Apply routing params.
-        overrides = apply_overrides(overrides, routing_config)
+        if len(xs) < 2:
+            return
 
-        cfg = apply_overrides(cfg, overrides)
+        markers = PolicyTuner._SCATTER_MARKERS
 
-        # Record the rescale factor so that downstream tooling knows
-        # the workload was time-compressed.
-        if self._tuner_config.rescale_factor is not None:
-            cfg.setdefault("workload_config", {})[
-                "rescale_factor"
-            ] = self._tuner_config.rescale_factor
+        plt.clear_figure()
+        plt.plot_size(60, 20)
+        for i in range(len(xs)):
+            mk = markers[i % len(markers)]
+            plt.scatter([xs[i]], [ys[i]], marker=mk)
+        plt.xlabel(x_label)
+        plt.ylabel("Cost ($)")
 
-        # Write final config.
-        final_path = self._run_dir / "final_config.yml"
-        with open(final_path, "w") as f:
-            dump_config(cfg, f)
+        x_lo, x_hi = min(xs), max(xs)
+        y_lo, y_hi = min(ys), max(ys)
+        x_pad = max((x_hi - x_lo) * 0.15, x_hi * 0.05) or 0.01
+        y_pad = max((y_hi - y_lo) * 0.15, y_hi * 0.05) or 0.01
+        plt.xlim(x_lo - x_pad, x_hi + x_pad)
+        plt.ylim(y_lo - y_pad, y_hi + y_pad)
 
-        # Persist raw overrides so skip-retuning runs can reload them.
-        overrides_path = self._run_dir / "tuned_overrides.yml"
-        with open(overrides_path, "w") as f:
-            dump_config(overrides, f)
+        plt.title("Violation vs. Cost")
+        plt.theme("clear")
 
-        # Finalize evolution log.
-        self._evolution_handler.finalize()
+        # Build the plot as a string and append a legend to the right.
+        plot_str = plt.build()
+        plot_lines = plot_str.split("\n")
 
-        console.print(f"  Final config written to [bold]{final_path}[/]")
+        legend_lines: list[str] = [""]  # blank line at top
+        for i, lbl in enumerate(labels):
+            mk = markers[i % len(markers)]
+            legend_lines.append(f"  {mk} {lbl}")
+        legend_lines.append("")
 
-        return final_path
+        # Vertically centre the legend against the plot.
+        total_plot = len(plot_lines)
+        total_legend = len(legend_lines)
+        offset = max(0, (total_plot - total_legend) // 2)
+
+        out_lines: list[str] = []
+        for row, pline in enumerate(plot_lines):
+            li = row - offset
+            suffix = legend_lines[li] if 0 <= li < total_legend else ""
+            out_lines.append(pline + suffix)
+
+        print("\n".join(out_lines))
 
     @staticmethod
     def _write_phase_summary(path: Path, result: PhaseResult) -> None:
@@ -960,27 +914,90 @@ class PolicyTuner:
             summary["val_violation_relative_mean"] = vm.violation_relative_mean
         summary["train_scenarios"] = [
             {
-                "scenario_idx": r.scenario_idx,
+                "simulation_dir": str(r.simulation_dir),
                 "violation_rate": r.violation_rate,
                 "violation_amount_s": r.violation_amount_s,
                 "violation_relative_mean": r.violation_relative_mean,
                 "total_cost": r.total_cost,
+                "num_queries": r.num_queries,
             }
             for r in result.train_results
         ]
         if result.val_results is not None:
             summary["val_scenarios"] = [
                 {
-                    "scenario_idx": r.scenario_idx,
+                    "simulation_dir": str(r.simulation_dir),
                     "violation_rate": r.violation_rate,
                     "violation_amount_s": r.violation_amount_s,
                     "violation_relative_mean": r.violation_relative_mean,
                     "total_cost": r.total_cost,
+                    "num_queries": r.num_queries,
                 }
                 for r in result.val_results
             ]
         with open(path, "w") as f:
             dump_config(summary, f)
+
+    @staticmethod
+    def _parse_phase_summary(path: Path) -> PhaseResult:
+        """Parse a PhaseResult from YAML."""
+        with open(path) as f:
+            summary = yaml.safe_load(f) or {}
+        train_results = [
+            SimulationResult(
+                simulation_dir=Path(r["simulation_dir"]),
+                violation_rate=r["violation_rate"],
+                violation_amount_s=r["violation_amount_s"],
+                violation_relative_mean=r["violation_relative_mean"],
+                total_cost=r["total_cost"],
+                num_queries=r["num_queries"],
+            )
+            for r in summary.get("train_scenarios", [])
+        ]
+        val_results = None
+        if "val_scenarios" in summary:
+            val_results = [
+                SimulationResult(
+                    simulation_dir=Path(r["simulation_dir"]),
+                    violation_rate=r["violation_rate"],
+                    violation_amount_s=r["violation_amount_s"],
+                    violation_relative_mean=r["violation_relative_mean"],
+                    total_cost=r["total_cost"],
+                    num_queries=r["num_queries"],
+                )
+                for r in summary.get("val_scenarios", [])
+            ]
+        return PhaseResult(
+            params=summary.get("params", {}),
+            train_results=train_results,
+            val_results=val_results,
+            train_violation_agg=summary.get("train_violation_agg"),
+            train_cost_agg=summary.get("train_cost_agg"),
+            val_violation_agg=summary.get("val_violation_agg"),
+            val_cost_agg=summary.get("val_cost_agg"),
+            train_metrics=AggregatedSimulationResults(
+                violation_rate=summary.get("train_violation_rate", 0.0),
+                violation_amount_s=summary.get("train_violation_amount_s", 0.0),
+                violation_relative_mean=summary.get(
+                    "train_violation_relative_mean", 0.0
+                ),
+                cost=summary.get("train_cost_agg", 0.0),
+            ),
+            val_metrics=(
+                AggregatedSimulationResults(
+                    violation_rate=summary.get("val_violation_rate", 0.0),
+                    violation_amount_s=summary.get(
+                        "val_violation_amount_s", 0.0
+                    ),
+                    violation_relative_mean=summary.get(
+                        "val_violation_relative_mean", 0.0
+                    ),
+                    cost=summary.get("val_cost_agg", 0.0),
+                )
+                if "val_violation_rate" in summary
+                else None
+            ),
+        )
 
     @staticmethod
     def _fmt_cell(
@@ -993,75 +1010,6 @@ class PolicyTuner:
             lo, hi = min(scenario_vals), max(scenario_vals)
             main += f"\n[dim]{lo:.4f} … {hi:.4f}[/dim]"
         return main
-
-    @staticmethod
-    def _print_phase_summary(
-        label: str, result: PhaseResult, agg_method: str = "p90"
-    ) -> None:
-        """Print a rich table summarising a phase result."""
-        table = Table(title=f"{label} Performance", show_lines=True)
-        table.add_column("Split", justify="left")
-        table.add_column("Viol. Rate", justify="right")
-        table.add_column("Viol. Amount (s)", justify="right")
-        table.add_column("Viol. Relative", justify="right")
-        table.add_column("Cost ($)", justify="right")
-        table.add_column("# Scenarios", justify="right")
-        table.add_column("Agg.", justify="center")
-
-        fmt = PolicyTuner._fmt_cell
-
-        tm = result.train_metrics
-        tr = result.train_results
-        if tm is not None:
-            table.add_row(
-                "Train",
-                fmt(tm.violation_rate, [r.violation_rate for r in tr]),
-                fmt(tm.violation_amount_s, [r.violation_amount_s for r in tr]),
-                fmt(
-                    tm.violation_relative_mean,
-                    [r.violation_relative_mean for r in tr],
-                ),
-                fmt(tm.cost, [r.total_cost for r in tr]),
-                str(len(tr)),
-                agg_method,
-            )
-        else:
-            table.add_row(
-                "Train",
-                f"{result.train_violation_agg:.4f}",
-                "—",
-                "—",
-                f"{result.train_cost_agg:.4f}",
-                str(len(tr)),
-                agg_method,
-            )
-
-        vm = result.val_metrics
-        vr = result.val_results or []
-        if vm is not None:
-            table.add_row(
-                "Val",
-                fmt(vm.violation_rate, [r.violation_rate for r in vr]),
-                fmt(vm.violation_amount_s, [r.violation_amount_s for r in vr]),
-                fmt(
-                    vm.violation_relative_mean,
-                    [r.violation_relative_mean for r in vr],
-                ),
-                fmt(vm.cost, [r.total_cost for r in vr]),
-                str(len(vr)),
-                agg_method,
-            )
-        elif result.val_results is not None:
-            table.add_row(
-                "Val",
-                f"{result.val_violation_agg:.4f}",
-                "—",
-                "—",
-                f"{result.val_cost_agg:.4f}",
-                str(len(vr)),
-                agg_method,
-            )
-        console.print(table)
 
 
 if __name__ == "__main__":
