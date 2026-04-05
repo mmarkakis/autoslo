@@ -353,11 +353,10 @@ class CheckpointOptimizer:
 
             # 1. Simulate training scenarios with current checkpoints.
             # TODO: Later can copy these over.
-            nested_train_results = self._evaluator.evaluate_batch(
+            nested_train_results = self._evaluator.evaluate_batch_from_configs(
                 phase_name="checkpoints_baseline",
                 workload_paths=train_paths,
-                base_config=current_config,
-                all_config_overrides=[{}],
+                configs = [current_config],
                 out_dir=round_dir / "baseline",
             )
             train_results = list(nested_train_results[0].values())
@@ -391,7 +390,7 @@ class CheckpointOptimizer:
                     config=current_config, checkpoints=[checkpoint]
                 )
                 all_config_overrides.append(trial_overrides)
-            all_trial_results = self._evaluator.evaluate_batch(
+            all_trial_results = self._evaluator.evaluate_batch_from_overrides(
                 phase_name="checkpoints",
                 workload_paths=train_paths,
                 base_config=current_config,
@@ -417,7 +416,7 @@ class CheckpointOptimizer:
 
             # 6. Validate.
             val_overrides = all_config_overrides[best_idx]
-            all_val_results = self._evaluator.evaluate_batch(
+            all_val_results = self._evaluator.evaluate_batch_from_overrides(
                 phase_name="checkpoints_val",
                 workload_paths=val_paths,
                 base_config=current_config,

@@ -51,44 +51,6 @@ def getd(
     return d
 
 
-def diff_to_overrides(
-    initial_config: dict, modified_config: dict
-) -> dict[str, object]:
-    """
-    Given an initial config and a modified config, compute the dot-delimited
-    overrides that would transform the initial config into the modified
-    config.
-
-    Example:
-        diff_into_overrides(
-            {"a": {"b": 1, "c": 2}, "d": 3},
-            {"a": {"b": 10, "c": 2}, "d": 30},
-        )
-        # returns {"a.b": 10, "d": 30}
-    """
-    overrides = {}
-
-    def recurse(d_initial: dict, d_modified: dict, prefix: str = ""):
-        for key in set(d_initial.keys()) | set(d_modified.keys()):
-            full_key = f"{prefix}.{key}" if prefix else key
-            if key not in d_initial:
-                overrides[full_key] = d_modified[key]
-            elif key not in d_modified:
-                overrides[full_key] = None  # or some sentinel for deletion
-            else:
-                val_initial = d_initial[key]
-                val_modified = d_modified[key]
-                if isinstance(val_initial, dict) and isinstance(
-                    val_modified, dict
-                ):
-                    recurse(val_initial, val_modified, full_key)
-                elif val_initial != val_modified:
-                    overrides[full_key] = val_modified
-
-    recurse(initial_config, modified_config)
-    return overrides
-
-
 def load_config_from_cli(description: str) -> tuple[dict, str]:
     """Parse CLI args, load YAML config, apply ``--set`` overrides.
 
