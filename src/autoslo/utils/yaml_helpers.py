@@ -42,4 +42,5 @@ def dump_config(data: Any, stream: IO[str], **kwargs: Any) -> None:
     """
     kwargs.pop("Dumper", None)
     kwargs.setdefault("default_flow_style", False)
+    kwargs.setdefault("sort_keys", False)
     yaml.dump(data, stream, Dumper=_QuotingSafeDumper, **kwargs)

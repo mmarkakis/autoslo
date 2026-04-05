@@ -96,6 +96,14 @@ class Workload:
     # Core interface
     # ------------------------------------------------------------------
 
+    def rename_workload(self, new_name: str) -> Workload:
+        """Rename the workload by changing the ``workload_name`` column."""
+        self._workload_name = new_name
+        if "workload_name" in self._df.columns:
+            self._df["workload_name"] = new_name
+        self._queries_cache = None
+        return self
+
     @property
     def workload_name(self) -> str:
         """The workload identifier, taken from the ``workload_name`` column."""
@@ -113,6 +121,11 @@ class Workload:
         """
 
         return self._df
+
+    @property
+    def num_queries(self) -> int:
+        """The number of queries in the workload."""
+        return len(self._df)
 
     def queries(self) -> list[Query]:
         """Return the list of :class:`~autoslo.workload_definition.query.Query`
@@ -160,7 +173,7 @@ class Workload:
         )
         self._queries_cache = None
 
-    def set_rel_start_times_from_zero(self) -> None:
+    def set_rel_start_times_from_zero(self) -> Workload:
         """
         Create a column of relative start times (``rel_start_time_s``) derived
         from absolute start times (``abs_start_time``) by rebasing to zero.
@@ -173,8 +186,9 @@ class Workload:
             lambda t: t.timestamp() - min_timestamp
         )
         self._queries_cache = None
+        return self
 
-    def rescale_rel_start_times(self, factor: float) -> None:
+    def rescale_rel_start_times(self, factor: float) -> Workload:
         """
         Rescale the relative start times (``rel_start_time_s``) by a constant
         factor.
@@ -191,11 +205,13 @@ class Workload:
         self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
         self._queries_cache = None
 
+        return self
+
     def slice_by_abs_time(
         self,
         start: str | None = None,
         end: str | None = None,
-    ) -> None:
+    ) -> Workload:
         """
         Filter the workload to only include queries whose ``abs_start_time``
         falls within [*start*, *end*] (both bounds inclusive and optional).
@@ -237,6 +253,8 @@ class Workload:
         self._df = self._df[mask].reset_index(drop=True)
         self._queries_cache = None
 
+        return self
+
     def save(
         self, out_dir: Optional[Path] = None, overwrite: bool = False
     ) -> Path:
@@ -249,8 +267,8 @@ class Workload:
         Parameters
         ----------
         out_dir:
-            Optional directory to write the workload file to.  
-            If *None* (default), the file is written to the standard path 
+            Optional directory to write the workload file to.
+            If *None* (default), the file is written to the standard path
             under the ``__workloads`` directory.
         overwrite:
             If *False* (default) and the file already exists, raises
@@ -269,9 +287,7 @@ class Workload:
         """
         if out_dir is None:
             out_dir = (
-                Path(pu.get_data_path())
-                / "__workloads"
-                / self._schema_name
+                Path(pu.get_data_path()) / "__workloads" / self._schema_name
             )
         path = out_dir / f"{self._workload_name}.parquet"
         if path.exists() and not overwrite:
