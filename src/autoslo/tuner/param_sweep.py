@@ -18,18 +18,18 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.scenario_evaluator import EvalSpec, ScenarioEvaluator
+from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
-    AggregatedMetrics,
+    AggregatedSimulationResults,
+    SimulationResult,
     PhaseResult,
     SloObjective,
-    aggregate,
     compute_pareto_front,
     primary_violation,
     threshold_aware_select,
 )
 import autoslo.utils.config as cfgu
+import yaml
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -83,15 +83,13 @@ class ParamSweep:
     def __init__(
         self,
         evaluator: ScenarioEvaluator,
-        config: dict[str, Any],
-        base_overrides: dict[str, Any],
+        initial_config: dict[str, Any],
         run_dir: Path,
         phase_name: str,
         slo_objective: SloObjective,
     ) -> None:
         self._evaluator = evaluator
-        self._config = config
-        self._base_overrides =  cfgu.apply_overrides({}, base_overrides)
+        self._config = initial_config
         self._run_dir = run_dir
         self._phase_name = phase_name
         self._slo_objective = slo_objective
@@ -122,7 +120,7 @@ class ParamSweep:
         -------
         The best parameter dict (keys without the section prefix).
         """
-        metric = cfgu.cfg_getd(
+        metric = cfgu.getd(
             self._config,
             "tuner_config.forecast_config.aggregation_metric",
             "p90",
@@ -132,30 +130,21 @@ class ParamSweep:
 
         # ── Pre-flight summary ──────────────────────────────────────
         self._print_preflight(param_ranges, grid, len(train_paths))
+        self._write_config(phase_dir / "initial_config.yml", self._config)
 
         # ── Training sweep ──────────────────────────────────────────
         console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results: list[dict[str, Any]] = []
-        train_specs : list[EvalSpec] = []
-        phase = self._phase_name
-        for idx in range(len(grid)):
-            point = grid[idx]
-            overrides = cfgu.apply_overrides(self._base_overrides, point)
-            grid_point = f"grid_point_{idx}"
-            spec = EvalSpec(
-                label=grid_point,
-                config_overrides=overrides,
-                grid_point=grid_point,
-                out_subdir=phase_dir / f"grid_point_{idx:03d}" / "train",
-             )
-            train_specs.append(spec)
-        all_train_results = self._evaluator.evaluate_batch(
+        all_train_results = self._evaluator.evaluate_batch_from_overrides(
+            phase_name=self._phase_name,
             workload_paths=train_paths,
-            specs=train_specs,
-            phase=phase,
+            base_config=self._config,
+            all_config_overrides=grid,
+            out_dir=phase_dir / "train",
         )
         for idx in range(len(grid)):
-            train_agg = aggregate(all_train_results[idx], metric)
+            train_results = list(all_train_results[idx].values())
+            train_agg = SimulationResult.aggregate(train_results, metric)
             train_primary = primary_violation(
                 train_agg, self._slo_objective.slo_metric
             )
@@ -189,26 +178,17 @@ class ParamSweep:
 
         # ── Validate Pareto-optimal points ─────────────────────────
         console.print(f"\n[bold cyan]Validation sweep:[/]")
-        val_specs: list[EvalSpec] = []
-        phase = self._phase_name
-        for idx in pareto_indices:
-            point = grid[idx]
-            overrides = cfgu.apply_overrides(self._base_overrides, point)
-            grid_point = f"grid_point_{idx}"
-            spec = EvalSpec(
-                label=grid_point,
-                config_overrides=overrides,
-                grid_point=grid_point,
-                out_subdir=phase_dir / f"grid_point_{idx:03d}" / "val",
-            )
-            val_specs.append(spec)
-        all_val_results = self._evaluator.evaluate_batch(
+        val_overrides = [grid[idx] for idx in pareto_indices]
+        all_val_results = self._evaluator.evaluate_batch_from_overrides(
+            phase_name=self._phase_name,
             workload_paths=val_paths,
-            specs=val_specs,
-            phase=phase,
+            base_config=self._config,
+            all_config_overrides=val_overrides,
+            out_dir=phase_dir / "val",
         )
         for i, idx in enumerate(pareto_indices):
-            val_agg = aggregate(all_val_results[i], metric)
+            val_results = list(all_val_results[i].values())
+            val_agg = SimulationResult.aggregate(val_results, metric)
             val_primary = primary_violation(
                 val_agg, self._slo_objective.slo_metric
             )
@@ -225,8 +205,10 @@ class ParamSweep:
 
         # ── Persist results ────────────────────────────────────────
         self._write_sweep_results(phase_dir, grid_results, best_idx)
+        final_config = cfgu.copy_and_apply_overrides(self._config, best_params)
+        self._write_config(phase_dir / "final_config.yml", final_config)
 
-        return best_params
+        return final_config
 
     # ------------------------------------------------------------------
     # Selection logic
@@ -370,3 +352,9 @@ class ParamSweep:
         }
         with open(phase_dir / "sweep_results.json", "w") as f:
             json.dump(output, f, indent=2, default=str)
+
+    @staticmethod
+    def _write_config(path, config):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            yaml.safe_dump(config, f, sort_keys=False)

@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import json
 import pytest
 
-from autoslo.tuner.config import TunerConfig
 from autoslo.tuner.param_sweep import ParamSweep, build_grid
-from autoslo.tuner.tuner_utils import ScenarioResult, SloObjective
-
+from autoslo.tuner.tuner_utils import SimulationResult, SloObjective
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -20,39 +18,38 @@ from autoslo.tuner.tuner_utils import ScenarioResult, SloObjective
 
 
 def _make_scenario_result(
-    scenario_idx: int,
     violation_rate: float = 0.05,
     total_cost: float = 10.0,
     out_dir: str = "/tmp/fake",
-) -> ScenarioResult:
-    return ScenarioResult(
-        scenario_idx=scenario_idx,
+) -> SimulationResult:
+    return SimulationResult(
         violation_rate=violation_rate,
         violation_amount_s=0.0,
         violation_relative_mean=0.0,
         total_cost=total_cost,
         num_queries=100,
-        out_dir=Path(out_dir),
+        simulation_dir=Path(out_dir),
     )
 
 
 def _mock_evaluator(
-    results_by_call: list[list[ScenarioResult]] | None = None,
+    results_by_call: list[dict[int, dict[int, SimulationResult]]] | None = None,
 ) -> MagicMock:
-    """Return a mock ScenarioEvaluator with canned .evaluate()  and evaluate_batch() results."""
+    """Return a mock ScenarioEvaluator with canned evaluate_batch_from_overrides() results.
+
+    Each element of *results_by_call* is one return value for a successive
+    call to ``evaluate_batch_from_overrides``.  The format is
+    ``{config_idx: {workload_idx: SimulationResult}}``.
+    """
     evaluator = MagicMock()
     if results_by_call is None:
-        evaluator.evaluate.return_value = [
-            _make_scenario_result(0, 0.10, 100.0),
-        ]
-        evaluator.evaluate_batch.return_value = [
-            [
-                _make_scenario_result(0, 0.10, 100.0),
-            ]
-        ]
+        evaluator.evaluate_batch_from_overrides.return_value = {
+            0: {
+                0: _make_scenario_result(0.10, 100.0),
+            }
+        }
     else:
-        evaluator.evaluate.side_effect = results_by_call
-        evaluator.evaluate_batch.side_effect = [results_by_call]
+        evaluator.evaluate_batch_from_overrides.side_effect = results_by_call
 
     return evaluator
 
@@ -92,8 +89,7 @@ class TestSelectBest:
     def _make_sweeper(self, slo_threshold: float = 1.0) -> ParamSweep:
         return ParamSweep(
             evaluator=_mock_evaluator(),
-            config={"tuner_config": {"aggregation_metric": "mean"}},
-            base_overrides={},
+            initial_config={"tuner_config": {"aggregation_metric": "mean"}},
             run_dir=Path("/tmp/fake"),
             phase_name="test",
             slo_objective=SloObjective(
@@ -212,15 +208,16 @@ class TestParamSweepIntegration:
 
     def test_sweep_single_point(self, run_dir: Path, config: dict[str, Any]):
         """One-element grid → the single point is selected."""
-        train_result = [_make_scenario_result(0, 0.05, 100.0)]
-        val_result = [_make_scenario_result(0, 0.06, 110.0)]
-
-        evaluator = _mock_evaluator([train_result, val_result])
+        evaluator = _mock_evaluator(
+            [
+                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
+                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+            ]
+        )
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
@@ -232,21 +229,22 @@ class TestParamSweepIntegration:
             param_ranges={"eta_crit": [0.5]},
         )
 
-        assert best == {"eta_crit": 0.5}
+        assert best == {"eta_crit": 0.5} | config
         # Both train and val were called.
-        assert evaluator.evaluate.call_count == 1
-        assert evaluator.evaluate_batch.call_count == 1
+        assert evaluator.evaluate_batch_from_overrides.call_count == 2
 
     def test_sweep_results_written(self, run_dir: Path, config: dict[str, Any]):
         """Verify sweep_results.json is created."""
-        train_result = [_make_scenario_result(0, 0.05, 100.0)]
-        val_result = [_make_scenario_result(0, 0.06, 110.0)]
-        evaluator = _mock_evaluator([train_result, val_result])
+        evaluator = _mock_evaluator(
+            [
+                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
+                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+            ]
+        )
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
@@ -276,22 +274,22 @@ class TestParamSweepIntegration:
         # Val for point 0: 0.12 viol, $55
         # Val for point 1: 0.04 viol, $95
         # With slo_threshold=0.01, both infeasible → lowest violation wins (point 1).
-        call_results = [
-            # train gp 0
-            [_make_scenario_result(0, 0.10, 50.0)],
-            # train gp 1
-            [_make_scenario_result(0, 0.03, 90.0)],
-            # val gp 0
-            [_make_scenario_result(0, 0.12, 55.0)],
-            # val gp 1
-            [_make_scenario_result(0, 0.04, 95.0)],
-        ]
-        evaluator = _mock_evaluator(call_results)
+        evaluator = _mock_evaluator(
+            [
+                {  # train: all grid points
+                    0: {0: _make_scenario_result(0.10, 50.0)},
+                    1: {0: _make_scenario_result(0.03, 90.0)},
+                },
+                {  # val: both Pareto-optimal
+                    0: {0: _make_scenario_result(0.12, 55.0)},
+                    1: {0: _make_scenario_result(0.04, 95.0)},
+                },
+            ]
+        )
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.01),
@@ -303,46 +301,9 @@ class TestParamSweepIntegration:
             param_ranges={"eta_crit": [0.3, 0.7]},
         )
 
-        assert best == {"eta_crit": 0.7}
-        # 2 train + 2 val evaluations
-        assert evaluator.evaluate.call_count == 2
-        assert evaluator.evaluate_batch.call_count == 1
-
-    def test_sweep_applies_base_overrides(
-        self, run_dir: Path, config: dict[str, Any]
-    ):
-        """Base overrides (e.g. checkpoints) are merged with grid overrides."""
-        train_result = [_make_scenario_result(0, 0.05, 100.0)]
-        val_result = [_make_scenario_result(0, 0.06, 110.0)]
-        evaluator = _mock_evaluator([train_result, val_result])
-
-        base_overrides = {
-            "autoscaling_config.capacity_checkpoints": [{"time_s": 0}]
-        }
-
-        sweeper = ParamSweep(
-            evaluator=evaluator,
-            config=config,
-            base_overrides=base_overrides,
-            run_dir=run_dir,
-            phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-        )
-
-        sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={"autoscaling_config.eta_crit": [0.5]},
-        )
-
-        # Verify the first evaluate call includes both base and grid overrides.
-        call_overrides = evaluator.evaluate.call_args_list[0][1][
-            "config_overrides"
-        ]
-        print(call_overrides)
-        assert "autoscaling_config" in call_overrides
-        assert "capacity_checkpoints" in call_overrides["autoscaling_config"]
-        assert "eta_crit" in call_overrides["autoscaling_config"]
+        assert best == {"eta_crit": 0.7} | config
+        # 1 train batch + 1 val batch
+        assert evaluator.evaluate_batch_from_overrides.call_count == 2
 
     def test_sweep_dominated_point_not_validated(
         self, run_dir: Path, config: dict[str, Any]
@@ -352,20 +313,23 @@ class TestParamSweepIntegration:
         # Point 0: 0.10 viol, $100 — dominated by point 1 (lower on both)
         # Point 1: 0.05 viol, $50
         # Point 2: 0.03 viol, $120 — Pareto with point 1
-        call_results = [
-            [_make_scenario_result(0, 0.10, 100.0)],  # train gp 0 (dominated)
-            [_make_scenario_result(0, 0.05, 50.0)],  # train gp 1 (pareto)
-            [_make_scenario_result(0, 0.03, 120.0)],  # train gp 2 (pareto)
-            # Only 2 val evals (gp 1 and gp 2)
-            [_make_scenario_result(0, 0.06, 55.0)],  # val gp 1
-            [_make_scenario_result(0, 0.04, 125.0)],  # val gp 2
-        ]
-        evaluator = _mock_evaluator(call_results)
+        evaluator = _mock_evaluator(
+            [
+                {  # train: all 3 grid points
+                    0: {0: _make_scenario_result(0.10, 100.0)},  # dominated
+                    1: {0: _make_scenario_result(0.05, 50.0)},  # pareto
+                    2: {0: _make_scenario_result(0.03, 120.0)},  # pareto
+                },
+                {  # val: only Pareto points (re-indexed 0, 1)
+                    0: {0: _make_scenario_result(0.06, 55.0)},
+                    1: {0: _make_scenario_result(0.04, 125.0)},
+                },
+            ]
+        )
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.01),
@@ -377,20 +341,21 @@ class TestParamSweepIntegration:
             param_ranges={"a": [1, 2, 3]},
         )
 
-        # 3 train evals + 2 val evals for Pareto points only
-        assert evaluator.evaluate.call_count == 3
-        assert evaluator.evaluate_batch.call_count == 1
+        # 1 train batch + 1 val batch (Pareto points only)
+        assert evaluator.evaluate_batch_from_overrides.call_count == 2
 
     def test_sweep_empty_ranges(self, run_dir: Path, config: dict[str, Any]):
         """Empty param_ranges → single point with empty params."""
-        train_result = [_make_scenario_result(0, 0.05, 100.0)]
-        val_result = [_make_scenario_result(0, 0.06, 110.0)]
-        evaluator = _mock_evaluator([train_result, val_result])
+        evaluator = _mock_evaluator(
+            [
+                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
+                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+            ]
+        )
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
@@ -402,20 +367,22 @@ class TestParamSweepIntegration:
             param_ranges={},
         )
 
-        assert best == {}
+        assert best == {} | config
 
     def test_sweep_config_section_applied_correctly(
         self, run_dir: Path, config: dict[str, Any]
     ):
         """Grid point keys are prefixed with config_section."""
-        train_result = [_make_scenario_result(0, 0.05, 100.0)]
-        val_result = [_make_scenario_result(0, 0.06, 110.0)]
-        evaluator = _mock_evaluator([train_result, val_result])
+        evaluator = _mock_evaluator(
+            [
+                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
+                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+            ]
+        )
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
@@ -427,34 +394,30 @@ class TestParamSweepIntegration:
             param_ranges={"routing_config.weight": [0.5]},
         )
 
-        call_overrides = evaluator.evaluate.call_args_list[0][1][
-            "config_overrides"
-        ]
-        assert "routing_config" in call_overrides
-        assert "weight" in call_overrides["routing_config"]
-        assert call_overrides["routing_config"]["weight"] == 0.5
+        call_overrides = evaluator.evaluate_batch_from_overrides.call_args_list[
+            0
+        ][1]["all_config_overrides"][0]
+        assert "routing_config.weight" in call_overrides
+        assert call_overrides["routing_config.weight"] == 0.5
 
     def test_sweep_multi_param_grid(
         self, run_dir: Path, config: dict[str, Any]
     ):
         """Multi-parameter grid produces correct number of evaluations."""
         # 2 x 3 = 6 grid points. Assume all Pareto (worst case).
-        results = []
-        for i in range(6):
-            results.append(
-                [_make_scenario_result(0, 0.10 - i * 0.01, 50.0 + i * 10)]
-            )
-        # 6 val results
-        for i in range(6):
-            results.append(
-                [_make_scenario_result(0, 0.11 - i * 0.01, 55.0 + i * 10)]
-            )
-        evaluator = _mock_evaluator(results)
+        train_batch = {
+            i: {0: _make_scenario_result(0.10 - i * 0.01, 50.0 + i * 10)}
+            for i in range(6)
+        }
+        val_batch = {
+            i: {0: _make_scenario_result(0.11 - i * 0.01, 55.0 + i * 10)}
+            for i in range(6)
+        }
+        evaluator = _mock_evaluator([train_batch, val_batch])
 
         sweeper = ParamSweep(
             evaluator=evaluator,
-            config=config,
-            base_overrides={},
+            initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
