@@ -56,7 +56,7 @@ class TestCheckpointsToOverrides:
         }
         checkpoints = []
         overrides = checkpoints_to_overrides(
-            initial_config=initial_config, checkpoints=checkpoints
+            config=initial_config, checkpoints=checkpoints
         )
         assert overrides == {}, "Expected empty overrides when no checkpoints"
 
@@ -77,7 +77,7 @@ class TestCheckpointsToOverrides:
             )
         ]
         overrides = checkpoints_to_overrides(
-            initial_config=initial_config, checkpoints=checkpoints
+            config=initial_config, checkpoints=checkpoints
         )
         expected_overrides = {
             "autoscaling_config": {
@@ -110,7 +110,7 @@ class TestCheckpointsToOverrides:
             )
         ]
         overrides = checkpoints_to_overrides(
-            initial_config=initial_config, checkpoints=checkpoints
+            config=initial_config, checkpoints=checkpoints
         )
         expected_overrides = {
             "managed_cluster_pool_config": {"initial_rpus": [1, 2, 2, 4, 4]}
@@ -140,7 +140,7 @@ class TestCheckpointsToOverrides:
             ),
         ]
         overrides = checkpoints_to_overrides(
-            initial_config=initial_config, checkpoints=checkpoints
+            config=initial_config, checkpoints=checkpoints
         )
         expected_overrides = {
             "managed_cluster_pool_config": {"initial_rpus": [1, 2, 2, 4, 4]},

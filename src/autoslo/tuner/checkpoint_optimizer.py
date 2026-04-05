@@ -23,13 +23,11 @@ from rich.table import Table
 
 from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
-from autoslo.tuner.config import TunerConfig
-from autoslo.tuner.scenario_evaluator import ScenarioEvaluator, EvalSpec
+from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
-    AggregatedMetrics,
-    ScenarioResult,
+    AggregatedSimulationResults,
+    SimulationResult,
     SloObjective,
-    aggregate,
     is_feasible,
     primary_violation,
     threshold_aware_select,
@@ -40,6 +38,7 @@ from autoslo.blueprint_selection.slo_resolver import (
 )
 import autoslo.utils.config as cfgu
 from collections import defaultdict
+import copy
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -51,15 +50,9 @@ console = Console()
 
 
 def checkpoints_to_overrides(
-    initial_config: dict[str, Any],
+    config: dict[str, Any],
     checkpoints: list[CapacityCheckpoint],
 ) -> dict[str, Any]:
-    """Serialise a :class:`CheckpointOptimizerResult` into config overrides.
-
-    Merges :attr:`~CheckpointOptimizerResult.additional_initial_rpus`
-    with *existing_initial_rpus* and emits both the checkpoint list and
-    the updated ``initial_rpus``.
-    """
 
     additional_initial_rpus: list[int] = []
     nonzero_checkpoints: list[dict[str, Any]] = []
@@ -75,22 +68,22 @@ def checkpoints_to_overrides(
     overrides: dict[str, Any] = {}
     if additional_initial_rpus:
         dot_delimited_key = "managed_cluster_pool_config.initial_rpus"
-        initial_rpus = cfgu.cfg_getd(initial_config, dot_delimited_key, [])
-        overrides = cfgu.apply_overrides(
+        initial_rpus = cfgu.getd(config, dot_delimited_key, [])
+        overrides = cfgu.copy_and_apply_overrides(
             overrides,
             {dot_delimited_key: sorted(initial_rpus + additional_initial_rpus)},
         )
 
     if nonzero_checkpoints:
         dot_delimited_key = "autoscaling_config.capacity_checkpoints"
-        overrides = cfgu.apply_overrides(
+        overrides = cfgu.copy_and_apply_overrides(
             overrides, {dot_delimited_key: nonzero_checkpoints}
         )
     return overrides
 
 
 def find_next_checkpoint_time(
-    results: list[ScenarioResult],  # TODO: Feed dfs for easier testing
+    results: list[SimulationResult],
     slo_resolver: SloResolver,
     threshold: float,
     spin_up_delay_s: float,
@@ -116,7 +109,7 @@ def find_next_checkpoint_time(
     """
     completion_structured_logs = []
     for result in results:
-        log_path = result.out_dir / "structured_log.parquet"
+        log_path = result.simulation_dir / "structured_log.parquet"
         if not log_path.exists():
             raise FileNotFoundError(f"Missing log file: {log_path}")
 
@@ -302,7 +295,7 @@ class CheckpointOptimizer:
 
     def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
         """Helper to read from the config dict with dot-delimited keys."""
-        return cfgu.cfg_getd(self._config, dot_delimited_key, default)
+        return cfgu.getd(self._config, dot_delimited_key, default)
 
     # ------------------------------------------------------------------
     # Public API
@@ -344,25 +337,30 @@ class CheckpointOptimizer:
             "tuner_config.checkpoint_phase.checkpoint_epsilon", 0.01
         )
 
-        current_checkpoints: list[CapacityCheckpoint] = []
         best_val_violation = baseline_val_violation
         ckpt_dir = self._run_dir / "checkpoints"
 
+        current_config = copy.deepcopy(self._config)
+        self._write_config(ckpt_dir / "initial_config.yml", current_config)
+
         for round_idx in range(checkpoint_budget):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
+            round_dir = ckpt_dir / f"round_{round_idx:03d}"
+            self._write_config(
+                round_dir / "initial_config.yml",
+                current_config,
+            )
 
             # 1. Simulate training scenarios with current checkpoints.
             # TODO: Later can copy these over.
-            overrides = checkpoints_to_overrides(
-                initial_config=self._config, checkpoints=current_checkpoints
-            )
-            train_results = self._evaluator.evaluate(
+            nested_train_results = self._evaluator.evaluate_batch(
+                phase_name="checkpoints_baseline",
                 workload_paths=train_paths,
-                config_overrides=overrides,
-                phase="checkpoints",
-                grid_point=f"round_{round_idx:03d}_base",
-                out_subdir=ckpt_dir / f"round_{round_idx:03d}" / "base",
+                base_config=current_config,
+                all_config_overrides=[{}],
+                out_dir=round_dir / "baseline",
             )
+            train_results = list(nested_train_results[0].values())
 
             # 2. Find earliest promising checkpoint time.
             next_checkpoint_time = find_next_checkpoint_time(
@@ -378,37 +376,32 @@ class CheckpointOptimizer:
                 break
 
             # 3. Try each RPU size.
-            cands: list[tuple[CapacityCheckpoint, AggregatedMetrics]] = []
+            cands: list[
+                tuple[CapacityCheckpoint, AggregatedSimulationResults]
+            ] = []
             checkpoints = []
-            specs: list[EvalSpec] = []
-            phase = "checkpoints"
+            all_config_overrides = []
             for rpu in self._allowed_rpu_sizes:
                 checkpoint = CapacityCheckpoint(
                     time_s=max(0.0, next_checkpoint_time),
                     min_rpus=(rpu,),
                 )
                 checkpoints.append(checkpoint)
-                trial_checkpoints = current_checkpoints + [checkpoint]
                 trial_overrides = checkpoints_to_overrides(
-                    initial_config=self._config, checkpoints=trial_checkpoints
+                    config=current_config, checkpoints=[checkpoint]
                 )
-                grid_point = f"round_{round_idx:03d}_rpu{rpu}"
-                spec = EvalSpec(
-                    label=f"{phase} gp={grid_point}",
-                    config_overrides=trial_overrides,
-                    grid_point=str(grid_point),
-                    out_subdir=(
-                        ckpt_dir / f"round_{round_idx:03d}" / f"rpu{rpu}"
-                    ),
-                )
-                specs.append(spec)
+                all_config_overrides.append(trial_overrides)
             all_trial_results = self._evaluator.evaluate_batch(
-                workload_paths=train_paths, specs=specs, phase=phase
+                phase_name="checkpoints",
+                workload_paths=train_paths,
+                base_config=current_config,
+                all_config_overrides=all_config_overrides,
+                out_dir=round_dir / "train",
             )
             for i in range(len(self._allowed_rpu_sizes)):
                 checkpoint = checkpoints[i]
-                trial_result = all_trial_results[i]
-                agg = aggregate(trial_result, metric)
+                trial_results = list(all_trial_results[i].values())
+                agg = SimulationResult.aggregate(trial_results, metric)
                 cands.append((checkpoint, agg))
 
             # 5. Pick best on training set (threshold-aware selection).
@@ -423,18 +416,16 @@ class CheckpointOptimizer:
             self._print_candidate_table(round_idx, cands, best_cp)
 
             # 6. Validate.
-            val_overrides = checkpoints_to_overrides(
-                initial_config=self._config,
-                checkpoints=current_checkpoints + [best_cp],
-            )
-            val_results = self._evaluator.evaluate(
+            val_overrides = all_config_overrides[best_idx]
+            all_val_results = self._evaluator.evaluate_batch(
+                phase_name="checkpoints_val",
                 workload_paths=val_paths,
-                config_overrides=val_overrides,
-                phase="checkpoints",
-                grid_point=f"round_{round_idx:03d}_val",
-                out_subdir=ckpt_dir / f"round_{round_idx:03d}" / "val",
+                base_config=current_config,
+                all_config_overrides=[val_overrides],
+                out_dir=round_dir / "val",
             )
-            val_agg = aggregate(val_results, metric)
+            val_results = list(all_val_results[0].values())
+            val_agg = SimulationResult.aggregate(val_results, metric)
             val_primary = primary_violation(val_agg, sm)
 
             console.print(
@@ -451,7 +442,9 @@ class CheckpointOptimizer:
                     f"{val_primary:.4f} ≤ {st:.2f}) "
                     f"— stopping checkpoint placement."
                 )
-                current_checkpoints.append(best_cp)
+                current_config = cfgu.copy_and_apply_overrides(
+                    current_config, val_overrides
+                )
                 best_val_violation = val_primary
                 self._write_round_summary(
                     round_idx,
@@ -459,15 +452,30 @@ class CheckpointOptimizer:
                     best_cp,
                     val_agg,
                 )
+                self._write_config(
+                    round_dir / "final_config.yml", current_config
+                )
                 break
+
             if best_val_violation - val_primary < checkpoint_epsilon:
                 console.print(
                     "[yellow]Improvement below epsilon on validation set — early stopping."
                 )
+                self._write_round_summary(
+                    round_idx,
+                    cands,
+                    best_cp,
+                    val_agg,
+                )
+                self._write_config(
+                    round_dir / "final_config.yml", current_config
+                )
                 break
 
             # 7. Accept.
-            current_checkpoints.append(best_cp)
+            current_config = cfgu.copy_and_apply_overrides(
+                current_config, val_overrides
+            )
             best_val_violation = val_primary
             console.print(
                 f"  [green]Accepted checkpoint: time_s={best_cp.time_s:.0f}  "
@@ -481,12 +489,11 @@ class CheckpointOptimizer:
                 best_cp,
                 val_agg,
             )
+            self._write_config(round_dir / "final_config.yml", current_config)
 
-        # Write the final selected checkpoints.
-        overrides = checkpoints_to_overrides(
-            initial_config=self._config, checkpoints=current_checkpoints
-        )
-        return overrides
+        # Write the final config.
+        self._write_config(ckpt_dir / "final_config.yml", current_config)
+        return current_config
 
     # ------------------------------------------------------------------
     # Rich output helpers
@@ -498,7 +505,7 @@ class CheckpointOptimizer:
         candidates: list[
             tuple[
                 CapacityCheckpoint,
-                AggregatedMetrics,
+                AggregatedSimulationResults,
             ]
         ],
         best_cp: CapacityCheckpoint,
@@ -534,17 +541,23 @@ class CheckpointOptimizer:
     # Persistence helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _write_config(path, config):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            yaml.safe_dump(config, f, sort_keys=False)
+
     def _write_round_summary(
         self,
         round_idx: int,
         candidates: list[
             tuple[
                 CapacityCheckpoint,
-                AggregatedMetrics,
+                AggregatedSimulationResults,
             ]
         ],
         best_cp: CapacityCheckpoint,
-        val_agg: AggregatedMetrics,
+        val_agg: AggregatedSimulationResults,
     ) -> None:
         round_dir = self._run_dir / "checkpoints" / f"round_{round_idx:03d}"
         round_dir.mkdir(parents=True, exist_ok=True)
@@ -578,15 +591,3 @@ class CheckpointOptimizer:
         }
         with open(round_dir / "candidate_results.yml", "w") as f:
             yaml.dump(summary, f, default_flow_style=False)
-
-    def _write_selected_checkpoints(
-        self, checkpoints: list[CapacityCheckpoint]
-    ) -> None:
-        ckpt_dir = self._run_dir / "checkpoints"
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
-        data = [
-            {"time_s": cp.time_s, "min_rpus": list(cp.min_rpus)}
-            for cp in checkpoints
-        ]
-        with open(ckpt_dir / "selected_checkpoints.yml", "w") as f:
-            yaml.dump(data, f, default_flow_style=False)
