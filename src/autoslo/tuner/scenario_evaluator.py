@@ -173,7 +173,7 @@ class ScenarioEvaluator:
         workload_paths: list[Path],
         base_config: dict[str, Any],
         all_config_overrides: list[dict[str, Any]],
-    ) -> dict[int, dict[int, SimulationResult]]:
+    ) -> list[list[SimulationResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
         accepts a list of override dicts instead of full configs, and applies
@@ -198,7 +198,7 @@ class ScenarioEvaluator:
         out_dir: Path,
         workload_paths: list[Path],
         configs: list[dict[str, Any]],
-    ) -> dict[int, dict[int, SimulationResult]]:
+    ) -> list[list[SimulationResult]]:
         """
         Evaluate the cross-product of *workload_paths* and *configs* in
         parallel, with unified progress tracking and result collection.
@@ -217,8 +217,9 @@ class ScenarioEvaluator:
 
         Returns
         -------
-        A nested dictionary mapping config indices to workload indices to
-        :class:`SimulationResult` instances.
+        A nested list where ``results[config_idx][workload_idx]`` is the
+        :class:`SimulationResult` for that combination.  The outer list
+        is ordered by *configs* and the inner list by *workload_paths*.
         """
 
         if len(configs) == 0 or len(workload_paths) == 0:
@@ -352,7 +353,12 @@ class ScenarioEvaluator:
 
         mgr.shutdown()
 
-        return results
+        # Convert the sparse dict-of-dicts into a list-of-lists ordered
+        # by config index (outer) and workload index (inner).
+        return [
+            [results[ci][wi] for wi in range(num_workloads)]
+            for ci in range(len(configs))
+        ]
 
     # ------------------------------------------------------------------
     # Internals

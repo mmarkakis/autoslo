@@ -141,7 +141,7 @@ class ParamSweep:
             out_dir=phase_dir / "train",
         )
         for idx in range(len(grid)):
-            train_results = list(all_train_results[idx].values())
+            train_results = all_train_results[idx]
             train_agg = SimulationResult.aggregate(train_results, metric)
             train_primary = primary_violation(
                 train_agg, self._slo_objective.slo_metric
@@ -185,7 +185,7 @@ class ParamSweep:
             out_dir=phase_dir / "val",
         )
         for i, idx in enumerate(pareto_indices):
-            val_results = list(all_val_results[i].values())
+            val_results = all_val_results[i]
             val_agg = SimulationResult.aggregate(val_results, metric)
             val_primary = primary_violation(
                 val_agg, self._slo_objective.slo_metric

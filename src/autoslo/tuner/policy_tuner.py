@@ -275,7 +275,7 @@ class PolicyTuner:
                 train_out_dir / "config_0"
             )
         else:
-            train_results_nested_dict = (
+            train_results_nested = (
                 self._evaluator.evaluate_batch_from_configs(
                     phase_name="baseline_train",
                     workload_paths=train_paths,
@@ -283,7 +283,7 @@ class PolicyTuner:
                     out_dir=train_out_dir,
                 )
             )
-            train_results = list(train_results_nested_dict[0].values())
+            train_results = train_results_nested[0]
 
         train_agg = SimulationResult.aggregate(train_results, metric)
 
@@ -300,7 +300,7 @@ class PolicyTuner:
             )
             val_results = SimulationResult.load_batch(val_out_dir / "config_0")
         else:
-            val_results_nested_dict = (
+            val_results_nested = (
                 self._evaluator.evaluate_batch_from_configs(
                     phase_name="baseline_val",
                     workload_paths=val_paths,
@@ -308,7 +308,7 @@ class PolicyTuner:
                     out_dir=val_out_dir,
                 )
             )
-            val_results = list(val_results_nested_dict[0].values())
+            val_results = val_results_nested[0]
         val_agg = SimulationResult.aggregate(val_results, metric)
 
         # Persist summary.
@@ -522,7 +522,7 @@ class PolicyTuner:
             workload_paths=train_paths,
             configs=[final_config],
         )
-        train_results = list(all_train_results[0].values())
+        train_results = all_train_results[0]
         train_agg = SimulationResult.aggregate(train_results, metric)
 
         all_val_results = self._evaluator.evaluate_batch_from_configs(
@@ -531,7 +531,7 @@ class PolicyTuner:
             workload_paths=val_paths,
             configs=[final_config],
         )
-        val_results = list(all_val_results[0].values())
+        val_results = all_val_results[0]
         val_agg = SimulationResult.aggregate(val_results, metric)
 
         self._write_phase_summary(train_summary_path, train_agg)
@@ -605,8 +605,8 @@ class PolicyTuner:
         metric = self._cfgd(
             "tuner_config.forecast_config.aggregation_metric", "mean"
         )
-        initial_results = list(all_results[0].values())
-        final_results = list(all_results[1].values())
+        initial_results = all_results[0]
+        final_results = all_results[1]
         base_agg = SimulationResult.aggregate(initial_results, metric)
         tuned_agg = SimulationResult.aggregate(final_results, metric)
 
@@ -619,7 +619,7 @@ class PolicyTuner:
         static_summaries: list[dict[str, Any]] = []
 
         for i, sb in enumerate(static_baselines):
-            sb_results = list(all_results[2 + i].values())
+            sb_results = all_results[2 + i]
             sb_agg = SimulationResult.aggregate(sb_results, metric)
             static_summaries.append(
                 {

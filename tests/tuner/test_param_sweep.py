@@ -33,21 +33,19 @@ def _make_scenario_result(
 
 
 def _mock_evaluator(
-    results_by_call: list[dict[int, dict[int, SimulationResult]]] | None = None,
+    results_by_call: list[list[list[SimulationResult]]] | None = None,
 ) -> MagicMock:
     """Return a mock ScenarioEvaluator with canned evaluate_batch_from_overrides() results.
 
     Each element of *results_by_call* is one return value for a successive
     call to ``evaluate_batch_from_overrides``.  The format is
-    ``{config_idx: {workload_idx: SimulationResult}}``.
+    ``[[SimulationResult, ...], ...]`` (configs × workloads).
     """
     evaluator = MagicMock()
     if results_by_call is None:
-        evaluator.evaluate_batch_from_overrides.return_value = {
-            0: {
-                0: _make_scenario_result(0.10, 100.0),
-            }
-        }
+        evaluator.evaluate_batch_from_overrides.return_value = [
+            [_make_scenario_result(0.10, 100.0)],
+        ]
     else:
         evaluator.evaluate_batch_from_overrides.side_effect = results_by_call
 
@@ -210,8 +208,8 @@ class TestParamSweepIntegration:
         """One-element grid → the single point is selected."""
         evaluator = _mock_evaluator(
             [
-                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
-                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+                [[_make_scenario_result(0.05, 100.0)]],  # train
+                [[_make_scenario_result(0.06, 110.0)]],  # val
             ]
         )
 
@@ -237,8 +235,8 @@ class TestParamSweepIntegration:
         """Verify sweep_results.json is created."""
         evaluator = _mock_evaluator(
             [
-                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
-                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+                [[_make_scenario_result(0.05, 100.0)]],  # train
+                [[_make_scenario_result(0.06, 110.0)]],  # val
             ]
         )
 
@@ -276,14 +274,14 @@ class TestParamSweepIntegration:
         # With slo_threshold=0.01, both infeasible → lowest violation wins (point 1).
         evaluator = _mock_evaluator(
             [
-                {  # train: all grid points
-                    0: {0: _make_scenario_result(0.10, 50.0)},
-                    1: {0: _make_scenario_result(0.03, 90.0)},
-                },
-                {  # val: both Pareto-optimal
-                    0: {0: _make_scenario_result(0.12, 55.0)},
-                    1: {0: _make_scenario_result(0.04, 95.0)},
-                },
+                [  # train: all grid points
+                    [_make_scenario_result(0.10, 50.0)],
+                    [_make_scenario_result(0.03, 90.0)],
+                ],
+                [  # val: both Pareto-optimal
+                    [_make_scenario_result(0.12, 55.0)],
+                    [_make_scenario_result(0.04, 95.0)],
+                ],
             ]
         )
 
@@ -315,15 +313,15 @@ class TestParamSweepIntegration:
         # Point 2: 0.03 viol, $120 — Pareto with point 1
         evaluator = _mock_evaluator(
             [
-                {  # train: all 3 grid points
-                    0: {0: _make_scenario_result(0.10, 100.0)},  # dominated
-                    1: {0: _make_scenario_result(0.05, 50.0)},  # pareto
-                    2: {0: _make_scenario_result(0.03, 120.0)},  # pareto
-                },
-                {  # val: only Pareto points (re-indexed 0, 1)
-                    0: {0: _make_scenario_result(0.06, 55.0)},
-                    1: {0: _make_scenario_result(0.04, 125.0)},
-                },
+                [  # train: all 3 grid points
+                    [_make_scenario_result(0.10, 100.0)],  # dominated
+                    [_make_scenario_result(0.05, 50.0)],  # pareto
+                    [_make_scenario_result(0.03, 120.0)],  # pareto
+                ],
+                [  # val: only Pareto points (re-indexed 0, 1)
+                    [_make_scenario_result(0.06, 55.0)],
+                    [_make_scenario_result(0.04, 125.0)],
+                ],
             ]
         )
 
@@ -348,8 +346,8 @@ class TestParamSweepIntegration:
         """Empty param_ranges → single point with empty params."""
         evaluator = _mock_evaluator(
             [
-                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
-                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+                [[_make_scenario_result(0.05, 100.0)]],  # train
+                [[_make_scenario_result(0.06, 110.0)]],  # val
             ]
         )
 
@@ -375,8 +373,8 @@ class TestParamSweepIntegration:
         """Grid point keys are prefixed with config_section."""
         evaluator = _mock_evaluator(
             [
-                {0: {0: _make_scenario_result(0.05, 100.0)}},  # train
-                {0: {0: _make_scenario_result(0.06, 110.0)}},  # val
+                [[_make_scenario_result(0.05, 100.0)]],  # train
+                [[_make_scenario_result(0.06, 110.0)]],  # val
             ]
         )
 
@@ -405,14 +403,14 @@ class TestParamSweepIntegration:
     ):
         """Multi-parameter grid produces correct number of evaluations."""
         # 2 x 3 = 6 grid points. Assume all Pareto (worst case).
-        train_batch = {
-            i: {0: _make_scenario_result(0.10 - i * 0.01, 50.0 + i * 10)}
+        train_batch = [
+            [_make_scenario_result(0.10 - i * 0.01, 50.0 + i * 10)]
             for i in range(6)
-        }
-        val_batch = {
-            i: {0: _make_scenario_result(0.11 - i * 0.01, 55.0 + i * 10)}
+        ]
+        val_batch = [
+            [_make_scenario_result(0.11 - i * 0.01, 55.0 + i * 10)]
             for i in range(6)
-        }
+        ]
         evaluator = _mock_evaluator([train_batch, val_batch])
 
         sweeper = ParamSweep(

@@ -397,7 +397,7 @@ class CheckpointOptimizer:
             )
             for i in range(len(self._allowed_rpu_sizes)):
                 checkpoint = checkpoints[i]
-                trial_results = list(all_trial_results[i].values())
+                trial_results = all_trial_results[i]
                 agg = SimulationResult.aggregate(trial_results, metric)
                 cands.append((checkpoint, agg))
 
@@ -421,7 +421,7 @@ class CheckpointOptimizer:
                 all_config_overrides=[val_overrides],
                 out_dir=round_dir / "val",
             )
-            val_results = list(all_val_results[0].values())
+            val_results = all_val_results[0]
             val_agg = SimulationResult.aggregate(val_results, metric)
             val_primary = primary_violation(val_agg, sm)
 
