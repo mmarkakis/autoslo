@@ -14,7 +14,7 @@ import pandas as pd
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.utils.yaml_helpers import dump_config
+from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_execution.trace import Trace
 
 _DEFAULT_DATA_SUBDIR = "slos"
@@ -119,9 +119,8 @@ def compute_slo_dict(
     subset["template_id"] = subset["tpcds_temp_and_q_idx"].map(
         _extract_template_id
     )
-    baseline = (
-        subset.groupby("template_id")["latency_s"]
-        .quantile(baseline_percentile / 100.0)
+    baseline = subset.groupby("template_id")["latency_s"].quantile(
+        baseline_percentile / 100.0
     )
     slo = baseline * multiplier
     return {str(k): round(float(v), 3) for k, v in slo.items()}
@@ -176,7 +175,6 @@ def dump_slo_table(
         "slo_dict": slo_dict,
     }
 
-    with open(output_path, "w") as f:
-        dump_config(meta, f, sort_keys=False)
+    dump(meta, output_path)
 
     return slo_dict

@@ -144,3 +144,7 @@ class ClassWithFactory(ABC):
         raise NotImplementedError(
             "Subclasses must implement the 'name' property."
         )
+
+
+    def __str__(self) -> str:
+        return self.name

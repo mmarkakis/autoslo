@@ -29,7 +29,7 @@ from autoslo.tuner.tuner_utils import (
     threshold_aware_select,
 )
 import autoslo.utils.config as cfgu
-import yaml
+from autoslo.utils.yaml_helpers import dump
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -130,7 +130,7 @@ class ParamSweep:
 
         # ── Pre-flight summary ──────────────────────────────────────
         self._print_preflight(param_ranges, grid, len(train_paths))
-        self._write_config(phase_dir / "initial_config.yml", self._config)
+        dump(self._config, phase_dir / "initial_config.yml")
 
         # ── Training sweep ──────────────────────────────────────────
         console.print(f"\n[bold cyan]Training sweep:[/]")
@@ -206,7 +206,7 @@ class ParamSweep:
         # ── Persist results ────────────────────────────────────────
         self._write_sweep_results(phase_dir, grid_results, best_idx)
         final_config = cfgu.copy_and_apply_overrides(self._config, best_params)
-        self._write_config(phase_dir / "final_config.yml", final_config)
+        dump(final_config, phase_dir / "final_config.yml")
 
         return final_config
 
@@ -353,8 +353,4 @@ class ParamSweep:
         with open(phase_dir / "sweep_results.json", "w") as f:
             json.dump(output, f, indent=2, default=str)
 
-    @staticmethod
-    def _write_config(path, config):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
-            yaml.safe_dump(config, f, sort_keys=False)
+    

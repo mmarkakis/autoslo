@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from typing import IO, Any
+from pathlib import Path
 
 import yaml
 
@@ -20,21 +21,17 @@ class _QuotingSafeDumper(yaml.SafeDumper):
     """SafeDumper subclass that single-quotes zero-padded numeric strings."""
 
 
-def _quote_ambiguous_str(
-    dumper: yaml.SafeDumper, data: str
-) -> yaml.ScalarNode:
+def _quote_ambiguous_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
     if _LEADING_ZERO_RE.match(data):
-        return dumper.represent_scalar(
-            "tag:yaml.org,2002:str", data, style="'"
-        )
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
     return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
 
 _QuotingSafeDumper.add_representer(str, _quote_ambiguous_str)
 
 
-def dump_config(data: Any, stream: IO[str], **kwargs: Any) -> None:
-    """Write *data* as YAML to *stream*, quoting ambiguous string keys.
+def dump(data: Any, path: str | Path, **kwargs: Any) -> None:
+    """Write *data* as YAML to *path*, quoting ambiguous string keys.
 
     Accepts the same keyword arguments as :func:`yaml.dump`
     (``default_flow_style``, ``sort_keys``, etc.).  ``Dumper`` is always
@@ -43,4 +40,5 @@ def dump_config(data: Any, stream: IO[str], **kwargs: Any) -> None:
     kwargs.pop("Dumper", None)
     kwargs.setdefault("default_flow_style", False)
     kwargs.setdefault("sort_keys", False)
-    yaml.dump(data, stream, Dumper=_QuotingSafeDumper, **kwargs)
+    with open(path, "w") as f:
+        yaml.dump(data, f, Dumper=_QuotingSafeDumper, **kwargs)

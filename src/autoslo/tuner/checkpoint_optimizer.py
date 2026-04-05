@@ -10,7 +10,9 @@ epsilon.
 
 from __future__ import annotations
 
+import copy
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -21,6 +23,11 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+import autoslo.utils.config as cfgu
+from autoslo.blueprint_selection.slo_resolver import (
+    SloResolver,
+    slo_relative_violation,
+)
 from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
@@ -32,13 +39,7 @@ from autoslo.tuner.tuner_utils import (
     primary_violation,
     threshold_aware_select,
 )
-from autoslo.blueprint_selection.slo_resolver import (
-    SloResolver,
-    slo_relative_violation,
-)
-import autoslo.utils.config as cfgu
-from collections import defaultdict
-import copy
+from autoslo.utils.yaml_helpers import dump
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -341,22 +342,19 @@ class CheckpointOptimizer:
         ckpt_dir = self._run_dir / "checkpoints"
 
         current_config = copy.deepcopy(self._config)
-        self._write_config(ckpt_dir / "initial_config.yml", current_config)
+        dump(current_config, ckpt_dir / "initial_config.yml")
 
         for round_idx in range(checkpoint_budget):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
             round_dir = ckpt_dir / f"round_{round_idx:03d}"
-            self._write_config(
-                round_dir / "initial_config.yml",
-                current_config,
-            )
+            dump(current_config, round_dir / "initial_config.yml")
 
             # 1. Simulate training scenarios with current checkpoints.
             # TODO: Later can copy these over.
             nested_train_results = self._evaluator.evaluate_batch_from_configs(
                 phase_name="checkpoints_baseline",
                 workload_paths=train_paths,
-                configs = [current_config],
+                configs=[current_config],
                 out_dir=round_dir / "baseline",
             )
             train_results = list(nested_train_results[0].values())
@@ -451,9 +449,7 @@ class CheckpointOptimizer:
                     best_cp,
                     val_agg,
                 )
-                self._write_config(
-                    round_dir / "final_config.yml", current_config
-                )
+                dump(current_config, round_dir / "final_config.yml")
                 break
 
             if best_val_violation - val_primary < checkpoint_epsilon:
@@ -466,9 +462,7 @@ class CheckpointOptimizer:
                     best_cp,
                     val_agg,
                 )
-                self._write_config(
-                    round_dir / "final_config.yml", current_config
-                )
+                dump(current_config, round_dir / "final_config.yml")
                 break
 
             # 7. Accept.
@@ -488,10 +482,10 @@ class CheckpointOptimizer:
                 best_cp,
                 val_agg,
             )
-            self._write_config(round_dir / "final_config.yml", current_config)
+            dump(current_config, round_dir / "final_config.yml")
 
         # Write the final config.
-        self._write_config(ckpt_dir / "final_config.yml", current_config)
+        dump(current_config, ckpt_dir / "final_config.yml")
         return current_config
 
     # ------------------------------------------------------------------
@@ -540,12 +534,6 @@ class CheckpointOptimizer:
     # Persistence helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _write_config(path, config):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
-            yaml.safe_dump(config, f, sort_keys=False)
-
     def _write_round_summary(
         self,
         round_idx: int,
@@ -588,5 +576,4 @@ class CheckpointOptimizer:
                 for cp, agg in candidates
             ],
         }
-        with open(round_dir / "candidate_results.yml", "w") as f:
-            yaml.dump(summary, f, default_flow_style=False)
+        dump(summary, round_dir / "round_summary.yml")

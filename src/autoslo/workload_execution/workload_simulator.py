@@ -51,7 +51,7 @@ from autoslo.utils.structured_log import (
     emit_structured,
     setup_structured_logging,
 )
-from autoslo.utils.yaml_helpers import dump_config
+from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 from autoslo.workload_definition.workload import Workload
 
@@ -450,25 +450,24 @@ class WorkloadSimulator:
 
     def _write_config_yml(self) -> None:
         config_out_path = os.path.join(self._out_dir, "config.yml")
-        with open(config_out_path, "w") as f:
-            d = {
-                "run_id": self._run_id,
-                "experiment_name": self._experiment_name,
-                "workload_name": self._workload_name,
-                "routing_policy_type": type(self._routing_policy).__name__,
-                "iconq_model_id": self._iconq_model_id,
-                "slo_s": self._slo_s,
-                "slo_dict_filename": self._slo_dict_filename,
-                "slo_dict": self._slo_resolver.slo_dict,
-                "slo_metric": self._slo_metric.value,
-                "slo_threshold": self._slo_threshold,
-                "verbose": self._verbose,
-                "export_video": self._export_video,
-                "video_frame_duration": self._video_frame_duration,
-                "seed": self._seed,
-                "closed_loop": self._closed_loop,
-            }
-            dump_config(d, f, sort_keys=False)
+        d = {
+            "run_id": self._run_id,
+            "experiment_name": self._experiment_name,
+            "workload_name": self._workload_name,
+            "routing_policy_type": type(self._routing_policy).__name__,
+            "iconq_model_id": self._iconq_model_id,
+            "slo_s": self._slo_s,
+            "slo_dict_filename": self._slo_dict_filename,
+            "slo_dict": self._slo_resolver.slo_dict,
+            "slo_metric": self._slo_metric.value,
+            "slo_threshold": self._slo_threshold,
+            "verbose": self._verbose,
+            "export_video": self._export_video,
+            "video_frame_duration": self._video_frame_duration,
+            "seed": self._seed,
+            "closed_loop": self._closed_loop,
+        }
+        dump(d, config_out_path)
 
     def reset(self, simulator_run_id: Optional[str] = None) -> None:
         """
@@ -942,8 +941,7 @@ class WorkloadSimulator:
             self._structured_handler.finalize()
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
-        with open(mapping_out_path, "w") as f:
-            dump_config(seq_num_to_cluster_name, f, sort_keys=False)
+        dump(seq_num_to_cluster_name, mapping_out_path)
 
         if self._experiment_name:
             self._write_experiment_meta()
@@ -1106,8 +1104,7 @@ class WorkloadSimulator:
             }
 
         out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
-        with open(out_path, "w") as f:
-            dump_config(d, f, sort_keys=False)
+        dump(d, out_path)
 
     def _write_experiment_meta(self) -> None:
         """

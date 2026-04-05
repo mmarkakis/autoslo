@@ -15,7 +15,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from autoslo.utils.yaml_helpers import dump_config
+from autoslo.utils.yaml_helpers import dump
 
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
@@ -74,8 +74,8 @@ class PolicyTuner:
         self._run_dir.mkdir(parents=True, exist_ok=True)
 
         # Persist config for reproducibility.
-        with open(self._run_dir / "initial_config.yml", "w") as f:
-            dump_config(self._initial_config, f)
+        initial_config_path = self._run_dir / "initial_config.yml"
+        dump(self._initial_config, initial_config_path)
 
         # Set up structured log for the evolution ledger.
         self._evolution_handler = setup_structured_logging(
@@ -453,8 +453,7 @@ class PolicyTuner:
         ### Phase 6.5: Persist final config
         final_config = post_second_sweep_config
         final_path = self._run_dir / "final_config.yml"
-        with open(final_path, "w") as f:
-            dump_config(final_config, f)
+        dump(final_config, final_path)
         self._evolution_handler.finalize()
         console.print(f"  Final config written to [bold]{final_path}[/]")
 
@@ -629,7 +628,7 @@ class PolicyTuner:
             val_metrics=None,
         )
         final_phase = PhaseResult(
-            params={}
+            params={},
             train_results=final_results,
             val_results=None,
             train_violation_agg=primary_violation(tuned_agg, self._slo_metric),
@@ -700,8 +699,9 @@ class PolicyTuner:
         }
         if static_summaries:
             holdout_summary["static_baselines"] = static_summaries
-        with open(summary_dir / "summary.yml", "w") as f:
-            dump_config(holdout_summary, f)
+
+        summary_path = summary_dir / "summary.yml"
+        dump(holdout_summary, summary_path)
 
     @staticmethod
     def _print_comparison(
@@ -935,8 +935,7 @@ class PolicyTuner:
                 }
                 for r in result.val_results
             ]
-        with open(path, "w") as f:
-            dump_config(summary, f)
+        dump(summary, path)
 
     @staticmethod
     def _parse_phase_summary(path: Path) -> PhaseResult:
