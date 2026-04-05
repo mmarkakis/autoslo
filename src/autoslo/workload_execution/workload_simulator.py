@@ -13,7 +13,6 @@ from tqdm import tqdm
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
-from autoslo.utils.yaml_helpers import dump_config
 from autoslo.blueprint_selection import log_timeline_builder
 from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
@@ -41,11 +40,18 @@ from autoslo.routing.routing_core import (
 )
 from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.utils.billing import Billing
+from autoslo.utils.policy_builders import (
+    build_autoscaling_policy,
+    build_routing_policy,
+    build_managed_cluster_pool_config,
+    parse_capacity_checkpoints,
+)
 from autoslo.utils.structured_log import (
     StructuredLogHandler,
     emit_structured,
     setup_structured_logging,
 )
+from autoslo.utils.yaml_helpers import dump_config
 from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
 from autoslo.workload_definition.workload import Workload
 
@@ -151,7 +157,10 @@ class WorkloadSimulator:
                     workload_name=workload_name,
                     schema_name=schema_name,
                 )
-            if abs_start_time_start is not None or abs_start_time_end is not None:
+            if (
+                abs_start_time_start is not None
+                or abs_start_time_end is not None
+            ):
                 self._workload.slice_by_abs_time(
                     abs_start_time_start, abs_start_time_end
                 )
@@ -194,6 +203,11 @@ class WorkloadSimulator:
 
         self._init_dynamic_clusters()
 
+    @property
+    def out_dir(self) -> str:
+        """Path to the output directory for the current run."""
+        return self._out_dir
+
     # ------------------------------------------------------------------
     # Factory: create from YAML config (aligned with WorkloadRunner)
     # ------------------------------------------------------------------
@@ -216,12 +230,14 @@ class WorkloadSimulator:
         path = Path(config_path)
         with open(path) as f:
             cfg = yaml.safe_load(f)
-        cfg = cfgu.apply_overrides(cfg, overrides)
+        cfg = cfgu.copy_and_apply_overrides(cfg, overrides)
         return cls.from_config_dict(cfg)
 
     @classmethod
     def from_config_dict(
-        cls, cfg: dict, workload: "Workload | None" = None,
+        cls,
+        cfg: dict,
+        workload: "Workload | None" = None,
     ) -> "WorkloadSimulator":
         """Create a :class:`WorkloadSimulator` from an already-loaded config dict.
 
@@ -255,20 +271,20 @@ class WorkloadSimulator:
         """
 
         # ── basic ────────────────────────────────────────────────────────────
-        schema_name: str = cfgu.cfg_get(
-            cfg, "basic_config", "schema_name", required=True
+        schema_name: str = cfgu.getd(
+            cfg, "basic_config.schema_name", required=True
         )
-        experiment_name: Optional[str] = cfgu.cfg_get(
-            cfg, "basic_config", "experiment_name"
+        experiment_name: Optional[str] = cfgu.getd(
+            cfg, "basic_config.experiment_name"
         )
-        simulator_run_id: Optional[str] = cfgu.cfg_get(
-            cfg, "basic_config", "simulator_run_id"
+        simulator_run_id: Optional[str] = cfgu.getd(
+            cfg, "basic_config.simulator_run_id"
         )
-        overwrite_experiment: bool = cfgu.cfg_get(
-            cfg, "basic_config", "overwrite_experiment", False
+        overwrite_experiment: bool = cfgu.getd(
+            cfg, "basic_config.overwrite_experiment", False
         )
-        iconq_model_id: str = cfgu.cfg_get(
-            cfg, "basic_config", "iconq_model_id", required=True
+        iconq_model_id: str = cfgu.getd(
+            cfg, "basic_config.iconq_model_id", required=True
         )
 
         # ── workload ─────────────────────────────────────────────────────
@@ -285,15 +301,15 @@ class WorkloadSimulator:
         closed_loop: bool = bool(wl_cfg.get("closed_loop", False))
 
         # ── SLO ──────────────────────────────────────────────────────────────
-        slo_s: float = cfgu.cfg_get(cfg, "slo_config", "slo_s", 10.0)
+        slo_s: float = cfgu.getd(cfg, "slo_config.slo_s", 10.0)
         slo_metric = SloMetric(
-            cfgu.cfg_get(cfg, "slo_config", "slo_metric", "relative")
+            cfgu.getd(cfg, "slo_config.slo_metric", "relative")
         )
         slo_threshold: float = float(
-            cfgu.cfg_get(cfg, "slo_config", "slo_threshold", 0.0)
+            cfgu.getd(cfg, "slo_config.slo_threshold", 0.0)
         )
-        slo_dict_filename: Optional[str] = cfgu.cfg_get(
-            cfg, "slo_config", "slo_dict_filename"
+        slo_dict_filename: Optional[str] = cfgu.getd(
+            cfg, "slo_config.slo_dict_filename"
         )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
@@ -303,7 +319,7 @@ class WorkloadSimulator:
         )
 
         # ── shared policy / pool construction ────────────────────────────────
-        routing_policy = cfgu.build_routing_policy(
+        routing_policy = build_routing_policy(
             cfg,
             iconq_model_id,
             slo_s,
@@ -311,13 +327,13 @@ class WorkloadSimulator:
             slo_metric,
             iconq_model=_iconq_model,
         )
-        mcp = cfgu.build_managed_cluster_pool_config(cfg)
+        mcp = build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
             mcp.allowed_rpu_sizes
             if mcp is not None
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
-        autoscaling_policy = cfgu.build_autoscaling_policy(
+        autoscaling_policy = build_autoscaling_policy(
             cfg,
             slo_resolver,
             slo_metric,
@@ -328,21 +344,17 @@ class WorkloadSimulator:
             iconq_model=_iconq_model,
         )
         poll_s: float = float(
-            cfgu.cfg_get(
-                cfg, "autoscaling_config", "capacity_poll_interval_s", 60.0
-            )
+            cfgu.getd(cfg, "autoscaling_config.capacity_poll_interval_s", 60.0)
         )
-        capacity_checkpoints = cfgu.parse_capacity_checkpoints(cfg)
+        capacity_checkpoints = parse_capacity_checkpoints(cfg)
 
         # ── output (simulator-specific) ──────────────────────────────────────
-        verbose: bool = cfgu.cfg_get(cfg, "output_config", "verbose", False)
-        export_video: bool = cfgu.cfg_get(
-            cfg, "output_config", "export_video", False
+        verbose: bool = cfgu.getd(cfg, "output_config.verbose", False)
+        export_video: bool = cfgu.getd(cfg, "output_config.export_video", False)
+        video_frame_duration: float = cfgu.getd(
+            cfg, "output_config.video_frame_duration", 1.0
         )
-        video_frame_duration: float = cfgu.cfg_get(
-            cfg, "output_config", "video_frame_duration", 1.0
-        )
-        out_dir: str | None = cfgu.cfg_get(cfg, "output_config", "out_dir")
+        out_dir: str | None = cfgu.getd(cfg, "output_config.out_dir")
 
         return cls(
             workload_name=workload_name,

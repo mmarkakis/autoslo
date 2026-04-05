@@ -28,6 +28,8 @@ from intervaltree import Interval  # type: ignore[import]
 import autoslo.utils.paths as pu
 from autoslo.workload_definition.query import QueryTextId, SloMetric
 
+import autoslo.utils.config as cfgu
+
 
 class SloResolver:
     """Resolves the effective SLO for a query given a global default and
@@ -78,6 +80,21 @@ class SloResolver:
         inst._dict = {str(k).zfill(3): float(v) for k, v in slo_dict.items()}
         inst._filename = slo_dict_filename
         return inst
+
+    @classmethod
+    def from_config(cls, config: dict) -> "SloResolver":
+        """Construct from a config dict (e.g. the one loaded from config.yml or
+        experiment_meta.json).  Looks for keys "default_slo_s" and
+        "slo_dict_filename" in the top-level dict and/or under "slo_config"."""
+        default_slo_s = config.get("default_slo_s") or cfgu.getd(
+            config, "slo_config.default_slo_s", 10.0
+        )
+        slo_dict_filename = config.get("slo_dict_filename") or cfgu.getd(
+            config, "slo_config.slo_dict_filename"
+        )
+        return cls(
+            default_slo_s=default_slo_s, slo_dict_filename=slo_dict_filename
+        )
 
     # ------------------------------------------------------------------
     # core API
@@ -144,7 +161,7 @@ class SloResolver:
 
 
 # -----------------------------------------------------------------------
-# Free SLO helper functions 
+# Free SLO helper functions
 # -----------------------------------------------------------------------
 
 

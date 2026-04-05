@@ -54,6 +54,8 @@ from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
 from autoslo.workload_definition.workload import Workload
 
+from autoslo.utils.policy_builders import build_routing_policy, build_autoscaling_policy, build_managed_cluster_pool_config, parse_capacity_checkpoints
+
 
 class WorkloadRunner:
     """Execute a workload against live Redshift Serverless clusters.
@@ -262,20 +264,20 @@ class WorkloadRunner:
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
         # ── shared policy / pool construction ────────────────────────────
-        routing_policy = cfgu.build_routing_policy(
+        routing_policy = build_routing_policy(
             cfg,
             iconq_model_id,
             slo_s,
             slo_resolver,
             slo_metric,
         )
-        mcp = cfgu.build_managed_cluster_pool_config(cfg)
+        mcp = build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
             mcp.allowed_rpu_sizes
             if mcp is not None
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
-        autoscaling_policy = cfgu.build_autoscaling_policy(
+        autoscaling_policy = build_autoscaling_policy(
             cfg,
             slo_resolver,
             slo_metric,
@@ -284,7 +286,7 @@ class WorkloadRunner:
             routing_policy,
             allowed_rpus,
         )
-        capacity_checkpoints = cfgu.parse_capacity_checkpoints(cfg)
+        capacity_checkpoints = parse_capacity_checkpoints(cfg)
         poll_s: float = float(
             cfgu.cfg_get(
                 cfg, "autoscaling_config", "capacity_poll_interval_s", 60.0
