@@ -118,7 +118,7 @@ class ForecastPolicy(ClassWithFactory):
         initial_seed: int = 42,
         workload_name_prefix: str = "f",
         out_dir: Optional[Path] = None,
-    ) -> tuple[list[Workload], Optional[list[Path]]]:
+    ) -> tuple[list[Workload], list[Path]]:
         """
         Return a list of forecasted workloads for the target day. Optionally
         also persist them.
@@ -149,7 +149,7 @@ class ForecastPolicy(ClassWithFactory):
             The list of forecasted workloads.
         paths :
             If *out_dir* is provided, the list of paths to which the forecasted
-            workloads were persisted. Otherwise, None.
+            workloads were persisted. Otherwise, an empty list.
         """
 
         workloads: list[Workload] = []
@@ -162,7 +162,7 @@ class ForecastPolicy(ClassWithFactory):
             workloads.append(workload)
 
         if out_dir is None:
-            return workloads, None
+            return workloads, []
 
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = []
