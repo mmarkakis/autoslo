@@ -14,14 +14,25 @@ import yaml
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 
+# ---------------------------------------------------------------------------
+# Aggregated result for one config over one collection of workloads
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class AggregatedSimulationResults:
-    """All three violation metrics plus cost, aggregated across scenarios."""
+    """All three violation metrics plus cost, aggregated across scenarios.
+
+    Optionally stores the per-scenario :class:`SimulationResult` objects
+    that were aggregated, so downstream code can inspect individual
+    scenario values (e.g. for min–max range display).
+    """
 
     violation_rate: float
     violation_amount_s: float
     violation_relative_mean: float
     cost: float
+    scenario_results: tuple[SimulationResult, ...] = ()
 
 @dataclass
 class SimulationResult:
@@ -141,6 +152,7 @@ class SimulationResult:
                 cost=0.0,
             )
 
+        scenario_results = tuple(results)
         rates = [r.violation_rate for r in results]
         amounts = [r.violation_amount_s for r in results]
         relatives = [r.violation_relative_mean for r in results]
@@ -152,6 +164,7 @@ class SimulationResult:
                 violation_amount_s=statistics.mean(amounts),
                 violation_relative_mean=statistics.mean(relatives),
                 cost=statistics.mean(costs),
+                scenario_results=scenario_results,
             )
         if metric == "max":
             return AggregatedSimulationResults(
@@ -159,6 +172,7 @@ class SimulationResult:
                 violation_amount_s=max(amounts),
                 violation_relative_mean=max(relatives),
                 cost=max(costs),
+                scenario_results=scenario_results,
             )
 
         # pNN quantile
@@ -169,6 +183,7 @@ class SimulationResult:
                 violation_amount_s=float(np.quantile(amounts, q)),
                 violation_relative_mean=float(np.quantile(relatives, q)),
                 cost=float(np.quantile(costs, q)),
+                scenario_results=scenario_results,
             )
 
         raise ValueError(f"Unknown aggregation metric: {metric!r}")
@@ -237,25 +252,6 @@ def threshold_aware_select(
         key=lambda i: (candidates[i][0], candidates[i][1]),
     )
 
-
-# ---------------------------------------------------------------------------
-# Aggregated result for one parameter combination
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class PhaseResult:
-    """Aggregated metrics across scenarios for one parameter combination."""
-
-    params: dict = field(default_factory=dict)
-    train_results: list[SimulationResult] = field(default_factory=list)
-    val_results: list[SimulationResult] | None = None
-    train_violation_agg: float = 0.0
-    train_cost_agg: float = 0.0
-    val_violation_agg: float | None = None
-    val_cost_agg: float | None = None
-    train_metrics: Optional[AggregatedSimulationResults] = None
-    val_metrics: Optional[AggregatedSimulationResults] = None
 
 
 

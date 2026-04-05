@@ -20,9 +20,7 @@ from rich.table import Table
 
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
-    AggregatedSimulationResults,
     SimulationResult,
-    PhaseResult,
     SloObjective,
     compute_pareto_front,
     primary_violation,

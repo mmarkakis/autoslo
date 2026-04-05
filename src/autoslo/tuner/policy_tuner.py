@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import copy
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -15,9 +13,8 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from autoslo.utils.yaml_helpers import dump
-
-from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
+import autoslo.utils.config as cfgu
+from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
@@ -25,20 +22,14 @@ from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
-    PhaseResult,
     SimulationResult,
     SloObjective,
     primary_violation,
 )
-import autoslo.utils.config as cfgu
-
 from autoslo.utils.config import copy_and_apply_overrides
-from autoslo.utils.structured_log import (
-    StructuredLogHandler,
-    setup_structured_logging,
-)
+from autoslo.utils.structured_log import setup_structured_logging
+from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.workload import Workload
-from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -255,13 +246,14 @@ class PolicyTuner:
         self,
         train_paths: list[Path],
         val_paths: list[Path],
-    ) -> PhaseResult:
+    ) -> tuple[AggregatedSimulationResults, AggregatedSimulationResults]:
         """Phase 3: Evaluate the initial config as a baseline.
 
         Runs all training and validation scenarios with the unmodified
         initial config, aggregates metrics, writes a summary, and
         prints a rich table.
-        """
+
+        Returns ``(train_agg, val_agg)``."""
         metric = self._cfgd(
             "tuner_config.forecast_config.aggregation_metric", "p90"
         )
@@ -319,24 +311,13 @@ class PolicyTuner:
             val_results = list(val_results_nested_dict[0].values())
         val_agg = SimulationResult.aggregate(val_results, metric)
 
-        result = PhaseResult(
-            params={},
-            train_results=train_results,
-            val_results=val_results,
-            train_violation_agg=primary_violation(train_agg, self._slo_metric),
-            train_cost_agg=train_agg.cost,
-            val_violation_agg=primary_violation(val_agg, self._slo_metric),
-            val_cost_agg=val_agg.cost,
-            train_metrics=train_agg,
-            val_metrics=val_agg,
-        )
-
         # Persist summary.
         summary_dir = self._run_dir / "baseline"
         summary_dir.mkdir(parents=True, exist_ok=True)
-        self._write_phase_summary(summary_dir / "summary.yml", result)
+        self._write_phase_summary(summary_dir / "train_summary.yml", train_agg)
+        self._write_phase_summary(summary_dir / "val_summary.yml", val_agg)
 
-        return result
+        return train_agg, val_agg
 
     def find_checkpoints(
         self,
@@ -424,12 +405,16 @@ class PolicyTuner:
 
         ### Phase 3: Baseline evaluation
         self._print_banner("Phase 3: Baseline evaluation")
-        baseline = self.evaluate_baseline(train_paths, val_paths)
+        baseline_train, baseline_val = self.evaluate_baseline(
+            train_paths, val_paths
+        )
 
         ### Phase 4: Checkpoint optimization
         self._print_banner("Phase 4: Checkpoint optimization")
         post_checkpoints_config = self.find_checkpoints(
-            train_paths, val_paths, baseline.val_violation_agg
+            train_paths,
+            val_paths,
+            primary_violation(baseline_val, self._slo_metric),
         )
 
         ### Phase 5: Autoscaler parameter sweep
@@ -459,14 +444,23 @@ class PolicyTuner:
 
         ### Phase 7: Final evaluation with tuned config
         self._print_banner("Phase 7: Final evaluation with tuned config")
-        tuned = self._evaluate_final(train_paths, val_paths, final_config)
+        tuned_train, tuned_val = self._evaluate_final(
+            train_paths, val_paths, final_config
+        )
         metric = self._cfgd(
             "tuner_config.forecast_config.aggregation_metric", "p90"
         )
         self._print_comparison(
-            ("Initial", baseline),
-            ("Final", tuned),
+            ("Initial (train)", baseline_train),
+            ("Final (train)", tuned_train),
             agg_method=metric,
+            slo_metric=self._slo_metric,
+        )
+        self._print_comparison(
+            ("Initial (val)", baseline_val),
+            ("Final (val)", tuned_val),
+            agg_method=metric,
+            slo_metric=self._slo_metric,
         )
 
         ### Phase 8: Evaluation on target-period data
@@ -497,22 +491,30 @@ class PolicyTuner:
         train_paths: list[Path],
         val_paths: list[Path],
         final_config: dict[str, Any],
-    ) -> PhaseResult:
-        """Re-run evaluation with the fully-tuned config."""
+    ) -> tuple[AggregatedSimulationResults, AggregatedSimulationResults]:
+        """Re-run evaluation with the fully-tuned config.
+
+        Returns ``(train_agg, val_agg)``."""
         metric = self._cfgd(
             "tuner_config.forecast_config.aggregation_metric", "mean"
         )
         summary_dir = self._run_dir / "final"
         summary_dir.mkdir(parents=True, exist_ok=True)
-        summary_yml_path = summary_dir / "summary.yml"
-        if summary_yml_path.exists() and not self._cfgd(
-            "tuner_config.force", False
+        train_summary_path = summary_dir / "train_summary.yml"
+        val_summary_path = summary_dir / "val_summary.yml"
+        if (
+            train_summary_path.exists()
+            and val_summary_path.exists()
+            and not self._cfgd("tuner_config.force", False)
         ):
             console.print(
-                f"  Final evaluation results already exist at {summary_yml_path}; "
+                f"  Final evaluation results already exist at {summary_dir}; "
                 "loading from disk."
             )
-            return self._parse_phase_summary(summary_yml_path)
+            return (
+                self._parse_phase_summary(train_summary_path),
+                self._parse_phase_summary(val_summary_path),
+            )
 
         all_train_results = self._evaluator.evaluate_batch_from_configs(
             phase_name="final",
@@ -523,26 +525,18 @@ class PolicyTuner:
         train_results = list(all_train_results[0].values())
         train_agg = SimulationResult.aggregate(train_results, metric)
 
-        all_val_results = self._evaluator.evaluate(
+        all_val_results = self._evaluator.evaluate_batch_from_configs(
+            phase_name="final",
+            out_dir=self._run_dir / "final" / "val",
             workload_paths=val_paths,
             configs=[final_config],
         )
         val_results = list(all_val_results[0].values())
         val_agg = SimulationResult.aggregate(val_results, metric)
 
-        result = PhaseResult(
-            params=final_config,
-            train_results=train_results,
-            val_results=val_results,
-            train_violation_agg=primary_violation(train_agg, self._slo_metric),
-            train_cost_agg=train_agg.cost,
-            val_violation_agg=primary_violation(val_agg, self._slo_metric),
-            val_cost_agg=val_agg.cost,
-            train_metrics=train_agg,
-            val_metrics=val_agg,
-        )
-        self._write_phase_summary(summary_dir / "summary.yml", result)
-        return result
+        self._write_phase_summary(train_summary_path, train_agg)
+        self._write_phase_summary(val_summary_path, val_agg)
+        return train_agg, val_agg
 
     def _evaluate_target(
         self,
@@ -616,31 +610,9 @@ class PolicyTuner:
         base_agg = SimulationResult.aggregate(initial_results, metric)
         tuned_agg = SimulationResult.aggregate(final_results, metric)
 
-        initial_phase = PhaseResult(
-            params={},
-            train_results=initial_results,
-            val_results=None,
-            train_violation_agg=primary_violation(base_agg, self._slo_metric),
-            train_cost_agg=base_agg.cost,
-            val_violation_agg=None,
-            val_cost_agg=None,
-            train_metrics=base_agg,
-            val_metrics=None,
-        )
-        final_phase = PhaseResult(
-            params={},
-            train_results=final_results,
-            val_results=None,
-            train_violation_agg=primary_violation(tuned_agg, self._slo_metric),
-            train_cost_agg=tuned_agg.cost,
-            val_violation_agg=None,
-            val_cost_agg=None,
-            train_metrics=tuned_agg,
-            val_metrics=None,
-        )
-        comparison_entries: list[tuple[str, PhaseResult]] = [
-            ("Initial", initial_phase),
-            ("Final", final_phase),
+        comparison_entries: list[tuple[str, AggregatedSimulationResults]] = [
+            ("Initial", base_agg),
+            ("Final", tuned_agg),
         ]
 
         # Extract static baseline summaries.
@@ -659,26 +631,9 @@ class PolicyTuner:
                     "violation_relative_mean": sb_agg.violation_relative_mean,
                 }
             )
-            comparison_entries.append(
-                (
-                    sb["label"],
-                    PhaseResult(
-                        params=sb.get("overrides", {}),
-                        train_results=sb_results,
-                        val_results=None,
-                        train_violation_agg=primary_violation(
-                            sb_agg, self._slo_metric
-                        ),
-                        train_cost_agg=sb_agg.cost,
-                        val_violation_agg=None,
-                        val_cost_agg=None,
-                        train_metrics=sb_agg,
-                        val_metrics=None,
-                    ),
-                )
-            )
+            comparison_entries.append((sb["label"], sb_agg))
 
-        self._print_comparison(*comparison_entries, agg_method=metric)
+        self._print_comparison(*comparison_entries, agg_method=metric, slo_metric=self._slo_metric)
         self._print_scatter(comparison_entries, self._slo_metric)
 
         # --- Write holdout summary --------------------------------------
@@ -705,20 +660,29 @@ class PolicyTuner:
 
     @staticmethod
     def _print_comparison(
-        *entries: tuple[str, PhaseResult],
+        *entries: tuple[str, AggregatedSimulationResults],
         agg_method: str = "p90",
+        slo_metric: str = "binary",
     ) -> None:
-        """Print a table comparing multiple PhaseResults side-by-side.
+        """Print a table comparing multiple AggregatedSimulationResults.
 
         Parameters
         ----------
         *entries :
-            ``(label, phase_result)`` pairs.  Each gets one row.
+            ``(label, agg)`` pairs.  Each gets one row.  Use labels like
+            ``"Initial (train)"`` / ``"Initial (val)"`` to distinguish splits.
         agg_method :
             Aggregation method shown in the title.
+        slo_metric :
+            The SLO metric that was actually optimised (``"binary"``,
+            ``"absolute_s"``, or ``"relative"``).  The best cell in this
+            column and in the Cost column is highlighted green; the best
+            cell in the other two violation columns is highlighted yellow.
         """
-        # Decide which splits to show based on the entries.
-        has_val = any(pr.val_metrics is not None for _, pr in entries)
+        # Map slo_metric → column index (0-2 are the three violation metrics).
+        _SLO_TO_COL = {"binary": 0, "absolute_s": 1, "relative": 2}
+        targeted_col = _SLO_TO_COL.get(slo_metric, 0)
+        cost_col = 3  # always
 
         table = Table(
             title=f"Comparison  [dim](agg: {agg_method})[/dim]",
@@ -733,87 +697,58 @@ class PolicyTuner:
             "Cost ($)",
         ]
         for ml in metric_labels:
-            header = f"Train {ml}" if has_val else ml
-            table.add_column(header, justify="right")
-        if has_val:
-            for ml in metric_labels:
-                table.add_column(f"Val {ml}", justify="right")
+            table.add_column(ml, justify="right")
 
         fmt = PolicyTuner._fmt_cell
 
         def _extract(
-            m: AggregatedSimulationResults | None,
-            rs: list[SimulationResult] | None,
+            agg: AggregatedSimulationResults,
         ) -> tuple[list[float], list[list[float]]]:
-            if m is not None and rs:
-                return (
-                    [
-                        m.violation_rate,
-                        m.violation_amount_s,
-                        m.violation_relative_mean,
-                        m.cost,
-                    ],
-                    [
-                        [r.violation_rate for r in rs],
-                        [r.violation_amount_s for r in rs],
-                        [r.violation_relative_mean for r in rs],
-                        [r.total_cost for r in rs],
-                    ],
-                )
-            return [0.0, 0.0, 0.0, 0.0], [[], [], [], []]
-
-        # Build row data: each entry → (label, train_aggs, train_per, val_aggs, val_per)
-        row_data: list[
-            tuple[
-                str,
-                list[float],
-                list[list[float]],
-                list[float],
-                list[list[float]],
+            aggs = [
+                agg.violation_rate,
+                agg.violation_amount_s,
+                agg.violation_relative_mean,
+                agg.cost,
             ]
-        ] = []
-        for label, pr in entries:
-            t_agg, t_per = _extract(pr.train_metrics, pr.train_results)
-            v_agg, v_per = _extract(pr.val_metrics, pr.val_results)
-            row_data.append((label, t_agg, t_per, v_agg, v_per))
+            if agg.scenario_results:
+                per = [
+                    [r.violation_rate for r in agg.scenario_results],
+                    [r.violation_amount_s for r in agg.scenario_results],
+                    [r.violation_relative_mean for r in agg.scenario_results],
+                    [r.total_cost for r in agg.scenario_results],
+                ]
+            else:
+                per = [[], [], [], []]
+            return aggs, per
+
+        # Build row data.
+        row_data: list[tuple[str, list[float], list[list[float]]]] = []
+        for label, agg in entries:
+            a, p = _extract(agg)
+            row_data.append((label, a, p))
 
         # Find the best (lowest) aggregated value per column.
         n_metric = 4
-        n_cols = n_metric * (2 if has_val else 1)
         best_per_col: list[int] = []
         if row_data:
-            for c in range(n_cols):
-                if c < n_metric:
-                    best_per_col.append(
-                        min(
-                            range(len(row_data)),
-                            key=lambda i, _c=c: row_data[i][1][_c],
-                        )
+            for c in range(n_metric):
+                best_per_col.append(
+                    min(
+                        range(len(row_data)),
+                        key=lambda i, _c=c: row_data[i][1][_c],  # type: ignore
                     )
-                else:
-                    best_per_col.append(
-                        min(
-                            range(len(row_data)),
-                            key=lambda i, _c=c - n_metric: row_data[i][3][_c],
-                        )
-                    )
+                )
 
-        for row_idx, (label, t_agg, t_per, v_agg, v_per) in enumerate(row_data):
+        for row_idx, (label, aggs, per) in enumerate(row_data):
             cells: list[str] = []
             for c in range(n_metric):
-                cell = fmt(t_agg[c], t_per[c])
+                cell = fmt(aggs[c], per[c])
                 if len(row_data) > 1 and row_idx == best_per_col[c]:
-                    cell = f"[green]{cell}[/green]"
-                cells.append(cell)
-            if has_val:
-                for c in range(n_metric):
-                    cell = fmt(v_agg[c], v_per[c])
-                    if (
-                        len(row_data) > 1
-                        and row_idx == best_per_col[n_metric + c]
-                    ):
+                    if c == targeted_col or c == cost_col:
                         cell = f"[green]{cell}[/green]"
-                    cells.append(cell)
+                    else:
+                        cell = f"[yellow]{cell}[/yellow]"
+                cells.append(cell)
             table.add_row(label, *cells)
 
         console.print(table)
@@ -822,7 +757,7 @@ class PolicyTuner:
 
     @staticmethod
     def _print_scatter(
-        entries: list[tuple[str, PhaseResult]],
+        entries: list[tuple[str, AggregatedSimulationResults]],
         slo_metric: str,
     ) -> None:
         """Print a terminal scatter plot of violation vs cost."""
@@ -836,13 +771,10 @@ class PolicyTuner:
         labels: list[str] = []
         xs: list[float] = []
         ys: list[float] = []
-        for label, pr in entries:
-            m = pr.train_metrics
-            if m is None:
-                continue
+        for label, agg in entries:
             labels.append(label)
-            xs.append(primary_violation(m, slo_metric))
-            ys.append(m.cost)
+            xs.append(primary_violation(agg, slo_metric))
+            ys.append(agg.cost)
 
         if len(xs) < 2:
             return
@@ -891,40 +823,16 @@ class PolicyTuner:
         print("\n".join(out_lines))
 
     @staticmethod
-    def _write_phase_summary(path: Path, result: PhaseResult) -> None:
-        """Persist a PhaseResult as YAML."""
+    def _write_phase_summary(
+        path: Path, agg: AggregatedSimulationResults
+    ) -> None:
+        """Persist an AggregatedSimulationResults as YAML."""
         summary: dict[str, Any] = {
-            "params": result.params,
-            "train_violation_agg": result.train_violation_agg,
-            "train_cost_agg": result.train_cost_agg,
-            "val_violation_agg": result.val_violation_agg,
-            "val_cost_agg": result.val_cost_agg,
-        }
-        if result.train_metrics is not None:
-            tm = result.train_metrics
-            summary["train_violation_rate"] = tm.violation_rate
-            summary["train_violation_amount_s"] = tm.violation_amount_s
-            summary["train_violation_relative_mean"] = (
-                tm.violation_relative_mean
-            )
-        if result.val_metrics is not None:
-            vm = result.val_metrics
-            summary["val_violation_rate"] = vm.violation_rate
-            summary["val_violation_amount_s"] = vm.violation_amount_s
-            summary["val_violation_relative_mean"] = vm.violation_relative_mean
-        summary["train_scenarios"] = [
-            {
-                "simulation_dir": str(r.simulation_dir),
-                "violation_rate": r.violation_rate,
-                "violation_amount_s": r.violation_amount_s,
-                "violation_relative_mean": r.violation_relative_mean,
-                "total_cost": r.total_cost,
-                "num_queries": r.num_queries,
-            }
-            for r in result.train_results
-        ]
-        if result.val_results is not None:
-            summary["val_scenarios"] = [
+            "violation_rate": agg.violation_rate,
+            "violation_amount_s": agg.violation_amount_s,
+            "violation_relative_mean": agg.violation_relative_mean,
+            "cost": agg.cost,
+            "scenarios": [
                 {
                     "simulation_dir": str(r.simulation_dir),
                     "violation_rate": r.violation_rate,
@@ -933,16 +841,17 @@ class PolicyTuner:
                     "total_cost": r.total_cost,
                     "num_queries": r.num_queries,
                 }
-                for r in result.val_results
-            ]
+                for r in agg.scenario_results
+            ],
+        }
         dump(summary, path)
 
     @staticmethod
-    def _parse_phase_summary(path: Path) -> PhaseResult:
-        """Parse a PhaseResult from YAML."""
+    def _parse_phase_summary(path: Path) -> AggregatedSimulationResults:
+        """Parse an AggregatedSimulationResults from YAML."""
         with open(path) as f:
             summary = yaml.safe_load(f) or {}
-        train_results = [
+        scenario_results = tuple(
             SimulationResult(
                 simulation_dir=Path(r["simulation_dir"]),
                 violation_rate=r["violation_rate"],
@@ -951,51 +860,14 @@ class PolicyTuner:
                 total_cost=r["total_cost"],
                 num_queries=r["num_queries"],
             )
-            for r in summary.get("train_scenarios", [])
-        ]
-        val_results = None
-        if "val_scenarios" in summary:
-            val_results = [
-                SimulationResult(
-                    simulation_dir=Path(r["simulation_dir"]),
-                    violation_rate=r["violation_rate"],
-                    violation_amount_s=r["violation_amount_s"],
-                    violation_relative_mean=r["violation_relative_mean"],
-                    total_cost=r["total_cost"],
-                    num_queries=r["num_queries"],
-                )
-                for r in summary.get("val_scenarios", [])
-            ]
-        return PhaseResult(
-            params=summary.get("params", {}),
-            train_results=train_results,
-            val_results=val_results,
-            train_violation_agg=summary.get("train_violation_agg"),
-            train_cost_agg=summary.get("train_cost_agg"),
-            val_violation_agg=summary.get("val_violation_agg"),
-            val_cost_agg=summary.get("val_cost_agg"),
-            train_metrics=AggregatedSimulationResults(
-                violation_rate=summary.get("train_violation_rate", 0.0),
-                violation_amount_s=summary.get("train_violation_amount_s", 0.0),
-                violation_relative_mean=summary.get(
-                    "train_violation_relative_mean", 0.0
-                ),
-                cost=summary.get("train_cost_agg", 0.0),
-            ),
-            val_metrics=(
-                AggregatedSimulationResults(
-                    violation_rate=summary.get("val_violation_rate", 0.0),
-                    violation_amount_s=summary.get(
-                        "val_violation_amount_s", 0.0
-                    ),
-                    violation_relative_mean=summary.get(
-                        "val_violation_relative_mean", 0.0
-                    ),
-                    cost=summary.get("val_cost_agg", 0.0),
-                )
-                if "val_violation_rate" in summary
-                else None
-            ),
+            for r in summary.get("scenarios", [])
+        )
+        return AggregatedSimulationResults(
+            violation_rate=summary.get("violation_rate", 0.0),
+            violation_amount_s=summary.get("violation_amount_s", 0.0),
+            violation_relative_mean=summary.get("violation_relative_mean", 0.0),
+            cost=summary.get("cost", 0.0),
+            scenario_results=scenario_results,
         )
 
     @staticmethod

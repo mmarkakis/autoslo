@@ -40,5 +40,8 @@ def dump(data: Any, path: str | Path, **kwargs: Any) -> None:
     kwargs.pop("Dumper", None)
     kwargs.setdefault("default_flow_style", False)
     kwargs.setdefault("sort_keys", False)
+    # Make sure the output directory exists.
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(data, f, Dumper=_QuotingSafeDumper, **kwargs)
