@@ -1,0 +1,10 @@
+run_id: '1775490791'
+workload_name: redbench_provisioned_157_0
+num_queries: 1392
+schema_name: ext_tpcds1000
+search_path: ext_tpcds1000
+initial_rpus:
+- 16
+routing_policy: {}
+maxconns: 1000
+closed_loop: false
