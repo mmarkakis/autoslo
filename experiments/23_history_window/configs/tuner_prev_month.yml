@@ -45,6 +45,11 @@ output_config:
   verbose: false
   export_video: false
 
+runner_config:
+  maxconns: 1000
+  max_threads: 512
+  aws_config_path: data/__run_configs/aws.yml
+
 tuner_config:
   force: true
   parallelism: auto

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
@@ -54,7 +55,12 @@ from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
 from autoslo.workload_definition.workload import Workload
 
-from autoslo.utils.policy_builders import build_routing_policy, build_autoscaling_policy, build_managed_cluster_pool_config, parse_capacity_checkpoints
+from autoslo.utils.policy_builders import (
+    build_routing_policy,
+    build_autoscaling_policy,
+    build_managed_cluster_pool_config,
+    parse_capacity_checkpoints,
+)
 
 
 class WorkloadRunner:
@@ -83,6 +89,7 @@ class WorkloadRunner:
         abs_start_time_start: str | None = None,
         abs_start_time_end: str | None = None,
         rescale_factor: float | None = None,
+        max_threads: int | None = None,
     ):
         self.config_path = Path(config_path) if config_path else None
         self.workload_name = workload_name
@@ -159,6 +166,11 @@ class WorkloadRunner:
         )
         self._capacity_poll_interval_s = capacity_poll_interval_s
 
+        # Thread-pool executor for query execution.
+        self._executor = (
+            ThreadPoolExecutor(max_workers=max_threads) if max_threads else None
+        )
+
         # Futures for in-flight background spin-ups (see _on_live_spin_up).
         self._pending_spin_ups: list[asyncio.Future] = []
 
@@ -200,7 +212,7 @@ class WorkloadRunner:
         path = Path(config_path)
         with open(path) as f:
             cfg = yaml.safe_load(f)
-        cfg = cfgu.apply_overrides(cfg, overrides)
+        cfg = cfgu.copy_and_apply_overrides(cfg, overrides)
         return cls.from_config_dict(cfg, config_path=config_path)
 
     @classmethod
@@ -230,11 +242,11 @@ class WorkloadRunner:
         """
 
         # ── basic ────────────────────────────────────────────────────────
-        schema_name: str = cfgu.cfg_get(
-            cfg, "basic_config", "schema_name", required=True
+        schema_name: str = cfgu.getd(
+            cfg, "basic_config.schema_name", required=True
         )
-        iconq_model_id: Optional[str] = cfgu.cfg_get(
-            cfg, "basic_config", "iconq_model_id"
+        iconq_model_id: Optional[str] = cfgu.getd(
+            cfg, "basic_config.iconq_model_id"
         )
 
         # ── workload ─────────────────────────────────────────────────────
@@ -251,15 +263,15 @@ class WorkloadRunner:
         closed_loop: bool = bool(wl_cfg.get("closed_loop", False))
 
         # ── SLO ──────────────────────────────────────────────────────────
-        slo_s: float = cfgu.cfg_get(cfg, "slo_config", "slo_s", 10.0)
+        slo_s: float = cfgu.getd(cfg, "slo_config.slo_s", 10.0)
         slo_metric = SloMetric(
-            cfgu.cfg_get(cfg, "slo_config", "slo_metric", "relative")
+            cfgu.getd(cfg, "slo_config.slo_metric", "relative")
         )
-        slo_dict_filename: Optional[str] = cfgu.cfg_get(
-            cfg, "slo_config", "slo_dict_filename"
+        slo_dict_filename: Optional[str] = cfgu.getd(
+            cfg, "slo_config.slo_dict_filename"
         )
         slo_threshold: float = float(
-            cfgu.cfg_get(cfg, "slo_config", "slo_threshold", 0.0)
+            cfgu.getd(cfg, "slo_config.slo_threshold", 0.0)
         )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
@@ -288,9 +300,7 @@ class WorkloadRunner:
         )
         capacity_checkpoints = parse_capacity_checkpoints(cfg)
         poll_s: float = float(
-            cfgu.cfg_get(
-                cfg, "autoscaling_config", "capacity_poll_interval_s", 60.0
-            )
+            cfgu.getd(cfg, "autoscaling_config.capacity_poll_interval_s", 60.0)
         )
 
         # ── runner-specific ──────────────────────────────────────────────
@@ -320,6 +330,10 @@ class WorkloadRunner:
             provisioner_config = None
 
         maxconns: int = int(runner_cfg.get("maxconns", 1000))
+        max_threads_raw = runner_cfg.get("max_threads")
+        max_threads: int | None = (
+            int(max_threads_raw) if max_threads_raw is not None else None
+        )
 
         return cls(
             workload_name=workload_name,
@@ -336,6 +350,7 @@ class WorkloadRunner:
             abs_start_time_start=abs_start_time_start,
             abs_start_time_end=abs_start_time_end,
             rescale_factor=rescale_factor,
+            max_threads=max_threads,
         )
 
     # ------------------------------------------------------------------
@@ -352,7 +367,7 @@ class WorkloadRunner:
         """
         loop = asyncio.get_running_loop()
         future = loop.run_in_executor(
-            None, self._do_spin_up, reason, rpu
+            self._executor, self._do_spin_up, reason, rpu
         )
         self._pending_spin_ups.append(future)
 
@@ -764,7 +779,7 @@ class WorkloadRunner:
                 self._run_query_sync, run_id, query_id, query_text, cluster_name
             )
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, fn)
+            await loop.run_in_executor(self._executor, fn)
         finally:
             now = self._ts()
             self.router.on_query_finish(
@@ -921,7 +936,7 @@ class WorkloadRunner:
             for cn in remaining:
                 try:
                     await loop.run_in_executor(
-                        None,
+                        self._executor,
                         partial(
                             self.pool.request_tear_down,
                             cn,
