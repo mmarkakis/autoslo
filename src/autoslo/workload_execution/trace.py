@@ -625,6 +625,27 @@ class Trace:
 
         return pd.concat(series).reindex(self.query_ids)
 
+    def relative_arrival_times_s(self) -> pd.Series:
+        """
+        Return a Series where the index is the query IDs and the values are
+        the arrival times (start times in SYS_QUERY_HISTORY) of each query,
+        relative to the earliest start time in the trace, in seconds.
+
+        The order of the query IDs in the Series matches the order of the query
+        IDs provided by the `query_ids` property.
+        """
+        earliest_start = self.earliest_query_start_time
+
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = (
+                pd.to_datetime(df.set_index("query_id")["start_time"])
+                - earliest_start
+            ).dt.total_seconds()
+            series.append(s)
+
+        return pd.concat(series).reindex(self.query_ids)
+
     def completion_times(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are

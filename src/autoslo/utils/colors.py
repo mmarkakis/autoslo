@@ -18,6 +18,8 @@ class Palette:
     light_red: str = "#E78C84"
     dark_red: str = "#C9302C"
     light_gray: str = "#D3D3D3"
+    light_purple: str = "#D8BFD8"
+    dark_purple: str = "#800080"
     gray: str = "#4A4A4A"
     black: str = "#000000"
 
@@ -47,6 +49,8 @@ class Palette:
             "light_gray": Palette.light_gray,
             "gray": Palette.gray,
             "black": Palette.black,
+            "light_purple": Palette.light_purple,
+            "dark_purple": Palette.dark_purple,
         }
     
     @staticmethod

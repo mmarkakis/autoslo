@@ -51,7 +51,7 @@ runner_config:
   aws_config_path: data/__run_configs/aws.yml
 
 tuner_config:
-  force: true
+  force: false
   parallelism: auto
   holdout_evaluation: true
 
@@ -84,9 +84,27 @@ tuner_config:
         autoscaling_config.autoscaling_policy: "noop"
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
+    - label: "16+16 RPU"
+      overrides:
+        managed_cluster_pool_config.initial_rpus: [16, 16]
+        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.capacity_checkpoints: []
+        routing_config.routing_policy: "round_robin"
     - label: "32 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [32]
+        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.capacity_checkpoints: []
+        routing_config.routing_policy: "round_robin"
+    - label: "32+32 RPU"
+      overrides:
+        managed_cluster_pool_config.initial_rpus: [32, 32]
+        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.capacity_checkpoints: []
+        routing_config.routing_policy: "round_robin"
+    - label: "64 RPU"
+      overrides:
+        managed_cluster_pool_config.initial_rpus: [64]
         autoscaling_config.autoscaling_policy: "noop"
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"

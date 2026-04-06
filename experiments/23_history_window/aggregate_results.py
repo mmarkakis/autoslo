@@ -494,13 +494,14 @@ def _generate_scatter_plots(
     _METRIC_SPECS: list[tuple[str, str, str]] = [
         ("violation_rate", "SLO Violation Rate", "binary"),
         ("violation_amount_s", "Total SLO Violation Amount (s)", "absolute_s"),
-        ("violation_relative_mean", "Mean Relative SLO Violation", "relative"),
+        ("violation_relative_mean", "Mean Relative SLO Violation\nPer query: max(0, (latency-slo)/slo)", "relative"),
     ]
 
     static_colors = [
         Palette.light_orange,
+        Palette.light_orange,
         Palette.dark_orange,
-        Palette.light_red,
+        Palette.dark_orange,
         Palette.dark_red,
     ]
 
@@ -522,7 +523,7 @@ def _generate_scatter_plots(
         if initial_xs and initial_costs:
             points.append(
                 ScatterPoint(
-                    label="Initial (avg)",
+                    label="Initial",
                     x=sum(initial_xs) / len(initial_xs),
                     y=sum(initial_costs) / len(initial_costs),
                     color=Palette.gray,
@@ -556,7 +557,7 @@ def _generate_scatter_plots(
                         x=xv,
                         y=entry.get("cost", 0.0),
                         color=static_colors[i % len(static_colors)],
-                        marker="s",
+                        marker="s" if i % 2 == 0 else "D",
                     )
                 )
 
@@ -576,7 +577,7 @@ def _generate_scatter_plots(
             points,
             xlabel=xlabel,
             ylabel="Cost ($)",
-            title=f"History-Window Experiment: Cost vs {xlabel}{title_suffix}",
+            title=f"Simulation Results with Different History Lengths",
             x_threshold=viol_threshold,
             x_threshold_label=threshold_label,
             xscale="log" if metric_name == "absolute_s" else "linear",

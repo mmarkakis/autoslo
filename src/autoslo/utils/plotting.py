@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from autoslo.utils.colors import Palette
+
 
 @dataclass
 class ScatterPoint:
@@ -36,7 +38,7 @@ def cost_vs_compliance_scatter(
     legend: bool = True,
     ax: Axes | None = None,
     x_threshold: float | None = None,
-    x_threshold_color: str = "#d4edda",
+    x_threshold_color: str = Palette.light_green,
     x_threshold_label: str | None = None,
 ) -> tuple[Figure, Axes]:
     """Create a cost-vs-compliance scatter plot.
@@ -79,6 +81,17 @@ def cost_vs_compliance_scatter(
         fig = ax.get_figure()
         assert isinstance(fig, Figure)
 
+    # Shaded threshold region.
+    if x_threshold is not None:
+        ax.axvspan(
+            0,
+            x_threshold,
+            color=x_threshold_color,
+            alpha=0.3,
+            zorder=0,
+            label=x_threshold_label,
+        )
+
     for pt in points:
         ax.scatter(
             pt.x, pt.y, label=pt.label, color=pt.color, marker=pt.marker, s=60
@@ -105,19 +118,10 @@ def cost_vs_compliance_scatter(
     elif xscale == "log":
         ax.set_xlim(min(xvals) - x_pad * xrange, max(xvals) + x_pad * xrange)
 
-    # Shaded threshold region.
-    if x_threshold is not None:
-        ax.axvspan(
-            0,
-            x_threshold,
-            color=x_threshold_color,
-            alpha=0.3,
-            zorder=0,
-            label=x_threshold_label,
-        )
+    
 
     if legend:
-        ax.legend()
+        ax.legend(ncols=2)
 
     fig.tight_layout()
     return fig, ax
