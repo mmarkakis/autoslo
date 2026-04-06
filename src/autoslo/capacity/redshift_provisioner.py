@@ -334,15 +334,22 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         logger.error("Statement %s timed out.", label)
         return False
 
-    def _delete_workgroup(self, workgroup_name: str) -> bool:
+    def _delete_workgroup(self, workgroup_name: str) -> tuple[bool, str | None]:
+        """Delete a workgroup, returning ``(success, namespace_name)``."""
         client = self._get_client("redshift-serverless")
+        try:
+            resp = client.get_workgroup(workgroupName=workgroup_name)
+            namespace_name: str | None = resp["workgroup"].get("namespaceName")
+        except Exception:
+            logger.exception("Failed to look up workgroup %s", workgroup_name)
+            return False, None
         try:
             client.delete_workgroup(workgroupName=workgroup_name)
             logger.info("Workgroup %s deletion initiated.", workgroup_name)
-            return True
+            return True, namespace_name
         except Exception:
             logger.exception("Workgroup deletion failed for %s", workgroup_name)
-            return False
+            return False, namespace_name
 
     def _wait_for_workgroup_deleted(
         self,
@@ -557,19 +564,19 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
                 }
             )
 
-        if not self._delete_workgroup(cluster_name):
+        ok, namespace_name = self._delete_workgroup(cluster_name)
+        if not ok:
             raise RuntimeError(f"Failed to delete workgroup {cluster_name}")
         if not self._wait_for_workgroup_deleted(cluster_name):
             raise RuntimeError(
                 f"Workgroup {cluster_name} was not deleted in time"
             )
 
-        if not self._delete_namespace(cluster_name):
-            raise RuntimeError(f"Failed to delete namespace {cluster_name}")
-        if not self._wait_for_namespace_deleted(cluster_name):
-            raise RuntimeError(
-                f"Namespace {cluster_name} was not deleted in time"
-            )
+        ns = namespace_name or cluster_name.replace("wg", "ns")
+        if not self._delete_namespace(ns):
+            raise RuntimeError(f"Failed to delete namespace {ns}")
+        if not self._wait_for_namespace_deleted(ns):
+            raise RuntimeError(f"Namespace {ns} was not deleted in time")
 
         tear_down_duration = time.time() - tear_down_start
         logger.info(
