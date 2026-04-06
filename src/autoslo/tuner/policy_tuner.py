@@ -5,13 +5,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import plotext as plt
 import yaml
 from rich.console import Console
-from rich.table import Table
 
 import autoslo.utils.config as cfgu
 from autoslo.blueprint_selection.slo_resolver import SloResolver
@@ -275,13 +274,11 @@ class PolicyTuner:
                 train_out_dir / "config_0"
             )
         else:
-            train_results_nested = (
-                self._evaluator.evaluate_batch_from_configs(
-                    phase_name="baseline_train",
-                    workload_paths=train_paths,
-                    configs=[self._initial_config],
-                    out_dir=train_out_dir,
-                )
+            train_results_nested = self._evaluator.evaluate_batch_from_configs(
+                phase_name="baseline_train",
+                workload_paths=train_paths,
+                configs=[self._initial_config],
+                out_dir=train_out_dir,
             )
             train_results = train_results_nested[0]
 
@@ -300,13 +297,11 @@ class PolicyTuner:
             )
             val_results = SimulationResult.load_batch(val_out_dir / "config_0")
         else:
-            val_results_nested = (
-                self._evaluator.evaluate_batch_from_configs(
-                    phase_name="baseline_val",
-                    workload_paths=val_paths,
-                    configs=[self._initial_config],
-                    out_dir=val_out_dir,
-                )
+            val_results_nested = self._evaluator.evaluate_batch_from_configs(
+                phase_name="baseline_val",
+                workload_paths=val_paths,
+                configs=[self._initial_config],
+                out_dir=val_out_dir,
             )
             val_results = val_results_nested[0]
         val_agg = SimulationResult.aggregate(val_results, metric)
@@ -320,14 +315,14 @@ class PolicyTuner:
         return train_agg, val_agg
 
     def find_checkpoints(
-        self,
-        train_paths: list[Path],
-        val_paths: list[Path],
-        baseline_val_violation: Optional[float],
-    ) -> dict[str, Any]:
+        self, train_paths: list[Path], val_paths: list[Path], agg_metric: str
+    ) -> tuple[
+        dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
+    ]:
         """
-        Phase 4: Find promising checkpoints via optimization.
+        Phase 4: Find promising checkpoints via greedy training-only optimization.
         """
+        # Compute or retrieve the post-checkpoint-optimization config.
         optimizer = CheckpointOptimizer(
             evaluator=self._evaluator,
             config=self._initial_config,
@@ -344,15 +339,52 @@ class PolicyTuner:
             with open(final_config_path) as f:
                 post_checkpoints_config = yaml.safe_load(f) or {}
         else:
-            assert (
-                baseline_val_violation is not None
-            ), "Baseline violation agg is None"
             post_checkpoints_config = optimizer.optimize(
                 train_paths=train_paths,
-                val_paths=val_paths,
-                baseline_val_violation=baseline_val_violation,
             )
-        return post_checkpoints_config
+
+        # Validate checkpoint schedule on training and validation data.
+        train_out_dir = self._run_dir / "checkpoints" / "final" / "train"
+        train_results: list[SimulationResult]
+        if train_out_dir.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Checkpoint-optimized train results already exist at "
+                f"{train_out_dir}; loading from disk."
+            )
+            train_results = SimulationResult.load_batch(
+                train_out_dir / "config_0"
+            )
+        else:
+            train_results_nested = self._evaluator.evaluate_batch_from_configs(
+                phase_name="checkpoints_train",
+                workload_paths=train_paths,
+                configs=[post_checkpoints_config],
+                out_dir=train_out_dir,
+            )
+            train_results = train_results_nested[0]
+        train_agg = SimulationResult.aggregate(train_results, agg_metric)
+
+        val_out_dir = self._run_dir / "checkpoints" / "final" / "val"
+        val_results: list[SimulationResult]
+        if val_out_dir.exists() and not self._cfgd("tuner_config.force", False):
+            console.print(
+                f"  Checkpoint-optimized val results already exist at "
+                f"{val_out_dir}; loading from disk."
+            )
+            val_results = SimulationResult.load_batch(val_out_dir / "config_0")
+        else:
+            val_results_nested = self._evaluator.evaluate_batch_from_configs(
+                phase_name="checkpoints_val",
+                workload_paths=val_paths,
+                configs=[post_checkpoints_config],
+                out_dir=val_out_dir,
+            )
+            val_results = val_results_nested[0]
+        val_agg = SimulationResult.aggregate(val_results, agg_metric)
+
+        return post_checkpoints_config, train_agg, val_agg
 
     def param_sweep(
         self,
@@ -395,6 +427,10 @@ class PolicyTuner:
         Returns the path to the final optimised config file.
         """
 
+        agg_metric = self._cfgd(
+            "tuner_config.forecast_config.aggregation_metric", "p90"
+        )
+
         ### Phase 1: Build reservoir
         self._print_banner("Phase 1: Building reservoir")
         self.build_reservoir()
@@ -408,13 +444,35 @@ class PolicyTuner:
         baseline_train, baseline_val = self.evaluate_baseline(
             train_paths, val_paths
         )
+        AggregatedSimulationResults.print_comparison(
+            ("Baseline (train)", baseline_train),
+            ("Baseline (val)", baseline_val),
+            console=console,
+            agg_metric=agg_metric,
+            slo_metric=self._slo_metric,
+            highlight_best=False,
+        )
 
         ### Phase 4: Checkpoint optimization
         self._print_banner("Phase 4: Checkpoint optimization")
-        post_checkpoints_config = self.find_checkpoints(
-            train_paths,
-            val_paths,
-            primary_violation(baseline_val, self._slo_metric),
+        (
+            post_checkpoints_config,
+            post_checkpoints_train,
+            post_checkpoints_val,
+        ) = self.find_checkpoints(train_paths, val_paths, agg_metric=agg_metric)
+        AggregatedSimulationResults.print_comparison(
+            ("Baseline (train)", baseline_train),
+            ("Post-checkpoints (train)", post_checkpoints_train),
+            console=console,
+            agg_metric=agg_metric,
+            slo_metric=self._slo_metric,
+        )
+        AggregatedSimulationResults.print_comparison(
+            ("Baseline (val)", baseline_val),
+            ("Post-checkpoints (val)", post_checkpoints_val),
+            console=console,
+            agg_metric=agg_metric,
+            slo_metric=self._slo_metric,
         )
 
         ### Phase 5: Autoscaler parameter sweep
@@ -447,19 +505,18 @@ class PolicyTuner:
         tuned_train, tuned_val = self._evaluate_final(
             train_paths, val_paths, final_config
         )
-        metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", "p90"
-        )
-        self._print_comparison(
+        AggregatedSimulationResults.print_comparison(
             ("Initial (train)", baseline_train),
             ("Final (train)", tuned_train),
-            agg_method=metric,
+            console=console,
+            agg_metric=agg_metric,
             slo_metric=self._slo_metric,
         )
-        self._print_comparison(
+        AggregatedSimulationResults.print_comparison(
             ("Initial (val)", baseline_val),
             ("Final (val)", tuned_val),
-            agg_method=metric,
+            console=console,
+            agg_metric=agg_metric,
             slo_metric=self._slo_metric,
         )
 
@@ -633,7 +690,13 @@ class PolicyTuner:
             )
             comparison_entries.append((sb["label"], sb_agg))
 
-        self._print_comparison(*comparison_entries, agg_method=metric, slo_metric=self._slo_metric)
+        AggregatedSimulationResults.print_comparison(
+            *comparison_entries,
+            agg_metric=metric,
+            slo_metric=self._slo_metric,
+            console=console,
+            highlight_best=True,
+        )
         self._print_scatter(comparison_entries, self._slo_metric)
 
         # --- Write holdout summary --------------------------------------
@@ -657,101 +720,6 @@ class PolicyTuner:
 
         summary_path = summary_dir / "summary.yml"
         dump(holdout_summary, summary_path)
-
-    @staticmethod
-    def _print_comparison(
-        *entries: tuple[str, AggregatedSimulationResults],
-        agg_method: str = "p90",
-        slo_metric: str = "binary",
-    ) -> None:
-        """Print a table comparing multiple AggregatedSimulationResults.
-
-        Parameters
-        ----------
-        *entries :
-            ``(label, agg)`` pairs.  Each gets one row.  Use labels like
-            ``"Initial (train)"`` / ``"Initial (val)"`` to distinguish splits.
-        agg_method :
-            Aggregation method shown in the title.
-        slo_metric :
-            The SLO metric that was actually optimised (``"binary"``,
-            ``"absolute_s"``, or ``"relative"``).  The best cell in this
-            column and in the Cost column is highlighted green; the best
-            cell in the other two violation columns is highlighted yellow.
-        """
-        # Map slo_metric → column index (0-2 are the three violation metrics).
-        _SLO_TO_COL = {"binary": 0, "absolute_s": 1, "relative": 2}
-        targeted_col = _SLO_TO_COL.get(slo_metric, 0)
-        cost_col = 3  # always
-
-        table = Table(
-            title=f"Comparison  [dim](agg: {agg_method})[/dim]",
-            show_lines=True,
-        )
-        table.add_column("Config", justify="left")
-
-        metric_labels = [
-            "Viol. Rate",
-            "Viol. Amt (s)",
-            "Viol. Rel.",
-            "Cost ($)",
-        ]
-        for ml in metric_labels:
-            table.add_column(ml, justify="right")
-
-        fmt = PolicyTuner._fmt_cell
-
-        def _extract(
-            agg: AggregatedSimulationResults,
-        ) -> tuple[list[float], list[list[float]]]:
-            aggs = [
-                agg.violation_rate,
-                agg.violation_amount_s,
-                agg.violation_relative_mean,
-                agg.cost,
-            ]
-            if agg.scenario_results:
-                per = [
-                    [r.violation_rate for r in agg.scenario_results],
-                    [r.violation_amount_s for r in agg.scenario_results],
-                    [r.violation_relative_mean for r in agg.scenario_results],
-                    [r.total_cost for r in agg.scenario_results],
-                ]
-            else:
-                per = [[], [], [], []]
-            return aggs, per
-
-        # Build row data.
-        row_data: list[tuple[str, list[float], list[list[float]]]] = []
-        for label, agg in entries:
-            a, p = _extract(agg)
-            row_data.append((label, a, p))
-
-        # Find the best (lowest) aggregated value per column.
-        n_metric = 4
-        best_per_col: list[int] = []
-        if row_data:
-            for c in range(n_metric):
-                best_per_col.append(
-                    min(
-                        range(len(row_data)),
-                        key=lambda i, _c=c: row_data[i][1][_c],  # type: ignore
-                    )
-                )
-
-        for row_idx, (label, aggs, per) in enumerate(row_data):
-            cells: list[str] = []
-            for c in range(n_metric):
-                cell = fmt(aggs[c], per[c])
-                if len(row_data) > 1 and row_idx == best_per_col[c]:
-                    if c == targeted_col or c == cost_col:
-                        cell = f"[green]{cell}[/green]"
-                    else:
-                        cell = f"[yellow]{cell}[/yellow]"
-                cells.append(cell)
-            table.add_row(label, *cells)
-
-        console.print(table)
 
     _SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
 
@@ -869,18 +837,6 @@ class PolicyTuner:
             cost=summary.get("cost", 0.0),
             scenario_results=scenario_results,
         )
-
-    @staticmethod
-    def _fmt_cell(
-        agg_val: float,
-        scenario_vals: list[float],
-    ) -> str:
-        """Format a metric cell: aggregated value with dim min–max range."""
-        main = f"{agg_val:.4f}"
-        if len(scenario_vals) >= 2:
-            lo, hi = min(scenario_vals), max(scenario_vals)
-            main += f"\n[dim]{lo:.4f} … {hi:.4f}[/dim]"
-        return main
 
 
 if __name__ == "__main__":

@@ -11,6 +11,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from rich.console import Console
+from rich.table import Table
+
 from autoslo.blueprint_selection.slo_resolver import SloResolver
 
 
@@ -33,6 +36,122 @@ class AggregatedSimulationResults:
     violation_relative_mean: float
     cost: float
     scenario_results: tuple[SimulationResult, ...] = ()
+
+    @staticmethod
+    def _fmt_cell(
+        agg_val: float,
+        scenario_vals: list[float],
+    ) -> str:
+        """Format a metric cell: aggregated value with dim min–max range."""
+        main = f"{agg_val:.4f}"
+        if len(scenario_vals) >= 2:
+            lo, hi = min(scenario_vals), max(scenario_vals)
+            main += f"\n[dim]{lo:.4f} … {hi:.4f}[/dim]"
+        return main
+
+    @staticmethod
+    def print_comparison(
+        *entries: tuple[str, AggregatedSimulationResults],
+        console: Console,
+        agg_metric: str = "p90",
+        slo_metric: str = "binary",
+        highlight_best: bool = True,
+    ) -> None:
+        """Print a table comparing multiple AggregatedSimulationResults.
+
+        Parameters
+        ----------
+        *entries :
+            ``(label, agg)`` pairs.  Each gets one row.  Use labels like
+            ``"Initial (train)"`` / ``"Initial (val)"`` to distinguish splits.
+        agg_metric :
+            Aggregation metric shown in the title.
+        slo_metric :
+            The SLO metric that was actually optimised (``"binary"``,
+            ``"absolute_s"``, or ``"relative"``).  The best cell in this
+            column and in the Cost column is highlighted green; the best
+            cell in the other two violation columns is highlighted yellow.
+        highlight_best :
+            Whether to highlight the best values in the table.
+        """
+        # Map slo_metric → column index (0-2 are the three violation metrics).
+        _SLO_TO_COL = {"binary": 0, "absolute_s": 1, "relative": 2}
+        targeted_col = _SLO_TO_COL.get(slo_metric, 0)
+        cost_col = 3  # always
+
+        table = Table(
+            title=f"Comparison  [dim](agg: {agg_metric})[/dim]",
+            show_lines=True,
+        )
+        table.add_column("Config", justify="left")
+
+        metric_labels = [
+            "Viol. Rate",
+            "Viol. Amt (s)",
+            "Viol. Rel.",
+            "Cost ($)",
+        ]
+        for ml in metric_labels:
+            table.add_column(ml, justify="right")
+
+        fmt = AggregatedSimulationResults._fmt_cell
+
+        def _extract(
+            agg: AggregatedSimulationResults,
+        ) -> tuple[list[float], list[list[float]]]:
+            aggs = [
+                agg.violation_rate,
+                agg.violation_amount_s,
+                agg.violation_relative_mean,
+                agg.cost,
+            ]
+            if agg.scenario_results:
+                per = [
+                    [r.violation_rate for r in agg.scenario_results],
+                    [r.violation_amount_s for r in agg.scenario_results],
+                    [r.violation_relative_mean for r in agg.scenario_results],
+                    [r.total_cost for r in agg.scenario_results],
+                ]
+            else:
+                per = [[], [], [], []]
+            return aggs, per
+
+        # Build row data.
+        row_data: list[tuple[str, list[float], list[list[float]]]] = []
+        for label, agg in entries:
+            a, p = _extract(agg)
+            row_data.append((label, a, p))
+
+        # Find the best (lowest) aggregated value per column.
+        n_metric = 4
+        best_per_col: list[int] = []
+        if row_data:
+            for c in range(n_metric):
+                best_per_col.append(
+                    min(
+                        range(len(row_data)),
+                        key=lambda i, _c=c: row_data[i][1][_c],  # type: ignore
+                    )
+                )
+
+        for row_idx, (label, aggs, per) in enumerate(row_data):
+            cells: list[str] = []
+            for c in range(n_metric):
+                cell = fmt(aggs[c], per[c])
+                if (
+                    len(row_data) > 1
+                    and (row_idx == best_per_col[c])
+                    and highlight_best
+                ):
+                    if c == targeted_col or c == cost_col:
+                        cell = f"[green]{cell}[/green]"
+                    else:
+                        cell = f"[yellow]{cell}[/yellow]"
+                cells.append(cell)
+            table.add_row(label, *cells)
+
+        console.print(table)
+
 
 @dataclass
 class SimulationResult:
@@ -126,7 +245,6 @@ class SimulationResult:
                 results.append(result)
         return results
 
-
     @staticmethod
     def aggregate(
         results: list[SimulationResult], metric: str = "p90"
@@ -189,8 +307,6 @@ class SimulationResult:
         raise ValueError(f"Unknown aggregation metric: {metric!r}")
 
 
-
-
 # ---------------------------------------------------------------------------
 # SLO objective bundle
 # ---------------------------------------------------------------------------
@@ -202,6 +318,32 @@ class SloObjective:
 
     slo_metric: str  # "binary", "absolute_s", or "relative"
     slo_threshold: float
+
+    def is_set_delinquent(
+        self, per_query_latency_slo: list[tuple[float, float]]
+    ) -> bool:
+        """Return True if the given latencies violate the SLO threshold."""
+        if self.slo_metric == "binary":
+            return (
+                sum(lat > slo for lat, slo in per_query_latency_slo)
+                > self.slo_threshold
+            )
+        if self.slo_metric == "absolute_s":
+            return (
+                sum(
+                    max(0.0, lat - slo) for lat, slo in per_query_latency_slo
+                )
+                > self.slo_threshold
+            )
+        if self.slo_metric == "relative":
+            return (
+                sum(
+                    max(0.0, (lat - slo) / slo)
+                    for lat, slo in per_query_latency_slo
+                )
+                > self.slo_threshold
+            )
+        raise ValueError(f"Unknown slo_metric: {self.slo_metric!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +357,9 @@ _METRIC_TO_FIELD = {
 }
 
 
-def primary_violation(agg: AggregatedSimulationResults, slo_metric: str) -> float:
+def primary_violation(
+    agg: AggregatedSimulationResults, slo_metric: str
+) -> float:
     """Extract the primary violation value for the given SLO metric."""
     field_name = _METRIC_TO_FIELD.get(slo_metric)
     if field_name is None:
@@ -251,8 +395,6 @@ def threshold_aware_select(
         range(len(candidates)),
         key=lambda i: (candidates[i][0], candidates[i][1]),
     )
-
-
 
 
 # ---------------------------------------------------------------------------

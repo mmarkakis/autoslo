@@ -1,3 +1,4 @@
+import copy
 import heapq
 import json
 import logging
@@ -106,7 +107,9 @@ class WorkloadSimulator:
         out_dir: str | Path | None = None,
         workload: "Workload | None" = None,
         iconq_model: "IconqModel | None" = None,
+        config_dict: dict | None = None,
     ):
+        self._config_dict = config_dict
         self._workload_name = workload_name
         self._iconq_model_id = iconq_model_id
         self._iconq_model = (
@@ -382,6 +385,7 @@ class WorkloadSimulator:
             out_dir=out_dir,
             workload=workload,
             iconq_model=_iconq_model,
+            config_dict=cfg,
         )
 
     # ------------------------------------------------------------------
@@ -450,23 +454,28 @@ class WorkloadSimulator:
 
     def _write_config_yml(self) -> None:
         config_out_path = os.path.join(self._out_dir, "config.yml")
-        d = {
-            "run_id": self._run_id,
-            "experiment_name": self._experiment_name,
-            "workload_name": self._workload_name,
-            "routing_policy_type": type(self._routing_policy).__name__,
-            "iconq_model_id": self._iconq_model_id,
-            "slo_s": self._slo_s,
-            "slo_dict_filename": self._slo_dict_filename,
-            "slo_dict": self._slo_resolver.slo_dict,
-            "slo_metric": self._slo_metric.value,
-            "slo_threshold": self._slo_threshold,
-            "verbose": self._verbose,
-            "export_video": self._export_video,
-            "video_frame_duration": self._video_frame_duration,
-            "seed": self._seed,
-            "closed_loop": self._closed_loop,
-        }
+        if self._config_dict is not None:
+            d = copy.deepcopy(self._config_dict)
+            d["run_id"] = self._run_id
+            d["seed"] = self._seed
+        else:
+            d = {
+                "run_id": self._run_id,
+                "experiment_name": self._experiment_name,
+                "workload_name": self._workload_name,
+                "routing_policy_type": type(self._routing_policy).__name__,
+                "iconq_model_id": self._iconq_model_id,
+                "slo_s": self._slo_s,
+                "slo_dict_filename": self._slo_dict_filename,
+                "slo_dict": self._slo_resolver.slo_dict,
+                "slo_metric": self._slo_metric.value,
+                "slo_threshold": self._slo_threshold,
+                "verbose": self._verbose,
+                "export_video": self._export_video,
+                "video_frame_duration": self._video_frame_duration,
+                "seed": self._seed,
+                "closed_loop": self._closed_loop,
+            }
         dump(d, config_out_path)
 
     def reset(self, simulator_run_id: Optional[str] = None) -> None:

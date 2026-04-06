@@ -28,7 +28,7 @@ class TunerConfig:
     aggregation_metric: str = "p90"  # "mean" | "p90" | "p99"
 
     # -- Checkpoint optimization (step 4) ---------------------------------
-    checkpoint_budget: int = 5
+    max_checkpoints: int = 5
     checkpoint_epsilon: float = 0.01
     sliding_window_s: float = 300.0
     violation_threshold: float = 0.1
