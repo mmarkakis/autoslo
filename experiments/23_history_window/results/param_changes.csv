@@ -1,10 +1,8 @@
-scenario,parameter,baseline,tuned
-1 day,autoscaling_config.capacity_poll_interval_s,60.0,120.0
+scenario,parameter,initial,final
+1 day,autoscaling_config.capacity_poll_interval_s,60.0,30.0
 1 day,autoscaling_config.eta_crit,0.05,0.2
-1 day,autoscaling_config.min_cluster_lifetime_s,1200.0,3600.0
-1 day,workload_config.rescale_factor,,0.1666667
+1 week,autoscaling_config.capacity_poll_interval_s,60.0,120.0
 1 week,autoscaling_config.eta_crit,0.05,0.2
-1 week,workload_config.rescale_factor,,0.1666667
 1 month,autoscaling_config.capacity_poll_interval_s,60.0,120.0
-1 month,autoscaling_config.eta_crit,0.05,0.1
-1 month,workload_config.rescale_factor,,0.1666667
+1 month,autoscaling_config.eta_crit,0.05,0.2
+1 month,autoscaling_config.idle_periods_before_tear_down,20,10
