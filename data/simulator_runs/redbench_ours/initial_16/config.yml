@@ -111,3 +111,4 @@ verbose: true
 export_video: false
 video_frame_duration: 1.0
 seed: null
+closed_loop: false
