@@ -19,7 +19,6 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
 )
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
@@ -40,11 +39,14 @@ from autoslo.routing.routing_core import (
     RoutingResult,
 )
 from autoslo.routing.routing_policy import RoutingPolicy
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.policy_builders import (
     build_autoscaling_policy,
-    build_routing_policy,
     build_managed_cluster_pool_config,
+    build_routing_policy,
     parse_capacity_checkpoints,
 )
 from autoslo.utils.structured_log import (
@@ -54,7 +56,6 @@ from autoslo.utils.structured_log import (
 )
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query, QueryTextId
-from autoslo.slo.slo_objective import SloMetric
 from autoslo.workload_definition.workload import Workload
 
 if TYPE_CHECKING:
@@ -316,6 +317,10 @@ class WorkloadSimulator:
             cfg, "slo_config.slo_dict_filename"
         )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
+        slo_objective = SloObjective(
+            slo_metric=slo_metric,
+            slo_threshold=slo_threshold,
+        )
 
         # ── Load the IconqModel once and share across all consumers ──────────
         _iconq_model: IconqModel | None = (
@@ -338,13 +343,12 @@ class WorkloadSimulator:
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
         autoscaling_policy = build_autoscaling_policy(
-            cfg,
-            slo_resolver,
-            slo_metric,
-            slo_threshold,
-            iconq_model_id,
-            routing_policy,
-            allowed_rpus,
+            cfg=cfg,
+            slo_resolver=slo_resolver,
+            slo_objective=slo_objective,
+            iconq_model_id=iconq_model_id,
+            routing_policy=routing_policy,
+            allowed_rpu_sizes=allowed_rpus,
             iconq_model=_iconq_model,
         )
         poll_s: float = float(
@@ -1085,13 +1089,9 @@ class WorkloadSimulator:
             if len(completed_queries) == 0:
                 continue
 
-            from autoslo.slo.slo_resolver import (
-                query_interval as _qi,
-            )  # noqa: PLC0415
-
             billed_intervals = Billing.billed_intervals(
                 [
-                    _qi(
+                    Query.query_interval(
                         q.rel_start_time_s,
                         self._predicted_latencies.get(q.query_id, 0.0),
                         q.query_id,
@@ -1167,16 +1167,18 @@ class WorkloadSimulator:
                     .map(self._slo_resolver.resolve)
                     .fillna(self._slo_s)
                 )
-                violations = durations > per_row_slo
-                violation_rate = float(violations.mean())
-                violation_amount_s = float(
-                    (durations - per_row_slo).clip(lower=0.0).sum()
+
+                lat_and_slos = [
+                    (lat, slo) for lat, slo in zip(durations, per_row_slo)
+                ]
+
+                violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)
+                violation_amount_s = SloMetric.ABSOLUTE_S.aggregate_batch(
+                    lat_and_slos
                 )
-                # Relative violation: max(0, (latency - slo) / slo) per query.
-                relative_violations = (
-                    (durations - per_row_slo) / per_row_slo
-                ).clip(lower=0.0)
-                violation_relative_mean = float(relative_violations.mean())
+                violation_relative_mean = SloMetric.RELATIVE.aggregate_batch(
+                    lat_and_slos
+                )
 
         run_entry = {
             "run_id": self._run_id,

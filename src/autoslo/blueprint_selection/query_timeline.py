@@ -1111,62 +1111,6 @@ class QueryTimeline:
 
         return old_latency_s
 
-    def slo_violation_rate(
-        self,
-    ) -> float:
-        """
-        Calculate the SLO violation rate for the timeline.
-
-        Returns:
-            The SLO violation rate as a float between 0 and 1.
-        """
-        total_queries = 0
-        violating_queries = 0
-
-        for query_id, (
-            _,
-            interval,
-        ) in self._query_id_to_cluster_interval.items():
-            total_queries += 1
-            latency = interval.end - interval.begin
-            if isinstance(self._slo_s, dict):
-                slo_for_query = self._slo_s[query_id]
-            else:
-                slo_for_query = self._slo_s
-            if latency > slo_for_query:
-                violating_queries += 1
-
-        if total_queries == 0:
-            return 0.0
-
-        return float(violating_queries / total_queries)
-
-    def slo_violation_amount(
-        self,
-    ) -> float:
-        """
-        Calculate the cumulative SLO violation amount for the timeline.
-
-        Returns:
-            The cumulative SLO violation amount in seconds.
-        """
-        total_violation_amount = 0.0
-
-        for query_id, (
-            _,
-            interval,
-        ) in self._query_id_to_cluster_interval.items():
-            latency = interval.end - interval.begin
-            if isinstance(self._slo_s, dict):
-                slo_for_query = self._slo_s[query_id]
-            else:
-                slo_for_query = self._slo_s
-            violation_amount = latency - slo_for_query
-            if violation_amount > 0:
-                total_violation_amount += violation_amount
-
-        return float(total_violation_amount)
-
     def find_intervals_by_slo_adherence(
         self,
         look_for_slo_violations: bool = True,

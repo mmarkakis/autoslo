@@ -23,11 +23,7 @@ if TYPE_CHECKING:
     from autoslo.models.iconq_model import IconqModel
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
-from autoslo.slo.slo_resolver import (
-    SloResolver,
-    slo_violation as _slo_violation,
-    query_interval as _query_interval,
-)
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query, QueryTextId
@@ -127,19 +123,22 @@ class RoutingCore:
         (before_cost, before_slo_violation)
         """
         # -- SLO violations -------------------------------------------------
-        individual_violations: list[float] = [
-            _slo_violation(
-                latencies.get(q.query_id, -1.0),
-                slo_resolver.resolve(q.query_text_id),
-                slo_metric,
-            )
-            for q in snapshot.active_queries
-        ]
+        individual_violations = slo_metric.calculate_batch(
+            [
+                (
+                    latencies.get(q.query_id, -1.0),
+                    slo_resolver.resolve(q.query_text_id),
+                )
+                for q in snapshot.active_queries
+            ]
+        )
         before_slo_violation = float(sum(individual_violations))
 
         # -- Billing cost ---------------------------------------------------
         before_query_intervals = [
-            _query_interval(q.rel_start_time_s, latencies.get(q.query_id, 0.0), q.query_id)
+            Query.query_interval(
+                q.rel_start_time_s, latencies.get(q.query_id, 0.0), q.query_id
+            )
             for q in snapshot.active_queries
         ]
         if snapshot.billing_window_start_s is not None:
@@ -219,7 +218,7 @@ class RoutingCore:
             slo_s = slo_resolver.resolve(q.query_text_id)
             predicted_latency = latencies[q.query_id]
             individual_after_violations.append(
-                _slo_violation(predicted_latency, slo_s, slo_metric)
+                float(slo_metric.calculate(predicted_latency, slo_s))
             )
         after_slo_violation = float(sum(individual_after_violations))
         marginal_slo_violation = after_slo_violation - before_slo_violation
@@ -389,8 +388,9 @@ class RoutingCore:
 
         # -- Featurise the incoming query ----------------------------------
         featurization = (
-            iconq_model.iconq_query_featurizer
-            .featurize_from_query_text_id(query_text_id)
+            iconq_model.iconq_query_featurizer.featurize_from_query_text_id(
+                query_text_id
+            )
         )
 
         # -- Stage-model predictions (one per unique RPU) ------------------
@@ -399,12 +399,9 @@ class RoutingCore:
         for cn in eligible:
             rpu = pool.get_rpu(cn)
             if rpu not in stage_predictions_per_rpu:
-                sp = (
-                    iconq_model.stage_model
-                    .predict_from_query_text_id(
-                        {query_id: query_text_id}, rpu
-                    )[query_id].overall_mean_s()
-                )
+                sp = iconq_model.stage_model.predict_from_query_text_id(
+                    {query_id: query_text_id}, rpu
+                )[query_id].overall_mean_s()
                 stage_predictions_per_rpu[rpu] = sp
             stage_preds[cn] = stage_predictions_per_rpu[rpu]
 
@@ -512,4 +509,3 @@ class RoutingCore:
                 min_headroom = headroom
 
         return min_headroom if min_headroom != float("inf") else 1.0
-

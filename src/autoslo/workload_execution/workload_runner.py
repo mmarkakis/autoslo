@@ -13,8 +13,8 @@ import psycopg2
 import yaml
 from tqdm.auto import tqdm
 
+import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
@@ -32,12 +32,23 @@ from autoslo.routing.managed_cluster_pool import (
 )
 from autoslo.routing.router import Router
 from autoslo.routing.routing_policy import RoutingPolicy
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
+from autoslo.utils.policy_builders import (
+    build_autoscaling_policy,
+    build_managed_cluster_pool_config,
+    build_routing_policy,
+    parse_capacity_checkpoints,
+)
 from autoslo.utils.structured_log import (
     LOGGER_NAME,
     emit_structured,
     setup_structured_logging,
 )
-from autoslo.workload_definition.query import SloMetric
+from autoslo.workload_definition.query_text_registry import QueryTextRegistry
+from autoslo.workload_definition.schema import Schema
+from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 from autoslo.workload_execution.run_stats_collector import (
     SYS_EXTERNAL_QUERY_DETAIL_QUERY,
@@ -50,17 +61,6 @@ from autoslo.workload_execution.run_stats_collector import (
 _has_structured = lambda: bool(
     logging.getLogger(LOGGER_NAME).handlers
 )  # noqa: E731
-import autoslo.utils.config as cfgu
-from autoslo.workload_definition.query_text_registry import QueryTextRegistry
-from autoslo.workload_definition.schema import Schema
-from autoslo.workload_definition.workload import Workload
-
-from autoslo.utils.policy_builders import (
-    build_routing_policy,
-    build_autoscaling_policy,
-    build_managed_cluster_pool_config,
-    parse_capacity_checkpoints,
-)
 
 
 class WorkloadRunner:
@@ -277,6 +277,9 @@ class WorkloadRunner:
             cfgu.getd(cfg, "slo_config.slo_threshold", 0.0)
         )
         slo_resolver = SloResolver(slo_s, slo_dict_filename)
+        slo_objective = SloObjective(
+            slo_metric=slo_metric, slo_threshold=slo_threshold
+        )
 
         # ── shared policy / pool construction ────────────────────────────
         routing_policy = build_routing_policy(
@@ -293,13 +296,12 @@ class WorkloadRunner:
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
         autoscaling_policy = build_autoscaling_policy(
-            cfg,
-            slo_resolver,
-            slo_metric,
-            slo_threshold,
-            iconq_model_id,
-            routing_policy,
-            allowed_rpus,
+            cfg=cfg,
+            slo_resolver=slo_resolver,
+            slo_objective=slo_objective,
+            iconq_model_id=iconq_model_id,
+            routing_policy=routing_policy,
+            allowed_rpu_sizes=allowed_rpus,
         )
         capacity_checkpoints = parse_capacity_checkpoints(cfg)
         poll_s: float = float(

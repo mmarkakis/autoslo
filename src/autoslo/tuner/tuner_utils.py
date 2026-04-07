@@ -13,6 +13,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,23 @@ class AggregatedSimulationResults:
     cost: float
     scenario_results: tuple[SimulationResult, ...] = ()
 
+    def primary_violation(self, slo_metric: str | SloMetric) -> float:
+        """Extract the primary violation value for the given SLO metric."""
+        slo_metric_obj = (
+            slo_metric
+            if isinstance(slo_metric, SloMetric)
+            else SloMetric(slo_metric)
+        )
+
+        if slo_metric_obj == SloMetric.BINARY:
+            return self.violation_rate
+        elif slo_metric_obj == SloMetric.ABSOLUTE_S:
+            return self.violation_amount_s
+        elif slo_metric_obj == SloMetric.RELATIVE:
+            return self.violation_relative_mean
+        else:
+            raise ValueError(f"Unknown SLO metric: {slo_metric}")
+
     @staticmethod
     def _fmt_cell(
         agg_val: float,
@@ -52,7 +70,7 @@ class AggregatedSimulationResults:
         *entries: tuple[str, AggregatedSimulationResults],
         console: Console,
         agg_metric: str = "p90",
-        slo_metric: str = "binary",
+        slo_metric: str | SloMetric = "binary",
         highlight_best: bool = True,
     ) -> None:
         """Print a table comparing multiple AggregatedSimulationResults.
@@ -73,8 +91,13 @@ class AggregatedSimulationResults:
             Whether to highlight the best values in the table.
         """
         # Map slo_metric → column index (0-2 are the three violation metrics).
+        slo_metric_str = (
+            slo_metric.value
+            if isinstance(slo_metric, SloMetric)
+            else slo_metric
+        )
         _SLO_TO_COL = {"binary": 0, "absolute_s": 1, "relative": 2}
-        targeted_col = _SLO_TO_COL.get(slo_metric, 0)
+        targeted_col = _SLO_TO_COL.get(slo_metric_str, 0)
         cost_col = 3  # always
 
         table = Table(
@@ -209,15 +232,16 @@ class SimulationResult:
                     .map(slo_resolver.resolve)
                     .fillna(0.0)
                 )
-                violations = durations > per_row_slo
-                violation_rate = float(violations.mean())
-                violation_amount_s = float(
-                    (durations - per_row_slo).clip(lower=0.0).sum()
+                lat_and_slos = [
+                    (lat, slo) for lat, slo in zip(durations, per_row_slo)
+                ]
+                violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)
+                violation_amount_s = SloMetric.ABSOLUTE_S.aggregate_batch(
+                    lat_and_slos
                 )
-                relative = ((durations - per_row_slo) / per_row_slo).clip(
-                    lower=0.0
+                violation_relative_mean = SloMetric.RELATIVE.aggregate_batch(
+                    lat_and_slos
                 )
-                violation_relative_mean = float(relative.mean())
 
         return SimulationResult(
             simulation_dir=simulation_dir,
@@ -308,22 +332,6 @@ class SimulationResult:
 # ---------------------------------------------------------------------------
 # Helpers for metric routing and threshold-aware selection
 # ---------------------------------------------------------------------------
-
-_METRIC_TO_FIELD = {
-    "binary": "violation_rate",
-    "absolute_s": "violation_amount_s",
-    "relative": "violation_relative_mean",
-}
-
-
-def primary_violation(
-    agg: AggregatedSimulationResults, slo_metric: str
-) -> float:
-    """Extract the primary violation value for the given SLO metric."""
-    field_name = _METRIC_TO_FIELD.get(slo_metric)
-    if field_name is None:
-        raise ValueError(f"Unknown slo_metric: {slo_metric!r}")
-    return getattr(agg, field_name)
 
 
 def is_feasible(primary_val: float, slo_threshold: float) -> bool:

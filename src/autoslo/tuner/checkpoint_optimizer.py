@@ -27,13 +27,13 @@ from rich.table import Table
 import autoslo.utils.config as cfgu
 from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
+from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
-from autoslo.slo.slo_resolver import SloResolver, slo_relative_violation
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    primary_violation,
     threshold_aware_select,
 )
 from autoslo.utils.yaml_helpers import dump
@@ -288,10 +288,10 @@ class CheckpointOptimizer:
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
 
         # SLO objective for threshold-aware candidate selection.
-        slo_metric = self._cfgd("slo_config.slo_metric", "binary")
+        slo_metric = SloMetric(self._cfgd("slo_config.slo_metric", "binary"))
         slo_threshold = self._cfgd("slo_config.slo_threshold", 1.0)
         self._slo_objective = SloObjective(
-            slo_metric=str(slo_metric),
+            slo_metric=slo_metric,
             slo_threshold=float(slo_threshold),
         )
 
@@ -406,7 +406,7 @@ class CheckpointOptimizer:
             sm = self._slo_objective.slo_metric
             st = self._slo_objective.slo_threshold
             best_idx = threshold_aware_select(
-                [(primary_violation(agg, sm), agg.cost) for _, agg in cands],
+                [(agg.primary_violation(sm), agg.cost) for _, agg in cands],
                 st,
             )
             best_cp, _ = cands[best_idx]
@@ -422,8 +422,8 @@ class CheckpointOptimizer:
 
             # 5. Accept the best checkpoint only if it actually improves the
             # metric we care about.
-            previous_best_slo = primary_violation(agg_train_results, sm)
-            new_best_slo = primary_violation(cands[best_idx][1], sm)
+            previous_best_slo = agg_train_results.primary_violation(sm)
+            new_best_slo = cands[best_idx][1].primary_violation(sm)
             relative_improvement = (
                 (previous_best_slo - new_best_slo) / abs(previous_best_slo)
                 if previous_best_slo != 0
@@ -545,8 +545,8 @@ class CheckpointOptimizer:
                 {
                     "rpu": cp.min_rpus[0],
                     "rel_time_s": cp.rel_time_s,
-                    "train_violation": primary_violation(
-                        agg, self._slo_objective.slo_metric
+                    "train_violation": agg.primary_violation(
+                        self._slo_objective.slo_metric
                     ),
                     "train_cost": agg.cost,
                     "train_violation_rate": agg.violation_rate,

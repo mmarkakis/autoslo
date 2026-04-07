@@ -1,6 +1,6 @@
 from typing import Optional
 
-from autoslo.slo.slo_resolver import SloMetric, SloResolver
+import autoslo.utils.config as cfgu
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
     CapacityCheckpoint,
@@ -12,9 +12,9 @@ from autoslo.routing.cache_aware_policy import CacheAwarePolicy
 from autoslo.routing.managed_cluster_pool import ManagedClusterPoolConfig
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.routing_policy import RoundRobinPolicy, RoutingPolicy
-from autoslo.workload_definition.query import SloMetric
-
-import autoslo.utils.config as cfgu
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
 
 # ── policy builders ──────────────────────────────────────────────────────
 
@@ -115,8 +115,7 @@ def build_routing_policy(
 def build_autoscaling_policy(
     cfg: dict,
     slo_resolver: SloResolver,
-    slo_metric: SloMetric,
-    slo_threshold: float,
+    slo_objective: SloObjective,
     iconq_model_id: Optional[str],
     routing_policy: RoutingPolicy,
     allowed_rpu_sizes: list[int],
@@ -152,14 +151,13 @@ def build_autoscaling_policy(
 
         return HeadroomPolicy(
             slo_resolver=slo_resolver,
-            slo_metric=slo_metric,
+            slo_objective=slo_objective,
             eta_crit=eta_crit,
             idle_periods_before_tear_down=idle_periods_before_tear_down,
             min_cluster_lifetime_s=min_cluster_lifetime_s,
             allowed_rpu_sizes=allowed_rpu_sizes,
             iconq_model=iconq_model,
             routing_policy=routing_policy,
-            slo_threshold=slo_threshold,
         )
     elif policy_type == "noop":
         return NoOpPolicy()

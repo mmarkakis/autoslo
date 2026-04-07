@@ -24,7 +24,6 @@ from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     SimulationResult,
     compute_pareto_front,
-    primary_violation,
     threshold_aware_select,
 )
 from autoslo.utils.yaml_helpers import dump
@@ -143,8 +142,8 @@ class ParamSweep:
         for idx in range(len(grid)):
             train_results = all_train_results[idx]
             train_agg = SimulationResult.aggregate(train_results, metric)
-            train_primary = primary_violation(
-                train_agg, self._slo_objective.slo_metric
+            train_primary = train_agg.primary_violation(
+                self._slo_objective.slo_metric
             )
             grid_results.append(
                 {
@@ -187,8 +186,8 @@ class ParamSweep:
         for i, idx in enumerate(pareto_indices):
             val_results = all_val_results[i]
             val_agg = SimulationResult.aggregate(val_results, metric)
-            val_primary = primary_violation(
-                val_agg, self._slo_objective.slo_metric
+            val_primary = val_agg.primary_violation(
+                self._slo_objective.slo_metric
             )
             grid_results[idx]["val_primary_violation_agg"] = val_primary
             grid_results[idx]["val_cost_agg"] = val_agg.cost

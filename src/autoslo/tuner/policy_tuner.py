@@ -13,6 +13,7 @@ import yaml
 from rich.console import Console
 
 import autoslo.utils.config as cfgu
+from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
@@ -23,7 +24,6 @@ from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    primary_violation,
 )
 from autoslo.utils.config import copy_and_apply_overrides
 from autoslo.utils.structured_log import setup_structured_logging
@@ -80,7 +80,7 @@ class PolicyTuner:
         )
 
         # SLO objective — drives metric routing and threshold-aware selection.
-        self._slo_metric = str(
+        self._slo_metric = SloMetric(
             cfgu.getd(self._initial_config, "slo_config.slo_metric", "binary")
         )
         self._slo_threshold = float(
@@ -681,7 +681,7 @@ class PolicyTuner:
             static_summaries.append(
                 {
                     "label": sb["label"],
-                    "violation": primary_violation(sb_agg, self._slo_metric),
+                    "violation": sb_agg.primary_violation(self._slo_metric),
                     "cost": sb_agg.cost,
                     "violation_rate": sb_agg.violation_rate,
                     "violation_amount_s": sb_agg.violation_amount_s,
@@ -703,17 +703,17 @@ class PolicyTuner:
         summary_dir = self._run_dir / "holdout"
         summary_dir.mkdir(parents=True, exist_ok=True)
         holdout_summary: dict[str, Any] = {
-            "initial_violation": primary_violation(base_agg, self._slo_metric),
+            "initial_violation": base_agg.primary_violation(self._slo_metric),
             "initial_cost": base_agg.cost,
             "initial_violation_rate": base_agg.violation_rate,
             "initial_violation_amount_s": base_agg.violation_amount_s,
             "initial_violation_relative_mean": base_agg.violation_relative_mean,
-            "final_violation": primary_violation(tuned_agg, self._slo_metric),
+            "final_violation": tuned_agg.primary_violation(self._slo_metric),
             "final_cost": tuned_agg.cost,
             "final_violation_rate": tuned_agg.violation_rate,
             "final_violation_amount_s": tuned_agg.violation_amount_s,
             "final_violation_relative_mean": tuned_agg.violation_relative_mean,
-            "slo_metric": self._slo_metric,
+            "slo_metric": self._slo_metric.value,
         }
         if static_summaries:
             holdout_summary["static_baselines"] = static_summaries
@@ -726,22 +726,20 @@ class PolicyTuner:
     @staticmethod
     def _print_scatter(
         entries: list[tuple[str, AggregatedSimulationResults]],
-        slo_metric: str,
+        slo_metric: str | SloMetric,
     ) -> None:
         """Print a terminal scatter plot of violation vs cost."""
-        _METRIC_LABELS = {
-            "binary": "Violation Rate",
-            "absolute_s": "Violation Amount (s)",
-            "relative": "Violation Relative Mean",
-        }
-        x_label = _METRIC_LABELS.get(slo_metric, slo_metric)
+        slo_metric_obj = (
+            SloMetric(slo_metric) if isinstance(slo_metric, str) else slo_metric
+        )
+        x_label = slo_metric_obj.aggregate_string_description
 
         labels: list[str] = []
         xs: list[float] = []
         ys: list[float] = []
         for label, agg in entries:
             labels.append(label)
-            xs.append(primary_violation(agg, slo_metric))
+            xs.append(agg.primary_violation(slo_metric))
             ys.append(agg.cost)
 
         if len(xs) < 2:

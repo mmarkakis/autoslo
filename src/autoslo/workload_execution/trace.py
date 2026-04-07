@@ -8,14 +8,13 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
-from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.blueprints.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
-from autoslo.utils.billing import Billing
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_definition.query_plan_registry import QueryPlanRegistry
 
@@ -510,9 +509,7 @@ class Trace:
             if os.path.exists(config_path):
                 with open(config_path) as f:
                     cfg = yaml.safe_load(f) or {}
-                schema_name = cfg.get("basic_config", {}).get(
-                    "schema_name", ""
-                )
+                schema_name = cfg.get("basic_config", {}).get("schema_name", "")
             else:
                 schema_name = ""
 
@@ -891,9 +888,9 @@ class Trace:
                 viol_rel = 0.0
                 violates = False
             else:
-                viol_amt = max(0.0, lat - slo_s)
-                viol_rel = max(0.0, (lat - slo_s) / slo_s) if slo_s > 0 else 0.0
-                violates = lat > slo_s
+                viol_amt = SloMetric.ABSOLUTE_S.calculate(lat, slo_s)
+                viol_rel = SloMetric.RELATIVE.calculate(lat, slo_s)
+                violates = SloMetric.BINARY.calculate(lat, slo_s) > 0
             rows.append(
                 {
                     "query_id": qid,

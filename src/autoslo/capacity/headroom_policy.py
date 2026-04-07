@@ -41,8 +41,8 @@ from autoslo.capacity.autoscaling_policy import (
 )
 from autoslo.routing.routing_core import ClusterSnapshot, RoutingResult
 from autoslo.routing.routing_policy import RoutingPolicy
-from autoslo.slo.slo_objective import SloMetric
-from autoslo.slo.slo_resolver import slo_violation as _slo_violation
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 from autoslo.workload_definition.query import Query
 
@@ -162,14 +162,13 @@ class HeadroomPolicy(AutoscalingPolicy):
     def __init__(
         self,
         slo_resolver: "SloResolver",
-        slo_metric: SloMetric = SloMetric.RELATIVE,
+        slo_objective: SloObjective,
         eta_crit: float = 0.1,
         idle_periods_before_tear_down: int = 5,
         min_cluster_lifetime_s: float = 1200.0,
         allowed_rpu_sizes: Optional[list[int]] = None,
         iconq_model: Optional["IconqModel"] = None,
         routing_policy: Optional[RoutingPolicy] = None,
-        slo_threshold: float = 0.0,
         routing_window_s: float = 120.0,
         min_window_observations: int = 3,
         *args: Any,
@@ -177,7 +176,7 @@ class HeadroomPolicy(AutoscalingPolicy):
     ) -> None:
         super().__init__(*args, **kwargs)
         self._slo_resolver = slo_resolver
-        self._slo_metric = slo_metric
+        self._slo_objective = slo_objective
         self._eta_crit = eta_crit
         self._idle_periods_before_tear_down = idle_periods_before_tear_down
         self._min_cluster_lifetime_s = min_cluster_lifetime_s
@@ -186,7 +185,6 @@ class HeadroomPolicy(AutoscalingPolicy):
         )
         self._iconq_model = iconq_model
         self._routing_policy = routing_policy
-        self._slo_threshold = slo_threshold
         self._routing_window_s = routing_window_s
         self._min_window_observations = min_window_observations
 
@@ -533,11 +531,11 @@ class HeadroomPolicy(AutoscalingPolicy):
                         "source": "headroom_policy",
                         "candidate_rpu": rpu,
                         "metric": metric,
-                        "slo_threshold": self._slo_threshold,
+                        "slo_threshold": self._slo_objective.slo_threshold,
                     }
                 )
 
-            if metric <= self._slo_threshold:
+            if metric <= self._slo_objective.slo_threshold:
                 return rpu  # smallest acceptable
             if metric < best_metric:
                 best_metric = metric
@@ -600,7 +598,7 @@ class HeadroomPolicy(AutoscalingPolicy):
         window_queries = self._augment_window_queries(candidate_rpu)
 
         # 4. Sequential replay.
-        violations: list[float] = []
+        lat_and_slos = []
 
         for query, _orig_lat, arrival_time_s in window_queries:
             # a. Expire completed queries on all virtual clusters.
@@ -632,19 +630,13 @@ class HeadroomPolicy(AutoscalingPolicy):
             # d. Update virtual state for the chosen cluster.
             virtuals[chosen_cn].add_query(query, returned_lats)
 
-            # e. Record SLO violation for the incoming query.
+            # e. Record latency for the incoming query.
             pred_lat = returned_lats.get(query.query_id, -1.0)
             slo_s = self._slo_resolver.resolve(query.query_text_id)
-            violations.append(_slo_violation(pred_lat, slo_s, self._slo_metric))
+            lat_and_slos.append((pred_lat, slo_s))
 
-        if not violations:
-            return 0.0
-
-        # 5. Aggregate metric.
-        total_violation = sum(violations)
-        if self._slo_metric is SloMetric.BINARY:
-            return total_violation / len(violations)  # violation rate
-        return total_violation  # absolute or relative sum
+        aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
+        return aggregate
 
     def _augment_window_queries(
         self,
@@ -715,7 +707,7 @@ class HeadroomPolicy(AutoscalingPolicy):
 
         # Identify pressure queries — those whose predicted latency
         # exceeded their SLO in the recent window.
-        pressure_queries: list[Query] = []
+        pressure_queries_and_slo_s: list[tuple[Query, float]] = []
         for (
             query,
             predicted_latency,
@@ -724,26 +716,26 @@ class HeadroomPolicy(AutoscalingPolicy):
         ) in self._routing_window:
             slo_s = self._slo_resolver.resolve(query.query_text_id)
             if predicted_latency > 0 and predicted_latency > slo_s:
-                pressure_queries.append(query)
+                pressure_queries_and_slo_s.append((query, slo_s))
 
-        if not pressure_queries:
+        if not pressure_queries_and_slo_s:
             return self._allowed_rpu_sizes[0]
 
         # Try each candidate RPU (ascending).
         for rpu in self._allowed_rpu_sizes:
-            all_feasible = True
-            for q in pressure_queries:
+            pred_lats_and_slo_s: list[tuple[float, float]] = []
+            for q, slo_s in pressure_queries_and_slo_s:
                 stage_pred = (
                     self._iconq_model.stage_model.predict_from_query_text_id(
                         {q.query_id: q.query_text_id},
                         cluster_rpu=rpu,
                     )[q.query_id].overall_mean_s()
                 )
-                slo_s = self._slo_resolver.resolve(q.query_text_id)
-                if stage_pred > slo_s:
-                    all_feasible = False
-                    break
-            if all_feasible:
+                pred_lats_and_slo_s.append((stage_pred, slo_s))
+            violation_rate = SloMetric.BINARY.aggregate_batch(
+                pred_lats_and_slo_s
+            )
+            if violation_rate == 0.0:
                 return rpu
 
         # No candidate RPU is sufficient — pick the largest.

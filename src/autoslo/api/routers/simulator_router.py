@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 import autoslo.utils.paths as pu
 from autoslo.slo.slo_resolver import SloResolver
+from autoslo.slo.slo_metric import SloMetric
 
 from autoslo.workload_definition.query import QueryTextId
 
@@ -255,12 +256,16 @@ def get_run_timeline(experiment: str, run_id: str):
         state = str(row["state"])
         tpcds = row.get("query_text_id")
         row_slo_s = resolver.resolve(tpcds)
-        viol = state == "COMPLETED" and duration > row_slo_s
+        viol = state == "COMPLETED" and (
+            SloMetric.BINARY.calculate(duration, row_slo_s) > 0
+        )
         viol_amount = (
-            max(0.0, duration - row_slo_s) if state == "COMPLETED" else 0.0
+            SloMetric.ABSOLUTE_S.calculate(duration, row_slo_s)
+            if state == "COMPLETED"
+            else 0.0
         )
         viol_rel = (
-            max(0.0, (duration - row_slo_s) / row_slo_s)
+            SloMetric.RELATIVE.calculate(duration, row_slo_s)
             if (state == "COMPLETED" and row_slo_s > 0)
             else 0.0
         )

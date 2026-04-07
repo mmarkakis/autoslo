@@ -11,12 +11,6 @@ from intervaltree import Interval
 
 from autoslo.blueprints.cluster import Cluster
 from autoslo.slo.slo_objective import SloMetric
-from autoslo.slo.slo_resolver import (
-    query_interval,
-    slo_relative_violation,
-    slo_violation_amount_s,
-    violates_slo,
-)
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
 from autoslo.workload_definition.query import Query
@@ -83,7 +77,7 @@ class GanttRecorder:
             for q in queries:
                 total_queries += 1
                 lat = latencies.get(q.query_id, 0.0)
-                ref_interval = query_interval(
+                ref_interval = Query.query_interval(
                     q.rel_start_time_s, lat, q.query_id
                 )
                 color = (
@@ -91,7 +85,7 @@ class GanttRecorder:
                     if state == "RUNNING"
                     else (
                         self.MISSED_COLOR
-                        if violates_slo(lat, slo_s)
+                        if SloMetric.BINARY.calculate(lat, slo_s)
                         else self.MET_COLOR
                     )
                 )
@@ -102,9 +96,11 @@ class GanttRecorder:
                         ref_interval.data | {"state": state, "color": color},
                     )
                 )
-                violating_queries += violates_slo(lat, slo_s)
-                violation_amount += slo_violation_amount_s(lat, slo_s)
-                violation_relative_sum += slo_relative_violation(lat, slo_s)
+                violating_queries += int(SloMetric.BINARY.calculate(lat, slo_s))
+                violation_amount += SloMetric.ABSOLUTE_S.calculate(lat, slo_s)
+                violation_relative_sum += SloMetric.RELATIVE.calculate(
+                    lat, slo_s
+                )
 
             intervals.sort(key=lambda x: (x[0], x[1], x[2].get("query_id", "")))
             return intervals
