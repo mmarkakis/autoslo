@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingAction,
@@ -23,7 +23,8 @@ from autoslo.capacity.autoscaling_policy import (
 )
 from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.routing.routing_core import PlacementScore, RoutingResult
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 
 
 # ---------------------------------------------------------------------------

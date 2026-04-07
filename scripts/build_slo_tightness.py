@@ -27,7 +27,7 @@ import os
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.stage_model import StageModel
 from autoslo.workload_definition.query import QueryTextId
 

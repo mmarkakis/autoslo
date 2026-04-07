@@ -14,7 +14,7 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (

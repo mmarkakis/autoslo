@@ -33,27 +33,23 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 from autoslo.blueprints.cluster import Cluster
-from autoslo.blueprint_selection.slo_resolver import (
-    slo_violation as _slo_violation,
-)
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingAction,
     AutoscalingPolicy,
     SpinUpRequest,
     TearDownRequest,
 )
-from autoslo.routing.routing_core import (
-    ClusterSnapshot,
-    RoutingResult,
-)
+from autoslo.routing.routing_core import ClusterSnapshot, RoutingResult
 from autoslo.routing.routing_policy import RoutingPolicy
-from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
-from autoslo.workload_definition.query import Query, SloMetric
+from autoslo.slo.slo_objective import SloMetric
+from autoslo.slo.slo_resolver import slo_violation as _slo_violation
+from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
+from autoslo.workload_definition.query import Query
 
 if TYPE_CHECKING:
-    from autoslo.blueprint_selection.slo_resolver import SloResolver
     from autoslo.models.iconq_model import IconqModel
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+    from autoslo.slo.slo_resolver import SloResolver
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +80,7 @@ class _VirtualCluster:
     def expire_before(self, time_s: float) -> None:
         """Remove queries whose estimated completion is ≤ *time_s*."""
         expired = [
-            qid
-            for qid, ct in self.completion_times.items()
-            if ct <= time_s
+            qid for qid, ct in self.completion_times.items() if ct <= time_s
         ]
         for qid in expired:
             self.active_queries.pop(qid, None)
@@ -116,6 +110,7 @@ class _VirtualCluster:
             q = self.active_queries.get(qid)
             if q is not None:
                 self.completion_times[qid] = q.rel_start_time_s + lat
+
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
@@ -202,9 +197,7 @@ class HeadroomPolicy(AutoscalingPolicy):
         self._routing_window: deque[
             tuple[Query, float, float, ClusterSnapshot | None]
         ] = deque()
-        self._window_initial_snapshots: dict[str, ClusterSnapshot] | None = (
-            None
-        )
+        self._window_initial_snapshots: dict[str, ClusterSnapshot] | None = None
         self._window_initial_latencies: dict[str, float] | None = None
 
     # ------------------------------------------------------------------
@@ -319,21 +312,14 @@ class HeadroomPolicy(AutoscalingPolicy):
             # Capture initial pool state on the first entry of a fresh
             # window (after on_cluster_ready or on_attach cleared it).
             if not self._routing_window:
-                self._window_initial_snapshots = (
-                    self._pool.build_snapshots()
-                )
-                self._window_initial_latencies = dict(
-                    current_latencies or {}
-                )
+                self._window_initial_snapshots = self._pool.build_snapshots()
+                self._window_initial_latencies = dict(current_latencies or {})
 
             self._routing_window.append(
                 (result.query, result.predicted_latency_s, current_time_s, None)
             )
             cutoff = current_time_s - self._routing_window_s
-            while (
-                self._routing_window
-                and self._routing_window[0][2] < cutoff
-            ):
+            while self._routing_window and self._routing_window[0][2] < cutoff:
                 self._routing_window.popleft()
 
         window_size = len(self._routing_window)
@@ -380,9 +366,7 @@ class HeadroomPolicy(AutoscalingPolicy):
         )
         pressure_trigger = window_size >= 1 and pressure
 
-        if (
-            headroom_trigger or pressure_trigger
-        ) and self._pending_count == 0:
+        if (headroom_trigger or pressure_trigger) and self._pending_count == 0:
             reason = (
                 f"window_headroom={window_headroom:.4f}"
                 f"<=η_crit={self._eta_crit:.4f}"
@@ -483,7 +467,12 @@ class HeadroomPolicy(AutoscalingPolicy):
             return 1.0
 
         min_headroom = float("inf")
-        for query, predicted_latency, _routed_at, _snapshot in self._routing_window:
+        for (
+            query,
+            predicted_latency,
+            _routed_at,
+            _snapshot,
+        ) in self._routing_window:
             slo_s = self._slo_resolver.resolve(query.query_text_id)
             if slo_s <= 0:
                 continue
@@ -496,7 +485,6 @@ class HeadroomPolicy(AutoscalingPolicy):
     # ------------------------------------------------------------------
     # RPU selection
     # ------------------------------------------------------------------
-
 
     def _select_rpu(self, current_time_s: float) -> int:
         """Choose the RPU size for a new cluster via counterfactual
@@ -597,9 +585,7 @@ class HeadroomPolicy(AutoscalingPolicy):
                 vc.active_queries[q.query_id] = q
                 vc.latencies[q.query_id] = lat
                 if lat > 0:
-                    vc.completion_times[q.query_id] = (
-                        q.rel_start_time_s + lat
-                    )
+                    vc.completion_times[q.query_id] = q.rel_start_time_s + lat
             virtuals[cn] = vc
 
         # 2. Add the hypothetical new cluster (empty).
@@ -649,9 +635,7 @@ class HeadroomPolicy(AutoscalingPolicy):
             # e. Record SLO violation for the incoming query.
             pred_lat = returned_lats.get(query.query_id, -1.0)
             slo_s = self._slo_resolver.resolve(query.query_text_id)
-            violations.append(
-                _slo_violation(pred_lat, slo_s, self._slo_metric)
-            )
+            violations.append(_slo_violation(pred_lat, slo_s, self._slo_metric))
 
         if not violations:
             return 0.0
@@ -682,13 +666,10 @@ class HeadroomPolicy(AutoscalingPolicy):
                 result.append((query, pred_lat, arrival_time))
             else:
                 # Compute missing stage prediction.
-                sp = (
-                    self._iconq_model.stage_model
-                    .predict_from_query_text_id(
-                        {query.query_id: query.query_text_id},
-                        cluster_rpu=candidate_rpu,
-                    )[query.query_id].overall_mean_s()
-                )
+                sp = self._iconq_model.stage_model.predict_from_query_text_id(
+                    {query.query_id: query.query_text_id},
+                    cluster_rpu=candidate_rpu,
+                )[query.query_id].overall_mean_s()
                 new_preds = dict(query.stage_predictions_per_rpu)
                 new_preds[candidate_rpu] = sp
                 augmented = Query(
@@ -735,7 +716,12 @@ class HeadroomPolicy(AutoscalingPolicy):
         # Identify pressure queries — those whose predicted latency
         # exceeded their SLO in the recent window.
         pressure_queries: list[Query] = []
-        for query, predicted_latency, _routed_at, _snapshot in self._routing_window:
+        for (
+            query,
+            predicted_latency,
+            _routed_at,
+            _snapshot,
+        ) in self._routing_window:
             slo_s = self._slo_resolver.resolve(query.query_text_id)
             if predicted_latency > 0 and predicted_latency > slo_s:
                 pressure_queries.append(query)

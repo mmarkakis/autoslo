@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.routing_core import (
     ClusterSnapshot,
@@ -18,7 +18,8 @@ from autoslo.routing.routing_core import (
     RoutingResult,
 )
 from autoslo.routing.routing_policy import RoutingPolicy
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
 
 if TYPE_CHECKING:

@@ -9,8 +9,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from autoslo.slo.slo_objective import SloObjective
 from autoslo.tuner.param_sweep import ParamSweep, build_grid
-from autoslo.tuner.tuner_utils import SimulationResult, SloObjective
+from autoslo.tuner.tuner_utils import SimulationResult
 
 # ---------------------------------------------------------------------------
 # Helpers

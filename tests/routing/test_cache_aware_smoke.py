@@ -17,8 +17,9 @@ import yaml
 from autoslo.routing.cache_aware_policy import CacheAwarePolicy
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.routing_core import PlacementScore, RoutingCore
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
-
+from autoslo.slo.slo_objective import SloMetric
+from autoslo.slo.slo_resolver import SloResolver
+from autoslo.workload_definition.query import Query, QueryTextId
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -65,7 +66,11 @@ def _write_yamls(tmp_path: str) -> tuple[str, str]:
         "stage_model_id": "test",
         "slo_source": "test",
         "entries": {
-            "1": {"isolated_prediction_s": 5.0, "slo_s": 10.0, "tightness": 0.5},
+            "1": {
+                "isolated_prediction_s": 5.0,
+                "slo_s": 10.0,
+                "tightness": 0.5,
+            },
         },
     }
     fp = os.path.join(tmp_path, "forecast.yml")
@@ -101,7 +106,6 @@ class TestConfigFactoryConstructsCacheAwarePolicy:
         }
 
         # Replicate the factory branch from workload_simulator.py.
-        from autoslo.blueprint_selection.slo_resolver import SloResolver
         slo_resolver = SloResolver(10.0, None)
 
         with patch(
@@ -113,12 +117,20 @@ class TestConfigFactoryConstructsCacheAwarePolicy:
                 default_slo_s=10.0,
                 slo_overrides=slo_resolver.slo_dict,
                 slo_metric=SloMetric.RELATIVE,
-                forecast_distribution_path=routing_cfg["forecast_distribution_path"],
+                forecast_distribution_path=routing_cfg[
+                    "forecast_distribution_path"
+                ],
                 slo_tightness_path=routing_cfg["slo_tightness_path"],
-                cache_risk_lambda=float(routing_cfg.get("cache_risk_lambda", 0.0)),
-                cache_decay_strategy=routing_cfg.get("cache_decay_strategy", "exponential"),
+                cache_risk_lambda=float(
+                    routing_cfg.get("cache_risk_lambda", 0.0)
+                ),
+                cache_decay_strategy=routing_cfg.get(
+                    "cache_decay_strategy", "exponential"
+                ),
                 cache_decay_params=routing_cfg.get("cache_decay_params", {}),
-                fallback_tightness=float(routing_cfg.get("fallback_tightness", 0.5)),
+                fallback_tightness=float(
+                    routing_cfg.get("fallback_tightness", 0.5)
+                ),
             )
 
         assert isinstance(policy, CacheAwarePolicy)
@@ -188,9 +200,16 @@ class TestEndToEndRouting:
             # Only offer the "best" cluster for simplicity.
 
             def _fake(
-                iconq_model, pool, query_id, query_text_id, start_time_s,
-                slo_resolver, slo_metric, current_latencies,
-                cluster_names=None, _scores=scores,
+                iconq_model,
+                pool,
+                query_id,
+                query_text_id,
+                start_time_s,
+                slo_resolver,
+                slo_metric,
+                current_latencies,
+                cluster_names=None,
+                _scores=scores,
             ):
                 incoming = Query(
                     query_id=query_id,

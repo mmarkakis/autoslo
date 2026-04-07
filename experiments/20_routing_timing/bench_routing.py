@@ -17,6 +17,7 @@ Outputs:
   - results/<tag>/heatmap.png
   - results/<tag>/lineplot.png
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,21 +33,28 @@ import numpy as np
 import pandas as pd
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from autoslo.utils.colors import Palette
 
 # Heatmap colormap: white → light_yellow → dark_orange → dark_red
 _TIMING_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "timing",
-    [Palette.white, Palette.light_yellow, Palette.dark_orange, Palette.dark_red],
+    [
+        Palette.white,
+        Palette.light_yellow,
+        Palette.dark_orange,
+        Palette.dark_red,
+    ],
 )
 
 # ── autoslo imports ──────────────────────────────────────────────────
 from autoslo.models.iconq_model import IconqModel
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.routing_core import ClusterSnapshot
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 from autoslo.workload_execution.trace import Trace
 from autoslo.blueprints.cluster import Cluster
 
@@ -80,11 +88,9 @@ def _prepare_queries(
             break
 
         feat = model.iconq_query_featurizer.featurize_from_query_text_id(qtid)
-        stage_pred = (
-            model.stage_model
-            .predict_from_query_text_id({qid: qtid}, cluster_rpu=rpu)
-            [qid].overall_mean_s()
-        )
+        stage_pred = model.stage_model.predict_from_query_text_id(
+            {qid: qtid}, cluster_rpu=rpu
+        )[qid].overall_mean_s()
 
         queries.append(
             Query(
@@ -164,7 +170,8 @@ def run_benchmark(
     print(f"  → prepared {len(query_pool)} queries")
 
     policy = ModelPolicy(
-        iconq_model_id=model_id, default_slo_s=slo_s,
+        iconq_model_id=model_id,
+        default_slo_s=slo_s,
     )
 
     rows: list[dict] = []
@@ -176,7 +183,9 @@ def run_benchmark(
         # Total active queries = C * Ac, plus 1 incoming.
         n_active = C * Ac
         if n_active + 1 > len(query_pool):
-            print(f"  SKIP C={C}, Ac={Ac}: need {n_active + 1} queries, have {len(query_pool)}")
+            print(
+                f"  SKIP C={C}, Ac={Ac}: need {n_active + 1} queries, have {len(query_pool)}"
+            )
             continue
 
         # The incoming query is the one after all active queries.
@@ -197,16 +206,20 @@ def run_benchmark(
             )
             elapsed = time.perf_counter() - t0
 
-            rows.append({
-                "C": C,
-                "Ac": Ac,
-                "rep": rep,
-                "time_s": elapsed,
-            })
+            rows.append(
+                {
+                    "C": C,
+                    "Ac": Ac,
+                    "rep": rep,
+                    "time_s": elapsed,
+                }
+            )
 
             done += 1
             if done % 10 == 0 or done == total:
-                print(f"  [{done}/{total}] C={C}, Ac={Ac}, rep={rep}, {elapsed:.4f}s")
+                print(
+                    f"  [{done}/{total}] C={C}, Ac={Ac}, rep={rep}, {elapsed:.4f}s"
+                )
 
     return pd.DataFrame(rows)
 
@@ -214,7 +227,9 @@ def run_benchmark(
 # ── plotting ─────────────────────────────────────────────────────────
 def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
     """Generate heatmap + line plots from timing data."""
-    agg = df.groupby(["C", "Ac"])["time_s"].agg(["median", "mean"]).reset_index()
+    agg = (
+        df.groupby(["C", "Ac"])["time_s"].agg(["median", "mean"]).reset_index()
+    )
     pivot = agg.pivot(index="C", columns="Ac", values="median")
 
     # ── Heatmap ──────────────────────────────────────────────────────
@@ -245,8 +260,15 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
             if np.isnan(val):
                 continue
             text_color = Palette.white if val > midpoint else Palette.black
-            ax.text(j, i, f"{val:.3f}", ha="center", va="center",
-                    color=text_color, fontsize=8)
+            ax.text(
+                j,
+                i,
+                f"{val:.3f}",
+                ha="center",
+                va="center",
+                color=text_color,
+                fontsize=8,
+            )
 
     cbar = fig.colorbar(im, ax=ax, label="seconds")
     cbar.ax.yaxis.label.set_color(Palette.black)
@@ -261,22 +283,38 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor(Palette.white)
     ax.set_facecolor(Palette.white)
-    q25 = df.groupby(["C", "Ac"])["time_s"].quantile(0.25).reset_index().rename(columns={"time_s": "q25"})
-    q75 = df.groupby(["C", "Ac"])["time_s"].quantile(0.75).reset_index().rename(columns={"time_s": "q75"})
+    q25 = (
+        df.groupby(["C", "Ac"])["time_s"]
+        .quantile(0.25)
+        .reset_index()
+        .rename(columns={"time_s": "q25"})
+    )
+    q75 = (
+        df.groupby(["C", "Ac"])["time_s"]
+        .quantile(0.75)
+        .reset_index()
+        .rename(columns={"time_s": "q75"})
+    )
     merged = agg.merge(q25, on=["C", "Ac"]).merge(q75, on=["C", "Ac"])
 
     for idx, (c_val, grp) in enumerate(merged.groupby("C")):
         color = palette_cycle[idx % len(palette_cycle)]
         grp = grp.sort_values("Ac")
         ax.plot(grp["Ac"], grp["median"], "o-", color=color, label=f"C={c_val}")
-        ax.fill_between(grp["Ac"], grp["q25"], grp["q75"], color=color, alpha=0.15)
+        ax.fill_between(
+            grp["Ac"], grp["q25"], grp["q75"], color=color, alpha=0.15
+        )
 
     ax.set_xlabel("Queries per Cluster (Ac)", color=Palette.black)
     ax.set_ylabel("Time (s)", color=Palette.black)
-    ax.set_title("Routing Time vs. Concurrency (by cluster count)", color=Palette.black)
+    ax.set_title(
+        "Routing Time vs. Concurrency (by cluster count)", color=Palette.black
+    )
     ax.tick_params(colors=Palette.black)
     ax.spines[:].set_color(Palette.gray)
-    legend = ax.legend(title="Clusters", facecolor=Palette.white, edgecolor=Palette.gray)
+    legend = ax.legend(
+        title="Clusters", facecolor=Palette.white, edgecolor=Palette.gray
+    )
     legend.get_title().set_color(Palette.black)
     for text in legend.get_texts():
         text.set_color(Palette.black)
@@ -293,35 +331,47 @@ def main() -> None:
         description="Timing micro-experiment for ModelPolicy routing.",
     )
     parser.add_argument(
-        "--model-id", default=DEFAULT_MODEL_ID,
+        "--model-id",
+        default=DEFAULT_MODEL_ID,
         help=f"IconQ model ID (default: {DEFAULT_MODEL_ID})",
     )
     parser.add_argument(
-        "--run-id", default=DEFAULT_RUN_ID,
+        "--run-id",
+        default=DEFAULT_RUN_ID,
         help=f"Source run ID for real queries (default: {DEFAULT_RUN_ID})",
     )
     parser.add_argument(
-        "--rpu", type=int, default=DEFAULT_RPU,
+        "--rpu",
+        type=int,
+        default=DEFAULT_RPU,
         help=f"RPU size for all clusters (default: {DEFAULT_RPU})",
     )
     parser.add_argument(
-        "--reps", type=int, default=DEFAULT_REPS,
+        "--reps",
+        type=int,
+        default=DEFAULT_REPS,
         help=f"Repetitions per grid point (default: {DEFAULT_REPS})",
     )
     parser.add_argument(
-        "--slo-s", type=float, default=DEFAULT_SLO_S,
+        "--slo-s",
+        type=float,
+        default=DEFAULT_SLO_S,
         help=f"Default SLO in seconds (default: {DEFAULT_SLO_S})",
     )
     parser.add_argument(
-        "--tag", default=None,
+        "--tag",
+        default=None,
         help="Output subdirectory name (default: timestamp)",
     )
     parser.add_argument(
-        "--load", default=None, metavar="CSV",
+        "--load",
+        default=None,
+        metavar="CSV",
         help="Load existing CSV instead of re-running the benchmark.",
     )
     parser.add_argument(
-        "--plot-only", action="store_true",
+        "--plot-only",
+        action="store_true",
         help="Only regenerate plots from --load CSV (no benchmarking).",
     )
     args = parser.parse_args()

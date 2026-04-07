@@ -6,12 +6,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from autoslo.blueprint_selection.slo_resolver import SloResolver
-from autoslo.tuner.tuner_utils import SloObjective
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import (
-    new_checkpoints_to_config,
     find_next_checkpoint_time_df,
+    new_checkpoints_to_config,
 )
 
 # ------------------------------------------------------------------
@@ -518,16 +518,16 @@ class TestFindNextCheckpointTimeDF:
         slo_resolver = SloResolver(default_slo_s=slo_s)
         nqueries = 2 * np.random.randint(5, 10)  # Even number.
 
-        # Create the first log. This always has relative violations between 3 
-        # and 4. 
+        # Create the first log. This always has relative violations between 3
+        # and 4.
         start_times = [10 + i * 10 for i in range(nqueries)]
         end_times = [
             s + slo_s * (4 + np.random.uniform(0, 1)) for s in start_times
         ]
         log1 = _make_completion_structured_log(start_times, end_times)
 
-        # Create the second log. This initially has relative violations between 
-        # 1 and 2, but then gets worse with relative violations between 3 and 4. 
+        # Create the second log. This initially has relative violations between
+        # 1 and 2, but then gets worse with relative violations between 3 and 4.
         start_times = [10 + i * 10 for i in range(nqueries)]
         end_times = [
             s + slo_s * (2 + np.random.uniform(0, 1))

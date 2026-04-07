@@ -1,6 +1,6 @@
 from typing import Optional
 
-from autoslo.blueprint_selection.slo_resolver import SloMetric, SloResolver
+from autoslo.slo.slo_resolver import SloMetric, SloResolver
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
     CapacityCheckpoint,

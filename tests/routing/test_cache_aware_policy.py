@@ -21,7 +21,8 @@ from autoslo.routing.cache_aware_policy import CacheAwarePolicy
 from autoslo.routing.cache_risk_scorer import FutureQueryMix
 from autoslo.routing.cluster_cache_state import ClusterCacheState
 from autoslo.routing.routing_core import PlacementScore, RoutingResult
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 
 
 # ---------------------------------------------------------------------------

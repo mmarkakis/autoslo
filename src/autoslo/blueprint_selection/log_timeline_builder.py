@@ -28,7 +28,7 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     GanttSnapshot,
     render_gantt_scrubber,
 )
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
 

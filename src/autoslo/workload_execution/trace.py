@@ -12,7 +12,7 @@ from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.blueprints.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
 from autoslo.utils.billing import Billing

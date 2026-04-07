@@ -4,22 +4,6 @@ from enum import Enum
 from typing import TypeAlias
 
 
-class SloMetric(Enum):
-    """Which SLO-violation metric to use for routing decisions.
-
-    * ``BINARY``     – 1 if the query violates its SLO, else 0.
-    * ``ABSOLUTE_S`` – seconds of overshoot, ``max(0, latency − SLO)``.
-    * ``RELATIVE``   – relative overshoot, ``max(0, (latency − SLO) / SLO)``.
-
-    All three are always *reported*; this enum selects which one drives
-    the routing optimiser.
-    """
-
-    BINARY = "binary"
-    ABSOLUTE_S = "absolute_s"
-    RELATIVE = "relative"
-
-
 QueryFeaturization: TypeAlias = list[float]
 
 

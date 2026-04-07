@@ -13,14 +13,15 @@ from __future__ import annotations
 
 import pytest
 
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.routing.routing_core import (
     ClusterSnapshot,
     PlacementScore,
     RoutingCore,
 )
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 
 from autoslo.utils.billing import Billing
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -24,22 +25,18 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.utils.config as cfgu
-from autoslo.blueprint_selection.slo_resolver import (
-    SloResolver,
-    slo_relative_violation,
-)
 from autoslo.blueprints.cluster import Cluster
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver, slo_relative_violation
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    SloObjective,
     primary_violation,
     threshold_aware_select,
 )
 from autoslo.utils.yaml_helpers import dump
-from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 console = Console()

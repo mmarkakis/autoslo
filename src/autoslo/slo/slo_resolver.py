@@ -26,7 +26,8 @@ import yaml
 from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paths as pu
-from autoslo.workload_definition.query import QueryTextId, SloMetric
+from autoslo.workload_definition.query import QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 
 import autoslo.utils.config as cfgu
 

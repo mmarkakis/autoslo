@@ -18,15 +18,15 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+import autoslo.utils.config as cfgu
+from autoslo.slo.slo_objective import SloObjective
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     SimulationResult,
-    SloObjective,
     compute_pareto_front,
     primary_violation,
     threshold_aware_select,
 )
-import autoslo.utils.config as cfgu
 from autoslo.utils.yaml_helpers import dump
 
 logger = logging.getLogger(__name__)
@@ -350,5 +350,3 @@ class ParamSweep:
         }
         with open(phase_dir / "sweep_results.json", "w") as f:
             json.dump(output, f, indent=2, default=str)
-
-    

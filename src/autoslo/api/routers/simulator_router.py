@@ -33,7 +33,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 
 from autoslo.workload_definition.query import QueryTextId
 

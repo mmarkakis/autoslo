@@ -18,10 +18,13 @@ Outputs:
   - results/<tag>/heatmap.png
   - results/<tag>/lineplot.png
 """
+
 from __future__ import annotations
 
 import argparse
 import itertools
+import os
+import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -29,30 +32,36 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import sys
-import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from autoslo.utils.colors import Palette
 
 # Heatmap colormap: white → light_yellow → dark_orange → dark_red
 _TIMING_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "timing",
-    [Palette.white, Palette.light_yellow, Palette.dark_orange, Palette.dark_red],
+    [
+        Palette.white,
+        Palette.light_yellow,
+        Palette.dark_orange,
+        Palette.dark_red,
+    ],
 )
+
+from autoslo.blueprints.cluster import Cluster
+from autoslo.capacity.headroom_policy import HeadroomPolicy
 
 # ── autoslo imports ──────────────────────────────────────────────────
 from autoslo.models.iconq_model import IconqModel
-from autoslo.blueprint_selection.slo_resolver import SloResolver
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.routing_core import ClusterSnapshot
-from autoslo.capacity.headroom_policy import HeadroomPolicy
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.slo.slo_objective import SloMetric
+from autoslo.slo.slo_resolver import SloResolver
+from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_execution.trace import Trace
-from autoslo.blueprints.cluster import Cluster
 
 # ── defaults ─────────────────────────────────────────────────────────
 DEFAULT_MODEL_ID = "1771539369"
@@ -92,11 +101,9 @@ def _prepare_queries(
         feat = model.iconq_query_featurizer.featurize_from_query_text_id(qtid)
         stage_preds: dict[int, float] = {}
         for rpu in rpu_sizes:
-            stage_preds[rpu] = (
-                model.stage_model
-                .predict_from_query_text_id({qid: qtid}, cluster_rpu=rpu)
-                [qid].overall_mean_s()
-            )
+            stage_preds[rpu] = model.stage_model.predict_from_query_text_id(
+                {qid: qtid}, cluster_rpu=rpu
+            )[qid].overall_mean_s()
 
         queries.append(
             Query(
@@ -213,7 +220,8 @@ def run_benchmark(
 
     # Routing policy for counterfactual scoring.
     routing_policy = ModelPolicy(
-        iconq_model_id=model_id, default_slo_s=slo_s,
+        iconq_model_id=model_id,
+        default_slo_s=slo_s,
     )
 
     resolver = SloResolver.from_dict(default_slo_s=slo_s, slo_dict={})
@@ -226,7 +234,9 @@ def run_benchmark(
 
     for R, W in grid:
         if W > len(window_pool):
-            print(f"  SKIP R={R}, W={W}: need {W} window queries, have {len(window_pool)}")
+            print(
+                f"  SKIP R={R}, W={W}: need {W} window queries, have {len(window_pool)}"
+            )
             continue
 
         candidate_rpus = _candidate_rpus_for_r(R)
@@ -245,7 +255,9 @@ def run_benchmark(
 
             # Inject internal state to enable counterfactual replay.
             hp._pool = mock_pool
-            hp._routing_window = _build_routing_window(window_qs, snapshots, rpu)
+            hp._routing_window = _build_routing_window(
+                window_qs, snapshots, rpu
+            )
             hp._window_initial_snapshots = dict(snapshots)
             hp._window_initial_latencies = dict(initial_lats)
 
@@ -255,16 +267,20 @@ def run_benchmark(
             hp._select_rpu(current_time_s)
             elapsed = time.perf_counter() - t0
 
-            rows.append({
-                "R": R,
-                "W": W,
-                "rep": rep,
-                "time_s": elapsed,
-            })
+            rows.append(
+                {
+                    "R": R,
+                    "W": W,
+                    "rep": rep,
+                    "time_s": elapsed,
+                }
+            )
 
             done += 1
             if done % 10 == 0 or done == total:
-                print(f"  [{done}/{total}] R={R}, W={W}, rep={rep}, {elapsed:.4f}s")
+                print(
+                    f"  [{done}/{total}] R={R}, W={W}, rep={rep}, {elapsed:.4f}s"
+                )
 
     return pd.DataFrame(rows)
 
@@ -302,8 +318,15 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
             if np.isnan(val):
                 continue
             text_color = Palette.white if val > midpoint else Palette.black
-            ax.text(j, i, f"{val:.3f}", ha="center", va="center",
-                    color=text_color, fontsize=8)
+            ax.text(
+                j,
+                i,
+                f"{val:.3f}",
+                ha="center",
+                va="center",
+                color=text_color,
+                fontsize=8,
+            )
 
     cbar = fig.colorbar(im, ax=ax, label="seconds")
     cbar.ax.yaxis.label.set_color(Palette.black)
@@ -318,22 +341,41 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor(Palette.white)
     ax.set_facecolor(Palette.white)
-    q25 = df.groupby(["R", "W"])["time_s"].quantile(0.25).reset_index().rename(columns={"time_s": "q25"})
-    q75 = df.groupby(["R", "W"])["time_s"].quantile(0.75).reset_index().rename(columns={"time_s": "q75"})
+    q25 = (
+        df.groupby(["R", "W"])["time_s"]
+        .quantile(0.25)
+        .reset_index()
+        .rename(columns={"time_s": "q25"})
+    )
+    q75 = (
+        df.groupby(["R", "W"])["time_s"]
+        .quantile(0.75)
+        .reset_index()
+        .rename(columns={"time_s": "q75"})
+    )
     merged = agg.merge(q25, on=["R", "W"]).merge(q75, on=["R", "W"])
 
     for idx, (r_val, grp) in enumerate(merged.groupby("R")):
         color = palette_cycle[idx % len(palette_cycle)]
         grp = grp.sort_values("W")
         ax.plot(grp["W"], grp["median"], "o-", color=color, label=f"R={r_val}")
-        ax.fill_between(grp["W"], grp["q25"], grp["q75"], color=color, alpha=0.15)
+        ax.fill_between(
+            grp["W"], grp["q25"], grp["q75"], color=color, alpha=0.15
+        )
 
     ax.set_xlabel("Window Length (W)", color=Palette.black)
     ax.set_ylabel("Time (s)", color=Palette.black)
-    ax.set_title("_select_rpu Time vs. Window Length (by # candidate RPUs)", color=Palette.black)
+    ax.set_title(
+        "_select_rpu Time vs. Window Length (by # candidate RPUs)",
+        color=Palette.black,
+    )
     ax.tick_params(colors=Palette.black)
     ax.spines[:].set_color(Palette.gray)
-    legend = ax.legend(title="# RPU candidates", facecolor=Palette.white, edgecolor=Palette.gray)
+    legend = ax.legend(
+        title="# RPU candidates",
+        facecolor=Palette.white,
+        edgecolor=Palette.gray,
+    )
     legend.get_title().set_color(Palette.black)
     for text in legend.get_texts():
         text.set_color(Palette.black)
@@ -350,43 +392,59 @@ def main() -> None:
         description="Timing micro-experiment for HeadroomPolicy._select_rpu.",
     )
     parser.add_argument(
-        "--model-id", default=DEFAULT_MODEL_ID,
+        "--model-id",
+        default=DEFAULT_MODEL_ID,
         help=f"IconQ model ID (default: {DEFAULT_MODEL_ID})",
     )
     parser.add_argument(
-        "--run-id", default=DEFAULT_RUN_ID,
+        "--run-id",
+        default=DEFAULT_RUN_ID,
         help=f"Source run ID for real queries (default: {DEFAULT_RUN_ID})",
     )
     parser.add_argument(
-        "--rpu", type=int, default=DEFAULT_RPU,
+        "--rpu",
+        type=int,
+        default=DEFAULT_RPU,
         help=f"RPU for fixed clusters (default: {DEFAULT_RPU})",
     )
     parser.add_argument(
-        "--reps", type=int, default=DEFAULT_REPS,
+        "--reps",
+        type=int,
+        default=DEFAULT_REPS,
         help=f"Repetitions per grid point (default: {DEFAULT_REPS})",
     )
     parser.add_argument(
-        "--slo-s", type=float, default=DEFAULT_SLO_S,
+        "--slo-s",
+        type=float,
+        default=DEFAULT_SLO_S,
         help=f"Default SLO in seconds (default: {DEFAULT_SLO_S})",
     )
     parser.add_argument(
-        "--clusters", type=int, default=DEFAULT_C,
+        "--clusters",
+        type=int,
+        default=DEFAULT_C,
         help=f"Number of clusters (fixed, default: {DEFAULT_C})",
     )
     parser.add_argument(
-        "--ac", type=int, default=DEFAULT_AC,
+        "--ac",
+        type=int,
+        default=DEFAULT_AC,
         help=f"Active queries per cluster (fixed, default: {DEFAULT_AC})",
     )
     parser.add_argument(
-        "--tag", default=None,
+        "--tag",
+        default=None,
         help="Output subdirectory name (default: timestamp)",
     )
     parser.add_argument(
-        "--load", default=None, metavar="CSV",
+        "--load",
+        default=None,
+        metavar="CSV",
         help="Load existing CSV instead of re-running the benchmark.",
     )
     parser.add_argument(
-        "--plot-only", action="store_true",
+        "--plot-only",
+        action="store_true",
         help="Only regenerate plots from --load CSV (no benchmarking).",
     )
     args = parser.parse_args()

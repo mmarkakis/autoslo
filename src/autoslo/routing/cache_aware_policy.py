@@ -22,11 +22,15 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from autoslo.routing.cache_risk_scorer import CacheRiskScorer, FutureQueryMix
-from autoslo.routing.cluster_cache_state import ClusterCacheState, build_decay_strategy
+from autoslo.routing.cluster_cache_state import (
+    ClusterCacheState,
+    build_decay_strategy,
+)
 from autoslo.routing.forecast_loader import ForecastDistributionLoader
 from autoslo.routing.model_policy import ModelPolicy
 from autoslo.routing.routing_core import RoutingCore, RoutingResult
-from autoslo.workload_definition.query import QueryTextId, SloMetric
+from autoslo.slo.slo_objective import SloMetric
+from autoslo.workload_definition.query import QueryTextId
 
 if TYPE_CHECKING:
     from autoslo.models.iconq_model import IconqModel
@@ -237,14 +241,17 @@ class CacheAwarePolicy(ModelPolicy):
                 params=self._decay_params,
             )
             self._cluster_caches[cluster_name] = ClusterCacheState(
-                n_tables=self._n, strategy=strategy,
+                n_tables=self._n,
+                strategy=strategy,
             )
         return self._cluster_caches[cluster_name]
 
     def _extract_table_vector(self, qtid: QueryTextId) -> np.ndarray:
         """Get the table-access vector (length N) for a query."""
         try:
-            feat = self._iconq_model.iconq_query_featurizer.featurize_from_query_text_id(qtid)
+            feat = self._iconq_model.iconq_query_featurizer.featurize_from_query_text_id(
+                qtid
+            )
             return np.array(feat[2 * self._m :], dtype=np.float64)
         except (ValueError, KeyError):
             return np.zeros(self._n, dtype=np.float64)

@@ -13,7 +13,8 @@ import yaml
 from rich.console import Console
 
 import autoslo.utils.config as cfgu
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
@@ -22,7 +23,6 @@ from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    SloObjective,
     primary_violation,
 )
 from autoslo.utils.config import copy_and_apply_overrides

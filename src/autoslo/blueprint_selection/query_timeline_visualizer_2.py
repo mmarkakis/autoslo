@@ -9,16 +9,17 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from intervaltree import Interval
 
-from autoslo.blueprint_selection.slo_resolver import (
+from autoslo.blueprints.cluster import Cluster
+from autoslo.slo.slo_objective import SloMetric
+from autoslo.slo.slo_resolver import (
     query_interval,
     slo_relative_violation,
     slo_violation_amount_s,
     violates_slo,
 )
-from autoslo.blueprints.cluster import Cluster
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
-from autoslo.workload_definition.query import Query, SloMetric
+from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.trace import Trace
 
 
@@ -82,7 +83,9 @@ class GanttRecorder:
             for q in queries:
                 total_queries += 1
                 lat = latencies.get(q.query_id, 0.0)
-                ref_interval = query_interval(q.rel_start_time_s, lat, q.query_id)
+                ref_interval = query_interval(
+                    q.rel_start_time_s, lat, q.query_id
+                )
                 color = (
                     self.RUNNING_COLOR
                     if state == "RUNNING"
@@ -361,7 +364,9 @@ def render_gantt_scrubber(
 
     max_lanes_by_cluster: dict[str, int] = {c: 0 for c in cluster_order}
     # Cache lane packing results to avoid redundant computation
-    _lane_cache: dict[tuple[int, str], list[list[tuple[float, float, dict[str, Any]]]]] = {}
+    _lane_cache: dict[
+        tuple[int, str], list[list[tuple[float, float, dict[str, Any]]]]
+    ] = {}
     for c in cluster_order:
         for snap_idx, snap in enumerate(snapshots):
             intervals = snap.intervals_by_cluster.get(c, [])
@@ -419,7 +424,9 @@ def render_gantt_scrubber(
     )
 
     specs = [
-        _build_shapes_for_snapshot(s, slo_s, layout_plan=layout_plan, snap_idx=i)
+        _build_shapes_for_snapshot(
+            s, slo_s, layout_plan=layout_plan, snap_idx=i
+        )
         for i, s in enumerate(snapshots)
     ]
     base = specs[0]
@@ -530,7 +537,8 @@ def render_gantt_scrubber(
 
     # Pre-compute all label traces to avoid redundant computation in slider steps
     all_label_traces = [
-        _build_label_traces(specs[i], snapshots[i]) for i in range(len(snapshots))
+        _build_label_traces(specs[i], snapshots[i])
+        for i in range(len(snapshots))
     ]
     base_label_traces = all_label_traces[0]
 
@@ -538,12 +546,16 @@ def render_gantt_scrubber(
     precomputed_slider_data = []
     for i in range(len(snapshots)):
         combined_traces = specs[i]["hover_traces"] + all_label_traces[i]
-        precomputed_slider_data.append({
-            "x": [t.x for t in combined_traces],
-            "y": [t.y for t in combined_traces],
-            "text": [t.text for t in combined_traces],
-            "hovertext": [getattr(t, "hovertext", None) for t in combined_traces],
-        })
+        precomputed_slider_data.append(
+            {
+                "x": [t.x for t in combined_traces],
+                "y": [t.y for t in combined_traces],
+                "text": [t.text for t in combined_traces],
+                "hovertext": [
+                    getattr(t, "hovertext", None) for t in combined_traces
+                ],
+            }
+        )
 
     # Build title dict with optional subtitle
     title_dict: dict[str, Any] = dict(text=title)
@@ -607,8 +619,7 @@ def render_gantt_scrubber(
         fig.frames = [
             go.Frame(
                 name=f"f{i}",
-                data=spec["hover_traces"]
-                + all_label_traces[i],
+                data=spec["hover_traces"] + all_label_traces[i],
                 layout=go.Layout(
                     shapes=spec["shapes"],
                     xaxis=dict(range=[-500, spec["x_max"] + 500]),

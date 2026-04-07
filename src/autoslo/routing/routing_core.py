@@ -23,14 +23,15 @@ if TYPE_CHECKING:
     from autoslo.models.iconq_model import IconqModel
     from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
-from autoslo.blueprint_selection.slo_resolver import (
+from autoslo.slo.slo_resolver import (
     SloResolver,
     slo_violation as _slo_violation,
     query_interval as _query_interval,
 )
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.utils.billing import Billing
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 
 
 # ---------------------------------------------------------------------------

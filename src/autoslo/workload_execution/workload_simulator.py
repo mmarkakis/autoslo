@@ -19,7 +19,7 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
 )
-from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.capacity.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
@@ -53,7 +53,8 @@ from autoslo.utils.structured_log import (
     setup_structured_logging,
 )
 from autoslo.utils.yaml_helpers import dump
-from autoslo.workload_definition.query import Query, QueryTextId, SloMetric
+from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.slo.slo_objective import SloMetric
 from autoslo.workload_definition.workload import Workload
 
 if TYPE_CHECKING:
@@ -1084,7 +1085,7 @@ class WorkloadSimulator:
             if len(completed_queries) == 0:
                 continue
 
-            from autoslo.blueprint_selection.slo_resolver import (
+            from autoslo.slo.slo_resolver import (
                 query_interval as _qi,
             )  # noqa: PLC0415
 
