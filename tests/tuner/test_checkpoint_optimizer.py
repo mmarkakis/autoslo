@@ -7,9 +7,10 @@ import pandas as pd
 import pytest
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
+from autoslo.tuner.tuner_utils import SloObjective
 from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
 from autoslo.tuner.checkpoint_optimizer import (
-    checkpoints_to_overrides,
+    new_checkpoints_to_config,
     find_next_checkpoint_time_df,
 )
 
@@ -44,7 +45,7 @@ def _make_completion_structured_log(
 # ------------------------------------------------------------------
 
 
-class TestCheckpointsToOverrides:
+class TestNewCheckpointsToConfig:
     def test_no_checkpoints(self):
         """
         If no checkpoints, overrides should be empty.
@@ -54,11 +55,12 @@ class TestCheckpointsToOverrides:
             "autoscaling_config": {"autoscaling_policy": "headroom"},
             "managed_cluster_pool_config": {"initial_rpus": [1, 2, 4]},
         }
-        checkpoints = []
-        overrides = checkpoints_to_overrides(
-            config=initial_config, checkpoints=checkpoints
+        new_config = new_checkpoints_to_config(
+            config=initial_config, new_checkpoints=[]
         )
-        assert overrides == {}, "Expected empty overrides when no checkpoints"
+        assert (
+            new_config == initial_config
+        ), "Expected no change to config when no new checkpoints"
 
     def test_single_nonzero_checkpoint(self):
         """
@@ -76,22 +78,24 @@ class TestCheckpointsToOverrides:
                 min_rpus=(2, 4),
             )
         ]
-        overrides = checkpoints_to_overrides(
-            config=initial_config, checkpoints=checkpoints
+        new_config = new_checkpoints_to_config(
+            config=initial_config, new_checkpoints=checkpoints
         )
-        expected_overrides = {
+        expected_new_config = {
+            "managed_cluster_pool_config": {"initial_rpus": [1, 2, 4]},
             "autoscaling_config": {
+                "autoscaling_policy": "headroom",
                 "capacity_checkpoints": [
                     {
                         "time_s": 100,
                         "min_rpus": [2, 4],
                     }
-                ]
-            }
+                ],
+            },
         }
         assert (
-            overrides == expected_overrides
-        ), "Expected capacity_checkpoints override based on checkpoint"
+            new_config == expected_new_config
+        ), "Expected capacity_checkpoints override based on nonzero-time checkpoint"
 
     def test_single_zero_checkpoint(self):
         """
@@ -109,14 +113,17 @@ class TestCheckpointsToOverrides:
                 min_rpus=(2, 4),
             )
         ]
-        overrides = checkpoints_to_overrides(
-            config=initial_config, checkpoints=checkpoints
+        new_config = new_checkpoints_to_config(
+            config=initial_config, new_checkpoints=checkpoints
         )
-        expected_overrides = {
-            "managed_cluster_pool_config": {"initial_rpus": [1, 2, 2, 4, 4]}
+        expected_new_config = {
+            "managed_cluster_pool_config": {"initial_rpus": [1, 2, 2, 4, 4]},
+            "autoscaling_config": {
+                "autoscaling_policy": "headroom",
+            },
         }
         assert (
-            overrides == expected_overrides
+            new_config == expected_new_config
         ), "Expected initial_rpus override based on zero-time checkpoint"
 
     def test_mixed_checkpoints(self):
@@ -139,23 +146,24 @@ class TestCheckpointsToOverrides:
                 min_rpus=(4, 8),
             ),
         ]
-        overrides = checkpoints_to_overrides(
-            config=initial_config, checkpoints=checkpoints
+        new_config = new_checkpoints_to_config(
+            config=initial_config, new_checkpoints=checkpoints
         )
-        expected_overrides = {
+        expected_new_config = {
             "managed_cluster_pool_config": {"initial_rpus": [1, 2, 2, 4, 4]},
             "autoscaling_config": {
+                "autoscaling_policy": "headroom",
                 "capacity_checkpoints": [
                     {
                         "time_s": 100,
                         "min_rpus": [4, 8],
                     }
-                ]
+                ],
             },
         }
         assert (
-            overrides == expected_overrides
-        ), "Expected overrides based on mixed zero and nonzero time checkpoints"
+            new_config == expected_new_config
+        ), "Expected overrides based on mixed zero and nonzero rel_time_s checkpoints"
 
 
 class TestFindNextCheckpointTimeDF:
@@ -169,11 +177,13 @@ class TestFindNextCheckpointTimeDF:
         end_times = [s + np.random.uniform(0, slo_s * 0.9) for s in start_times]
         log = _make_completion_structured_log(start_times, end_times)
 
-        threshold = 0.5
+        slo_objective = SloObjective(slo_metric="binary", slo_threshold=0.0)
+
         result = find_next_checkpoint_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=5.0,
         )
         assert (
@@ -194,11 +204,13 @@ class TestFindNextCheckpointTimeDF:
         end_times = [13, 11, 11.5, 12, 12.5, 13, 13.5, 14]
         log = _make_completion_structured_log(start_times, end_times)
 
-        threshold = 0.6
+        slo_objective = SloObjective(slo_metric="binary", slo_threshold=0.6)
+
         result = find_next_checkpoint_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=5.0,
         )
         assert (
@@ -218,12 +230,16 @@ class TestFindNextCheckpointTimeDF:
         end_times = [12]
         log = _make_completion_structured_log(start_times, end_times)
 
-        threshold = np.random.uniform(0, 1)
+        slo_threshold = np.random.uniform(0, 1)
         spin_up_delay_s = np.random.uniform(0, 10)
+        slo_objective = SloObjective(
+            slo_metric="binary", slo_threshold=slo_threshold
+        )
         result = find_next_checkpoint_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=spin_up_delay_s,
         )
         assert (
@@ -244,12 +260,16 @@ class TestFindNextCheckpointTimeDF:
         end_times = [start_times[0] + 2]
         log = _make_completion_structured_log(start_times, end_times)
 
-        threshold = np.random.uniform(0, 1)
+        slo_threshold = np.random.uniform(0, 1)
         spin_up_delay_s = np.random.uniform(5, 10)
+        slo_objective = SloObjective(
+            slo_metric="binary", slo_threshold=slo_threshold
+        )
         result = find_next_checkpoint_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=spin_up_delay_s,
         )
         assert result == 0, "Expected checkpoint time to be zero"
@@ -273,12 +293,17 @@ class TestFindNextCheckpointTimeDF:
         # any threshold < 1.
         log = _make_completion_structured_log(start_times, end_times)
 
-        threshold = np.random.uniform(0, 1)
+        slo_threshold = np.random.uniform(0, 1)
         spin_up_delay_s = np.random.uniform(0, 10)
+        slo_objective = SloObjective(
+            slo_metric="relative", slo_threshold=slo_threshold
+        )
+
         result = find_next_checkpoint_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=spin_up_delay_s,
         )
         expected_time = min(start_times) - spin_up_delay_s
@@ -307,12 +332,17 @@ class TestFindNextCheckpointTimeDF:
         ]
         log = _make_completion_structured_log(start_times, end_times)
 
-        threshold = np.random.uniform(1, 2)
+        slo_threshold = np.random.uniform(1, 2)
         spin_up_delay_s = np.random.uniform(0, 10)
+        slo_objective = SloObjective(
+            slo_metric="relative", slo_threshold=slo_threshold
+        )
+
         result = find_next_checkpoint_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=spin_up_delay_s,
         )
         expected_time = 20 - spin_up_delay_s
@@ -321,10 +351,12 @@ class TestFindNextCheckpointTimeDF:
             "period above threshold minus spin-up delay"
         )
 
-    def test_multi_log_no_violations(self):
+    @pytest.mark.parametrize("seed", range(10))
+    def test_multi_log_no_violations(self, seed):
         """
         For multiple structured logs with no violations, return None.
         """
+        np.random.seed(seed)
         slo_s = 0.5
         slo_resolver = SloResolver(default_slo_s=slo_s)
         logs = []
@@ -336,11 +368,16 @@ class TestFindNextCheckpointTimeDF:
             log = _make_completion_structured_log(start_times, end_times)
             logs.append(log)
 
-        threshold = 0.5
+        slo_threshold = np.random.uniform(0, 1)
+        slo_objective = SloObjective(
+            slo_metric="binary", slo_threshold=slo_threshold
+        )
+        min_delinquent_workloads = np.random.randint(1, 4)
         result = find_next_checkpoint_time_df(
             completion_structured_logs=logs,
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=min_delinquent_workloads,
             spin_up_delay_s=5.0,
         )
         assert (
@@ -366,12 +403,16 @@ class TestFindNextCheckpointTimeDF:
             log = _make_completion_structured_log(start_times, end_times)
             logs.append(log)
 
-        threshold = np.random.uniform(0, 1)
+        slo_threshold = np.random.uniform(0, 1)
+        slo_objective = SloObjective(
+            slo_metric="relative", slo_threshold=slo_threshold
+        )
         spin_up_delay_s = np.random.uniform(0, 10)
         result = find_next_checkpoint_time_df(
             completion_structured_logs=logs,
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=1,
             spin_up_delay_s=spin_up_delay_s,
         )
         expected_time = 100 - spin_up_delay_s
@@ -383,7 +424,7 @@ class TestFindNextCheckpointTimeDF:
         ), "Expected checkpoint time to be the start of the violating period minus spin-up delay"
 
     @pytest.mark.parametrize("seed", range(10))
-    def test_multi_log_multiple_violating_periods(self, seed):
+    def test_multi_log_multiple_violating_periods_finds(self, seed):
         """
         For multiple structured logs with multiple violating periods above the threshold,
         return the start time of the earliest violating period.
@@ -393,7 +434,8 @@ class TestFindNextCheckpointTimeDF:
         slo_s = 1
         slo_resolver = SloResolver(default_slo_s=slo_s)
         logs = []
-        for i in range(3):
+        num_workloads = np.random.randint(2, 5)
+        for i in range(num_workloads):
             start_times = [100 + j * 10 for j in range(5)]
             end_times = [
                 s + (2 + i) * slo_s + np.random.uniform(0, 1)
@@ -402,12 +444,17 @@ class TestFindNextCheckpointTimeDF:
             log = _make_completion_structured_log(start_times, end_times)
             logs.append(log)
 
-        threshold = np.random.uniform(0, 1)
+        slo_threshold = np.random.uniform(0, 1)
+        slo_objective = SloObjective(
+            slo_metric="relative", slo_threshold=slo_threshold
+        )
+        min_delinquent_workloads = np.random.randint(1, num_workloads + 1)
         spin_up_delay_s = np.random.uniform(0, 10)
         result = find_next_checkpoint_time_df(
             completion_structured_logs=logs,
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=min_delinquent_workloads,
             spin_up_delay_s=spin_up_delay_s,
         )
         expected_time = 100 - spin_up_delay_s
@@ -418,8 +465,8 @@ class TestFindNextCheckpointTimeDF:
     @pytest.mark.parametrize("seed", range(10))
     def test_multi_log_some_violate_but_not_enough(self, seed):
         """
-        For multiple structured logs where some have violating periods but the overall
-        violation rate is below the threshold, return None.
+        For multiple structured logs where some have violating periods but not
+        enough to meet the minimum delinquent workloads, return None.
         """
         np.random.seed(seed)
 
@@ -439,12 +486,17 @@ class TestFindNextCheckpointTimeDF:
         log2 = _make_completion_structured_log(start_times, end_times)
 
         logs = [log1, log2]
-        threshold = relative_slo_violation / 2 + np.random.uniform(0, 0.5)
+        slo_threshold = relative_slo_violation / 2  # So the second log violates
+        slo_objective = SloObjective(
+            slo_metric="relative", slo_threshold=slo_threshold
+        )
         spin_up_delay_s = np.random.uniform(0, 10)
+
         result = find_next_checkpoint_time_df(
             completion_structured_logs=logs,
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=2,  # Requires both logs to be delinquent
             spin_up_delay_s=spin_up_delay_s,
         )
         assert (
@@ -466,37 +518,37 @@ class TestFindNextCheckpointTimeDF:
         slo_resolver = SloResolver(default_slo_s=slo_s)
         nqueries = 2 * np.random.randint(5, 10)  # Even number.
 
-        # Create the first log. This always has relative violations between 1 and 2.
+        # Create the first log. This always has relative violations between 3 
+        # and 4. 
         start_times = [10 + i * 10 for i in range(nqueries)]
         end_times = [
-            s + slo_s * (2 + np.random.uniform(0, 1)) for s in start_times
+            s + slo_s * (4 + np.random.uniform(0, 1)) for s in start_times
         ]
         log1 = _make_completion_structured_log(start_times, end_times)
 
-        # Create the second log. This initially is like 1, having relative violations
-        # between 1 and 2. So, the mean of the two is between 1 and 2, below any
-        # threshold in the range (2, 2.5).
-        #
-        # But, in the second half, the violations increase to between 4 and 5. Then,
-        # the mean of the two logs is between 2.5 and 3.5, above any threshold in
-        # the range (2, 2.5).
+        # Create the second log. This initially has relative violations between 
+        # 1 and 2, but then gets worse with relative violations between 3 and 4. 
         start_times = [10 + i * 10 for i in range(nqueries)]
         end_times = [
             s + slo_s * (2 + np.random.uniform(0, 1))
             for s in start_times[: nqueries // 2]
         ] + [
-            s + slo_s * (5 + np.random.uniform(0, 1))
+            s + slo_s * (4 + np.random.uniform(0, 1))
             for s in start_times[nqueries // 2 :]
         ]
         log2 = _make_completion_structured_log(start_times, end_times)
 
         logs = [log1, log2]
-        threshold = np.random.uniform(2, 2.5)
+        slo_threshold = np.random.uniform(2, 3)
+        slo_objective = SloObjective(
+            slo_metric="relative", slo_threshold=slo_threshold
+        )
         spin_up_delay_s = np.random.uniform(0, 10)
         result = find_next_checkpoint_time_df(
             completion_structured_logs=logs,
             slo_resolver=slo_resolver,
-            threshold=threshold,
+            slo_objective=slo_objective,
+            min_delinquent_workloads=2,  # Requires both logs to be delinquent
             spin_up_delay_s=spin_up_delay_s,
         )
         expected_time = 10 + (nqueries // 2) * 10 - spin_up_delay_s

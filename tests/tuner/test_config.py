@@ -17,7 +17,7 @@ class TestTunerConfigDefaults:
         assert cfg.random_seed == 42
         assert cfg.forecast_policy == "recency_weighted"
         assert cfg.aggregation_metric == "p90"
-        assert cfg.checkpoint_budget == 5
+        assert cfg.max_checkpoints == 5
         assert cfg.parallelism == "auto"
 
     def test_n_train_n_val(self):
@@ -43,7 +43,7 @@ class TestLoadTunerConfig:
             },
             "forecast_policy": "uniform",
             "aggregation_metric": "mean",
-            "checkpoint_budget": 10,
+            "max_checkpoints": 10,
             "checkpoint_epsilon": 0.005,
             "sliding_window_s": 600.0,
             "violation_threshold": 0.2,
@@ -63,7 +63,7 @@ class TestLoadTunerConfig:
         assert cfg.target_end == datetime(2024, 6, 2)
         assert cfg.forecast_policy == "uniform"
         assert cfg.aggregation_metric == "mean"
-        assert cfg.checkpoint_budget == 10
+        assert cfg.max_checkpoints == 10
         assert cfg.checkpoint_epsilon == 0.005
         assert cfg.sliding_window_s == 600.0
         assert cfg.violation_threshold == 0.2

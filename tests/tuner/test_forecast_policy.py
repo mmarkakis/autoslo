@@ -3,23 +3,21 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone, date
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 import pytest
-
-from typing import Optional
+from scipy import stats
 
 from autoslo.tuner.forecast_policy import (
     OneDayForecastPolicy,
-    SevenDaysFlatForecastPolicy,
-    SameDayOnceForecastPolicy,
     SameDayExponentialForecastPolicy,
+    SameDayOnceForecastPolicy,
+    SevenDaysFlatForecastPolicy,
 )
 from autoslo.tuner.reservoir import QueryReservoir
-
-from scipy import stats
 
 _1H = timedelta(hours=1)
 _BASE_DATE = date(2024, 1, 31)
@@ -240,7 +238,7 @@ class TestOneDayForecastPolicy:
             _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
-        assert paths is None
+        assert len(paths) == 0
         for i in range(4):
             for j in range(i + 1, 5):
                 with pytest.raises(AssertionError):
@@ -423,7 +421,7 @@ class TestSevenDaysFlatForecastPolicy:
             _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
-        assert paths is None
+        assert len(paths) == 0
         for i in range(4):
             for j in range(i + 1, 5):
                 with pytest.raises(AssertionError):
@@ -607,7 +605,7 @@ class TestSameDayOnceForecastPolicy:
             _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
-        assert paths is None
+        assert len(paths) == 0
         for i in range(4):
             for j in range(i + 1, 5):
                 with pytest.raises(AssertionError):
@@ -823,7 +821,7 @@ class TestSameDayExponentialForecastPolicy:
             _BASE_DATE, n_scenarios=5, initial_seed=42
         )
         assert len(workloads) == 5
-        assert paths is None
+        assert len(paths) == 0
         for i in range(4):
             for j in range(i + 1, 5):
                 with pytest.raises(AssertionError):
