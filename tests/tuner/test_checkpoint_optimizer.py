@@ -74,7 +74,7 @@ class TestNewCheckpointsToConfig:
         }
         checkpoints = [
             CapacityCheckpoint(
-                time_s=100,
+                rel_time_s=100,
                 min_rpus=(2, 4),
             )
         ]
@@ -87,7 +87,7 @@ class TestNewCheckpointsToConfig:
                 "autoscaling_policy": "headroom",
                 "capacity_checkpoints": [
                     {
-                        "time_s": 100,
+                        "rel_time_s": 100,
                         "min_rpus": [2, 4],
                     }
                 ],
@@ -99,7 +99,7 @@ class TestNewCheckpointsToConfig:
 
     def test_single_zero_checkpoint(self):
         """
-        For a single checkpoint with time_s=0, overrides should add its min_rpus
+        For a single checkpoint with rel_time_s=0, overrides should add its min_rpus
         to initial_rpus.
         """
 
@@ -109,7 +109,7 @@ class TestNewCheckpointsToConfig:
         }
         checkpoints = [
             CapacityCheckpoint(
-                time_s=0,
+                rel_time_s=0,
                 min_rpus=(2, 4),
             )
         ]
@@ -128,7 +128,7 @@ class TestNewCheckpointsToConfig:
 
     def test_mixed_checkpoints(self):
         """
-        For multiple checkpoints with a mix of zero and nonzero time_s, overrides
+        For multiple checkpoints with a mix of zero and nonzero rel_time_s, overrides
         should correctly set both initial_rpus and capacity_checkpoints.
         """
 
@@ -138,11 +138,11 @@ class TestNewCheckpointsToConfig:
         }
         checkpoints = [
             CapacityCheckpoint(
-                time_s=0,
+                rel_time_s=0,
                 min_rpus=(2, 4),
             ),
             CapacityCheckpoint(
-                time_s=100,
+                rel_time_s=100,
                 min_rpus=(4, 8),
             ),
         ]
@@ -155,7 +155,7 @@ class TestNewCheckpointsToConfig:
                 "autoscaling_policy": "headroom",
                 "capacity_checkpoints": [
                     {
-                        "time_s": 100,
+                        "rel_time_s": 100,
                         "min_rpus": [4, 8],
                     }
                 ],

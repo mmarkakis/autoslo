@@ -43,7 +43,7 @@ def parse_capacity_checkpoints(cfg: dict) -> list[CapacityCheckpoint]:
     )
     return [
         CapacityCheckpoint(
-            time_s=float(cp["time_s"]),
+            rel_time_s=float(cp["rel_time_s"]),
             min_rpus=tuple(cp["min_rpus"]),
         )
         for cp in raw

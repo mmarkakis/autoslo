@@ -63,20 +63,20 @@ class AutoscalingAction:
 class CapacityCheckpoint:
     """Declarative capacity checkpoint.
 
-    At ``time_s`` (relative to workload start) the system reconciles
+    At ``rel_time_s`` (relative to workload start) the system reconciles
     the declared RPU multiset against the current (READY + PENDING)
     clusters and spins up only the gap.
 
     Parameters
     ----------
-    time_s :
+    rel_time_s :
         Trigger time in seconds from the start of the workload.
     min_rpus :
         Desired RPU multiset.  Each element is an RPU size that must
         be present (exact matching, not total-capacity).
     """
 
-    time_s: float
+    rel_time_s: float
     min_rpus: tuple[int, ...]
 
 

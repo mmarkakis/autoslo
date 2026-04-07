@@ -721,7 +721,9 @@ class WorkloadSimulator:
             self._current_sim_time_s = tick_time
 
             # Process capacity checkpoints that fire at or before this tick.
-            self._autoscaler.reconcile_checkpoints_up_to(tick_time)
+            self._autoscaler.reconcile_checkpoints_up_to(
+                current_time_s=self._current_sim_time_s, reference_time_s=0.0
+            )
 
             # Compute headroom for logging before the tick.
             all_aq = self._pool.get_all_active_queries()
@@ -734,7 +736,7 @@ class WorkloadSimulator:
             )
             self._log_if_verbose(
                 {
-                    "timestamp": tick_time,
+                    "timestamp": self._current_sim_time_s,
                     "event_type": "capacity_tick",
                     "headroom": headroom,
                     "num_active_queries": len(all_active),
@@ -750,7 +752,9 @@ class WorkloadSimulator:
         # Remaining events up to target.
         self._process_pending_events_up_to(target_time_s)
         # Process any remaining checkpoints between last tick and target.
-        self._autoscaler.reconcile_checkpoints_up_to(target_time_s)
+        self._autoscaler.reconcile_checkpoints_up_to(
+            current_time_s=target_time_s, reference_time_s=0.0
+        )
         self._current_sim_time_s = target_time_s
 
     # ------------------------------------------------------------------

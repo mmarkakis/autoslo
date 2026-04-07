@@ -183,12 +183,15 @@ class WorkloadRunner:
         checkpoint: CapacityCheckpoint,
         async_reference_ts: float,
     ) -> None:
-        """Wait until *checkpoint.time_s* elapses, then reconcile."""
-        target = async_reference_ts + checkpoint.time_s
-        delay = target - self._async_ts()
+        """Wait until *checkpoint.rel_time_s* elapses, then reconcile."""
+        target = async_reference_ts + checkpoint.rel_time_s
+        delay = target - self._ts()
         if delay > 0:
             await asyncio.sleep(delay)
-        self.autoscaler.reconcile_checkpoints_up_to(checkpoint.time_s)
+        current_time_s = self._ts()
+        self.autoscaler.reconcile_checkpoints_up_to(
+            current_time_s=current_time_s, reference_time_s=async_reference_ts
+        )
 
     # ------------------------------------------------------------------
     # Factory: create from YAML config (aligned with WorkloadSimulator)
@@ -536,8 +539,6 @@ class WorkloadRunner:
         """
         Return the current UTC wall-clock time.
 
-        All timing in the runner uses wall-clock time for consistency.
-
         Parameters:
             cast_to_int: If True, return the timestamp as an integer (seconds
                 since epoch). If False, return as a float (with fractional
@@ -547,17 +548,6 @@ class WorkloadRunner:
         if cast_to_int:
             return int(base)
         return base
-
-    def _async_ts(self) -> float:
-        """Return the current wall-clock time (UTC, fractional seconds).
-
-        This deliberately uses the **same clock** as :meth:`_ts` (wall-clock
-        UTC) rather than the event-loop monotonic clock.  Mixing two clocks
-        (``loop.time()`` vs ``datetime.now()``) leads to meaningless deltas
-        when NTP adjustments occur.  The trade-off is that a large clock jump
-        could distort scheduling, but in practice NTP steps are sub-second.
-        """
-        return datetime.now(tz=timezone.utc).timestamp()
 
     def _setup_run_directory(self):
         """
@@ -723,7 +713,7 @@ class WorkloadRunner:
             query_text_id: The query_text_id for this query (used for
                 routing).
         """
-        now = self._async_ts()
+        now = self._ts()
         scheduled_time = async_reference_ts + rel_start_time_s
         delay = scheduled_time - now
         logging.info(
@@ -734,13 +724,13 @@ class WorkloadRunner:
             await asyncio.sleep(delay)
 
         # ── Route at arrival time ────────────────────────────────────
-        route_start_ts = self._async_ts()
+        route_start_ts = self._ts()
         result = self.router.route_query_with_predictions(
             query_id=query_id,
             query_text_id=query_text_id,
         )
         cluster_name = result.cluster_name
-        route_end_ts = self._async_ts()
+        route_end_ts = self._ts()
 
         if _has_structured():
             emit_structured(
@@ -762,7 +752,7 @@ class WorkloadRunner:
         # while this query is active.  If the autoscaler decides to
         # drain the cluster in response to the routing result, the
         # active-query count prevents premature removal.
-        now = self._async_ts()
+        now = self._ts()
         self.router.on_query_start(
             query_id=query_id,
             cluster_name=cluster_name,
@@ -804,7 +794,7 @@ class WorkloadRunner:
         next_tick_rel = self._capacity_poll_interval_s
         while True:
             target = async_reference_ts + next_tick_rel
-            delay = target - self._async_ts()
+            delay = target - self._ts()
             if delay > 0:
                 await asyncio.sleep(delay)
             self.autoscaler.on_time_advance(self._ts())
@@ -841,7 +831,7 @@ class WorkloadRunner:
 
         # Add a 30-second buffer between the reference timestamp and the first
         # query's scheduled start time for setup.
-        async_reference_ts = self._async_ts() + 30
+        async_reference_ts = self._ts() + 30
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
 
         tasks: list[asyncio.Task] = []

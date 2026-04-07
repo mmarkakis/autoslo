@@ -66,7 +66,7 @@ class Autoscaler:
 
         # Capacity checkpoints — sorted by trigger time.
         self._checkpoints: list[CapacityCheckpoint] = sorted(
-            capacity_checkpoints or [], key=lambda cp: cp.time_s
+            capacity_checkpoints or [], key=lambda cp: cp.rel_time_s
         )
         self._next_checkpoint_idx: int = 0
 
@@ -129,25 +129,41 @@ class Autoscaler:
     # Capacity checkpoints
     # ------------------------------------------------------------------
 
-    def reconcile_checkpoints_up_to(self, current_time_s: float) -> None:
-        """Process all capacity checkpoints with ``time_s <= current_time_s``.
+    def reconcile_checkpoints_up_to(
+        self, current_time_s: float, reference_time_s: float = 0.0
+    ) -> None:
+        """Process all capacity checkpoints with
+        ``reference_time_s + cp.rel_time_s <= current_time_s``.
 
         For each checkpoint, computes the gap between the desired RPU
         multiset and the current (READY + PENDING) clusters, then fires
         spin-ups for the difference through the standard ``_on_spin_up``
         callback.
+
+        Parameters
+        ----------
+        current_time_s :
+            Absolute time in seconds. All checkpoints with
+            ``reference_time_s + cp.rel_time_s <= current_time_s`` will be
+            reconciled.
+        reference_time_s :
+            Absolute time in seconds corresponding to workload start.  Used for
+            structured logging of spin-up events.
         """
+        current_rel_time_s = current_time_s - reference_time_s
         while (
             self._next_checkpoint_idx < len(self._checkpoints)
-            and self._checkpoints[self._next_checkpoint_idx].time_s
-            <= current_time_s
+            and self._checkpoints[self._next_checkpoint_idx].rel_time_s
+            <= current_rel_time_s
         ):
             cp = self._checkpoints[self._next_checkpoint_idx]
             self._next_checkpoint_idx += 1
             self._reconcile_one(cp, current_time_s)
 
     def _reconcile_one(
-        self, cp: CapacityCheckpoint, current_time_s: float
+        self,
+        cp: CapacityCheckpoint,
+        current_time_s: float,
     ) -> None:
         """Reconcile a single checkpoint against the live pool state."""
         current = Counter(self._pool.cluster_rpu_multiset)
@@ -155,27 +171,29 @@ class Autoscaler:
         gap = desired - current  # keeps only positive differences
 
         if _has_structured():
-            emit_structured({
-                "timestamp": current_time_s,
-                "event_type": "capacity_checkpoint_reconciled",
-                "source": "autoscaler",
-                "checkpoint_time_s": cp.time_s,
-                "desired_rpus": list(cp.min_rpus),
-                "current_rpus": sorted(current.elements()),
-                "gap_spin_ups": str(dict(gap)) if gap else "",
-            })
+            emit_structured(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": "capacity_checkpoint_reconciled",
+                    "source": "autoscaler",
+                    "checkpoint_rel_time_s": cp.rel_time_s,
+                    "desired_rpus": list(cp.min_rpus),
+                    "current_rpus": sorted(current.elements()),
+                    "gap_spin_ups": str(dict(gap)) if gap else "",
+                }
+            )
 
         if not gap:
             logger.debug(
                 "Checkpoint t=%.1f: already satisfied (current %s).",
-                cp.time_s,
+                cp.rel_time_s,
                 dict(current),
             )
             return
 
         logger.debug(
             "Checkpoint t=%.1f: gap %s — spinning up.",
-            cp.time_s,
+            cp.rel_time_s,
             dict(gap),
         )
         self._last_event_time_s = current_time_s
@@ -183,20 +201,20 @@ class Autoscaler:
             for _ in range(count):
                 try:
                     self._on_spin_up(
-                        f"capacity_checkpoint@t={cp.time_s}", rpu
+                        f"capacity_checkpoint@t={cp.rel_time_s}", rpu
                     )
                     if _has_structured():
-                        emit_structured({
-                            "timestamp": current_time_s,
-                            "event_type": "autoscaler_spin_up",
-                            "source": "autoscaler",
-                            "rpu": rpu,
-                            "reason": f"capacity_checkpoint@t={cp.time_s}",
-                        })
+                        emit_structured(
+                            {
+                                "timestamp": current_time_s,
+                                "event_type": "autoscaler_spin_up",
+                                "source": "autoscaler",
+                                "rpu": rpu,
+                                "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
+                            }
+                        )
                 except Exception:
-                    logger.exception(
-                        "Checkpoint spin-up failed (rpu=%d)", rpu
-                    )
+                    logger.exception("Checkpoint spin-up failed (rpu=%d)", rpu)
 
     # ------------------------------------------------------------------
     # Action execution
@@ -204,34 +222,38 @@ class Autoscaler:
 
     def _execute(self, action: AutoscalingAction) -> None:
         """Execute all requests in an :class:`AutoscalingAction`."""
-        for req in action.spin_ups:
+        for spinup_req in action.spin_ups:
             try:
-                self._on_spin_up(req.reason, req.rpu)
+                self._on_spin_up(spinup_req.reason, spinup_req.rpu)
                 if _has_structured():
-                    emit_structured({
-                        "timestamp": self._last_event_time_s,
-                        "event_type": "autoscaler_spin_up",
-                        "source": "autoscaler",
-                        "rpu": req.rpu,
-                        "reason": req.reason,
-                    })
+                    emit_structured(
+                        {
+                            "timestamp": self._last_event_time_s,
+                            "event_type": "autoscaler_spin_up",
+                            "source": "autoscaler",
+                            "rpu": spinup_req.rpu,
+                            "reason": spinup_req.reason,
+                        }
+                    )
             except Exception:
                 logger.exception(
-                    "on_spin_up callback failed (rpu=%d)", req.rpu
+                    "on_spin_up callback failed (rpu=%d)", spinup_req.rpu
                 )
-        for req in action.tear_downs:
+        for tear_down_req in action.tear_downs:
             try:
-                self._on_tear_down(req.cluster_name)
+                self._on_tear_down(tear_down_req.cluster_name)
                 if _has_structured():
-                    emit_structured({
-                        "timestamp": self._last_event_time_s,
-                        "event_type": "autoscaler_tear_down",
-                        "source": "autoscaler",
-                        "cluster_name": req.cluster_name,
-                        "reason": req.reason,
-                    })
+                    emit_structured(
+                        {
+                            "timestamp": self._last_event_time_s,
+                            "event_type": "autoscaler_tear_down",
+                            "source": "autoscaler",
+                            "cluster_name": tear_down_req.cluster_name,
+                            "reason": tear_down_req.reason,
+                        }
+                    )
             except Exception:
                 logger.exception(
                     "on_tear_down callback failed (cluster=%s)",
-                    req.cluster_name,
+                    tear_down_req.cluster_name,
                 )

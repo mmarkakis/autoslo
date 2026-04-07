@@ -62,13 +62,13 @@ def new_checkpoints_to_config(
     nonzero_checkpoints: list[dict[str, Any]] = []
 
     for cp in new_checkpoints:
-        if cp.time_s == 0:
+        if cp.rel_time_s == 0:
             initial_rpus.extend(cp.min_rpus)
         else:
             nonzero_checkpoints.append(
                 {
-                    "time_s": cp.time_s,
-                    "min_rpus": list(cp.min_rpus) + initial_rpus,
+                    "rel_time_s": cp.rel_time_s,
+                    "min_rpus": list(cp.min_rpus),
                 }
             )
 
@@ -215,7 +215,7 @@ def find_next_checkpoint_time_df(
 
         if len(scenario_active_queries) > 0:
             delinquency_per_workload[event["scenario_id"]] = (
-                slo_objective.is_set_delinquent(
+                not slo_objective.is_met(
                     per_query_latency_slo=scenario_active_queries
                 )
             )
@@ -380,10 +380,13 @@ class CheckpointOptimizer:
             ] = []
             checkpoints = []
             all_configs = []
+            initial_rpus = cfgu.getd(
+                current_config, "managed_cluster_pool_config.initial_rpus", []
+            )
             for rpu in self._allowed_rpu_sizes:
                 checkpoint = CapacityCheckpoint(
-                    time_s=max(0.0, next_checkpoint_time),
-                    min_rpus=(rpu,),
+                    rel_time_s=max(0.0, next_checkpoint_time),
+                    min_rpus=tuple(sorted(initial_rpus + [rpu])),
                 )
                 checkpoints.append(checkpoint)
                 trial_config = new_checkpoints_to_config(
@@ -496,7 +499,7 @@ class CheckpointOptimizer:
             show_lines=True,
         )
         table.add_column("RPU", justify="right")
-        table.add_column("time_s", justify="right")
+        table.add_column("rel_time_s", justify="right")
         table.add_column("Viol. Rate", justify="right")
         table.add_column("Viol. Amount (s)", justify="right")
         table.add_column("Viol. Relative", justify="right")
@@ -508,7 +511,7 @@ class CheckpointOptimizer:
             style = "bold green" if is_best else ""
             table.add_row(
                 str(cp.min_rpus[0]),
-                f"{cp.time_s:.0f}",
+                f"{cp.rel_time_s:.0f}",
                 f"{agg.violation_rate:.4f}",
                 f"{agg.violation_amount_s:.4f}",
                 f"{agg.violation_relative_mean:.4f}",
@@ -538,13 +541,13 @@ class CheckpointOptimizer:
         summary = {
             "round_idx": round_idx,
             "selected_checkpoint": {
-                "time_s": best_cp.time_s,
+                "rel_time_s": best_cp.rel_time_s,
                 "min_rpus": list(best_cp.min_rpus),
             },
             "candidates": [
                 {
                     "rpu": cp.min_rpus[0],
-                    "time_s": cp.time_s,
+                    "rel_time_s": cp.rel_time_s,
                     "train_violation": primary_violation(
                         agg, self._slo_objective.slo_metric
                     ),

@@ -5,17 +5,15 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import yaml
-
 from rich.console import Console
 from rich.table import Table
 
 from autoslo.blueprint_selection.slo_resolver import SloResolver
-
 
 # ---------------------------------------------------------------------------
 # Aggregated result for one config over one collection of workloads
@@ -318,22 +316,25 @@ class SloObjective:
 
     slo_metric: str  # "binary", "absolute_s", or "relative"
     slo_threshold: float
+    # Meaning of the threshold depends on the metric:
+    # - "binary": max allowed violation rate (e.g. 0.01 for 1%)
+    # - "absolute_s": max allowed total violation amount in seconds (e.g. 10.0)
+    # - "relative": max allowed mean relative violation (e.g. 0.1 for 10%)
 
-    def is_set_delinquent(
-        self, per_query_latency_slo: list[tuple[float, float]]
-    ) -> bool:
-        """Return True if the given latencies violate the SLO threshold."""
+    def is_met(self, per_query_latency_slo: list[tuple[float, float]]) -> bool:
+        """Return True if the given per-query (latency, SLO) pairs meet the
+        SLO objective."""
+        if len(per_query_latency_slo) == 0:
+            return False
         if self.slo_metric == "binary":
             return (
                 sum(lat > slo for lat, slo in per_query_latency_slo)
-                > self.slo_threshold
-            )
+                / len(per_query_latency_slo)
+            ) <= self.slo_threshold
         if self.slo_metric == "absolute_s":
             return (
-                sum(
-                    max(0.0, lat - slo) for lat, slo in per_query_latency_slo
-                )
-                > self.slo_threshold
+                sum(max(0.0, lat - slo) for lat, slo in per_query_latency_slo)
+                <= self.slo_threshold
             )
         if self.slo_metric == "relative":
             return (
@@ -341,8 +342,8 @@ class SloObjective:
                     max(0.0, (lat - slo) / slo)
                     for lat, slo in per_query_latency_slo
                 )
-                > self.slo_threshold
-            )
+                / len(per_query_latency_slo)
+            ) <= self.slo_threshold
         raise ValueError(f"Unknown slo_metric: {self.slo_metric!r}")
 
 
