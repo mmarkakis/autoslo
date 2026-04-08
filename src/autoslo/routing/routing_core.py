@@ -416,14 +416,8 @@ class RoutingCore:
 
         # -- Atomic pool snapshot ------------------------------------------
         snapshots, cluster_to_base_to_neighbors = pool.build_routing_context(
-            incoming
+            incoming, eligible_cluster_names=eligible
         )
-        snapshots = {cn: s for cn, s in snapshots.items() if cn in eligible}
-        cluster_to_base_to_neighbors = {
-            cn: n
-            for cn, n in cluster_to_base_to_neighbors.items()
-            if cn in eligible
-        }
 
         # -- Before-state per cluster -------------------------------------
         before: dict[str, tuple[float, float]] = {}

@@ -492,6 +492,7 @@ class ManagedClusterPool:
     def build_routing_context(
         self,
         incoming: Query,
+        eligible_cluster_names: list[str],
     ) -> tuple[
         dict[str, ClusterSnapshot],
         dict[str, dict[Query, list[Query]]],
@@ -507,7 +508,9 @@ class ManagedClusterPool:
             neighbor_map: dict[str, dict[Query, list[Query]]] = {}
 
             for cn, entry in self._entries.items():
-                if entry.state != _ClusterState.READY:
+                if (entry.state != _ClusterState.READY) or (
+                    cn not in eligible_cluster_names
+                ):
                     continue
 
                 active_list = list(entry.active_queries.values())
