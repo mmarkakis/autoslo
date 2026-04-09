@@ -39,7 +39,11 @@ from autoslo.capacity.autoscaling_policy import (
     SpinUpRequest,
     TearDownRequest,
 )
-from autoslo.routing.routing_core import ClusterSnapshot, RoutingResult
+from autoslo.routing.managed_cluster_pool import (
+    ClusterSnapshot,
+    ManagedClusterPool,
+)
+from autoslo.routing.routing_core import RoutingResult
 from autoslo.routing.routing_policy import RoutingPolicy
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
@@ -48,7 +52,6 @@ from autoslo.workload_definition.query import Query
 
 if TYPE_CHECKING:
     from autoslo.models.iconq_model import IconqModel
-    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
     from autoslo.slo.slo_resolver import SloResolver
 
 
@@ -194,7 +197,9 @@ class HeadroomPolicy(AutoscalingPolicy):
         self._cluster_ready_time_s: dict[str, float] = {}
         self._routing_window: deque[
             tuple[Query, float, float, ClusterSnapshot | None]
-        ] = deque()
+        ] = (
+            deque()
+        )  # stores (query, predicted_latency, routed_at_time, initial_snapshot)
         self._window_initial_snapshots: dict[str, ClusterSnapshot] | None = None
         self._window_initial_latencies: dict[str, float] | None = None
 
@@ -204,7 +209,7 @@ class HeadroomPolicy(AutoscalingPolicy):
 
     @property
     def name(self) -> str:
-        return f"HeadroomPolicy(eta_crit={self._eta_crit})"
+        return f"HeadroomPolicy(eta_crit={self._eta_crit:.3f})"
 
     @property
     def eta_crit(self) -> float:
@@ -241,6 +246,22 @@ class HeadroomPolicy(AutoscalingPolicy):
     @property
     def pending_count(self) -> int:
         return self._pending_count
+
+    @property
+    def routing_window(
+        self,
+    ) -> list[tuple[Query, float, float, ClusterSnapshot | None]]:
+        """Return a copy of the recent routing-decision window.
+        Each entry is a tuple of ``(query, predicted_latency_s, routed_at_s,
+        initial_snapshot)``, where *initial_snapshot* is the snapshot of
+        the pool state at the time of the query's routing decision (or
+        *None* if the window was reset after the query was routed).
+
+        The window is maintained internally as a deque and cleared on
+        each cluster_ready event, so that it always reflects recent
+        evidence gathered after the most recent cluster came online.
+        """
+        return list(self._routing_window)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -327,7 +348,9 @@ class HeadroomPolicy(AutoscalingPolicy):
         # (post-reset) routing window.  This avoids stale signals from
         # queries that were routed before the most recent cluster came
         # online.
-        window_headroom = self._compute_window_headroom()
+        window_headroom = HeadroomPolicy.compute_window_headroom(
+            self._routing_window, self._slo_resolver
+        )
 
         # -- Detect capacity pressure ----------------------------------
         # If the best score still has positive marginal violation, then
@@ -447,38 +470,23 @@ class HeadroomPolicy(AutoscalingPolicy):
 
         return AutoscalingAction(tear_downs=tear_downs)
 
-    # ------------------------------------------------------------------
-    # Window-based headroom
-    # ------------------------------------------------------------------
-
-    def _compute_window_headroom(self) -> float:
+    @staticmethod
+    def compute_window_headroom(routing_window, slo_resolver) -> float:
         """Compute the minimum SLO headroom across the routing window.
-
-        Mirrors the semantics of ``RoutingCore.compute_slo_headroom``
-        but operates on the ``(Query, predicted_latency_s, ...)``
-        tuples stored in the routing window rather than the live
-        active-query set.
 
         Returns 1.0 (full headroom) when the window is empty.
         """
-        if not self._routing_window:
+
+        if not routing_window:
             return 1.0
 
-        min_headroom = float("inf")
-        for (
-            query,
-            predicted_latency,
-            _routed_at,
-            _snapshot,
-        ) in self._routing_window:
-            slo_s = self._slo_resolver.resolve(query.query_text_id)
-            if slo_s <= 0:
-                continue
-            headroom = (slo_s - predicted_latency) / slo_s
-            if headroom < min_headroom:
-                min_headroom = headroom
-
-        return min_headroom if min_headroom != float("inf") else 1.0
+        lat_and_slos = [
+            (pred_lat, slo_resolver.resolve(query.query_text_id))
+            for query, pred_lat, _, _ in routing_window
+        ]
+        return -1 * SloMetric.RELATIVE_UNCONSTRAINED.aggregate_batch(
+            lat_and_slos
+        )
 
     # ------------------------------------------------------------------
     # RPU selection
@@ -514,7 +522,9 @@ class HeadroomPolicy(AutoscalingPolicy):
         )
 
         if not can_replay:
-            return self._select_rpu_legacy(current_time_s)
+            raise RuntimeError(
+                "Cannot perform counterfactual replay: prerequisites not met."
+            )
 
         # -- Counterfactual replay per candidate RPU ----------------------
         best_rpu: int | None = None
@@ -678,78 +688,3 @@ class HeadroomPolicy(AutoscalingPolicy):
         # Sort by arrival time (window deque is already in order, but be safe).
         result.sort(key=lambda x: x[2])
         return result
-
-    # ------------------------------------------------------------------
-    # Legacy RPU selection (stage-model-only fallback)
-    # ------------------------------------------------------------------
-
-    def _select_rpu_legacy(self, current_time_s: float) -> int:
-        """Original stage-model-only RPU selection.
-
-        Used as a fallback when ``routing_policy`` is not available for
-        counterfactual replay.
-        """
-        if self._iconq_model is None or not self._routing_window:
-            if _has_structured():
-                emit_structured(
-                    {
-                        "timestamp": current_time_s,
-                        "event_type": "rpu_selection_fallback",
-                        "source": "headroom_policy",
-                        "reason": (
-                            "no_iconq_model"
-                            if self._iconq_model is None
-                            else "empty_routing_window"
-                        ),
-                    }
-                )
-            return self._allowed_rpu_sizes[0]
-
-        # Identify pressure queries — those whose predicted latency
-        # exceeded their SLO in the recent window.
-        pressure_queries_and_slo_s: list[tuple[Query, float]] = []
-        for (
-            query,
-            predicted_latency,
-            _routed_at,
-            _snapshot,
-        ) in self._routing_window:
-            slo_s = self._slo_resolver.resolve(query.query_text_id)
-            if predicted_latency > 0 and predicted_latency > slo_s:
-                pressure_queries_and_slo_s.append((query, slo_s))
-
-        if not pressure_queries_and_slo_s:
-            return self._allowed_rpu_sizes[0]
-
-        # Try each candidate RPU (ascending).
-        for rpu in self._allowed_rpu_sizes:
-            pred_lats_and_slo_s: list[tuple[float, float]] = []
-            for q, slo_s in pressure_queries_and_slo_s:
-                stage_pred = (
-                    self._iconq_model.stage_model.predict_from_query_text_id(
-                        {q.query_id: q.query_text_id},
-                        cluster_rpu=rpu,
-                    )[q.query_id].overall_mean_s()
-                )
-                pred_lats_and_slo_s.append((stage_pred, slo_s))
-            violation_rate = SloMetric.BINARY.aggregate_batch(
-                pred_lats_and_slo_s
-            )
-            if violation_rate == 0.0:
-                return rpu
-
-        # No candidate RPU is sufficient — pick the largest.
-        return self._allowed_rpu_sizes[-1]
-
-    # ------------------------------------------------------------------
-    # Introspection
-    # ------------------------------------------------------------------
-
-    def get_routing_window(
-        self,
-    ) -> list[tuple[Query, float, float, ClusterSnapshot | None]]:
-        """Return a copy of the recent routing-decision window.
-
-        Each entry is ``(query, predicted_latency_s, routed_at_s, snapshot)``.
-        """
-        return list(self._routing_window)

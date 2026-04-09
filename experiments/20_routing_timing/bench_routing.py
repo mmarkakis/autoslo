@@ -52,7 +52,7 @@ _TIMING_CMAP = mcolors.LinearSegmentedColormap.from_list(
 from autoslo.models.iconq_model import IconqModel
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.routing.model_policy import ModelPolicy
-from autoslo.routing.routing_core import ClusterSnapshot
+from autoslo.routing.managed_cluster_pool import ClusterSnapshot
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.slo.slo_objective import SloMetric
 from autoslo.workload_execution.trace import Trace

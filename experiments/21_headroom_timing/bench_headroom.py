@@ -57,7 +57,7 @@ from autoslo.capacity.headroom_policy import HeadroomPolicy
 # ── autoslo imports ──────────────────────────────────────────────────
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.model_policy import ModelPolicy
-from autoslo.routing.routing_core import ClusterSnapshot
+from autoslo.routing.managed_cluster_pool import ClusterSnapshot
 from autoslo.slo.slo_objective import SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import Query, QueryTextId

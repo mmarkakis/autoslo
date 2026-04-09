@@ -8,6 +8,7 @@ class SloMetric(Enum):
     * ``BINARY``     – 1 if the query violates its SLO, else 0.
     * ``ABSOLUTE_S`` – seconds of overshoot, ``max(0, latency − SLO)``.
     * ``RELATIVE``   – relative overshoot, ``max(0, (latency − SLO) / SLO)``.
+    * ``RELATIVE_UNCONSTRAINED`` – relative overshoot, but without the max.
 
     All three are always *reported*; this enum selects which one drives
     the routing optimiser.
@@ -16,6 +17,7 @@ class SloMetric(Enum):
     BINARY = "binary"
     ABSOLUTE_S = "absolute_s"
     RELATIVE = "relative"
+    RELATIVE_UNCONSTRAINED = "relative_unconstrained"
 
     def calculate(self, latency_s: float, slo_s: float) -> float | int:
         """Calculate the SLO violation according to this metric."""
@@ -37,6 +39,12 @@ class SloMetric(Enum):
                     "All SLOs must be positive for relative violation metric."
                 )
             return [max(0.0, (lat - slo) / slo) for lat, slo in lat_and_slos]
+        if self is SloMetric.RELATIVE_UNCONSTRAINED:
+            if any(slo <= 0 for _, slo in lat_and_slos):
+                raise ValueError(
+                    "All SLOs must be positive for relative violation metric."
+                )
+            return [(lat - slo) / slo for lat, slo in lat_and_slos]
         raise ValueError(f"Unknown SloMetric: {self}")
 
     def aggregate(self, violations: list[float] | list[int]) -> float:
@@ -68,4 +76,6 @@ class SloMetric(Enum):
             return "Violation Amount (s)"
         if self is SloMetric.RELATIVE:
             return "Mean Relative Violation"
+        if self is SloMetric.RELATIVE_UNCONSTRAINED:
+            return "Mean Relative Violation (Unconstrained)"
         raise ValueError(f"Unknown SloMetric: {self}")
