@@ -120,11 +120,6 @@ class TestCluster:
             q2.query_id: [q1, q3],
             q3.query_id: [q2],
         }
-        original.currently_predicted_latencies = {
-            q2.query_id: 15.0,
-            q3.query_id: 15.0,
-        }
-
         clone = original.clone()
 
         assert clone is not original
@@ -136,11 +131,7 @@ class TestCluster:
         assert clone.billing_window_start_s == original.billing_window_start_s
         assert clone._queries == original._queries
         assert clone.neighbor_map == original.neighbor_map
-        assert (
-            clone.currently_predicted_latencies
-            == original.currently_predicted_latencies
-        )
-
+      
         # Now mutate original
         q4 = Query(
             query_id="q4",
@@ -149,18 +140,13 @@ class TestCluster:
         )
         original._queries = {q4.query_id: q4}
         original.neighbor_map = {q4.query_id: [q4]}
-        original.currently_predicted_latencies = {q4.query_id: 50.0}
 
         assert clone._queries == {q2.query_id: q2, q3.query_id: q3}
         assert clone.neighbor_map == {
             q2.query_id: [q1, q3],
             q3.query_id: [q2],
         }
-        assert clone.currently_predicted_latencies == {
-            q2.query_id: 15.0,
-            q3.query_id: 15.0,
-        }
-
+   
     def test_update_state_valid_transitions(self):
         """
         Cluster.update_state allows valid state transitions.
@@ -210,11 +196,9 @@ class TestCluster:
             query_text_id="qt1",
             rel_start_time_s=150.0,
         )
-        cluster.add_query(q1, new_predicted_latencies={q1.query_id: 10.0})
+        cluster.add_query(q1, )
         assert cluster._queries.keys() == {q1.query_id}
         assert cluster._queries[q1.query_id] == q1
-        assert cluster.currently_predicted_latencies.keys() == {q1.query_id}
-        assert cluster.currently_predicted_latencies[q1.query_id] == 10.0
         assert cluster.neighbor_map.keys() == {q1.query_id}
         assert cluster.neighbor_map[q1.query_id] == []
         assert cluster.billing_window_start_s == 150.0
@@ -234,24 +218,16 @@ class TestCluster:
             query_text_id="qt1",
             rel_start_time_s=150.0,
         )
-        cluster.add_query(q1, new_predicted_latencies={q1.query_id: 10.0})
+        cluster.add_query(q1)
         q2 = Query(
             query_id="q2",
             query_text_id="qt2",
             rel_start_time_s=160.0,
         )
-        cluster.add_query(
-            q2, new_predicted_latencies={q1.query_id: 15.0, q2.query_id: 20.0}
-        )
+        cluster.add_query(q2)
         assert cluster._queries.keys() == {q1.query_id, q2.query_id}
         assert cluster._queries[q1.query_id] == q1
         assert cluster._queries[q2.query_id] == q2
-        assert cluster.currently_predicted_latencies.keys() == {
-            q1.query_id,
-            q2.query_id,
-        }
-        assert cluster.currently_predicted_latencies[q1.query_id] == 15.0
-        assert cluster.currently_predicted_latencies[q2.query_id] == 20.0
         assert cluster.neighbor_map.keys() == {q1.query_id, q2.query_id}
         assert set(cluster.neighbor_map[q1.query_id]) == {q2}
         assert set(cluster.neighbor_map[q2.query_id]) == {q1}
@@ -272,12 +248,11 @@ class TestCluster:
             query_text_id="qt1",
             rel_start_time_s=150.0,
         )
-        cluster.add_query(q1, new_predicted_latencies={q1.query_id: 10.0})
+        cluster.add_query(q1)
         cluster.finish_query(
             q1.query_id, current_time_s=160.0, min_billing_window_size_s=60.0
         )
         assert cluster._queries == {}
-        assert cluster.currently_predicted_latencies == {}
         assert cluster.neighbor_map == {}
         assert cluster.billing_window_start_s == 150.0
 
@@ -296,46 +271,13 @@ class TestCluster:
             query_text_id="qt1",
             rel_start_time_s=150.0,
         )
-        cluster.add_query(q1, new_predicted_latencies={q1.query_id: 10.0})
+        cluster.add_query(q1)
         cluster.finish_query(
             q1.query_id, current_time_s=220.0, min_billing_window_size_s=60.0
         )
         assert cluster._queries == {}
-        assert cluster.currently_predicted_latencies == {}
         assert cluster.neighbor_map == {}
         assert cluster.billing_window_start_s is None
-
-    def test_fast_forward_only_deletes_appropriate_queries(self):
-        """
-        Fast-forwarding time should only delete queries that have finished by
-        the new time.
-        """
-        cluster = Cluster(
-            name="cluster_10_1234567890",
-            rpu=10,
-            conn_info=self.get_conn_info(),
-        )
-        q1 = Query(
-            query_id="q1",
-            query_text_id="qt1",
-            rel_start_time_s=150.0,
-        )
-        cluster.add_query(q1, new_predicted_latencies={q1.query_id: 11.0})
-        q2 = Query(
-            query_id="q2",
-            query_text_id="qt2",
-            rel_start_time_s=160.0,
-        )
-        cluster.add_query(
-            q2, new_predicted_latencies={q1.query_id: 15.0, q2.query_id: 20.0}
-        )
-        cluster.fast_forward_to(current_time_s=166.0)
-        assert cluster._queries.keys() == {q2.query_id}
-        assert cluster._queries[q2.query_id] == q2
-        assert cluster.currently_predicted_latencies.keys() == {q2.query_id}
-        assert cluster.currently_predicted_latencies[q2.query_id] == 20.0
-        assert cluster.neighbor_map.keys() == {q2.query_id}
-        assert cluster.neighbor_map[q2.query_id] == [q1]
 
     def test_rpu_for_cluster_name_throws_on_invalid_name(self):
         """
