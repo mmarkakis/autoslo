@@ -1,20 +1,55 @@
 from __future__ import annotations
 
+import copy
 import itertools
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import ClassVar, Optional
 
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+from autoslo.workload_definition.query import Query
+
+from autoslo.utils.billing import Billing
+
+from enum import Enum
 
 
-@dataclass(frozen=True, eq=True)
+_VALID_CLUSTER_STATE_TRANSITIONS = {
+    "pending": {"ready"},
+    "ready": {"draining", "collecting_stats", "removed"},
+    "draining": {"collecting_stats", "removed"},
+    "collecting_stats": {"removed"},
+    "removed": set(),
+}
+
+
+class ClusterState(Enum):
+    PENDING = "pending"
+    READY = "ready"
+    DRAINING = "draining"
+    COLLECTING_STATS = "collecting_stats"
+    REMOVED = "removed"
+
+    @staticmethod
+    def is_valid_transition(
+        old_state: ClusterState, new_state: ClusterState
+    ) -> bool:
+        """Check if transitioning from self to new_state is valid."""
+        return (old_state == new_state) or (
+            new_state.value in _VALID_CLUSTER_STATE_TRANSITIONS[old_state.value]
+        )
+
+
+@dataclass(eq=False)
 class Cluster:
-    """Lightweight descriptor for a compute cluster.
+    """Mutable cluster with identity, workload state, and neighbor tracking.
 
-    After Phase-2 cleanup the class is a frozen dataclass — no mutable
-    state, no config-file access, no connection-pool management.
-    Connection pools are owned by :class:`ManagedClusterPool`.
+    The neighbor map is the primary data structure: it records, for each
+    active query, which other queries were concurrently active when that
+    query started.  ``active_queries`` is a derived view of its keys.
+
+    Use :meth:`clone` to obtain a deep copy for counterfactual replay or
+    safe exposure across thread boundaries.
     """
 
     # --- Class-level constants -------------------------------------------
@@ -26,20 +61,228 @@ class Cluster:
 
     _new_counter: ClassVar[itertools.count] = itertools.count()
 
-    # --- Instance fields -------------------------------------------------
+    # --- Identity (set once) ---------------------------------------------
     rpu: int
     name: str
-    conn_info: Optional[ClusterConnInfo] = field(default=None, compare=True)
-    cost_per_rpu_hour: float = field(
-        default=US_EAST_1_COST_PER_RPU_HOUR, compare=True
+    conn_info: Optional[ClusterConnInfo] = field(default=None, repr=False)
+    cost_per_rpu_hour: float = field(default=US_EAST_1_COST_PER_RPU_HOUR)
+
+    # --- Mutable state ----------------------------------------
+    #
+    # Invariant: _queries.keys() == _neighbor_map.keys()
+    #
+    state: ClusterState = ClusterState.PENDING
+    predicted_ready_time_s: Optional[float] = None
+    billing_window_start_s: Optional[float] = field(default=None, repr=False)
+
+    _queries: dict[str, "Query"] = field(default_factory=dict, repr=False)
+    neighbor_map: dict[str, list["Query"]] = field(
+        default_factory=dict, repr=False
     )
+    currently_predicted_latencies: dict[str, float] = field(
+        default_factory=dict, repr=False
+    )
+
+    # --- Construction ----------------------------------------------
+
+    def __init__(
+        self,
+        rpu: int,
+        name: str | None = None,
+        conn_info: Optional[ClusterConnInfo] = None,
+        cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
+        state: ClusterState = ClusterState.PENDING,
+        predicted_ready_time_s: Optional[float] = None,
+        billing_window_start_s: Optional[float] = None,
+    ) -> None:
+        """Create a fresh cluster with no active queries.
+
+        The name must start with "cluster_{rpu}_".
+        """
+        if name is None:
+            seq = next(Cluster._new_counter)
+            name = f"cluster_{rpu}_{int(datetime.now().timestamp())}_{seq}"
+        elif not name.startswith(f"cluster_{rpu}_"):
+            raise ValueError(
+                f"Cluster name {name!r} must start with 'cluster_{rpu}_'."
+            )
+        self.rpu = rpu
+        self.name = name
+        self.conn_info = conn_info
+        self.cost_per_rpu_hour = cost_per_rpu_hour
+        self.state = state
+        self.predicted_ready_time_s = predicted_ready_time_s
+        self.billing_window_start_s = billing_window_start_s
+
+        self._queries = {}
+        self.neighbor_map = {}
+        self.currently_predicted_latencies = {}
+
+    def clone(self) -> Cluster:
+        """
+        Deep-copy. Relies on `Query` and `ClusterConnInfo` being
+        immutable/frozen dataclasses.
+        """
+        c = Cluster(
+            rpu=self.rpu,
+            name=self.name,
+            conn_info=self.conn_info,
+            cost_per_rpu_hour=self.cost_per_rpu_hour,
+            state=self.state,
+            predicted_ready_time_s=self.predicted_ready_time_s,
+            billing_window_start_s=self.billing_window_start_s,
+        )
+        c._queries = dict(self._queries)
+        c.neighbor_map = {
+            qid: list(nbs) for qid, nbs in self.neighbor_map.items()
+        }
+        c.currently_predicted_latencies = dict(
+            self.currently_predicted_latencies
+        )
+        return c
 
     # --- Derived properties ----------------------------------------------
 
     @property
     def cost_per_second(self) -> float:
         """Cost per second for the cluster."""
-        return self.cost_per_rpu_hour * self.rpu / Cluster.ONE_HOUR_S
+        return self.cost_per_second_for_rpu(self.rpu, self.cost_per_rpu_hour)
+
+    @property
+    def active_queries(self) -> list["Query"]:
+        """Currently-active queries (order not guaranteed)."""
+        return list(self._queries.values())
+
+    @property
+    def active_query_ids(self) -> set[str]:
+        return set(self._queries.keys())
+
+    @property
+    def predicted_ready_time_s(self) -> Optional[float]:
+        return self._predicted_ready_time_s
+
+    @predicted_ready_time_s.setter
+    def predicted_ready_time_s(self, value: Optional[float]) -> None:
+        if value is not None and value < 0:
+            raise ValueError("predicted_ready_time_s cannot be negative.")
+        self._predicted_ready_time_s = value
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Cluster):
+            return NotImplemented
+        return self.name == other.name
+
+    # --- Workload mutations ----------------------------------------------
+
+    def update_state(self, new_state: ClusterState) -> None:
+        """Update the cluster's lifecycle state."""
+        if not ClusterState.is_valid_transition(self.state, new_state):
+            raise ValueError(
+                f"Invalid state transition from {self.state.value} to "
+                f"{new_state.value} for cluster {self.name!r}."
+            )
+        self.state = new_state
+
+    def add_query(
+        self,
+        query: "Query",
+        new_predicted_latencies: dict[str, float],
+    ) -> None:
+        """
+        Register a query as actively running.
+        """
+        new_query_id = query.query_id
+
+        # Check that we have an updated latency for every active query, and for
+        # the new query itself.
+        expected_query_id_set = set(self.active_query_ids) | {new_query_id}
+        given_query_id_set = set(new_predicted_latencies.keys())
+        if expected_query_id_set != given_query_id_set:
+            raise ValueError(
+                f"Expected predicted latencies for queries "
+                f"{expected_query_id_set}, but got {given_query_id_set}."
+            )
+
+        # Update neighbor maps
+        self.neighbor_map[new_query_id] = self.active_queries
+        for active_query_id in self.active_query_ids:
+            self.neighbor_map[active_query_id].append(query)
+
+        # Mark the query as active and set billing window start.
+        self._queries[new_query_id] = query
+        if self.billing_window_start_s is None:
+            self.billing_window_start_s = query.rel_start_time_s
+
+        # Update latencies
+        for qid, lat in new_predicted_latencies.items():
+            self.currently_predicted_latencies[qid] = lat
+
+    def finish_query(
+        self,
+        query_id: str,
+        current_time_s: float,
+        min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
+    ) -> "Query":
+        """
+        Remove a query from active tracking.
+
+        Parameters:
+        -----------
+        query_id: The ID of the query to finish.
+        current_time_s: The current time in seconds
+        min_billing_window_size_s: The minimum size of a billing window. If the
+            time since the start of the current billing window exceeds this
+            threshold, the billing window is closed.
+
+        Returns:
+        --------
+        query: The finished Query object.
+        billing_interval: If a billing interval was completed, its endpoints.
+        """
+
+        if query_id not in self.active_query_ids:
+            raise ValueError(
+                f"Cannot finish query {query_id}: not found on cluster "
+                f"{self.name}."
+            )
+
+        q = self._queries.pop(query_id)
+        self.neighbor_map.pop(query_id, None)
+        self.currently_predicted_latencies.pop(query_id, None)
+
+        if (self.billing_window_start_s is not None) and (
+            (current_time_s - self.billing_window_start_s)
+            >= min_billing_window_size_s
+        ):
+            self.billing_window_start_s = None
+        return q
+
+    def fast_forward_to(
+        self,
+        current_time_s: float,
+        min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
+    ) -> None:
+        """
+        Fast-forward time, finishing any queries that have completed by
+        current_time_s and updating the billing window accordingly.
+        """
+        to_finish: list[tuple[float, str]] = []
+        for (
+            query_id,
+            predicted_lat,
+        ) in self.currently_predicted_latencies.items():
+            if predicted_lat < 0:
+                continue  # No prediction available; skip
+            query_start_time_s = self._queries[query_id].rel_start_time_s
+            query_end_time_s = query_start_time_s + predicted_lat
+            if query_end_time_s <= current_time_s:
+                to_finish.append((query_end_time_s, query_id))
+        to_finish.sort()  # Finish in order of predicted completion time
+        for end_time_s, qid in to_finish:
+            self.finish_query(qid, end_time_s, min_billing_window_size_s)
 
     # --- Static helpers --------------------------------------------------
 
@@ -71,27 +314,4 @@ class Cluster:
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
     ) -> float:
         """Return the cost-per-second for the given RPU size."""
-        return cost_per_rpu_hour * rpu / 3600
-
-    @staticmethod
-    def new(
-        rpu: int,
-        name: str | None = None,
-        cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
-    ) -> Cluster:
-        """Create a spec-only cluster with no config lookup.
-
-        Factory for dynamically provisioned clusters (used by the
-        simulator and the capacity controller).  Connection info is
-        *not* attached — the :class:`ManagedClusterPool` wires it up
-        after the AWS workgroup is created.
-        """
-        if name is None:
-            seq = next(Cluster._new_counter)
-            name = f"cluster_{rpu}_{int(datetime.now().timestamp())}_{seq}"
-        return Cluster(
-            rpu=rpu,
-            name=name,
-            conn_info=None,
-            cost_per_rpu_hour=cost_per_rpu_hour,
-        )
+        return cost_per_rpu_hour * rpu / Cluster.ONE_HOUR_S
