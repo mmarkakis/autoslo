@@ -4,8 +4,6 @@ from typing import TypeAlias
 
 from intervaltree import Interval  # type: ignore[import]
 
-from autoslo.blueprints.cluster import Cluster
-
 QueryFeaturization: TypeAlias = list[float]
 
 
@@ -103,12 +101,6 @@ class Query:
                 "rel_start_time_s",
                 self.abs_start_time.timestamp(),
             )
-
-    def stage_prediction_for_cluster(self, cluster_name: str) -> float:
-        """Convenience: look up the stage prediction for a named cluster."""
-
-        rpu = Cluster.rpu_for_cluster_name(cluster_name)
-        return self.stage_predictions_per_rpu.get(rpu, -1.0)
 
     @staticmethod
     def query_interval(
