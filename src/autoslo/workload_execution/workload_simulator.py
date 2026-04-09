@@ -173,9 +173,7 @@ class WorkloadSimulator:
             if rescale_factor is not None:
                 self._workload.rescale_rel_start_times(rescale_factor)
 
-        self._run_id = run_id or str(
-            int(datetime.now().timestamp() * 1000)
-        )
+        self._run_id = run_id or str(int(datetime.now().timestamp() * 1000))
 
         self._seed: Optional[int] = None  # populated in simulate_one
 
@@ -282,9 +280,7 @@ class WorkloadSimulator:
         experiment_name: Optional[str] = cfgu.getd(
             cfg, "basic_config.experiment_name"
         )
-        run_id: Optional[str] = cfgu.getd(
-            cfg, "basic_config.run_id"
-        )
+        run_id: Optional[str] = cfgu.getd(cfg, "basic_config.run_id")
         overwrite_experiment: bool = cfgu.getd(
             cfg, "basic_config.overwrite_experiment", False
         )
@@ -492,9 +488,7 @@ class WorkloadSimulator:
             run_id: Optional run ID for the new run. If None, generates
                 a new timestamp-based ID.
         """
-        self._run_id = run_id or str(
-            int(datetime.now().timestamp() * 1000)
-        )
+        self._run_id = run_id or str(int(datetime.now().timestamp() * 1000))
         self._seed = None
         self._out_dir = self._make_out_dir(self._run_id)
         self._write_config_yml()
@@ -881,8 +875,10 @@ class WorkloadSimulator:
 
             # Register the tracking query with the pool.
             # (Handles neighbour bookkeeping and billing-window start.)
-            self._pool.on_query_start(tq, selected_cluster_name)
-
+            self._pool.on_query_start(
+                query=tq,
+                cluster_name=selected_cluster_name,
+            )
             seq_num_to_cluster_name[i] = selected_cluster_name
 
             # Update co-runner latencies on the chosen cluster using the

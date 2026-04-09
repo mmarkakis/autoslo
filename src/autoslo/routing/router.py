@@ -104,14 +104,16 @@ class Router:
             exclude_clusters=exclude_clusters,
         )
         if _has_structured():
-            emit_structured({
-                "timestamp": start_time_s,
-                "event_type": "routing",
-                "source": "router",
-                "query_id": str(query_id),
-                "query_text_id": str(query_text_id),
-                "cluster_name": cluster_name,
-            })
+            emit_structured(
+                {
+                    "timestamp": start_time_s,
+                    "event_type": "routing",
+                    "source": "router",
+                    "query_id": str(query_id),
+                    "query_text_id": str(query_text_id),
+                    "cluster_name": cluster_name,
+                }
+            )
         return cluster_name
 
     def route_query_with_predictions(
@@ -179,16 +181,21 @@ class Router:
             start_time_s=start_time_s,
             cluster_rpu=self._pool.get_rpu(cluster_name),
         )
-        self._pool.on_query_start(query, cluster_name)
+        self._pool.on_query_start(
+            cluster_name=cluster_name,
+            query=query,
+        )
         if _has_structured():
-            emit_structured({
-                "timestamp": start_time_s,
-                "event_type": "query_start",
-                "source": "router",
-                "query_id": str(query_id),
-                "query_text_id": str(query_text_id),
-                "cluster_name": cluster_name,
-            })
+            emit_structured(
+                {
+                    "timestamp": start_time_s,
+                    "event_type": "query_start",
+                    "source": "router",
+                    "query_id": str(query_id),
+                    "query_text_id": str(query_text_id),
+                    "cluster_name": cluster_name,
+                }
+            )
 
     def on_query_finish(
         self,
@@ -205,10 +212,12 @@ class Router:
             current_time_s=current_time_s,
         )
         if _has_structured():
-            emit_structured({
-                "timestamp": current_time_s,
-                "event_type": "query_finish",
-                "source": "router",
-                "query_id": str(query_id),
-                "cluster_name": cluster_name,
-            })
+            emit_structured(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": "query_finish",
+                    "source": "router",
+                    "query_id": str(query_id),
+                    "cluster_name": cluster_name,
+                }
+            )

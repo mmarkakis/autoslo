@@ -29,7 +29,7 @@ from typing import Any, Callable, Optional
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
-from autoslo.blueprints.cluster import Cluster
+from autoslo.blueprints.cluster import Cluster, ClusterState
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.capacity.cluster_provisioner import ClusterProvisioner
 from autoslo.utils.billing import Billing
@@ -37,58 +37,6 @@ from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ClusterSnapshot:
-    """Immutable snapshot of a cluster's state at routing time.
-
-    This captures everything the scoring functions need to evaluate a
-    hypothetical placement.
-    """
-
-    cluster_name: str
-    cost_per_second: float
-    active_queries: list[Query]
-    billing_window_start_s: Optional[float]
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-class _ClusterState(enum.Enum):
-    PENDING = "pending"
-    READY = "ready"
-    DRAINING = "draining"
-    COLLECTING_STATS = "collecting_stats"
-    REMOVED = "removed"
-
-
-class _ClusterEntry:
-    """All mutable per-cluster data, owned exclusively by the pool."""
-
-    __slots__ = (
-        "cluster",
-        "state",
-        "active_queries",
-        "completed_queries",
-        "neighbors_per_active_query",
-        "billing_window_start_s",
-        "conn_pool",
-        "ready_at_s",
-    )
-
-    def __init__(self, cluster: Cluster, state: _ClusterState) -> None:
-        self.cluster = cluster
-        self.state = state
-        self.active_queries: dict[str, Query] = {}
-        self.completed_queries: list[Query] = []
-        self.neighbors_per_active_query: dict[str, list[Query]] = {}
-        self.billing_window_start_s: Optional[float] = None
-        self.conn_pool: Optional[ThreadedConnectionPool] = None
-        self.ready_at_s: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +95,10 @@ class ManagedClusterPool:
         config: ManagedClusterPoolConfig,
         maxconns: int = 1000,
         search_path: str = "public",
+        stats_collector: Optional[
+            Callable[[str, ClusterConnInfo, str], None]
+        ] = None,
+        run_id: Optional[str] = None,
     ) -> None:
         self._provisioner = provisioner
         self._allowed_rpu_sizes: list[int] = sorted(

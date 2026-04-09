@@ -4,15 +4,12 @@ import copy
 import itertools
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import ClassVar, Optional
 
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-from autoslo.workload_definition.query import Query
-
 from autoslo.utils.billing import Billing
-
-from enum import Enum
-
+from autoslo.workload_definition.query import Query
 
 _VALID_CLUSTER_STATE_TRANSITIONS = {
     "pending": {"ready"},
@@ -79,9 +76,6 @@ class Cluster:
     neighbor_map: dict[str, list["Query"]] = field(
         default_factory=dict, repr=False
     )
-    currently_predicted_latencies: dict[str, float] = field(
-        default_factory=dict, repr=False
-    )
 
     # --- Construction ----------------------------------------------
 
@@ -116,7 +110,6 @@ class Cluster:
 
         self._queries = {}
         self.neighbor_map = {}
-        self.currently_predicted_latencies = {}
 
     def clone(self) -> Cluster:
         """
@@ -136,9 +129,6 @@ class Cluster:
         c.neighbor_map = {
             qid: list(nbs) for qid, nbs in self.neighbor_map.items()
         }
-        c.currently_predicted_latencies = dict(
-            self.currently_predicted_latencies
-        )
         return c
 
     # --- Derived properties ----------------------------------------------
@@ -156,16 +146,6 @@ class Cluster:
     @property
     def active_query_ids(self) -> set[str]:
         return set(self._queries.keys())
-
-    @property
-    def predicted_ready_time_s(self) -> Optional[float]:
-        return self._predicted_ready_time_s
-
-    @predicted_ready_time_s.setter
-    def predicted_ready_time_s(self, value: Optional[float]) -> None:
-        if value is not None and value < 0:
-            raise ValueError("predicted_ready_time_s cannot be negative.")
-        self._predicted_ready_time_s = value
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -189,22 +169,11 @@ class Cluster:
     def add_query(
         self,
         query: "Query",
-        new_predicted_latencies: dict[str, float],
     ) -> None:
         """
         Register a query as actively running.
         """
         new_query_id = query.query_id
-
-        # Check that we have an updated latency for every active query, and for
-        # the new query itself.
-        expected_query_id_set = set(self.active_query_ids) | {new_query_id}
-        given_query_id_set = set(new_predicted_latencies.keys())
-        if expected_query_id_set != given_query_id_set:
-            raise ValueError(
-                f"Expected predicted latencies for queries "
-                f"{expected_query_id_set}, but got {given_query_id_set}."
-            )
 
         # Update neighbor maps
         self.neighbor_map[new_query_id] = self.active_queries
@@ -215,10 +184,6 @@ class Cluster:
         self._queries[new_query_id] = query
         if self.billing_window_start_s is None:
             self.billing_window_start_s = query.rel_start_time_s
-
-        # Update latencies
-        for qid, lat in new_predicted_latencies.items():
-            self.currently_predicted_latencies[qid] = lat
 
     def finish_query(
         self,
@@ -251,7 +216,6 @@ class Cluster:
 
         q = self._queries.pop(query_id)
         self.neighbor_map.pop(query_id, None)
-        self.currently_predicted_latencies.pop(query_id, None)
 
         if (self.billing_window_start_s is not None) and (
             (current_time_s - self.billing_window_start_s)
@@ -259,30 +223,6 @@ class Cluster:
         ):
             self.billing_window_start_s = None
         return q
-
-    def fast_forward_to(
-        self,
-        current_time_s: float,
-        min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
-    ) -> None:
-        """
-        Fast-forward time, finishing any queries that have completed by
-        current_time_s and updating the billing window accordingly.
-        """
-        to_finish: list[tuple[float, str]] = []
-        for (
-            query_id,
-            predicted_lat,
-        ) in self.currently_predicted_latencies.items():
-            if predicted_lat < 0:
-                continue  # No prediction available; skip
-            query_start_time_s = self._queries[query_id].rel_start_time_s
-            query_end_time_s = query_start_time_s + predicted_lat
-            if query_end_time_s <= current_time_s:
-                to_finish.append((query_end_time_s, query_id))
-        to_finish.sort()  # Finish in order of predicted completion time
-        for end_time_s, qid in to_finish:
-            self.finish_query(qid, end_time_s, min_billing_window_size_s)
 
     # --- Static helpers --------------------------------------------------
 
