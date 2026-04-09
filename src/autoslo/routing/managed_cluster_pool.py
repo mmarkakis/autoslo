@@ -32,12 +32,25 @@ from psycopg2.pool import ThreadedConnectionPool
 from autoslo.blueprints.cluster import Cluster
 from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
 from autoslo.capacity.cluster_provisioner import ClusterProvisioner
-from autoslo.routing.routing_core import ClusterSnapshot
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ClusterSnapshot:
+    """Immutable snapshot of a cluster's state at routing time.
+
+    This captures everything the scoring functions need to evaluate a
+    hypothetical placement.
+    """
+
+    cluster_name: str
+    cost_per_second: float
+    active_queries: list[Query]
+    billing_window_start_s: Optional[float]
 
 
 # ---------------------------------------------------------------------------
@@ -497,11 +510,8 @@ class ManagedClusterPool:
         dict[str, ClusterSnapshot],
         dict[str, dict[Query, list[Query]]],
     ]:
-        """Atomic snapshot for routing (READY clusters only).
-
-        Identical semantics to ``ClusterStateTracker.build_routing_context``.
-        The outer dict key **is** the cluster name — ``incoming``
-        is never mutated.
+        """
+        Atomic snapshot for routing (READY clusters only).
         """
         with self._lock:
             snapshots: dict[str, ClusterSnapshot] = {}

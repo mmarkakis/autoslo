@@ -19,35 +19,23 @@ from typing import TYPE_CHECKING, Optional
 
 from intervaltree import Interval  # type: ignore[import]
 
-if TYPE_CHECKING:
-    from autoslo.models.iconq_model import IconqModel
-    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
-
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.model_prediction import ModelPrediction
+from autoslo.routing.managed_cluster_pool import (
+    ClusterSnapshot,
+    ManagedClusterPool,
+)
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query, QueryTextId
-from autoslo.slo.slo_objective import SloMetric
+
+if TYPE_CHECKING:
+    from autoslo.models.iconq_model import IconqModel
 
 
 # ---------------------------------------------------------------------------
 # Data containers
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class ClusterSnapshot:
-    """Immutable snapshot of a cluster's state at routing time.
-
-    This captures everything the scoring functions need to evaluate a
-    hypothetical placement, without requiring access to the simulator's
-    mutable bookkeeping.
-    """
-
-    cluster_name: str
-    cost_per_second: float
-    active_queries: list[Query]
-    billing_window_start_s: Optional[float]
 
 
 @dataclass
@@ -123,7 +111,7 @@ class RoutingCore:
         (before_cost, before_slo_violation)
         """
         # -- SLO violations -------------------------------------------------
-        individual_violations = slo_metric.calculate_batch(
+        before_slo_violation = slo_metric.aggregate_batch(
             [
                 (
                     latencies.get(q.query_id, -1.0),
@@ -132,7 +120,6 @@ class RoutingCore:
                 for q in snapshot.active_queries
             ]
         )
-        before_slo_violation = float(sum(individual_violations))
 
         # -- Billing cost ---------------------------------------------------
         before_query_intervals = [
@@ -145,10 +132,7 @@ class RoutingCore:
             before_query_intervals.append(
                 Interval(snapshot.billing_window_start_s, current_time_s)
             )
-        before_billed_s = sum(
-            iv.end - iv.begin
-            for iv in Billing.billed_intervals(before_query_intervals)
-        )
+        before_billed_s = Billing.billed_s(before_query_intervals)
         before_cost = snapshot.cost_per_second * before_billed_s
 
         return before_cost, before_slo_violation
@@ -376,9 +360,9 @@ class RoutingCore:
         """
         # ConcurrentQueryDataset lives in nn/, which does not import
         # routing_core — safe to import here at runtime.
-        from autoslo.nn.concurrent_query_dataset import (  # noqa: PLC0415
+        from autoslo.nn.concurrent_query_dataset import (
             ConcurrentQueryDataset,
-        )
+        )  # noqa: PLC0415
 
         eligible: list[str] = (
             list(cluster_names)
@@ -456,50 +440,3 @@ class RoutingCore:
             )
 
         return scores, incoming, stage_preds
-
-    # --------------------------------------------------------------------------
-    # SLO headroom
-    # --------------------------------------------------------------------------
-
-    @staticmethod
-    def compute_slo_headroom(
-        active_queries: list[Query],
-        slo_resolver: SloResolver,
-        latencies: dict[str, float],
-    ) -> float:
-        """Compute the minimum SLO headroom across all active queries.
-
-        Headroom is defined as ``1 − relative_violation(q)`` which equals
-        ``(SLO − latency) / SLO`` when the query is within its SLO and
-        becomes negative once it overshoots.
-
-        Returns 1.0 when there are no active queries (full headroom).
-        Returns ≤ 0 when at least one query is at or past its SLO.
-
-        Parameters
-        ----------
-        active_queries:
-            Currently running queries.
-        slo_resolver:
-            Resolves per-query SLOs.
-        latencies:
-            ``{query_id: predicted_latency_s}`` for the active queries.
-
-        Returns
-        -------
-        Minimum headroom across all active queries. In [−∞, 1.0].
-        """
-        if not active_queries:
-            return 1.0
-
-        min_headroom = float("inf")
-        for q in active_queries:
-            slo_s = slo_resolver.resolve(q.query_text_id)
-            if slo_s <= 0:
-                continue  # degenerate SLO, skip
-            lat = latencies.get(q.query_id, -1.0)
-            headroom = (slo_s - lat) / slo_s
-            if headroom < min_headroom:
-                min_headroom = headroom
-
-        return min_headroom if min_headroom != float("inf") else 1.0

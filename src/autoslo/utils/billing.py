@@ -3,8 +3,6 @@ import math
 from intervaltree import Interval  # type: ignore[import]
 import pandas as pd
 
-from datetime import datetime
-
 
 class Billing:
     REDSHIFT_BILLING_THRESHOLD_S = 60

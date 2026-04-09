@@ -730,25 +730,6 @@ class WorkloadSimulator:
                 current_time_s=self._current_sim_time_s, reference_time_s=0.0
             )
 
-            # Compute headroom for logging before the tick.
-            all_aq = self._pool.get_all_active_queries()
-            draining = self._pool.draining_cluster_names
-            all_active = [
-                q for cn, qs in all_aq.items() if cn not in draining for q in qs
-            ]
-            headroom = RoutingCore.compute_slo_headroom(
-                all_active, self._slo_resolver, self._predicted_latencies
-            )
-            self._log_if_verbose(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "capacity_tick",
-                    "headroom": headroom,
-                    "num_active_queries": len(all_active),
-                    "num_active_clusters": len(self._pool.cluster_names),
-                }
-            )
-
             self._autoscaler.on_time_advance(tick_time)
             self._next_tick_time_s += self._cc_poll_interval_s
             # Process events spawned by this tick (e.g. delay=0 spin-ups).

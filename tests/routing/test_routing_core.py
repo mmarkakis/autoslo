@@ -5,28 +5,21 @@ Covers:
 - compute_before_state (empty/populated clusters, with/without billing window)
 - score_placement (alignment correctness, SLO violations, billing cost)
 - pick_best (lexicographic selection, tolerance handling)
-- compute_slo_headroom (empty, healthy, violated)
 - _slo_cmp_with_tolerance (comparison edge cases)
 """
 
 from __future__ import annotations
 
 import pytest
-
-from autoslo.slo.slo_resolver import SloResolver
-from autoslo.models.model_prediction import ModelPrediction
-from autoslo.routing.routing_core import (
-    ClusterSnapshot,
-    PlacementScore,
-    RoutingCore,
-)
-from autoslo.workload_definition.query import Query, QueryTextId
-from autoslo.slo.slo_objective import SloMetric
-
-from autoslo.utils.billing import Billing
-
 from intervaltree import Interval
 
+from autoslo.models.model_prediction import ModelPrediction
+from autoslo.routing.managed_cluster_pool import ClusterSnapshot
+from autoslo.routing.routing_core import PlacementScore, RoutingCore
+from autoslo.slo.slo_objective import SloMetric
+from autoslo.slo.slo_resolver import SloResolver
+from autoslo.utils.billing import Billing
+from autoslo.workload_definition.query import Query, QueryTextId
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,9 +108,7 @@ class TestComputeBeforeState:
         cost_per_second = 1.0
         slo_s = 10.0
 
-        q = _q(
-            "a", start=start_time
-        )  # SLO=10 → 2s violation
+        q = _q("a", start=start_time)  # SLO=10 → 2s violation
         latencies = {"a": end_time - start_time}
         snap = ClusterSnapshot(
             cluster_name="c0",
@@ -241,7 +232,9 @@ class TestScorePlacement:
 
     def test_no_violation_placement(self):
         """All predictions under SLO → marginal SLO violation = 0."""
-        incoming, snap, predictions, resolver, bc, bv, latencies = self._base_scenario()
+        incoming, snap, predictions, resolver, bc, bv, latencies = (
+            self._base_scenario()
+        )
         score = RoutingCore.score_placement(
             query=incoming,
             snapshot=snap,
@@ -259,7 +252,9 @@ class TestScorePlacement:
     def test_latency_alignment(self):
         """Each query's latency in the result should match its OWN prediction,
         not a shifted neighbor's prediction — verifying the misalignment fix."""
-        incoming, snap, predictions, resolver, bc, bv, latencies = self._base_scenario()
+        incoming, snap, predictions, resolver, bc, bv, latencies = (
+            self._base_scenario()
+        )
         score = RoutingCore.score_placement(
             query=incoming,
             snapshot=snap,
@@ -294,7 +289,11 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S, latencies={}
+            snap,
+            incoming.rel_start_time_s,
+            resolver,
+            slo_metric=SloMetric.ABSOLUTE_S,
+            latencies={},
         )
 
         score = RoutingCore.score_placement(
@@ -328,7 +327,11 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S, latencies={}
+            snap,
+            incoming.rel_start_time_s,
+            resolver,
+            slo_metric=SloMetric.ABSOLUTE_S,
+            latencies={},
         )
 
         score = RoutingCore.score_placement(
@@ -369,7 +372,11 @@ class TestScorePlacement:
         predictions = {"new": _pred(latency_s)}
         resolver = _resolver(slo_s)
         bc, bv = RoutingCore.compute_before_state(
-            snap, incoming.rel_start_time_s, resolver, slo_metric=SloMetric.ABSOLUTE_S, latencies={}
+            snap,
+            incoming.rel_start_time_s,
+            resolver,
+            slo_metric=SloMetric.ABSOLUTE_S,
+            latencies={},
         )
 
         score = RoutingCore.score_placement(
@@ -457,54 +464,3 @@ class TestSloCmpWithTolerance:
 
     def test_symmetric_zero(self):
         assert RoutingCore._slo_cmp_with_tolerance(3.0, 3.0) == 0
-
-
-# ---------------------------------------------------------------------------
-# compute_slo_headroom
-# ---------------------------------------------------------------------------
-
-
-class TestComputeSloHeadroom:
-
-    def test_no_queries(self):
-        """No active queries → full headroom (1.0)."""
-        assert RoutingCore.compute_slo_headroom([], _resolver(), latencies={}) == 1.0
-
-    def test_half_headroom(self):
-        """Latency at 50% of SLO → headroom = 0.5."""
-        slo_s = 10.0
-        factor = 0.5
-        q = _q("a", start=0.0)
-        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s), latencies={"a": slo_s * factor})
-        assert h == pytest.approx(1.0 - factor)
-
-    def test_at_slo(self):
-        """Latency equals SLO → headroom = 0."""
-        slo_s = 10.0
-        q = _q("a", start=0.0)
-        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s), latencies={"a": slo_s})
-        assert h == pytest.approx(0.0)
-
-    def test_violated(self):
-        """Latency exceeds SLO → headroom < 0."""
-        slo_s = 10.0
-        factor = 1.5
-        q = _q("a", start=0.0)
-        h = RoutingCore.compute_slo_headroom([q], _resolver(slo_s), latencies={"a": slo_s * factor})
-        assert h < 0.0
-        assert h == pytest.approx(1.0 - factor)
-
-    def test_min_across_queries(self):
-        """Headroom is the minimum across all queries."""
-        slo_s = 10.0
-        small_factor = 0.2
-        large_factor = 0.8
-        q1 = _q("a", start=0.0)
-        q2 = _q("b", start=0.0)
-        h = RoutingCore.compute_slo_headroom(
-            [q1, q2], _resolver(slo_s),
-            latencies={"a": slo_s * small_factor, "b": slo_s * large_factor},
-        )
-        assert h == pytest.approx(1.0 - large_factor)
-
-

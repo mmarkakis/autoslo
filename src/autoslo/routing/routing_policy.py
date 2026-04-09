@@ -12,14 +12,15 @@ from __future__ import annotations
 
 import itertools
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from autoslo.routing.routing_core import ClusterSnapshot, RoutingResult
+from autoslo.routing.managed_cluster_pool import (
+    ClusterSnapshot,
+    ManagedClusterPool,
+)
+from autoslo.routing.routing_core import RoutingResult
 from autoslo.utils.class_with_factory import ClassWithFactory
 from autoslo.workload_definition.query import Query, QueryTextId
-
-if TYPE_CHECKING:
-    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
 
 
 class RoutingPolicy(ClassWithFactory):
@@ -198,4 +199,3 @@ class RoundRobinPolicy(RoutingPolicy):
         if self._cycle is None:
             self._cycle = itertools.cycle(names)
         return next(self._cycle)
-

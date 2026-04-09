@@ -9,21 +9,21 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.routing_core import (
+from autoslo.routing.managed_cluster_pool import (
     ClusterSnapshot,
+    ManagedClusterPool,
+)
+from autoslo.routing.routing_core import (
     PlacementScore,
     RoutingCore,
     RoutingResult,
 )
 from autoslo.routing.routing_policy import RoutingPolicy
-from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.slo.slo_objective import SloMetric
-from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
-
-if TYPE_CHECKING:
-    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+from autoslo.slo.slo_resolver import SloResolver
+from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
+from autoslo.workload_definition.query import Query, QueryTextId
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
@@ -259,9 +259,9 @@ class ModelPolicy(RoutingPolicy):
         overridden to cover hypothetical cluster names that don't exist
         in the real pool.
         """
-        from autoslo.nn.concurrent_query_dataset import (  # noqa: PLC0415
+        from autoslo.nn.concurrent_query_dataset import (
             ConcurrentQueryDataset,
-        )
+        )  # noqa: PLC0415
 
         if not snapshots:
             return None
@@ -292,9 +292,9 @@ class ModelPolicy(RoutingPolicy):
     ) -> tuple[str, dict[str, float]] | None:
         """Inner implementation of counterfactual scoring (RPU lookup
         already set)."""
-        from autoslo.nn.concurrent_query_dataset import (  # noqa: PLC0415
+        from autoslo.nn.concurrent_query_dataset import (
             ConcurrentQueryDataset,
-        )
+        )  # noqa: PLC0415
 
         # -- Build neighbour maps (all-vs-all per cluster) ----------------
         cluster_to_base_to_neighbors: dict[str, dict[Query, list[Query]]] = {}
