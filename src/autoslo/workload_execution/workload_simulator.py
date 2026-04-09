@@ -95,7 +95,7 @@ class WorkloadSimulator:
         verbose: bool = True,
         export_video: bool = False,
         video_frame_duration: float = 1.0,
-        simulator_run_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         experiment_name: Optional[str] = None,
         overwrite_experiment: bool = False,
         managed_cluster_pool_config: Optional[ManagedClusterPoolConfig] = None,
@@ -139,10 +139,10 @@ class WorkloadSimulator:
 
         self._slo_metric = slo_metric
         self._slo_threshold = slo_threshold
+        self._slo_objective = SloObjective(slo_metric, slo_threshold)
         self._verbose = verbose
         self._export_video = export_video
         self._video_frame_duration = video_frame_duration
-        self._simulator_run_id = simulator_run_id
         self._experiment_name = experiment_name
         self._overwrite_experiment = overwrite_experiment
         self._schema_name = schema_name
@@ -173,7 +173,7 @@ class WorkloadSimulator:
             if rescale_factor is not None:
                 self._workload.rescale_rel_start_times(rescale_factor)
 
-        self._run_id = simulator_run_id or str(
+        self._run_id = run_id or str(
             int(datetime.now().timestamp() * 1000)
         )
 
@@ -263,7 +263,7 @@ class WorkloadSimulator:
                               abs_start_time_end, rescale_factor,
                               closed_loop
         basic_config        : schema_name, experiment_name,
-                              simulator_run_id, overwrite_experiment,
+                              run_id, overwrite_experiment,
                               iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold, slo_dict_filename
         routing_config      : routing_policy  ("model" | "round_robin" | "cache_aware"),
@@ -282,8 +282,8 @@ class WorkloadSimulator:
         experiment_name: Optional[str] = cfgu.getd(
             cfg, "basic_config.experiment_name"
         )
-        simulator_run_id: Optional[str] = cfgu.getd(
-            cfg, "basic_config.simulator_run_id"
+        run_id: Optional[str] = cfgu.getd(
+            cfg, "basic_config.run_id"
         )
         overwrite_experiment: bool = cfgu.getd(
             cfg, "basic_config.overwrite_experiment", False
@@ -376,7 +376,7 @@ class WorkloadSimulator:
             verbose=verbose,
             export_video=export_video,
             video_frame_duration=video_frame_duration,
-            simulator_run_id=simulator_run_id,
+            run_id=run_id,
             experiment_name=experiment_name,
             overwrite_experiment=overwrite_experiment,
             managed_cluster_pool_config=mcp,
@@ -483,16 +483,16 @@ class WorkloadSimulator:
             }
         dump(d, config_out_path)
 
-    def reset(self, simulator_run_id: Optional[str] = None) -> None:
+    def reset(self, run_id: Optional[str] = None) -> None:
         """
         Reset the simulator state for a new run, reusing the model and workload.
         This allows multiple samples to be run without reloading heavy objects.
 
         Parameters:
-            simulator_run_id: Optional run ID for the new run. If None, generates
+            run_id: Optional run ID for the new run. If None, generates
                 a new timestamp-based ID.
         """
-        self._run_id = simulator_run_id or str(
+        self._run_id = run_id or str(
             int(datetime.now().timestamp() * 1000)
         )
         self._seed = None
@@ -573,7 +573,7 @@ class WorkloadSimulator:
         if self._autoscaling_policy is None:
             policy = HeadroomPolicy(
                 slo_resolver=self._slo_resolver,
-                slo_metric=self._slo_metric,
+                slo_objective=self._slo_objective,
                 allowed_rpu_sizes=list(config.allowed_rpu_sizes),
             )
         else:
