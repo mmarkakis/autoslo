@@ -175,9 +175,7 @@ def _build_comparison_table(
 # ---------------------------------------------------------------------------
 
 
-def _collect_scenario_data(
-    scenario_dir: Path, scenario: str
-) -> dict[str, Any]:
+def _collect_scenario_data(scenario_dir: Path, scenario: str) -> dict[str, Any]:
     """Collect all metrics for a single scenario into a flat dict."""
     row: dict[str, Any] = {
         "scenario": scenario,
@@ -199,9 +197,7 @@ def _collect_scenario_data(
 
     # --- Final train/val summaries (Phase 7) ------------------------------
     for split in ("train", "val"):
-        summary = _load_yaml(
-            scenario_dir / "final" / f"{split}_summary.yml"
-        )
+        summary = _load_yaml(scenario_dir / "final" / f"{split}_summary.yml")
         if summary:
             for suffix in _VIOLATION_SUFFIXES:
                 row[f"final_{split}_{suffix}"] = summary.get(suffix)
@@ -209,9 +205,7 @@ def _collect_scenario_data(
 
     # --- Baseline train/val summaries (Phase 3) ---------------------------
     for split in ("train", "val"):
-        summary = _load_yaml(
-            scenario_dir / "baseline" / f"{split}_summary.yml"
-        )
+        summary = _load_yaml(scenario_dir / "baseline" / f"{split}_summary.yml")
         if summary:
             for suffix in _VIOLATION_SUFFIXES:
                 row[f"baseline_{split}_{suffix}"] = summary.get(suffix)
@@ -314,7 +308,10 @@ def _print_checkpoint_table(console: Console, rows: list[dict]) -> None:
         if not cps:
             table.add_row(r["label"], "0", "—", "—")
         else:
-            times = ", ".join(f"{cp.get('time_s', '?'):.0f}" for cp in cps)
+            times = ", ".join(
+                f"{cp.get('rel_time_s', cp.get('time_s', '?')):.0f}"
+                for cp in cps
+            )
             rpus = ", ".join(str(cp.get("min_rpus", "?")) for cp in cps)
             table.add_row(r["label"], str(len(cps)), times, rpus)
     console.print()
@@ -422,7 +419,7 @@ def _write_checkpoints_csv(rows: list[dict]) -> Path | None:
                     [
                         r["label"],
                         i,
-                        cp.get("time_s", ""),
+                        cp.get("time_s", cp.get("rel_time_s", "?")),
                         json.dumps(cp.get("min_rpus", [])),
                     ]
                 )
@@ -494,7 +491,11 @@ def _generate_scatter_plots(
     _METRIC_SPECS: list[tuple[str, str, str]] = [
         ("violation_rate", "SLO Violation Rate", "binary"),
         ("violation_amount_s", "Total SLO Violation Amount (s)", "absolute_s"),
-        ("violation_relative_mean", "Mean Relative SLO Violation\nPer query: max(0, (latency-slo)/slo)", "relative"),
+        (
+            "violation_relative_mean",
+            "Mean Relative SLO Violation\nPer query: max(0, (latency-slo)/slo)",
+            "relative",
+        ),
     ]
 
     static_colors = [

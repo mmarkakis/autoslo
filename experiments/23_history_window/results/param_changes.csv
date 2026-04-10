@@ -16,6 +16,7 @@ scenario,parameter,initial,final
 1 month,autoscaling_config.capacity_poll_interval_s,60.0,120.0
 1 month,autoscaling_config.eta_crit,0.05,0.2
 1 month,autoscaling_config.idle_periods_before_tear_down,20,10
+1 month,output_config.verbose,False,True
 1 month,runner_config.aws_config_path,data/__run_configs/aws.yml,
 1 month,runner_config.max_threads,512,
 1 month,runner_config.maxconns,1000,
