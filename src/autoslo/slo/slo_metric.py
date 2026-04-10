@@ -56,9 +56,7 @@ class SloMetric(Enum):
         """
         if len(violations) == 0:
             return 0.0
-        if self is SloMetric.BINARY:
-            return sum(violations) / len(violations) if violations else 0.0
-        return sum(violations)
+        return sum(violations) / len(violations) 
 
     def aggregate_batch(
         self, lat_and_slos: Iterable[tuple[float, float]]

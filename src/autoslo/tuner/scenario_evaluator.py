@@ -110,7 +110,7 @@ def _run_one_combination(
         combination_idx, num_workloads
     )
     local_overrides = {
-        "basic_config.simulator_run_id": f"workload_{workload_idx}",
+        "basic_config.run_id": f"workload_{workload_idx}",
         "output_config.out_dir": str(combination_out_dir),
         "output_config.verbose": True,
         "basic_config.experiment_name": None,
