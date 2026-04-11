@@ -1,4 +1,6 @@
 import logging
+import random
+from enum import Enum
 from typing import Optional
 
 from intervaltree import Interval  # type: ignore[import]
@@ -17,26 +19,28 @@ logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
+class QueryRouterPolicy(Enum):
+    USE_ICONQ_MODEL = "use_iconq_model"
+    ROUND_ROBIN = "round_robin"
+    UNIFORM_RANDOM = "uniform_random"
+
+
 class QueryRouter:
 
     def __init__(
         self,
         slo_resolver: SloResolver,
         slo_metric: SloMetric,
-        round_robin_cluster_names: Optional[list[str]] = None,
+        routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
     ):
         self._slo_resolver = slo_resolver
         self._slo_metric = slo_metric
-        self._round_robin_names = round_robin_cluster_names
+        self._routing_policy = routing_policy
         self._round_robin_idx = 0
 
     @property
-    def round_robin_names(self) -> Optional[list[str]]:
-        return self._round_robin_names
-
-    @property
-    def round_robin_idx(self) -> int:
-        return self._round_robin_idx
+    def routing_policy(self) -> QueryRouterPolicy:
+        return self._routing_policy
 
     def route_query(
         self,
@@ -181,14 +185,17 @@ class QueryRouter:
         self,
         marginal_viols_and_costs: dict[str, tuple[float, float]],
     ):
-        if self._round_robin_names:
-            cluster_name = self._round_robin_names[self._round_robin_idx]
-            self._round_robin_idx = (self._round_robin_idx + 1) % len(
-                self._round_robin_names
-            )
+        cluster_names = sorted(marginal_viols_and_costs.keys())
+
+        if self._routing_policy == QueryRouterPolicy.ROUND_ROBIN:
+            cluster_name = cluster_names[self._round_robin_idx % len(cluster_names)]
+            self._round_robin_idx += 1
             return cluster_name
 
-        cluster_names = list(marginal_viols_and_costs.keys())
+        if self._routing_policy == QueryRouterPolicy.UNIFORM_RANDOM:
+            return random.choice(cluster_names)
+
+        # USE_ICONQ_MODEL
         best = cluster_names[0]
         best_marginal_viol_and_cost = marginal_viols_and_costs[best]
 

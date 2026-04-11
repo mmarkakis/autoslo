@@ -16,7 +16,7 @@ workload_config:
 
 slo_config:
   slo_s: 30.0
-  slo_metric: relative
+  slo_metric: binary
   slo_threshold: 0.05
   slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
 
@@ -31,18 +31,17 @@ managed_cluster_pool_config:
   spin_up_delay_s: 300.0
 
 routing_config:
-  routing_policy: model
+  routing_policy: use_iconq_model
 
 autoscaling_config:
-  autoscaling_policy: headroom
-  eta_crit: 0.05
-  idle_periods_before_tear_down: 20
-  capacity_poll_interval_s: 60.0
   min_cluster_lifetime_s: 1200.0
+  idle_time_before_tear_down_s: 1200.0
+  observation_window_s: 300.0
+  min_observations_to_act: 5
   capacity_checkpoints: []
 
 output_config:
-  verbose: false
+  verbose: true
   export_video: false
 
 runner_config:
@@ -51,7 +50,7 @@ runner_config:
   aws_config_path: data/__run_configs/aws.yml
 
 tuner_config:
-  force: false
+  force: true
   parallelism: auto
   holdout_evaluation: true
 
@@ -71,9 +70,9 @@ tuner_config:
     min_rel_improvement_for_acceptance: 0.01
 
   autoscaling_param_sweep:
-    "autoscaling_config.eta_crit": [0.05, 0.10, 0.20]
-    "autoscaling_config.idle_periods_before_tear_down": [5, 10, 20]
-    "autoscaling_config.capacity_poll_interval_s": [30.0, 60.0, 120.0]
+    "autoscaling_config.observation_window_s": [60.0, 300.0, 600.0]
+    "autoscaling_config.min_observations_to_act": [3, 5, 10]
+    "autoscaling_config.idle_time_before_tear_down_s": [600.0, 1200.0, 2400.0]
     "autoscaling_config.min_cluster_lifetime_s": [1200.0, 3600.0]
   routing_param_sweep: {}
 
@@ -81,30 +80,30 @@ tuner_config:
     - label: "16 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [16]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "16+16 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [16, 16]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "32 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [32]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "32+32 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [32, 32]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "64 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [64]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"

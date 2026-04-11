@@ -39,7 +39,7 @@ from autoslo.clusters.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
-from autoslo.routing.query_router import QueryRouter
+from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -103,7 +103,7 @@ class WorkloadSimulator:
         self,
         config_dict: dict,
         workload_name: str,
-        round_robin_cluster_names: Optional[list[str]],
+        routing_policy: QueryRouterPolicy,
         slo_s: float,
         schema_name: str,
         iconq_model_id: str,
@@ -140,8 +140,8 @@ class WorkloadSimulator:
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
         self._closed_loop = closed_loop
 
-        # Store the round-robin cluster names for use in the query router.
-        self._round_robin_cluster_names = round_robin_cluster_names
+        # Routing policy for query dispatch.
+        self._routing_policy = routing_policy
 
         # Dynamic provisioning parameters.
         self._managed_cluster_pool_config = (
@@ -249,7 +249,7 @@ class WorkloadSimulator:
         self._router: QueryRouter = QueryRouter(
             slo_resolver=self._slo_resolver,
             slo_metric=self._slo_metric,
-            round_robin_cluster_names=self._round_robin_cluster_names,
+            routing_policy=self._routing_policy,
         )
 
         # Autoscaler
@@ -280,7 +280,7 @@ class WorkloadSimulator:
                 "autoscaling_config.min_observations_to_act",
                 5,
             ),
-            round_robin_cluster_names=self._round_robin_cluster_names,
+            routing_policy=self._routing_policy,
         )
 
         # Event queue
@@ -324,7 +324,7 @@ class WorkloadSimulator:
                               run_id, overwrite_experiment,
                               iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold, slo_dict_filename
-        routing_config      : round_robin_cluster_names,
+        routing_config      : routing_policy,
         managed_cluster_pool_config : initial_rpus, allowed_rpu_sizes,
                                 spin_up_delay_s
         autoscaling_config  : eta_crit, idle_periods_before_tear_down,
@@ -383,9 +383,10 @@ class WorkloadSimulator:
         )
 
         # ── shared policy / pool construction ────────────────────────────────
-        round_robin_cluster_names: Optional[list[str]] = cfgu.getd(
-            cfg, "routing_config.round_robin_cluster_names"
+        routing_policy_str: str = cfgu.getd(
+            cfg, "routing_config.routing_policy", "use_iconq_model"
         )
+        routing_policy = QueryRouterPolicy(routing_policy_str)
         mcp = build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
             mcp.allowed_rpu_sizes
@@ -411,7 +412,7 @@ class WorkloadSimulator:
         return cls(
             config_dict=cfg,
             workload_name=workload_name,
-            round_robin_cluster_names=round_robin_cluster_names,
+            routing_policy=routing_policy,
             slo_s=slo_s,
             schema_name=schema_name,
             iconq_model_id=iconq_model_id,
@@ -469,7 +470,7 @@ class WorkloadSimulator:
                 "run_id": self._run_id,
                 "experiment_name": self._experiment_name,
                 "workload_name": self._workload_name,
-                "round_robin_cluster_names": self._round_robin_cluster_names,
+                "routing_policy": self._routing_policy.value,
                 "iconq_model_id": self._iconq_model_id,
                 "slo_s": self._slo_s,
                 "slo_dict_filename": self._slo_dict_filename,
