@@ -6,7 +6,7 @@ from intervaltree import Interval  # type: ignore[import]
 
 import autoslo.utils.paths as pu
 from autoslo.blueprint_selection.query_timeline import QueryTimeline
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )

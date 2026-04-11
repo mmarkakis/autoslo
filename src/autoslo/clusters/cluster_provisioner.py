@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ import autoslo.utils.paths as pu
 from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
-from autoslo.blueprints.blueprint import Blueprint
+from autoslo.clusters.blueprint import Blueprint
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
 from autoslo.workload_definition.redset_workload import (
     RedsetWorkloadSamplingSpec,

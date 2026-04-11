@@ -5,7 +5,7 @@ from enum import Enum
 import copy
 from typing import TYPE_CHECKING, Any, Optional
 
-from autoslo.blueprints.cluster import Cluster, ClusterState
+from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_metric import SloMetric

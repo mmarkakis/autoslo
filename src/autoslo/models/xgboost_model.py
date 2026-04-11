@@ -245,7 +245,7 @@ class XGBoostModel:
                 if featurization is None or len(featurization) == 0:
                     continue
                 cluster_name = trace.cluster_name_from_query_id(query_id)
-                from autoslo.blueprints.cluster import Cluster
+                from autoslo.clusters.cluster import Cluster
 
                 cluster_rpu = (
                     0

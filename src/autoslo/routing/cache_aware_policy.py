@@ -34,7 +34,7 @@ from autoslo.workload_definition.query import QueryTextId
 
 if TYPE_CHECKING:
     from autoslo.models.iconq_model import IconqModel
-    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+    from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 
 logger = logging.getLogger(__name__)
 

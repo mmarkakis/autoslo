@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from intervaltree import Interval
 
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 from autoslo.slo.slo_objective import SloMetric
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette

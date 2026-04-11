@@ -11,7 +11,7 @@ import yaml
 
 import autoslo.utils.paralellism as plu
 import autoslo.utils.paths as pu
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_resolver import SloResolver

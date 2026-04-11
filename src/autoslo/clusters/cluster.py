@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import ClassVar, Optional
 
-from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query
 

@@ -15,18 +15,18 @@ from tqdm.auto import tqdm
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
-from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-from autoslo.capacity.autoscaler import Autoscaler
+from autoslo.clusters.cluster_conn_info import ClusterConnInfo
+from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingPolicy,
     CapacityCheckpoint,
     NoOpPolicy,
 )
-from autoslo.capacity.cluster_provisioner import (
+from autoslo.clusters.cluster_provisioner import (
     ClusterProvisioner,
     SimulatedProvisioner,
 )
-from autoslo.routing.managed_cluster_pool import (
+from autoslo.clusters.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
