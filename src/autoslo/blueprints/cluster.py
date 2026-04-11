@@ -59,6 +59,7 @@ class Cluster:
     _new_counter: ClassVar[itertools.count] = itertools.count()
 
     # --- Identity (set once) ---------------------------------------------
+    creation_time_s: float
     rpu: int
     name: str
     conn_info: Optional[ClusterConnInfo] = field(default=None, repr=False)
@@ -66,14 +67,14 @@ class Cluster:
 
     # --- Mutable state ----------------------------------------
     #
-    # Invariant: _queries.keys() == _neighbor_map.keys()
+    # Invariant: queries.keys() == _neighbor_ids.keys()
     #
     state: ClusterState = ClusterState.PENDING
     predicted_ready_time_s: Optional[float] = None
     billing_window_start_s: Optional[float] = field(default=None, repr=False)
 
-    _queries: dict[str, "Query"] = field(default_factory=dict, repr=False)
-    neighbor_map: dict[str, list["Query"]] = field(
+    queries: dict[str, Query] = field(default_factory=dict, repr=False)
+    id_to_neighbors: dict[str, list[Query]] = field(
         default_factory=dict, repr=False
     )
 
@@ -81,6 +82,7 @@ class Cluster:
 
     def __init__(
         self,
+        creation_time_s: float,
         rpu: int,
         name: str | None = None,
         conn_info: Optional[ClusterConnInfo] = None,
@@ -100,6 +102,7 @@ class Cluster:
             raise ValueError(
                 f"Cluster name {name!r} must start with 'cluster_{rpu}_'."
             )
+        self.creation_time_s = creation_time_s
         self.rpu = rpu
         self.name = name
         self.conn_info = conn_info
@@ -107,9 +110,10 @@ class Cluster:
         self.state = state
         self.predicted_ready_time_s = predicted_ready_time_s
         self.billing_window_start_s = billing_window_start_s
+        self.most_recent_query_completion_time_s: float = self.creation_time_s
 
-        self._queries = {}
-        self.neighbor_map = {}
+        self.queries = {}
+        self.id_to_neighbors = {}
 
     def clone(self) -> Cluster:
         """
@@ -117,6 +121,7 @@ class Cluster:
         immutable/frozen dataclasses.
         """
         c = Cluster(
+            creation_time_s=self.creation_time_s,
             rpu=self.rpu,
             name=self.name,
             conn_info=self.conn_info,
@@ -125,9 +130,9 @@ class Cluster:
             predicted_ready_time_s=self.predicted_ready_time_s,
             billing_window_start_s=self.billing_window_start_s,
         )
-        c._queries = dict(self._queries)
-        c.neighbor_map = {
-            qid: list(nbs) for qid, nbs in self.neighbor_map.items()
+        c.queries = dict(self.queries)
+        c.id_to_neighbors = {
+            qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
         }
         return c
 
@@ -141,11 +146,11 @@ class Cluster:
     @property
     def active_queries(self) -> list["Query"]:
         """Currently-active queries (order not guaranteed)."""
-        return list(self._queries.values())
+        return list(self.queries.values())
 
     @property
-    def active_query_ids(self) -> set[str]:
-        return set(self._queries.keys())
+    def active_query_ids(self) -> list[str]:
+        return list(self.queries.keys())
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -176,12 +181,12 @@ class Cluster:
         new_query_id = query.query_id
 
         # Update neighbor maps
-        self.neighbor_map[new_query_id] = self.active_queries
+        self.id_to_neighbors[new_query_id] = self.active_queries
         for active_query_id in self.active_query_ids:
-            self.neighbor_map[active_query_id].append(query)
+            self.id_to_neighbors[active_query_id].append(query)
 
         # Mark the query as active and set billing window start.
-        self._queries[new_query_id] = query
+        self.queries[new_query_id] = query
         if self.billing_window_start_s is None:
             self.billing_window_start_s = query.rel_start_time_s
 
@@ -190,7 +195,7 @@ class Cluster:
         query_id: str,
         current_time_s: float,
         min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
-    ) -> "Query":
+    ) -> tuple[Query, float]:
         """
         Remove a query from active tracking.
 
@@ -205,7 +210,7 @@ class Cluster:
         Returns:
         --------
         query: The finished Query object.
-        billing_interval: If a billing interval was completed, its endpoints.
+        latency_s: The latency of the query in seconds.
         """
 
         if query_id not in self.active_query_ids:
@@ -214,15 +219,66 @@ class Cluster:
                 f"{self.name}."
             )
 
-        q = self._queries.pop(query_id)
-        self.neighbor_map.pop(query_id, None)
+        q = self.queries.pop(query_id)
+        self.id_to_neighbors.pop(query_id, None)
 
         if (self.billing_window_start_s is not None) and (
             (current_time_s - self.billing_window_start_s)
             >= min_billing_window_size_s
         ):
             self.billing_window_start_s = None
-        return q
+
+        self.most_recent_query_completion_time_s = current_time_s
+        return q, current_time_s - q.rel_start_time_s
+
+    def finish_queries_until(
+        self,
+        current_time_s: float,
+        predicted_latencies: dict[str, float],
+        min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
+    ) -> list[tuple[Query, float]]:
+        """
+        Finish all queries that have completed by the given time.
+
+        Parameters:
+        -----------
+        current_time_s: The current time in seconds.
+        min_billing_window_size_s: The minimum size of a billing window. If the
+            time since the start of the current billing window exceeds this
+            threshold, the billing window is closed.
+        """
+        if not set(self.active_query_ids).issubset(predicted_latencies.keys()):
+            breakpoint()
+        times_and_ids_of_finished_queries = []
+        for qid, q in self.queries.items():
+            predicted_completion_time_s = (
+                q.rel_start_time_s + predicted_latencies[qid]
+            )
+            if predicted_completion_time_s <= current_time_s:
+                times_and_ids_of_finished_queries.append(
+                    (predicted_completion_time_s, qid)
+                )
+        times_and_ids_of_finished_queries.sort()
+
+        qs_and_latencies = []
+        for (
+            predicted_completion_time_s,
+            qid,
+        ) in times_and_ids_of_finished_queries:
+            qs_and_latencies.append(
+                self.finish_query(
+                    qid,
+                    predicted_completion_time_s,
+                    min_billing_window_size_s=min_billing_window_size_s,
+                )
+            )
+        return qs_and_latencies
+
+    def queries_to_neighbors(self) -> dict[Query, list["Query"]]:
+        """Return a mapping from each active query to its active neighbors."""
+        return {
+            self.queries[qid]: nbs for qid, nbs in self.id_to_neighbors.items()
+        }
 
     # --- Static helpers --------------------------------------------------
 
