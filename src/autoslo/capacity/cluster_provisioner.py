@@ -109,7 +109,7 @@ class SimulatedProvisioner(ClusterProvisioner):
         -------
         A new ``Cluster`` with auto-generated name and no connection info.
         """
-        cluster = Cluster.new(rpu=rpu)
+        cluster = Cluster(rpu=rpu, creation_time_s=current_time_s)
         self._spun_up.append((cluster, current_time_s))
         logger.debug(
             "SimulatedProvisioner: spun up %s (%d RPU) at time %.2f",
