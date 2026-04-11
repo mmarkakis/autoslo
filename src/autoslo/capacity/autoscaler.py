@@ -1,259 +1,448 @@
-"""
-autoscaler.py
--------------
-Thin coordinator between an :class:`AutoscalingPolicy` and a
-:class:`~autoslo.routing.managed_cluster_pool.ManagedClusterPool`.
-
-Analogous to :class:`~autoslo.routing.router.Router` for routing:
-the ``Autoscaler`` receives events from the orchestrator, delegates
-to the policy, and executes the returned
-:class:`~autoslo.capacity.autoscaling_policy.AutoscalingAction` via
-callbacks.
-"""
-
-from __future__ import annotations
-
 import logging
-from collections import Counter
-from typing import TYPE_CHECKING, Callable
+from collections import deque
+from dataclasses import dataclass
+from enum import Enum
+import copy
+from typing import TYPE_CHECKING, Any, Optional
 
-from autoslo.capacity.autoscaling_policy import (
-    AutoscalingAction,
-    AutoscalingPolicy,
-    CapacityCheckpoint,
-)
-from autoslo.routing.routing_core import RoutingResult
-from autoslo.utils.structured_log import emit_structured, LOGGER_NAME
-
-if TYPE_CHECKING:
-    from autoslo.routing.managed_cluster_pool import ManagedClusterPool
+from autoslo.blueprints.cluster import Cluster, ClusterState
+from autoslo.models.iconq_model import IconqModel
+from autoslo.routing.query_router import QueryRouter
+from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
+from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
+from autoslo.workload_definition.query import Query
+from autoslo.utils.billing import Billing
+from intervaltree import Interval  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
-class Autoscaler:
-    """Coordinator that dispatches events to an autoscaling policy and
-    executes the returned actions via callbacks.
+class AutoscalingActionType(Enum):
+    SPIN_UP = "spin_up"
+    TEAR_DOWN = "tear_down"
+
+
+@dataclass(frozen=True)
+class AutoscalingAction:
+    """
+    Returned back to the runner/simulator to indicate what action to take.
+    """
+
+    action_type: AutoscalingActionType
+    reason: str
+    rpu: Optional[int] = None  # For spin-up actions
+    cluster_name: Optional[str] = None  # For tear-down actions
+
+
+@dataclass(frozen=True)
+class CapacityCheckpoint:
+    """Declarative capacity checkpoint.
+
+    At ``rel_time_s`` (relative to workload start) the system reconciles
+    the declared RPU multiset against the current (READY + PENDING)
+    clusters and spins up only the gap.
 
     Parameters
     ----------
-    policy :
-        Determines *when* and *how* to spin up / tear down clusters.
-    pool :
-        Live cluster pool (passed to the policy via ``on_attach``).
-    on_spin_up :
-        Callback ``(reason: str, rpu: int) -> None`` invoked for each
-        spin-up request in a returned action.
-    on_tear_down :
-        Callback ``(cluster_name: str) -> None`` invoked for each
-        tear-down request in a returned action.
+    rel_time_s :
+        Trigger time in seconds from the start of the workload.
+    min_rpus :
+        Desired RPU multiset.  Each element is an RPU size that must
+        be present (exact matching, not total-capacity).
+    """
+
+    rel_time_s: float
+    min_rpus: tuple[int, ...]
+
+
+class AutoscalerStub:
+    """Stub autoscaler that performs no scaling actions."""
+
+    def __init__(self):
+        pass
+
+    def inform(
+        self,
+        current_time_s: float,
+        pool_snapshot: dict[str, Cluster],
+    ) -> list[AutoscalingAction]:
+        return []
+
+
+class Autoscaler:
+    """
+    Coordinator that dispatches events to an autoscaling policy and
+    executes the returned actions via callbacks.
     """
 
     def __init__(
         self,
-        policy: AutoscalingPolicy,
-        pool: "ManagedClusterPool",
-        on_spin_up: Callable[[str, int], None],
-        on_tear_down: Callable[[str], None],
-        capacity_checkpoints: list[CapacityCheckpoint] | None = None,
+        slo_resolver: SloResolver,
+        slo_objective: SloObjective,
+        allowed_rpu_sizes: list[int],
+        iconq_model: IconqModel,
+        min_cluster_lifetime_s: float = 1200.0,
+        idle_time_before_tear_down_s: float = 300.0,  # TODO: should clusters note start of idle period?
+        observation_window_s: float = 120.0,
+        min_observations_to_act: int = 5,
+        round_robin_cluster_names: Optional[list[str]] = None,
     ) -> None:
-        self._policy = policy
-        self._pool = pool
-        self._on_spin_up = on_spin_up
-        self._on_tear_down = on_tear_down
-        self._last_event_time_s: float = 0.0
+        self._slo_resolver = slo_resolver
+        self._slo_objective = slo_objective
+        self._allowed_rpu_sizes = sorted(allowed_rpu_sizes)
+        self._iconq_model = iconq_model
+        self._round_robin_cluster_names = round_robin_cluster_names
+        self._min_cluster_lifetime_s = min_cluster_lifetime_s
+        self._idle_time_before_tear_down_s = idle_time_before_tear_down_s
+        self._observation_window_s = observation_window_s
+        self._min_observations_to_act = min_observations_to_act
 
-        # Capacity checkpoints — sorted by trigger time.
-        self._checkpoints: list[CapacityCheckpoint] = sorted(
-            capacity_checkpoints or [], key=lambda cp: cp.rel_time_s
-        )
-        self._next_checkpoint_idx: int = 0
-
-        # Attach policy to pool (like Router calls policy.on_attach).
-        self._policy.on_attach(pool)
+        # Internal mutable state
+        self._window_start_time_s: Optional[float] = None
+        self._snapshot_at_window_start: Optional[dict[str, Cluster]] = None
+        self._predicted_latencies_at_window_start: Optional[
+            dict[str, dict[str, float]]
+        ] = None
+        self._window_queries: list[Query] = []
 
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+    @property
+    def slo_resolver(self) -> SloResolver:
+        return self._slo_resolver
 
     @property
-    def policy(self) -> AutoscalingPolicy:
-        return self._policy
+    def slo_objective(self) -> SloObjective:
+        return self._slo_objective
 
     @property
-    def checkpoints(self) -> list[CapacityCheckpoint]:
-        """The capacity checkpoints (sorted by trigger time)."""
-        return list(self._checkpoints)
+    def allowed_rpu_sizes(self) -> list[int]:
+        return self._allowed_rpu_sizes
+
+    @property
+    def iconq_model(self) -> IconqModel:
+        return self._iconq_model
+
+    @property
+    def min_cluster_lifetime_s(self) -> float:
+        return self._min_cluster_lifetime_s
+
+    @property
+    def idle_time_before_tear_down_s(self) -> float:
+        return self._idle_time_before_tear_down_s
+
+    @property
+    def observation_window_s(self) -> float:
+        return self._observation_window_s
+
+    @property
+    def min_observations_to_act(self) -> int:
+        return self._min_observations_to_act
 
     # ------------------------------------------------------------------
-    # Event dispatch
+    # Public interface
     # ------------------------------------------------------------------
 
-    def on_routing_result(
+    def _reset_window(
         self,
-        result: RoutingResult,
+        window_start_time: float,
+        snapshot: dict[str, Cluster],
+        predicted_latencies: dict[str, dict[str, float]],
+    ) -> None:
+        """Clear the routing window and all associated state."""
+        self._window_start_time_s = window_start_time
+        self._snapshot_at_window_start = snapshot
+        self._predicted_latencies_at_window_start = copy.deepcopy(
+            predicted_latencies
+        )
+        self._window_queries = []
+
+    def inform(
+        self,
         current_time_s: float,
-        current_latencies: dict[str, float] | None = None,
-    ) -> None:
-        """Forward a routing result to the policy and execute actions."""
-        self._last_event_time_s = current_time_s
-        action = self._policy.on_routing_result(
-            result, current_time_s, current_latencies
-        )
-        self._execute(action)
+        current_query: Query,
+        pool_snapshot_with_current_query: dict[str, Cluster],
+        predicted_latencies: dict[str, dict[str, float]],
+    ) -> list[AutoscalingAction]:
 
-    def on_query_complete(
-        self, query_id: str, cluster_name: str, current_time_s: float
-    ) -> None:
-        """Forward a query-completion event and execute actions."""
-        self._last_event_time_s = current_time_s
-        action = self._policy.on_query_complete(
-            query_id, cluster_name, current_time_s
-        )
-        self._execute(action)
+        actions: list[AutoscalingAction] = []
 
-    def on_time_advance(self, current_time_s: float) -> None:
-        """Forward a time-advance tick and execute actions."""
-        self._last_event_time_s = current_time_s
-        action = self._policy.on_time_advance(current_time_s)
-        self._execute(action)
-
-    def notify_cluster_ready(
-        self, cluster_name: str, rpu: int, ready_time_s: float
-    ) -> None:
-        """Inform the policy that a pending cluster has become READY."""
-        self._policy.on_cluster_ready(cluster_name, rpu, ready_time_s)
-
-    # ------------------------------------------------------------------
-    # Capacity checkpoints
-    # ------------------------------------------------------------------
-
-    def reconcile_checkpoints_up_to(
-        self, current_time_s: float, reference_time_s: float = 0.0
-    ) -> None:
-        """Process all capacity checkpoints with
-        ``reference_time_s + cp.rel_time_s <= current_time_s``.
-
-        For each checkpoint, computes the gap between the desired RPU
-        multiset and the current (READY + PENDING) clusters, then fires
-        spin-ups for the difference through the standard ``_on_spin_up``
-        callback.
-
-        Parameters
-        ----------
-        current_time_s :
-            Absolute time in seconds. All checkpoints with
-            ``reference_time_s + cp.rel_time_s <= current_time_s`` will be
-            reconciled.
-        reference_time_s :
-            Absolute time in seconds corresponding to workload start.  Used for
-            structured logging of spin-up events.
-        """
-        current_rel_time_s = current_time_s - reference_time_s
-        while (
-            self._next_checkpoint_idx < len(self._checkpoints)
-            and self._checkpoints[self._next_checkpoint_idx].rel_time_s
-            <= current_rel_time_s
+        # Start new window if needed.
+        if (self._window_start_time_s is None) or (
+            (current_time_s - self._window_start_time_s)
+            > self._observation_window_s
         ):
-            cp = self._checkpoints[self._next_checkpoint_idx]
-            self._next_checkpoint_idx += 1
-            self._reconcile_one(cp, current_time_s)
-
-    def _reconcile_one(
-        self,
-        cp: CapacityCheckpoint,
-        current_time_s: float,
-    ) -> None:
-        """Reconcile a single checkpoint against the live pool state."""
-        current = Counter(self._pool.cluster_rpu_multiset)
-        desired = Counter(cp.min_rpus)
-        gap = desired - current  # keeps only positive differences
-
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": current_time_s,
-                    "event_type": "capacity_checkpoint_reconciled",
-                    "source": "autoscaler",
-                    "checkpoint_rel_time_s": cp.rel_time_s,
-                    "desired_rpus": list(cp.min_rpus),
-                    "current_rpus": sorted(current.elements()),
-                    "gap_spin_ups": str(dict(gap)) if gap else "",
-                }
+            self._reset_window(
+                current_time_s,
+                pool_snapshot_with_current_query,
+                predicted_latencies,
             )
+            return actions
 
-        if not gap:
-            logger.debug(
-                "Checkpoint t=%.1f: already satisfied (current %s).",
-                cp.rel_time_s,
-                dict(current),
-            )
-            return
+        # Add the current query to the existing window.
+        self._window_queries.append(current_query)
+        if len(self._window_queries) < self._min_observations_to_act:
+            return actions
 
-        logger.debug(
-            "Checkpoint t=%.1f: gap %s — spinning up.",
-            cp.rel_time_s,
-            dict(gap),
+        # Determine whether to take any spinup actions.
+        spin_up_actions = self.consider_spin_up(
+            current_time_s,
+            pool_snapshot_with_current_query,
+            predicted_latencies,
         )
-        self._last_event_time_s = current_time_s
-        for rpu, count in sorted(gap.items()):
-            for _ in range(count):
-                try:
-                    self._on_spin_up(
-                        f"capacity_checkpoint@t={cp.rel_time_s}", rpu
+        actions.extend(spin_up_actions)
+
+        # Determine whether to take any teardown actions.
+        tear_down_actions = self.consider_teardown(
+            current_time_s, pool_snapshot_with_current_query
+        )
+        actions.extend(tear_down_actions)
+
+        # If acting, reset the window so that future decisions are based on
+        # post-action evidence.
+        if len(actions) > 0:
+            self._reset_window(
+                current_time_s,
+                pool_snapshot_with_current_query,
+                predicted_latencies,
+            )
+
+        return actions
+
+    def consider_spin_up(
+        self,
+        current_time_s: float,
+        pool_snapshot_with_current_query: dict[str, Cluster],
+        predicted_latencies: dict[str, dict[str, float]],
+    ) -> list[AutoscalingAction]:
+        """
+        Recommend spinning up a cluster if both are true:
+        1. The window has at least ``min_observations_to_act`` queries.
+        2. The SloObjective is being violated on the current snapshot.
+        3. There are no other ongoing spinups.
+
+        Use the window to determine the size of the window to spin up.
+        """
+
+        # Determine if we have enough observations to act.
+        if len(self._window_queries) < self._min_observations_to_act:
+            return []
+
+        # Determine if there are ongoing spinups.
+        for cluster in pool_snapshot_with_current_query.values():
+            if cluster.state == ClusterState.PENDING:
+                return []
+
+        # Determine if the SLO objective is met.
+        lat_and_slos = []
+        for cluster_name, cluster in pool_snapshot_with_current_query.items():
+            for q in cluster.active_queries:
+                pred_lat = predicted_latencies[cluster_name][q.query_id]
+                slo = self._slo_resolver.resolve(q.query_text_id)
+                lat_and_slos.append((pred_lat, slo))
+        slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
+            lat_and_slos
+        )
+        slo_is_met = self._slo_objective.is_met_from_aggregated(
+            slo_metric_value
+        )
+        if slo_is_met:
+            return []
+
+        # Find the best size to spin up.
+        best_rpu = self._select_rpu(current_time_s)
+        action = AutoscalingAction(
+            action_type=AutoscalingActionType.SPIN_UP,
+            reason=(
+                f"num_queries_in_window={len(self._window_queries)}, "
+                f"slo_metric={self._slo_objective.slo_metric}, "
+                f"slo_metric_value={slo_metric_value:.4f}, "
+                f"slo_threshold={self._slo_objective.slo_threshold:.4f}"
+            ),
+            rpu=best_rpu,
+        )
+        return [action]
+
+    def consider_teardown(
+        self,
+        current_time_s: float,
+        pool_snapshot_with_current_query: dict[str, Cluster],
+    ) -> list[AutoscalingAction]:
+        """
+        Recommend tearing down any cluster(s) that have:
+        1. Been idle for at least ``idle_time_before_tear_down_s`` seconds, and
+        2. Exceeded the minimum cluster lifetime of ``min_cluster_lifetime_s``.
+        """
+
+        tear_down_actions: list[AutoscalingAction] = []
+
+        for cluster_name, cluster in pool_snapshot_with_current_query.items():
+            if (cluster.state != ClusterState.READY) or (
+                len(cluster.active_query_ids) > 0
+            ):
+                continue
+
+            idle_time_s = (
+                current_time_s - cluster.most_recent_query_completion_time_s
+            )
+            lifetime_s = current_time_s - cluster.creation_time_s
+
+            if (idle_time_s >= self._idle_time_before_tear_down_s) and (
+                lifetime_s >= self._min_cluster_lifetime_s
+            ):
+                action = AutoscalingAction(
+                    action_type=AutoscalingActionType.TEAR_DOWN,
+                    reason=(
+                        f"creation_time: {cluster.creation_time_s:.0f}s, "
+                        f"most_recent_query_completion_time: "
+                        f"{cluster.most_recent_query_completion_time_s:.0f}s, "
+                        f"current_time: {current_time_s:.0f}s, "
+                    ),
+                    cluster_name=cluster_name,
+                )
+                tear_down_actions.append(action)
+
+                if _has_structured():
+                    emit_structured(
+                        {
+                            "timestamp": current_time_s,
+                            "event_type": "tear_down_decision",
+                            "source": "Autoscaler",
+                            "cluster_name": cluster_name,
+                            "reason": action.reason,
+                        }
                     )
-                    if _has_structured():
-                        emit_structured(
-                            {
-                                "timestamp": current_time_s,
-                                "event_type": "autoscaler_spin_up",
-                                "source": "autoscaler",
-                                "rpu": rpu,
-                                "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
-                            }
+
+        return tear_down_actions
+
+    def _select_rpu(self, current_time_s: float) -> int:
+        """
+        Select the RPU size for a new cluster based on the current window.
+        """
+
+        best_rpu: int = 4  # placeholder
+        best_viol_and_cost: tuple[float, float] = (float("inf"), float("inf"))
+
+        for rpu in self._allowed_rpu_sizes:
+            slo_viol_and_cost = self._counterfactual_replay(rpu, current_time_s)
+
+            if self._slo_objective.is_b_better(
+                best_viol_and_cost, slo_viol_and_cost
+            ):
+                best_rpu = rpu
+                best_viol_and_cost = slo_viol_and_cost
+
+            if _has_structured():
+                emit_structured(
+                    {
+                        "timestamp": current_time_s,
+                        "event_type": "rpu_counterfactual",
+                        "source": "headroom_policy",
+                        "candidate_rpu": rpu,
+                        "metric_and_cost": f"{slo_viol_and_cost[0]:.4f}, {slo_viol_and_cost[1]:.4f}",
+                        "slo_threshold": self._slo_objective.slo_threshold,
+                    }
+                )
+
+        return best_rpu
+
+    def _counterfactual_replay(
+        self,
+        candidate_rpu: int,
+        current_time_s: float,
+    ) -> tuple[float, float]:
+        """Replay the routing window with a hypothetical new cluster of
+        *candidate_rpu* and return the aggregate SLO-violation metric and cost.
+        """
+        assert self._snapshot_at_window_start is not None
+        assert self._predicted_latencies_at_window_start is not None
+
+        # Set up.
+        local_snapshot = {
+            cluster_name: cluster.clone()
+            for cluster_name, cluster in self._snapshot_at_window_start.items()
+        }
+        hyp_cluster_name = f"cluster_{candidate_rpu}_hypothetical"
+        local_snapshot[hyp_cluster_name] = Cluster(
+            creation_time_s=current_time_s,
+            rpu=candidate_rpu,
+            name=hyp_cluster_name,
+        )
+        billed_intervals: dict[str, list[Interval]] = {}
+        for cluster_name, cluster in local_snapshot.items():
+            billed_intervals[cluster_name] = []
+            if cluster.billing_window_start_s is not None:
+                billed_intervals[cluster_name].append(
+                    Interval(
+                        begin=cluster.billing_window_start_s, end=current_time_s
+                    )
+                )
+        predicted_latencies = copy.deepcopy(
+            self._predicted_latencies_at_window_start
+        )        
+        router = QueryRouter(
+            slo_resolver=self._slo_resolver,
+            slo_metric=self._slo_objective.slo_metric,
+            round_robin_cluster_names=self._round_robin_cluster_names,
+        )
+
+        # Sequential replay.
+        lat_and_slos = []
+        for query in self._window_queries:
+            time_s = query.rel_start_time_s
+
+            # Expire any finished queries.
+            for cluster_name, cluster in local_snapshot.items():
+                qs_and_latencies = cluster.finish_queries_until(
+                    current_time_s=time_s,
+                    predicted_latencies=predicted_latencies.get(
+                        cluster_name, {}
+                    ),
+                )
+                if len(qs_and_latencies) > 0:
+                    for q, latency_s in qs_and_latencies:
+                        slo = self._slo_resolver.resolve(q.query_text_id)
+                        lat_and_slos.append((latency_s, slo))
+
+                        billed_intervals[cluster_name].append(
+                            Interval(begin=q.rel_start_time_s, end=latency_s)
                         )
-                except Exception:
-                    logger.exception("Checkpoint spin-up failed (rpu=%d)", rpu)
 
-    # ------------------------------------------------------------------
-    # Action execution
-    # ------------------------------------------------------------------
+            # Route and update state for the incoming query.
+            snapshot_for_routing = {
+                cluster_name: cluster.clone()
+                for cluster_name, cluster in local_snapshot.items()
+            }
+            selected_cluster_name, new_predicted_latencies_for_cluster = (
+                router.route_query(
+                    query=query,
+                    clusters=snapshot_for_routing,
+                    initial_predicted_latencies=predicted_latencies,
+                    iconq_model=self._iconq_model,
+                    current_time_s=time_s,
+                )
+            )
+            local_snapshot[selected_cluster_name].add_query(query)
+            predicted_latencies[selected_cluster_name] = (
+                new_predicted_latencies_for_cluster
+            )
 
-    def _execute(self, action: AutoscalingAction) -> None:
-        """Execute all requests in an :class:`AutoscalingAction`."""
-        for spinup_req in action.spin_ups:
-            try:
-                self._on_spin_up(spinup_req.reason, spinup_req.rpu)
-                if _has_structured():
-                    emit_structured(
-                        {
-                            "timestamp": self._last_event_time_s,
-                            "event_type": "autoscaler_spin_up",
-                            "source": "autoscaler",
-                            "rpu": spinup_req.rpu,
-                            "reason": spinup_req.reason,
-                        }
-                    )
-            except Exception:
-                logger.exception(
-                    "on_spin_up callback failed (rpu=%d)", spinup_req.rpu
-                )
-        for tear_down_req in action.tear_downs:
-            try:
-                self._on_tear_down(tear_down_req.cluster_name)
-                if _has_structured():
-                    emit_structured(
-                        {
-                            "timestamp": self._last_event_time_s,
-                            "event_type": "autoscaler_tear_down",
-                            "source": "autoscaler",
-                            "cluster_name": tear_down_req.cluster_name,
-                            "reason": tear_down_req.reason,
-                        }
-                    )
-            except Exception:
-                logger.exception(
-                    "on_tear_down callback failed (cluster=%s)",
-                    tear_down_req.cluster_name,
-                )
+        # Also add the lat and slo from any queries still active at the end of
+        # the window.
+        for cluster_name, cluster in local_snapshot.items():
+            for q in cluster.active_queries:
+                pred_lat = predicted_latencies[cluster_name][q.query_id]
+                slo = self._slo_resolver.resolve(q.query_text_id)
+                lat_and_slos.append((pred_lat, slo))
+
+        aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
+        total_cost = sum(
+            cluster.cost_per_second
+            * Billing.billed_s(billed_intervals.get(cluster_name, []))
+            for cluster_name, cluster in local_snapshot.items()
+        )
+        return aggregate, total_cost
