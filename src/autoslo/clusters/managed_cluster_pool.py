@@ -36,7 +36,7 @@ from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
-
+import autoslo.utils.config as cfgu
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
@@ -73,6 +73,21 @@ class ManagedClusterPoolConfig:
     allowed_rpu_sizes: tuple[int, ...] = tuple(Cluster.ALL_ALLOWED_RPU_SIZES)
     spin_up_delay_s: float = 120.0
 
+    @staticmethod
+    def parse_from_cfg(
+        cfg: dict,
+    ) -> ManagedClusterPoolConfig:
+        mcp_raw: Optional[dict] = cfgu.getd(cfg, "managed_cluster_pool_config")
+        if mcp_raw is None:
+            return ManagedClusterPoolConfig()  # defaults
+        mcp_raw = dict(mcp_raw)  # shallow copy — don't mutate the caller's dict
+        if "initial_rpus" in mcp_raw and isinstance(mcp_raw["initial_rpus"], list):
+            mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
+        if "allowed_rpu_sizes" in mcp_raw and isinstance(
+            mcp_raw["allowed_rpu_sizes"], list
+        ):
+            mcp_raw["allowed_rpu_sizes"] = tuple(mcp_raw["allowed_rpu_sizes"])
+        return ManagedClusterPoolConfig(**mcp_raw)
 
 class ManagedClusterPool:
     """Unified, thread-safe cluster pool with query bookkeeping.
