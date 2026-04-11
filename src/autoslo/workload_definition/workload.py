@@ -188,7 +188,7 @@ class Workload:
         self._queries_cache = None
         return self
 
-    def rescale_rel_start_times(self, factor: float) -> Workload:
+    def rescale_rel_start_times(self, factor: Optional[float]) -> Workload:
         """
         Rescale the relative start times (``rel_start_time_s``) by a constant
         factor.
@@ -202,7 +202,8 @@ class Workload:
         factor:
             The constant factor by which to multiply all relative start times.
         """
-        self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
+        if factor is not None:
+            self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
         self._queries_cache = None
 
         return self

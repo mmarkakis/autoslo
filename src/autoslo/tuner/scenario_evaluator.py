@@ -120,7 +120,7 @@ def _run_one_combination(
     # Build the simulator with the workload injected at construction time
     # so that all internal counters / tracking state are initialised
     # with the correct workload from the start.
-    sim = WorkloadSimulator.from_config_dict(config, workload=workload)
+    sim = WorkloadSimulator(config, workload=workload)
 
     # Build a progress callback that writes into the shared dict.
     def _progress_cb(current: int, total: int) -> None:
