@@ -124,7 +124,7 @@ class Billing:
         query, considering the billing threshold and granularity.
 
         Parameters:
-            query_intervals: Tthe execution intervals of the queries.
+            query_intervals: The execution intervals of the queries.
             threshold_s: The billing threshold in seconds. This is the minimum
                 time that will be billed - i.e. all smaller intervals are
                 rounded up to this threshold.

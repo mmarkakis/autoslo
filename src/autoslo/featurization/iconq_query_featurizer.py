@@ -88,7 +88,7 @@ class IconqQueryFeaturizer:
         ] = {}
         # Lazy numpy cache: populated on first call to
         # featurize_from_query_text_id_as_numpy.
-        self._np_featurization_cache: dict[str, np.ndarray] = {}
+        self._np_featurization_cache: dict[QueryTextId, np.ndarray] = {}
 
         if precomputed_top_operators is not None:
             self._top_operators = precomputed_top_operators
@@ -398,7 +398,7 @@ class IconqQueryFeaturizer:
         Returns:
             The featurization as a 1-D float32 numpy array of shape (num_dims,).
         """
-        if query_text_id.value not in self._np_featurization_cache:
+        if query_text_id not in self._np_featurization_cache:
             self._np_featurization_cache[query_text_id] = np.array(
                 self.featurize_from_query_text_id(query_text_id),
                 dtype=np.float32,

@@ -3,7 +3,7 @@ structured_log.py
 -----------------
 Centralized structured-logging facility for autoslo.
 
-Components (``WorkloadSimulator``, ``Router``, ``Autoscaler``,
+Components (``WorkloadSimulator``, ``QueryRouter``, ``Autoscaler``,
 ``HeadroomPolicy``, ``WorkloadRunner``, …) emit structured *dict* records
 through Python's standard :mod:`logging` framework.  A custom handler
 (``StructuredLogHandler``) buffers those records and periodically flushes
