@@ -42,4 +42,5 @@ uis/**/node_modules/
 docs/*.md
 
 data/tuner_runs/history_*exp*/
+data/tuner_runs/TESTTEST/*
 

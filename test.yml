@@ -16,7 +16,7 @@ workload_config:
 
 slo_config:
   slo_s: 30.0
-  slo_metric: relative
+  slo_metric: binary
   slo_threshold: 0.05
   slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
 
@@ -31,7 +31,7 @@ managed_cluster_pool_config:
   spin_up_delay_s: 300.0
 
 routing_config:
-  round_robin_cluster_names: []
+  routing_policy: use_iconq_model
 
 autoscaling_config:
   min_cluster_lifetime_s: 1200.0
@@ -84,30 +84,30 @@ tuner_config:
     - label: "16 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [16]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "16+16 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [16, 16]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "32 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [32]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "32+32 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [32, 32]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "64 RPU"
       overrides:
         managed_cluster_pool_config.initial_rpus: [64]
-        autoscaling_config.autoscaling_policy: "noop"
+        autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"

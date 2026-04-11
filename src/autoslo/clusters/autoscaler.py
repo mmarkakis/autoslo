@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import QueryRouter
+from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -88,13 +88,13 @@ class Autoscaler:
         idle_time_before_tear_down_s: float = 300.0,  # TODO: should clusters note start of idle period?
         observation_window_s: float = 120.0,
         min_observations_to_act: int = 5,
-        round_robin_cluster_names: Optional[list[str]] = None,
+        routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
         self._allowed_rpu_sizes = sorted(allowed_rpu_sizes)
         self._iconq_model = iconq_model
-        self._round_robin_cluster_names = round_robin_cluster_names
+        self._routing_policy = routing_policy
         self._min_cluster_lifetime_s = min_cluster_lifetime_s
         self._idle_time_before_tear_down_s = idle_time_before_tear_down_s
         self._observation_window_s = observation_window_s
@@ -227,6 +227,10 @@ class Autoscaler:
 
         Use the window to determine the size of the window to spin up.
         """
+
+        # Determine if we are disallowed from spinning up. 
+        if len(self.allowed_rpu_sizes) == 0:
+            return []
 
         # Determine if we have enough observations to act.
         if len(self._window_queries) < self._min_observations_to_act:
@@ -387,7 +391,7 @@ class Autoscaler:
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
             slo_metric=self._slo_objective.slo_metric,
-            round_robin_cluster_names=self._round_robin_cluster_names,
+            routing_policy=self._routing_policy,
         )
 
         # Sequential replay.
