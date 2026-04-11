@@ -30,6 +30,12 @@ managed_cluster_pool_config:
     - 32
   spin_up_delay_s: 300.0
 
+capacity_checkpoints: 
+  - rel_time_s: 5438.450446128845
+    min_rpus:
+    - 16
+    - 16
+
 routing_config:
   routing_policy: use_iconq_model
 
@@ -38,14 +44,9 @@ autoscaling_config:
   idle_time_before_tear_down_s: 1200.0
   observation_window_s: 300.0
   min_observations_to_act: 5
-  capacity_checkpoints: 
-  - rel_time_s: 5438.450446128845
-    min_rpus:
-    - 16
-    - 16
 
 output_config:
-  verbose: false
+  write_text_log: false
   export_video: false
 
 runner_config:
