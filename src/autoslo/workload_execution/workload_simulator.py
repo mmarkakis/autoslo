@@ -6,11 +6,23 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import yaml
 from filelock import FileLock
 from tqdm import tqdm
+import torch
+from autoslo.utils.paralellism import inner_level_num_cpus
+
+from collections import Counter
+
+from autoslo.capacity.autoscaler import (
+    CapacityCheckpoint,
+    AutoscalingAction,
+    AutoscalingActionType,
+    Autoscaler,
+)
+from collections import defaultdict
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
@@ -19,51 +31,58 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
 )
-from autoslo.capacity.autoscaler import Autoscaler
-from autoslo.capacity.autoscaling_policy import (
-    AutoscalingPolicy,
-    CapacityCheckpoint,
-)
+from autoslo.blueprints.cluster import Cluster, ClusterState
+
 from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
-from autoslo.capacity.headroom_policy import HeadroomPolicy
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )
-from autoslo.routing.model_policy import ModelPolicy
-from autoslo.routing.router import Router
-from autoslo.routing.routing_core import (
-    PlacementScore,
-    RoutingCore,
-    RoutingResult,
-)
-from autoslo.routing.routing_policy import RoutingPolicy
+from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.policy_builders import (
-    build_autoscaling_policy,
     build_managed_cluster_pool_config,
-    build_routing_policy,
     parse_capacity_checkpoints,
 )
 from autoslo.utils.structured_log import (
     StructuredLogHandler,
+    LOGGER_NAME,
     emit_structured,
     setup_structured_logging,
 )
 from autoslo.utils.yaml_helpers import dump
-from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
 
-if TYPE_CHECKING:
-    from autoslo.workload_definition.redset_workload import (
-        RedsetWorkloadSamplingSpec,
-    )
 
-logger = logging.getLogger(__name__)
+from dataclasses import dataclass
+
+_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
+
+
+@dataclass
+class SimulatorEventType:
+    QUERY_ARRIVAL: str = "query_arrival"
+    QUERY_COMPLETION: str = "query_completion"
+    CAPACITY_CHECKPOINT: str = "capacity_checkpoint"
+    CLUSTER_READY: str = "cluster_ready"
+
+
+@dataclass
+class SimulatorEvent:
+    rel_time_s: float
+    event_type: str
+    details: dict[str, Any]
+
+    def __lt__(self, other: "SimulatorEvent") -> bool:
+        """Order by rel_time_s, then by event_type for tie-breaking."""
+        if self.rel_time_s == other.rel_time_s:
+            return self.event_type < other.event_type
+        return self.rel_time_s < other.rel_time_s
 
 
 class WorkloadSimulator:
@@ -80,12 +99,11 @@ class WorkloadSimulator:
 
     """
 
-    TOLERANCE_FOR_SLO_VIOLATION_AMOUNT_OPTIMIZATION_S = 1e-4
-
     def __init__(
         self,
+        config_dict: dict,
         workload_name: str,
-        routing_policy: RoutingPolicy,
+        round_robin_cluster_names: Optional[list[str]],
         slo_s: float,
         schema_name: str,
         iconq_model_id: str,
@@ -99,7 +117,6 @@ class WorkloadSimulator:
         experiment_name: Optional[str] = None,
         overwrite_experiment: bool = False,
         managed_cluster_pool_config: Optional[ManagedClusterPoolConfig] = None,
-        autoscaling_policy: Optional[AutoscalingPolicy] = None,
         capacity_poll_interval_s: float = 60.0,
         capacity_checkpoints: list[CapacityCheckpoint] | None = None,
         abs_start_time_start: str | None = None,
@@ -109,7 +126,6 @@ class WorkloadSimulator:
         out_dir: str | Path | None = None,
         workload: "Workload | None" = None,
         iconq_model: "IconqModel | None" = None,
-        config_dict: dict | None = None,
     ):
         self._config_dict = config_dict
         self._workload_name = workload_name
@@ -124,16 +140,15 @@ class WorkloadSimulator:
         self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
         self._closed_loop = closed_loop
 
-        # Store the routing policy (caller is responsible for constructing it).
-        self._routing_policy = routing_policy
+        # Store the round-robin cluster names for use in the query router.
+        self._round_robin_cluster_names = round_robin_cluster_names
 
         # Dynamic provisioning parameters.
-        self._dynamic_cluster_config = (
+        self._managed_cluster_pool_config = (
             managed_cluster_pool_config
             if managed_cluster_pool_config is not None
             else ManagedClusterPoolConfig()
         )
-        self._autoscaling_policy = autoscaling_policy
         self._cc_poll_interval_s = capacity_poll_interval_s
         self._capacity_checkpoints = capacity_checkpoints or []
 
@@ -175,8 +190,6 @@ class WorkloadSimulator:
 
         self._run_id = run_id or str(int(datetime.now().timestamp() * 1000))
 
-        self._seed: Optional[int] = None  # populated in simulate_one
-
         # Optional caller-provided output directory override.
         self._out_dir_override: str | Path | None = out_dir
 
@@ -184,27 +197,95 @@ class WorkloadSimulator:
         self._out_dir = self._make_out_dir(self._run_id)
         self._write_config_yml()
 
-        # Set up structured logging handler.
-        self._structured_handler: Optional[StructuredLogHandler] = None
-        if self._verbose:
-            self._structured_handler = setup_structured_logging(
-                out_dir=self._out_dir,
-            )
+        # Set up a log file inside the run directory.
+        log_file_path = os.path.join(self._out_dir, "run.log")
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        # Remove all existing handlers (console and file alike) so that
+        # log records are emitted only to the run-specific file and the
+        # structured log — never to the caller's console.
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+        file_handler = logging.FileHandler(log_file_path)
+        file_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        # Prevent propagation to ancestor loggers (which might print to console).
+        logger.propagate = False
+        logging.info(f"Run directory created at {self._out_dir}")
 
-        # Dynamic provisioning state (always initialised by _init_dynamic_clusters).
-        self._pending_events: list[tuple[float, int, str]] = []
-        self._event_counter: int = 0
-        self._current_sim_time_s: float = 0.0
-        self._next_tick_time_s: float = 0.0
+        # Set up structured logging for this run.
+        self._structured_handler = setup_structured_logging(out_dir=self._out_dir)
 
         # External latency tracking (replaces mutation of Query.latency_s).
-        self._predicted_latencies: dict[str, float] = {}
-        """query_id → current best latency estimate (monotonically increasing)."""
+        self._predicted_latencies: dict[str, dict[str, float]] = defaultdict(
+            dict
+        )
+        """cluster_name → {query_id → current best latency estimate (monotonically increasing)}."""
 
-        self._query_to_cluster_name: dict[str, str] = {}
-        """query_id → cluster_name for queries currently tracked."""
+        # Provisioner
+        self._provisioner: SimulatedProvisioner = SimulatedProvisioner(
+            spin_up_delay_s=self._managed_cluster_pool_config.spin_up_delay_s
+        )
 
-        self._init_dynamic_clusters()
+        # Pool (no initial clusters via constructor — we add them below
+        # with instant on_cluster_ready to bypass spin-up delay).
+        self._pool: ManagedClusterPool = ManagedClusterPool(
+            provisioner=self._provisioner,
+            config=self._managed_cluster_pool_config,
+        )
+
+        # Activate initial clusters immediately (no spin-up delay).
+        pending_cluster_names = self._pool.clusters_in_state(
+            ClusterState.PENDING
+        )
+        for name in pending_cluster_names:
+            self._pool.on_cluster_ready(name, 0.0)
+
+        # Create the Router.
+        self._router: QueryRouter = QueryRouter(
+            slo_resolver=self._slo_resolver,
+            slo_metric=self._slo_metric,
+            round_robin_cluster_names=self._round_robin_cluster_names,
+        )
+
+        # Autoscaler
+        self._autoscaler = Autoscaler(
+            slo_resolver=self._slo_resolver,
+            slo_objective=self._slo_objective,
+            allowed_rpu_sizes=list(
+                self._managed_cluster_pool_config.allowed_rpu_sizes
+            ),
+            iconq_model=self._iconq_model,
+            min_cluster_lifetime_s=cfgu.getd(
+                self._config_dict,
+                "autoscaling_config.min_cluster_lifetime_s",
+                1200.0,
+            ),
+            idle_time_before_tear_down_s=cfgu.getd(
+                self._config_dict,
+                "autoscaling_config.idle_time_before_tear_down_s",
+                600.0,
+            ),
+            observation_window_s=cfgu.getd(
+                self._config_dict,
+                "autoscaling_config.observation_window_s",
+                300.0,
+            ),
+            min_observations_to_act=cfgu.getd(
+                self._config_dict,
+                "autoscaling_config.min_observations_to_act",
+                5,
+            ),
+            round_robin_cluster_names=self._round_robin_cluster_names,
+        )
+
+        # Event queue
+        self._pending_events: list[SimulatorEvent] = []
+        self._current_sim_time_s = 0.0
 
     @property
     def out_dir(self) -> str:
@@ -214,27 +295,6 @@ class WorkloadSimulator:
     # ------------------------------------------------------------------
     # Factory: create from YAML config (aligned with WorkloadRunner)
     # ------------------------------------------------------------------
-
-    @classmethod
-    def from_config(
-        cls, config_path: str | Path, **overrides: object
-    ) -> "WorkloadSimulator":
-        """Create a :class:`WorkloadSimulator` from a YAML config file.
-
-        Parameters
-        ----------
-        config_path : str | Path
-            Path to the YAML configuration file.
-        **overrides
-            Dot-delimited keys mapped to override values, e.g.
-            ``slo_config.slo_s=5.0``.  Applied on top of the parsed YAML
-            before the config dict is interpreted.
-        """
-        path = Path(config_path)
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
-        cfg = cfgu.copy_and_apply_overrides(cfg, overrides)
-        return cls.from_config_dict(cfg)
 
     @classmethod
     def from_config_dict(
@@ -264,11 +324,10 @@ class WorkloadSimulator:
                               run_id, overwrite_experiment,
                               iconq_model_id
         slo_config          : slo_s, slo_metric, slo_threshold, slo_dict_filename
-        routing_config      : routing_policy  ("model" | "round_robin" | "cache_aware"),
+        routing_config      : round_robin_cluster_names,
         managed_cluster_pool_config : initial_rpus, allowed_rpu_sizes,
                                 spin_up_delay_s
-        autoscaling_config  : autoscaling_policy ("headroom" | "noop"),
-                              eta_crit, idle_periods_before_tear_down,
+        autoscaling_config  : eta_crit, idle_periods_before_tear_down,
                               capacity_poll_interval_s, min_cluster_lifetime_s
         output_config       : verbose, export_video, video_frame_duration
         """
@@ -324,13 +383,8 @@ class WorkloadSimulator:
         )
 
         # ── shared policy / pool construction ────────────────────────────────
-        routing_policy = build_routing_policy(
-            cfg,
-            iconq_model_id,
-            slo_s,
-            slo_resolver,
-            slo_metric,
-            iconq_model=_iconq_model,
+        round_robin_cluster_names: Optional[list[str]] = cfgu.getd(
+            cfg, "routing_config.round_robin_cluster_names"
         )
         mcp = build_managed_cluster_pool_config(cfg)
         allowed_rpus: list[int] = list(
@@ -338,19 +392,13 @@ class WorkloadSimulator:
             if mcp is not None
             else ManagedClusterPoolConfig().allowed_rpu_sizes
         )
-        autoscaling_policy = build_autoscaling_policy(
-            cfg=cfg,
-            slo_resolver=slo_resolver,
-            slo_objective=slo_objective,
-            iconq_model_id=iconq_model_id,
-            routing_policy=routing_policy,
-            allowed_rpu_sizes=allowed_rpus,
-            iconq_model=_iconq_model,
-        )
+
         poll_s: float = float(
             cfgu.getd(cfg, "autoscaling_config.capacity_poll_interval_s", 60.0)
         )
-        capacity_checkpoints = parse_capacity_checkpoints(cfg)
+        capacity_checkpoints: list[CapacityCheckpoint] = (
+            parse_capacity_checkpoints(cfg)
+        )
 
         # ── output (simulator-specific) ──────────────────────────────────────
         verbose: bool = cfgu.getd(cfg, "output_config.verbose", False)
@@ -361,8 +409,9 @@ class WorkloadSimulator:
         out_dir: str | None = cfgu.getd(cfg, "output_config.out_dir")
 
         return cls(
+            config_dict=cfg,
             workload_name=workload_name,
-            routing_policy=routing_policy,
+            round_robin_cluster_names=round_robin_cluster_names,
             slo_s=slo_s,
             schema_name=schema_name,
             iconq_model_id=iconq_model_id,
@@ -376,7 +425,6 @@ class WorkloadSimulator:
             experiment_name=experiment_name,
             overwrite_experiment=overwrite_experiment,
             managed_cluster_pool_config=mcp,
-            autoscaling_policy=autoscaling_policy,
             capacity_poll_interval_s=poll_s,
             capacity_checkpoints=capacity_checkpoints,
             abs_start_time_start=abs_start_time_start,
@@ -385,50 +433,8 @@ class WorkloadSimulator:
             closed_loop=closed_loop,
             out_dir=out_dir,
             workload=workload,
-            iconq_model=_iconq_model,
-            config_dict=cfg,
+            iconq_model=_iconq_model,   
         )
-
-    # ------------------------------------------------------------------
-    # Post-routing scoring (for non-model policies)
-    # ------------------------------------------------------------------
-
-    def _score_with_model(
-        self,
-        query_id: str,
-        query_text_id: QueryTextId,
-        cluster_name: str,
-        start_time_s: float,
-    ) -> tuple[Optional[PlacementScore], Optional[Query]]:
-        """Score a routing decision post-hoc using the scoring model.
-
-        Called when the routing policy returned a :class:`RoutingResult` with
-        ``score=None`` (e.g. :class:`RoundRobinPolicy`).
-        Delegates to :meth:`RoutingCore.score_query_on_clusters` for the single
-        chosen cluster.
-
-        Returns ``(PlacementScore, featurised_tracking_query)`` on success, or
-        ``(None, None)`` if any step fails (cluster not in pool, no predictions).
-        """
-        scores, incoming, _ = RoutingCore.score_query_on_clusters(
-            iconq_model=self._iconq_model,
-            pool=self._pool,
-            query_id=query_id,
-            query_text_id=query_text_id,
-            start_time_s=start_time_s,
-            slo_resolver=self._slo_resolver,
-            slo_metric=self._slo_metric,
-            current_latencies=self._predicted_latencies,
-            cluster_names=[cluster_name],
-        )
-        score = scores.get(cluster_name)
-        if score is None:
-            logger.warning(
-                "_score_with_model: no score produced for cluster %s; skipping.",
-                cluster_name,
-            )
-            return None, None
-        return score, incoming
 
     # ------------------------------------------------------------------
     # helper: build/return the output directory path
@@ -458,13 +464,12 @@ class WorkloadSimulator:
         if self._config_dict is not None:
             d = copy.deepcopy(self._config_dict)
             d["run_id"] = self._run_id
-            d["seed"] = self._seed
         else:
             d = {
                 "run_id": self._run_id,
                 "experiment_name": self._experiment_name,
                 "workload_name": self._workload_name,
-                "routing_policy_type": type(self._routing_policy).__name__,
+                "round_robin_cluster_names": self._round_robin_cluster_names,
                 "iconq_model_id": self._iconq_model_id,
                 "slo_s": self._slo_s,
                 "slo_dict_filename": self._slo_dict_filename,
@@ -474,276 +479,127 @@ class WorkloadSimulator:
                 "verbose": self._verbose,
                 "export_video": self._export_video,
                 "video_frame_duration": self._video_frame_duration,
-                "seed": self._seed,
                 "closed_loop": self._closed_loop,
             }
         dump(d, config_out_path)
-
-    def reset(self, run_id: Optional[str] = None) -> None:
-        """
-        Reset the simulator state for a new run, reusing the model and workload.
-        This allows multiple samples to be run without reloading heavy objects.
-
-        Parameters:
-            run_id: Optional run ID for the new run. If None, generates
-                a new timestamp-based ID.
-        """
-        self._run_id = run_id or str(int(datetime.now().timestamp() * 1000))
-        self._seed = None
-        self._out_dir = self._make_out_dir(self._run_id)
-        self._write_config_yml()
-
-        # Reset structured logging.
-        if self._structured_handler is not None:
-            self._structured_handler.reset(out_dir=self._out_dir)
-        elif self._verbose:
-            self._structured_handler = setup_structured_logging(
-                out_dir=self._out_dir,
-            )
-
-        # Reset per-run bookkeeping.
-        self._init_dynamic_clusters()
-
-    def _log_if_verbose(self, d: dict) -> None:
-        """Emit a structured log record (if verbose logging is enabled).
-
-        Adds ``source='simulator'`` automatically if not already set.
-
-        Parameters:
-            d: A dictionary containing the log entry data. Must include at
-                least ``timestamp`` and ``event_type``.
-        """
-        if not self._verbose:
-            return
-        d.setdefault("source", "simulator")
-        emit_structured(d)
 
     # ------------------------------------------------------------------
     # Dynamic provisioning helpers
     # ------------------------------------------------------------------
 
-    def _init_dynamic_clusters(self) -> None:
-        """Set up provisioner, pool, router, controller, and initial clusters."""
-        config = self._dynamic_cluster_config
-
-        # Provisioner
-        self._provisioner: SimulatedProvisioner = SimulatedProvisioner(
-            spin_up_delay_s=config.spin_up_delay_s
-        )
-
-        # Pool (no initial clusters via constructor — we add them below
-        # with instant on_cluster_ready to bypass spin-up delay).
-        self._pool: ManagedClusterPool = ManagedClusterPool(
-            provisioner=self._provisioner,
-            config=ManagedClusterPoolConfig(
-                initial_rpus=(),
-                allowed_rpu_sizes=config.allowed_rpu_sizes,
-            ),
-        )
-
-        # Activate initial clusters immediately (no spin-up delay).
-        for rpu in config.initial_rpus:
-            name = self._pool.request_spin_up(rpu, 0.0)
-            self._pool.on_cluster_ready(name, 0.0)
-
-        # Create the Router (invokes policy.on_attach to wire up RPU lookup).
-        self._router: Router = Router(
-            policy=self._routing_policy,
-            pool=self._pool,
-        )
-
-        # If we have a standalone scoring model (not attached via the policy),
-        # wire up the RPU lookup so interaction featurisation works correctly.
-        if self._iconq_model is not None and not isinstance(
-            self._routing_policy, ModelPolicy
-        ):
-            self._iconq_model.iconq_interaction_featurizer.set_rpu_lookup(
-                self._pool.get_rpu
-            )
-
-        # Autoscaler (replaces CapacityController).
-        # If no policy was provided, default to HeadroomPolicy.
-        policy: AutoscalingPolicy
-        if self._autoscaling_policy is None:
-            policy = HeadroomPolicy(
-                slo_resolver=self._slo_resolver,
-                slo_objective=self._slo_objective,
-                allowed_rpu_sizes=list(config.allowed_rpu_sizes),
-            )
-        else:
-            policy = self._autoscaling_policy
-
-        self._autoscaler: Autoscaler = Autoscaler(
-            policy=policy,
-            pool=self._pool,
-            on_spin_up=self._on_sim_spin_up,
-            on_tear_down=self._on_sim_tear_down,
-            capacity_checkpoints=self._capacity_checkpoints,
-        )
-
-        # Register all initial clusters with the autoscaler so
-        # they are protected by the minimum lifetime.
-        for cn in self._pool.cluster_names:
-            self._autoscaler.notify_cluster_ready(
-                cn, self._pool.get_rpu(cn), 0.0
-            )
-
-        # Event queue
-        self._pending_events = []
-        self._event_counter = 0
-        self._current_sim_time_s = 0.0
-        self._next_tick_time_s = self._cc_poll_interval_s
-
-    def _on_sim_spin_up(self, reason: str, rpu: int) -> None:
+    def _on_sim_spin_up(self, action: AutoscalingAction) -> None:
         """Capacity-controller callback: schedule a new cluster."""
+        rpu = action.rpu
+        assert rpu is not None, "RPU must be specified for spin-up actions."
         cluster_name = self._pool.request_spin_up(rpu, self._current_sim_time_s)
         ready_time = (
             self._current_sim_time_s + self._provisioner.spin_up_delay_s
         )
-        self._event_counter += 1
         heapq.heappush(
             self._pending_events,
-            (ready_time, self._event_counter, cluster_name),
+            SimulatorEvent(
+                rel_time_s=ready_time,
+                event_type=SimulatorEventType.CLUSTER_READY,
+                details={"cluster_name": cluster_name},
+            ),
         )
-        logger.debug(
+        logging.debug(
             "Scheduled cluster %s (%d RPU) ready at t=%.1f",
             cluster_name,
             rpu,
             ready_time,
         )
-        self._log_if_verbose(
+        emit_structured(
             {
                 "timestamp": self._current_sim_time_s,
                 "event_type": "spin_up_scheduled",
                 "cluster_name": cluster_name,
                 "rpu": rpu,
-                "reason": reason,
+                "reason": action.reason,
                 "end_time_s": ready_time,
+                "source": "WorkloadSimulator",
             }
         )
 
-    def _on_sim_tear_down(self, cluster_name: str) -> None:
+    def _on_sim_tear_down(self, action: AutoscalingAction) -> None:
         """Capacity-controller callback: begin graceful tear-down.
 
         Delegates to the pool, which marks the cluster as DRAINING.
         When the last active query finishes (via ``on_query_finish``),
         the pool automatically finalises removal.
         """
+        cluster_name = action.cluster_name
+        assert cluster_name is not None
         # Pre-check for logging: pool will guard against last-cluster
         # removal, but we want a specific log entry.
-        ready_names = self._pool.ready_cluster_names
+        ready_names = self._pool.clusters_in_state(ClusterState.READY)
         if len(ready_names) <= 1:
-            logger.debug(
+            logging.debug(
                 "Skipping tear-down of %s — it is the last routable "
                 "cluster.",
                 cluster_name,
             )
-            self._log_if_verbose(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "tear_down_blocked",
-                    "cluster_name": cluster_name,
-                    "reason": "last_routable_cluster",
-                    "num_active_clusters": len(ready_names),
-                }
-            )
+            if _has_structured():
+                emit_structured(
+                    {
+                        "timestamp": self._current_sim_time_s,
+                        "source": "WorkloadSimulator",
+                        "event_type": "tear_down_skipped",
+                        "cluster_name": cluster_name,
+                        "reason": "last_cluster",
+                    }
+                )
+
             return
 
-        active = self._pool.get_active_queries(cluster_name)
+        snapshot = self._pool.snapshot(only_ready=False)
+        active = snapshot[cluster_name].active_queries
         self._pool.request_tear_down(cluster_name, self._current_sim_time_s)
 
         if active:
-            logger.debug(
+            logging.debug(
                 "Cluster %s marked as draining with %d active queries.",
                 cluster_name,
                 len(active),
             )
-            self._log_if_verbose(
+            emit_structured(
                 {
                     "timestamp": self._current_sim_time_s,
                     "event_type": "tear_down_requested",
                     "cluster_name": cluster_name,
                     "reason": "draining",
                     "num_active_queries": len(active),
+                    "source": "WorkloadSimulator",
                 }
             )
         else:
-            self._log_if_verbose(
+            emit_structured(
                 {
                     "timestamp": self._current_sim_time_s,
                     "event_type": "tear_down_requested",
                     "cluster_name": cluster_name,
                     "reason": "immediate",
                     "num_active_queries": 0,
+                    "source": "WorkloadSimulator",
                 }
             )
-
-    def _process_pending_events_up_to(self, time_s: float) -> None:
-        """Drain cluster-ready events that fire at or before *time_s*."""
-        while self._pending_events and self._pending_events[0][0] <= time_s:
-            _, _, cluster_name = heapq.heappop(self._pending_events)
-            self._pool.on_cluster_ready(cluster_name, time_s)
-            rpu = self._pool.get_rpu(cluster_name)
-            # Notify the autoscaler that the cluster is now ready
-            # (decrements pending count and records ready time for
-            # minimum-lifetime enforcement).
-            if self._autoscaler is not None:
-                self._autoscaler.notify_cluster_ready(cluster_name, rpu, time_s)
-            logger.debug(
-                "Cluster %s (%d RPU) became ready at t=%.1f",
-                cluster_name,
-                rpu,
-                time_s,
-            )
-            self._log_if_verbose(
-                {
-                    "timestamp": time_s,
-                    "event_type": "cluster_ready",
-                    "cluster_name": cluster_name,
-                    "rpu": rpu,
-                    "num_active_clusters": len(self._pool.cluster_names),
-                }
-            )
-
-    def _advance_simulated_time(self, target_time_s: float) -> None:
-        """Process capacity-controller ticks and cluster-ready events
-        chronologically up to *target_time_s*.
-
-        Must be called before routing each query so that the routing
-        logic sees an up-to-date cluster set.
-        """
-        # Process ticks (and any events that fire before/at each tick).
-        while self._next_tick_time_s <= target_time_s:
-            tick_time = self._next_tick_time_s
-            self._process_pending_events_up_to(tick_time)
-            self._cleanup_completed_queries_up_to(tick_time)
-            self._current_sim_time_s = tick_time
-
-            # Process capacity checkpoints that fire at or before this tick.
-            self._autoscaler.reconcile_checkpoints_up_to(
-                current_time_s=self._current_sim_time_s, reference_time_s=0.0
-            )
-
-            self._autoscaler.on_time_advance(tick_time)
-            self._next_tick_time_s += self._cc_poll_interval_s
-            # Process events spawned by this tick (e.g. delay=0 spin-ups).
-            self._process_pending_events_up_to(tick_time)
-
-        # Remaining events up to target.
-        self._process_pending_events_up_to(target_time_s)
-        # Process any remaining checkpoints between last tick and target.
-        self._autoscaler.reconcile_checkpoints_up_to(
-            current_time_s=target_time_s, reference_time_s=0.0
-        )
-        self._current_sim_time_s = target_time_s
 
     # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------
 
-    def simulate_one(
+    _PROGRESS_INTERVAL = 100
+
+    def default_progress_callback(self, completed: int, total: int) -> None:
+        """Default progress callback that prints progress to a tqdm progress bar."""
+        if completed == 0:
+            self._progress_bar = tqdm(total=total)
+        else:
+            self._progress_bar.n = completed
+            self._progress_bar.refresh()
+
+    def run(
         self,
-        sampling_spec: "Optional[RedsetWorkloadSamplingSpec]" = None,
         progress_callback: "Optional[Callable[[int, int], None]]" = None,
     ) -> None:
         """
@@ -753,18 +609,13 @@ class WorkloadSimulator:
 
         seq_num_to_cluster_name: dict[int, str] = {}
 
-        # Store seed so it ends up in config.yml and experiment_meta.json
-        self._seed = getattr(sampling_spec, "seed", None)
         self._write_config_yml()
 
-        queries = (
-            self._workload.queries(sampling_spec=sampling_spec)  # type: ignore[call-arg]
-            if type(self._workload).__name__ == "RedsetWorkload"
-            else self._workload.queries()
-        )
+        queries = self._workload.queries()
+
         print(
             f"Simulating routing of {len(queries)} queries from workload "
-            f"{self._workload_name} using {type(self._routing_policy).__name__}"
+            f"{self._workload_name} using "
             + (
                 f" (model {self._iconq_model_id})"
                 if self._iconq_model_id
@@ -773,164 +624,67 @@ class WorkloadSimulator:
             + "..."
         )
         print(
-            f"The first and last relative query start times are {queries[0].rel_start_time_s} and {queries[-1].rel_start_time_s}"
+            f"The first and last relative query start times are "
+            f"{queries[0].rel_start_time_s} and {queries[-1].rel_start_time_s}"
         )
 
-        total_queries = len(queries)
+        self._total_queries = len(queries)
+        self._completed_queries = 0
 
-        closed_loop_clock = 0.0  # tracks effective wall-clock in closed-loop
+        if progress_callback is None:
+            progress_callback = self.default_progress_callback
+        progress_callback(0, self._total_queries)
 
-        # When a progress_callback is supplied (tuner workers), report
-        # progress every _PROGRESS_INTERVAL queries instead of using tqdm.
-        _PROGRESS_INTERVAL = 100
-        _use_callback = progress_callback is not None
-        iterator = (
-            enumerate(queries)
-            if _use_callback
-            else tqdm(enumerate(queries), total=total_queries)
-        )
-
-        if _use_callback:
-            progress_callback(0, total_queries)
-
-        for i, query in iterator:
-
-            # In closed-loop mode the next query starts only after the
-            # previous one finishes, ignoring the original inter-arrival times.
-            start_s = (
-                closed_loop_clock
-                if self._closed_loop
-                else query.rel_start_time_s
-            )
-
-            self._advance_simulated_time(start_s)
-
-            self._cleanup_completed_queries_up_to(start_s)
-
-            self._log_if_verbose(
-                {
-                    "timestamp": start_s,
-                    "event_type": "arrival",
-                    "query_id": query.query_id,
-                    "query_text_id": query.query_text_id.value,
-                }
-            )
-
-            # Route the query via the Router (delegates to policy).
-            # DRAINING clusters are automatically excluded by the pool.
-            result = self._router.route_query_with_predictions(
-                query_id=query.query_id,
-                query_text_id=str(query.query_text_id),
-                start_time_s=start_s,
-            )
-
-            # If the policy did not produce a PlacementScore (e.g. RoundRobinPolicy),
-            # score the chosen cluster post-hoc using the scoring
-            # model so that latency predictions and co-runner updates are still
-            # tracked correctly.
-            if result.score is None and self._iconq_model is not None:
-                computed_score, enriched_tq = self._score_with_model(
-                    query_id=query.query_id,
-                    query_text_id=query.query_text_id,
-                    cluster_name=result.cluster_name,
-                    start_time_s=start_s,
+        # Add all the checkpoint creation events to the heap.
+        for checkpoint in self._capacity_checkpoints:
+            self._pending_events.append(
+                SimulatorEvent(
+                    rel_time_s=checkpoint.rel_time_s,
+                    event_type=SimulatorEventType.CAPACITY_CHECKPOINT,
+                    details={"checkpoint": checkpoint},
                 )
-                if (computed_score is not None) and (enriched_tq is not None):
-                    result = RoutingResult(
-                        cluster_name=result.cluster_name,
-                        score=computed_score,
-                        query=enriched_tq,
+            )
+        # Add all the query arrival events to the heap, except in closed-loop
+        # mode where we only add the first one.
+        if self._closed_loop:
+            first_query = queries[0]
+            self._pending_events.append(
+                SimulatorEvent(
+                    rel_time_s=first_query.rel_start_time_s,
+                    event_type=SimulatorEventType.QUERY_ARRIVAL,
+                    details={"query": first_query, "index": 0},
+                )
+            )
+        else:
+            for i, query in enumerate(queries):
+                self._pending_events.append(
+                    SimulatorEvent(
+                        rel_time_s=query.rel_start_time_s,
+                        event_type=SimulatorEventType.QUERY_ARRIVAL,
+                        details={"query": query, "index": i},
                     )
-
-            # Feed routing result to the autoscaler.
-            if self._autoscaler is not None:
-                self._autoscaler.on_routing_result(
-                    result, start_s, self._predicted_latencies
                 )
 
-            selected_cluster_name = result.cluster_name
-            tq = result.query
-            assert (
-                result.score is not None
-            ), "RoutingResult must have a score at this point."
-            self_latency_s = result.score.latencies[query.query_id]
+        heapq.heapify(self._pending_events)
 
-            # Store predicted latency and cluster mapping.
-            self._predicted_latencies[query.query_id] = self_latency_s
-            self._query_to_cluster_name[query.query_id] = selected_cluster_name
+        while self._pending_events:
 
-            self._log_if_verbose(
-                {
-                    "timestamp": start_s,
-                    "event_type": "routing",
-                    "query_id": query.query_id,
-                    "query_text_id": query.query_text_id.value,
-                    "cluster_name": selected_cluster_name,
-                    "old_latency_s": None,
-                    "raw_model_latency_s": None,
-                    "latency_s": self_latency_s,
-                    "end_time_s": start_s + self_latency_s,
-                }
-            )
+            event = heapq.heappop(self._pending_events)
+            self._current_sim_time_s = event.rel_time_s
 
-            # Register the tracking query with the pool.
-            # (Handles neighbour bookkeeping and billing-window start.)
-            self._pool.on_query_start(
-                query=tq,
-                cluster_name=selected_cluster_name,
-            )
-            seq_num_to_cluster_name[i] = selected_cluster_name
+            match event.event_type:
+                case SimulatorEventType.QUERY_ARRIVAL:
+                    self._handle_query_arrival(event, seq_num_to_cluster_name)
+                case SimulatorEventType.QUERY_COMPLETION:
+                    self._handle_query_completion(event, progress_callback)
+                case SimulatorEventType.CAPACITY_CHECKPOINT:
+                    self._handle_capacity_checkpoint(event)
+                case SimulatorEventType.CLUSTER_READY:
+                    self._handle_cluster_ready(event)
 
-            # Update co-runner latencies on the chosen cluster using the
-            # model predictions.
-            for q in self._pool.get_active_queries(selected_cluster_name):
-                if q.query_id == query.query_id:
-                    continue
-                old_latency_s = self._predicted_latencies.get(q.query_id, -1.0)
-                predicted_latency_s = result.score.latencies.get(
-                    q.query_id, old_latency_s
-                )
-                updated_latency_s = max(old_latency_s, predicted_latency_s)
-                self._log_if_verbose(
-                    {
-                        "timestamp": start_s,
-                        "event_type": "latency_update",
-                        "query_id": q.query_id,
-                        "query_text_id": q.query_text_id.value,
-                        "cluster_name": selected_cluster_name,
-                        "old_latency_s": old_latency_s,
-                        "raw_model_latency_s": predicted_latency_s,
-                        "latency_s": updated_latency_s,
-                        "end_time_s": q.rel_start_time_s + updated_latency_s,
-                    }
-                )
-                self._predicted_latencies[q.query_id] = updated_latency_s
+                case _:
+                    logging.warning(f"Unknown event type: {event.event_type}")
 
-            # Advance the closed-loop clock past this query's completion.
-            if self._closed_loop:
-                closed_loop_clock = start_s + self_latency_s
-
-            # Report progress to the parent process.
-            if _use_callback and (i + 1) % _PROGRESS_INTERVAL == 0:
-                progress_callback(i + 1, total_queries)
-
-        # Final progress report.
-        if _use_callback:
-            progress_callback(total_queries, total_queries)
-
-        all_completed = [
-            q
-            for qs in self._pool.get_all_completed_queries().values()
-            for q in qs
-        ]
-        if all_completed:
-            workload_end_time_s = max(
-                q.rel_start_time_s
-                + self._predicted_latencies.get(q.query_id, 0.0)
-                for q in all_completed
-            )
-
-        self._cleanup_completed_queries_up_to()
         self.write_out_billing_interval_analysis()
         if self._structured_handler is not None:
             self._structured_handler.finalize()
@@ -941,75 +695,271 @@ class WorkloadSimulator:
         if self._experiment_name:
             self._write_experiment_meta()
 
-    def _cleanup_completed_queries_up_to(
-        self, current_time_s: Optional[float] = None
+    def _handle_query_arrival(
+        self, event: SimulatorEvent, seq_num_to_cluster_name: dict[int, str]
     ) -> None:
         """
-        Move queries that have completed by current_time_s from active to
-        completed.
-
-        Parameters:
-            current_time_s: The current time in seconds since the start of the
-                workload. If None, all active queries are considered completed.
+        Handle the arrival of a new query: route it, update the pool and
+        autoscaler state, and schedule its completion event.
         """
-        # Snapshot cluster names before processing (pool may auto-remove
-        # draining clusters as their last queries finish).
-        draining_before = set(self._pool.draining_cluster_names)
-        cluster_names = list(self._pool.ready_cluster_names) + list(
-            draining_before
+        query = event.details["query"]
+        index = event.details["index"]
+
+        emit_structured(
+            {
+                "timestamp": self._current_sim_time_s,
+                "event_type": "arrival",
+                "source": "WorkloadSimulator",
+                "query_id": query.query_id,
+                "query_text_id": query.query_text_id.value,
+            }
         )
 
-        for cluster_name in cluster_names:
-            active_queries = self._pool.get_active_queries(cluster_name)
-            completed: list[tuple[Query, float]] = []
-            for query in active_queries:
-                end_time_s = (
-                    query.rel_start_time_s
-                    + self._predicted_latencies.get(query.query_id, 0.0)
-                )
-                if (current_time_s is None) or (end_time_s <= current_time_s):
-                    completed.append((query, end_time_s))
+        # Route the query.
+        snapshot = self._pool.snapshot(only_ready=True)
+        selected_cluster_name, new_predicted_latencies_on_selected = (
+            self._router.route_query(
+                query=query,
+                clusters=snapshot,
+                initial_predicted_latencies=self._predicted_latencies,
+                iconq_model=self._iconq_model,
+                current_time_s=self._current_sim_time_s,
+            )
+        )
+        self_latency_s = new_predicted_latencies_on_selected[query.query_id]
+        seq_num_to_cluster_name[index] = selected_cluster_name
+        emit_structured(
+            {
+                "timestamp": self._current_sim_time_s,
+                "event_type": "routing",
+                "query_id": query.query_id,
+                "query_text_id": query.query_text_id.value,
+                "cluster_name": selected_cluster_name,
+                "old_latency_s": None,
+                "raw_model_latency_s": None,
+                "latency_s": self_latency_s,
+                "end_time_s": self._current_sim_time_s + self_latency_s,
+                "source": "WorkloadSimulator",
+            }
+        )
 
-            for query, end_time_s in completed:
-                # Pool handles: active → completed, billing window,
-                # auto-finalization of draining clusters.
-                self._pool.on_query_finish(
-                    query_id=query.query_id,
-                    cluster_name=cluster_name,
-                    current_time_s=end_time_s,
-                )
-                # Feed query-completion event to the autoscaler.
-                if self._autoscaler is not None:
-                    self._autoscaler.on_query_complete(
-                        query.query_id, cluster_name, end_time_s
-                    )
-                self._log_if_verbose(
-                    {
-                        "timestamp": end_time_s,
-                        "event_type": "completion",
-                        "query_id": query.query_id,
-                        "query_text_id": query.query_text_id.value,
-                        "cluster_name": cluster_name,
-                        "old_latency_s": None,
-                        "raw_model_latency_s": None,
-                        "latency_s": self._predicted_latencies.get(
-                            query.query_id, -1.0
-                        ),
-                        "end_time_s": end_time_s,
-                    }
-                )
+        # Update latencies of existing queries as needed (including the new one)
+        for qid, latency_s in new_predicted_latencies_on_selected.items():
+            old_latency_s = self._predicted_latencies[
+                selected_cluster_name
+            ].get(qid, None)
 
-        # Detect draining clusters that were auto-removed by the pool.
-        draining_after = set(self._pool.draining_cluster_names)
-        for cn in draining_before - draining_after:
-            logger.debug("Draining cluster %s is now empty — deactivated.", cn)
-            self._log_if_verbose(
+            if (old_latency_s is not None) and (
+                abs(latency_s - old_latency_s) < 1e-3
+            ):
+                # No change in latency prediction for this query, so skip the update.
+                continue
+
+            self._predicted_latencies[selected_cluster_name][qid] = latency_s
+            completion_time_s = self._current_sim_time_s + latency_s
+            emit_structured(
                 {
-                    "timestamp": current_time_s,
-                    "event_type": "cluster_deactivated",
-                    "cluster_name": cn,
-                    "reason": "drain_complete",
-                    "num_active_clusters": len(self._pool.cluster_names),
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "latency_update",
+                    "source": "WorkloadSimulator",
+                    "query_id": qid,
+                    "cluster_name": selected_cluster_name,
+                    "old_latency_s": old_latency_s,
+                    "latency_s": latency_s,
+                    "end_time_s": completion_time_s,
+                }
+            )
+            heapq.heappush(
+                self._pending_events,
+                SimulatorEvent(
+                    rel_time_s=completion_time_s,
+                    event_type=SimulatorEventType.QUERY_COMPLETION,
+                    details={
+                        "query_id": qid,
+                        "cluster_name": selected_cluster_name,
+                        "latency_s": latency_s,
+                    },
+                ),
+            )
+
+        # Update pool and notify autoscaler of the new query.
+        self._pool.on_query_start(
+            query=query,
+            cluster_name=selected_cluster_name,
+        )
+        post_snapshot = self._pool.snapshot(only_ready=False)
+        autoscaler_suggested_actions: list[AutoscalingAction] = (
+            self._autoscaler.inform(
+                current_time_s=self._current_sim_time_s,
+                current_query=query,
+                pool_snapshot_with_current_query=post_snapshot,
+                predicted_latencies=self._predicted_latencies,
+            )
+        )
+        for action in autoscaler_suggested_actions:
+            match action.action_type:
+                case AutoscalingActionType.SPIN_UP:
+                    self._on_sim_spin_up(action)
+                case AutoscalingActionType.TEAR_DOWN:
+                    self._on_sim_tear_down(action)
+                case _:
+                    logging.warning(
+                        f"Unknown autoscaling action type: {action.action_type}"
+                    )
+
+    def _handle_query_completion(
+        self,
+        event: SimulatorEvent,
+        progress_callback: "Callable[[int, int], None]",
+    ) -> None:
+        """
+        Handle the completion of a query: update the pool and autoscaler state,
+        and report progress.
+
+        Note that the pool's on_query_finish will trigger auto-finalization of
+        draining clusters, which we detect and log here.
+        """
+        query_id = event.details["query_id"]
+        cluster_name = event.details["cluster_name"]
+        latency_s_from_event = event.details["latency_s"]
+
+        # Verify that this is a valid completion event for an active query.
+        currently_predicted_latency_s = self._predicted_latencies.get(
+            cluster_name, {}
+        ).get(query_id)
+        if (currently_predicted_latency_s is None) or (
+            abs(currently_predicted_latency_s - latency_s_from_event) > 1e-3
+        ):
+            # This was an older completion event, but the latency prediction has
+            # changed since.
+            emit_structured(
+                {
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "completion_ignored",
+                    "source": "WorkloadSimulator",
+                    "query_id": query_id,
+                }
+            )
+            return
+
+        # Clean up this query's state.
+        del self._predicted_latencies[cluster_name][query_id]
+        self._pool.on_query_finish(
+            query_id=query_id,
+            cluster_name=cluster_name,
+            current_time_s=self._current_sim_time_s,
+        )
+        emit_structured(
+            {
+                "timestamp": self._current_sim_time_s,
+                "event_type": "completion",
+                "source": "WorkloadSimulator",
+                "query_id": query_id,
+                "cluster_name": cluster_name,
+                "latency_s": latency_s_from_event,
+            }
+        )
+
+        # If we are in closed-loop mode, schedule the next query arrival now that this one has completed.
+        self._completed_queries += 1
+        if (
+            self._completed_queries % self._PROGRESS_INTERVAL == 0
+            or self._completed_queries == self._total_queries
+        ):
+            progress_callback(self._completed_queries, self._total_queries)
+        if self._closed_loop:
+            next_query = self._workload.queries()[self._completed_queries]
+            heapq.heappush(
+                self._pending_events,
+                SimulatorEvent(
+                    rel_time_s=next_query.rel_start_time_s,
+                    event_type=SimulatorEventType.QUERY_ARRIVAL,
+                    details={
+                        "query": next_query,
+                        "index": self._completed_queries,
+                    },
+                ),
+            )
+
+    def _handle_capacity_checkpoint(self, event: SimulatorEvent) -> None:
+        """
+        Handle a capacity checkpoint event: check the current provisioned
+        capacity against the checkpoint's requirements, and if there is a gap,
+        trigger the necessary spin-ups to meet the checkpoint.
+        """
+        cp: CapacityCheckpoint = event.details["checkpoint"]
+        current = Counter(self._pool.ready_and_pending_cluster_rpu_multiset)
+        desired = Counter(cp.min_rpus)
+        gap = desired - current  # keeps only positive differences
+
+        if _has_structured():
+            emit_structured(
+                {
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "capacity_checkpoint_reconciliation",
+                    "source": "WorkloadSimulator",
+                    "checkpoint_rel_time_s": cp.rel_time_s,
+                    "desired_rpus": list(cp.min_rpus),
+                    "current_rpus": sorted(current.elements()),
+                    "gap_spin_ups": str(dict(gap)) if gap else "",
+                }
+            )
+
+        if not gap:
+            logging.debug(
+                "Checkpoint t=%.1f: already satisfied (current %s).",
+                cp.rel_time_s,
+                dict(current),
+            )
+            return
+
+        logging.debug(
+            "Checkpoint t=%.1f: gap %s — spinning up.",
+            cp.rel_time_s,
+            dict(gap),
+        )
+        for rpu, count in sorted(gap.items()):
+            for _ in range(count):
+                action = AutoscalingAction(
+                    action_type=AutoscalingActionType.SPIN_UP,
+                    rpu=rpu,
+                    reason=f"capacity_checkpoint@t={cp.rel_time_s}",
+                )
+                self._on_sim_spin_up(action)
+                if _has_structured():
+                    emit_structured(
+                        {
+                            "timestamp": self._current_sim_time_s,
+                            "event_type": "spin_up",
+                            "source": "WorkloadSimulator",
+                            "rpu": rpu,
+                            "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
+                        }
+                    )
+
+    def _handle_cluster_ready(self, event: SimulatorEvent) -> None:
+        """
+        Handle the event of a cluster becoming ready: update the pool and
+        autoscaler state.
+        """
+
+        cluster_name = event.details["cluster_name"]
+
+        self._pool.on_cluster_ready(cluster_name, self._current_sim_time_s)
+        rpu = Cluster.rpu_for_cluster_name(cluster_name)
+
+        snapshot = self._pool.snapshot(only_ready=False)
+        if _has_structured():
+            emit_structured(
+                {
+                    "timestamp": self._current_sim_time_s,
+                    "event_type": "cluster_ready",
+                    "source": "WorkloadSimulator",
+                    "cluster_name": cluster_name,
+                    "rpu": rpu,
+                    "num_active_clusters": len(
+                        self._pool.clusters_in_state(ClusterState.READY)
+                    ),
                 }
             )
 
@@ -1059,25 +1009,25 @@ class WorkloadSimulator:
         d = {}
 
         all_completed = self._pool.get_all_completed_queries()
-        cost_map = self._pool.cost_per_second_map
         cluster_names = sorted(all_completed.keys())
         for cluster_name in cluster_names:
             completed_queries = all_completed[cluster_name]
             if len(completed_queries) == 0:
                 continue
-
             billed_intervals = Billing.billed_intervals(
                 [
                     Query.query_interval(
                         q.rel_start_time_s,
-                        self._predicted_latencies.get(q.query_id, 0.0),
+                        latency_s,
                         q.query_id,
                     )
-                    for q in completed_queries
+                    for latency_s, q in completed_queries
                 ],
             )
+
             total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
-            cost_per_second = cost_map.get(cluster_name, 0.0)
+            rpu = Cluster.rpu_for_cluster_name(cluster_name)
+            cost_per_second = Cluster.cost_per_second_for_rpu(rpu)
             d[cluster_name] = {
                 "num_completed_queries": len(completed_queries),
                 "num_billed_intervals": len(billed_intervals),
@@ -1159,7 +1109,6 @@ class WorkloadSimulator:
 
         run_entry = {
             "run_id": self._run_id,
-            "seed": self._seed,
             "slo_s": self._slo_s,
             "slo_metric": self._slo_metric.value,
             "slo_threshold": self._slo_threshold,
@@ -1195,5 +1144,10 @@ if __name__ == "__main__":
     cfg, _ = cfgu.load_config_from_cli(
         "Run the WorkloadSimulator from a YAML config file.",
     )
+    ncpus = str(inner_level_num_cpus())
+    os.environ["OMP_NUM_THREADS"] = ncpus
+    os.environ["MKL_NUM_THREADS"] = ncpus
+    os.environ["OPENBLAS_NUM_THREADS"] = ncpus
+    torch.set_num_threads(int(ncpus))
     sim = WorkloadSimulator.from_config_dict(cfg)
-    sim.simulate_one()
+    sim.run()
