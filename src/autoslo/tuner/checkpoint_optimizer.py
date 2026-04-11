@@ -26,7 +26,7 @@ from rich.table import Table
 
 import autoslo.utils.config as cfgu
 from autoslo.clusters.cluster import Cluster
-from autoslo.clusters.autoscaler import CapacityCheckpoint
+from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver

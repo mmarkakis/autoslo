@@ -36,42 +36,6 @@ class AutoscalingAction:
     rpu: Optional[int] = None  # For spin-up actions
     cluster_name: Optional[str] = None  # For tear-down actions
 
-
-@dataclass(frozen=True)
-class CapacityCheckpoint:
-    """Declarative capacity checkpoint.
-
-    At ``rel_time_s`` (relative to workload start) the system reconciles
-    the declared RPU multiset against the current (READY + PENDING)
-    clusters and spins up only the gap.
-
-    Parameters
-    ----------
-    rel_time_s :
-        Trigger time in seconds from the start of the workload.
-    min_rpus :
-        Desired RPU multiset.  Each element is an RPU size that must
-        be present (exact matching, not total-capacity).
-    """
-
-    rel_time_s: float
-    min_rpus: tuple[int, ...]
-
-
-class AutoscalerStub:
-    """Stub autoscaler that performs no scaling actions."""
-
-    def __init__(self):
-        pass
-
-    def inform(
-        self,
-        current_time_s: float,
-        pool_snapshot: dict[str, Cluster],
-    ) -> list[AutoscalingAction]:
-        return []
-
-
 class Autoscaler:
     """
     Coordinator that dispatches events to an autoscaling policy and
