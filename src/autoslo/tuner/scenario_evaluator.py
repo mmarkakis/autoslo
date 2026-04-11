@@ -128,7 +128,7 @@ def _run_one_combination(
             progress_dict[combination_idx] = (current, total)
 
     # Run the simulation.
-    sim.simulate_one(
+    sim.run(
         progress_callback=_progress_cb if progress_dict is not None else None,
     )
 

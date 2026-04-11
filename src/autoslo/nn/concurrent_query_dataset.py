@@ -298,63 +298,7 @@ class ConcurrentQueryDataset(Dataset):
             def _stage_pred(q: Query) -> float:
                 return q.stage_predictions_per_rpu.get(rpu, -1.0)
 
-            # Fast path: if every base query maps to the same neighbor list
-            # (identity check), the full group is all-vs-all. Build all
-            # interaction matrices in one batch call instead of one per base.
-            neighbor_ids = {id(v) for v in base_to_neighbors.values()}
-            if len(neighbor_ids) == 1:
-                # All base queries share one neighbor list.
-                shared_neighbors: list[Query] = next(
-                    iter(base_to_neighbors.values())
-                )
-                entries_for_batch = [
-                    (
-                        q.query_text_id,
-                        q.rel_start_time_s,
-                        _stage_pred(q),
-                    )
-                    for q in shared_neighbors
-                ]
-                # Index of each base query within shared_neighbors (O(1) lookup).
-                neighbor_pos = {id(q): i for i, q in enumerate(shared_neighbors)}
-                base_query_list = list(base_to_neighbors.keys())
-                base_idx_in_neighbors = [
-                    neighbor_pos[id(q)] for q in base_query_list
-                ]
-                arrays, pinch_indices = (
-                    iconq_interaction_featurizer
-                    .featurize_all_vs_all_to_numpy(
-                        cluster_name=cluster_name,
-                        entries=entries_for_batch,
-                    )
-                )
-                for base_query, base_idx in zip(
-                    base_query_list, base_idx_in_neighbors
-                ):
-                    x.append(torch.from_numpy(arrays[base_idx]))
-                    if targets is not None and base_query.query_id in targets:
-                        latency = targets[base_query.query_id]
-                        floored_latency = max(latency, 0.001)
-                        y.append(
-                            floored_latency
-                            if not use_log_runtime
-                            else np.log(floored_latency)
-                        )
-                    else:
-                        y.append(0.0)
-                    pinch_points.append(pinch_indices[base_idx])
-                    query_ids_out.append(base_query.query_id)
-                    query_text_id_out.append(
-                        base_query.query_text_id
-                    )
-                    run_ids_out.append(cluster_name)
-                    lb = (
-                        is_lower_bound.get(base_query.query_id, False)
-                        if is_lower_bound is not None
-                        else False
-                    )
-                    y_is_lower_bound_out.append(lb)
-                continue
+          
 
             # General path: distinct neighbor lists per base query.
             for base_query in base_to_neighbors.keys():

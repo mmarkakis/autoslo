@@ -34,7 +34,52 @@ class SloObjective:
     def is_met(self, per_query_latency_slo: list[tuple[float, float]]) -> bool:
         """Return True if the given per-query (latency, SLO) pairs meet the
         SLO objective."""
-        return (
-            self.slo_metric.aggregate_batch(per_query_latency_slo)
-            <= self.slo_threshold
-        )
+        aggregated = self.slo_metric.aggregate_batch(per_query_latency_slo)
+        return self.is_met_from_aggregated(aggregated)
+
+    def is_met_from_aggregated(self, aggregated_violation: float) -> bool:
+        """Return True if the given aggregated violation meets the SLO
+        objective."""
+        return aggregated_violation <= self.slo_threshold
+
+    COMPARISON_TOLERANCE = 1e-4
+
+    def _cmp_with_tolerance(
+        self,
+        a: float,
+        b: float,
+        tolerance: float = COMPARISON_TOLERANCE,
+    ) -> int:
+        """
+        Compare two amounts with a tolerance.
+
+        Returns -1 if a < b, 0 if approximately equal, 1 if a > b.
+        """
+        if a + tolerance < b:
+            return -1
+        elif b + tolerance < a:
+            return 1
+        return 0
+
+    def is_b_better(
+        self,
+        metric_value_and_cost_a: tuple[float, float],
+        metric_value_and_cost_b: tuple[float, float],
+        tolerance: float = COMPARISON_TOLERANCE,
+    ) -> bool:
+        """
+        Compare two (metric_value, cost) pairs according to the SLO objective.
+
+        If both are under threshold, return the cheapest. Otherwise, return the
+        one with the better metric value.
+        """
+
+        metric_a, cost_a = metric_value_and_cost_a
+        metric_b, cost_b = metric_value_and_cost_b
+
+        a_meets = self.is_met_from_aggregated(metric_a)
+        b_meets = self.is_met_from_aggregated(metric_b)
+
+        if a_meets and b_meets:
+            return self._cmp_with_tolerance(cost_a, cost_b, tolerance) > 0
+        return self._cmp_with_tolerance(metric_a, metric_b, tolerance) > 0

@@ -26,7 +26,7 @@ from rich.table import Table
 
 import autoslo.utils.config as cfgu
 from autoslo.blueprints.cluster import Cluster
-from autoslo.capacity.autoscaling_policy import CapacityCheckpoint
+from autoslo.capacity.autoscaler import CapacityCheckpoint
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -452,10 +452,11 @@ class CheckpointOptimizer:
                 >= min_rel_improvement_for_acceptance
             ):
                 console.print(
-                    f" [red]Rejecting because relative SLO "
-                    f"improvement {relative_improvement:.4f} is below the "
-                    f"threshold of {min_rel_improvement_for_acceptance:.4f} "
-                    f"and does not meet cost improvement criteria."
+                    f" [red]Rejecting because SLO metric improvement "
+                    f"{relative_improvement:.2%} is below the "
+                    f"threshold of {min_rel_improvement_for_acceptance:.2%} "
+                    f"and cost impact {relative_cost_improvement:.2%} is not "
+                    f"sufficient."
                 )
                 self._write_round_summary(round_idx, cands, best_cp)
                 dump(current_config, round_dir / "final_config.yml")
@@ -463,9 +464,9 @@ class CheckpointOptimizer:
 
             current_config = all_configs[best_idx]
             console.print(
-                f"  [green]Accepted with relative "
-                f"SLO improvement {relative_improvement:.4f} and relative cost "
-                f"improvement {relative_cost_improvement:.4f}"
+                f"  [green]Accepted with SLO metric improvement "
+                f"{relative_improvement:.2%} and cost impact "
+                f"{relative_cost_improvement:.2%}"
             )
 
             # Write round summary.
@@ -507,7 +508,7 @@ class CheckpointOptimizer:
             is_best = cp == best_cp
             style = "bold green" if is_best else ""
             table.add_row(
-                str(cp.min_rpus[0]),
+                ', '.join(str(rpu) for rpu in cp.min_rpus),
                 f"{cp.rel_time_s:.0f}",
                 f"{agg.violation_rate:.4f}",
                 f"{agg.violation_amount_s:.4f}",
@@ -543,7 +544,7 @@ class CheckpointOptimizer:
             },
             "candidates": [
                 {
-                    "rpu": cp.min_rpus[0],
+                    "rpu": ', '.join(str(rpu) for rpu in cp.min_rpus),
                     "rel_time_s": cp.rel_time_s,
                     "train_violation": agg.primary_violation(
                         self._slo_objective.slo_metric
