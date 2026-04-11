@@ -2,7 +2,7 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace

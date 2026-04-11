@@ -3,8 +3,8 @@ import math
 import numpy as np
 import pytest
 
-from autoslo.blueprints.cluster import Cluster, ClusterState
-from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+from autoslo.clusters.cluster import Cluster, ClusterState
+from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_definition.query import Query
 
 

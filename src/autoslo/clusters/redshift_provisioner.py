@@ -22,9 +22,9 @@ import logging
 import time
 from typing import Optional
 
-from autoslo.blueprints.cluster import Cluster
-from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
-from autoslo.capacity.cluster_provisioner import ClusterProvisioner
+from autoslo.clusters.cluster import Cluster
+from autoslo.clusters.cluster_conn_info import ClusterConnInfo
+from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 
 logger = logging.getLogger(__name__)

@@ -5,8 +5,8 @@ from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
 
-from autoslo.blueprints.blueprint import Blueprint
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.blueprint import Blueprint
+from autoslo.clusters.cluster import Cluster
 
 def main(args):
 

@@ -205,7 +205,7 @@ class CacheModel:
                 cluster_name = trace.cluster_name_from_query_id(
                     query_id  # type: ignore
                 )
-                from autoslo.blueprints.cluster import Cluster
+                from autoslo.clusters.cluster import Cluster
                 cluster_rpu = (
                     0
                     if self._ignore_cluster_size

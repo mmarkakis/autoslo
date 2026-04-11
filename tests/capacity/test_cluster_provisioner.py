@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from autoslo.blueprints.cluster import Cluster
-from autoslo.capacity.cluster_provisioner import (
+from autoslo.clusters.cluster import Cluster
+from autoslo.clusters.cluster_provisioner import (
     ClusterProvisioner,
     SimulatedProvisioner,
 )
@@ -143,7 +143,7 @@ class TestClusterFrozen:
 
     def test_conn_info_set_at_construction(self):
         """Connection info can be provided at construction time."""
-        from autoslo.blueprints.cluster_conn_info import ClusterConnInfo
+        from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 
         info = ClusterConnInfo(
             host="example.com",

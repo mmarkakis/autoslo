@@ -193,7 +193,7 @@ def _compute_run_summary(run_id: str, trace: Trace) -> RunSummary:
             # RPU cannot be parsed — compute manually
             try:
                 rpu = _rpu_for_runner_cluster(cluster_name)
-                from autoslo.blueprints.cluster import Cluster
+                from autoslo.clusters.cluster import Cluster
                 from intervaltree import Interval
 
                 df = trace._dfs["sys_query_history"][cluster_name]
@@ -347,7 +347,7 @@ def get_runner_timeline(
         except ValueError:
             try:
                 rpu = _rpu_for_runner_cluster(cluster_name)
-                from autoslo.blueprints.cluster import Cluster
+                from autoslo.clusters.cluster import Cluster
                 from intervaltree import Interval
                 from autoslo.utils.billing import Billing
 

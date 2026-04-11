@@ -9,7 +9,7 @@ from autoslo.workload_definition.query import SloMetric
 from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
-from autoslo.blueprints.blueprint import Blueprint
+from autoslo.clusters.blueprint import Blueprint
 
 
 def main(args):

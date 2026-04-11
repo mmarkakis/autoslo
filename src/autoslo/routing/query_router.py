@@ -3,7 +3,7 @@ from typing import Optional
 
 from intervaltree import Interval  # type: ignore[import]
 
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.slo.slo_metric import SloMetric

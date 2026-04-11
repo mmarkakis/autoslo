@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.capacity.autoscaler import Autoscaler
+from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.capacity.autoscaling_policy import (
     AutoscalingAction,
     AutoscalingPolicy,

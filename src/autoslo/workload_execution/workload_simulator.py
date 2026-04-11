@@ -16,7 +16,7 @@ from autoslo.utils.paralellism import inner_level_num_cpus
 
 from collections import Counter
 
-from autoslo.capacity.autoscaler import (
+from autoslo.clusters.autoscaler import (
     CapacityCheckpoint,
     AutoscalingAction,
     AutoscalingActionType,
@@ -31,11 +31,11 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
 )
-from autoslo.blueprints.cluster import Cluster, ClusterState
+from autoslo.clusters.cluster import Cluster, ClusterState
 
-from autoslo.capacity.cluster_provisioner import SimulatedProvisioner
+from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.managed_cluster_pool import (
+from autoslo.clusters.managed_cluster_pool import (
     ManagedClusterPool,
     ManagedClusterPoolConfig,
 )

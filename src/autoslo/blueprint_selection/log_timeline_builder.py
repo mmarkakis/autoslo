@@ -147,7 +147,7 @@ def _cost_per_second_from_config(config: dict) -> dict[str, float]:
     Reads the blueprint YAML directly — no Blueprint or Cluster.from_config needed.
     """
     import autoslo.utils.paths as pu
-    from autoslo.blueprints.cluster import Cluster
+    from autoslo.clusters.cluster import Cluster
 
     bp_configs = pu.get_blueprint_dicts_from_config()
     bp_name = config["blueprint_name"]

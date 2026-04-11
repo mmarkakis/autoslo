@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
 from matplotlib.patches import Rectangle
 
-from autoslo.blueprints.cluster import Cluster
+from autoslo.clusters.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset

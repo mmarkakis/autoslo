@@ -1,10 +1,10 @@
 from typing import Optional
 
 import autoslo.utils.config as cfgu
-from autoslo.capacity.autoscaler import (
+from autoslo.clusters.autoscaler import (
     CapacityCheckpoint,
 )
-from autoslo.routing.managed_cluster_pool import ManagedClusterPoolConfig
+from autoslo.clusters.managed_cluster_pool import ManagedClusterPoolConfig
 
 
 # ── policy builders ──────────────────────────────────────────────────────
