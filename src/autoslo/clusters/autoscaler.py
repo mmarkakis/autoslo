@@ -1,4 +1,3 @@
-import copy
 import logging
 from typing import Optional
 
@@ -49,9 +48,6 @@ class Autoscaler:
         # Internal mutable state
         self._window_start_time_s: Optional[float] = None
         self._snapshot_at_window_start: Optional[dict[str, Cluster]] = None
-        self._predicted_latencies_at_window_start: Optional[
-            dict[str, dict[str, float]]
-        ] = None
         self._window_queries: list[Query] = []
 
     # ------------------------------------------------------------------
@@ -97,14 +93,10 @@ class Autoscaler:
         self,
         window_start_time: float,
         snapshot: dict[str, Cluster],
-        predicted_latencies: dict[str, dict[str, float]],
     ) -> None:
         """Clear the routing window and all associated state."""
         self._window_start_time_s = window_start_time
         self._snapshot_at_window_start = snapshot
-        self._predicted_latencies_at_window_start = copy.deepcopy(
-            predicted_latencies
-        )
         self._window_queries = []
 
     def inform(
@@ -112,7 +104,6 @@ class Autoscaler:
         current_time_s: float,
         current_query: Query,
         pool_snapshot_with_current_query: dict[str, Cluster],
-        predicted_latencies: dict[str, dict[str, float]],
     ) -> list[ScalingAction]:
 
         actions: list[ScalingAction] = []
@@ -125,7 +116,6 @@ class Autoscaler:
             self._reset_window(
                 current_time_s,
                 pool_snapshot_with_current_query,
-                predicted_latencies,
             )
             return actions
 
@@ -138,7 +128,6 @@ class Autoscaler:
         spin_up_actions = self.consider_spin_up(
             current_time_s,
             pool_snapshot_with_current_query,
-            predicted_latencies,
         )
         actions.extend(spin_up_actions)
 
@@ -154,7 +143,6 @@ class Autoscaler:
             self._reset_window(
                 current_time_s,
                 pool_snapshot_with_current_query,
-                predicted_latencies,
             )
 
         return actions
@@ -163,7 +151,6 @@ class Autoscaler:
         self,
         current_time_s: float,
         pool_snapshot_with_current_query: dict[str, Cluster],
-        predicted_latencies: dict[str, dict[str, float]],
     ) -> list[SpinUpAction]:
         """
         Recommend spinning up a cluster if both are true:
@@ -191,7 +178,7 @@ class Autoscaler:
         lat_and_slos = []
         for cluster_name, cluster in pool_snapshot_with_current_query.items():
             for q in cluster.active_queries:
-                pred_lat = predicted_latencies[cluster_name][q.query_id]
+                pred_lat = cluster.predicted_latencies[q.query_id]
                 slo = self._slo_resolver.resolve(q.query_text_id)
                 lat_and_slos.append((pred_lat, slo))
         slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
@@ -307,7 +294,6 @@ class Autoscaler:
         *candidate_rpu* and return the aggregate SLO-violation metric and cost.
         """
         assert self._snapshot_at_window_start is not None
-        assert self._predicted_latencies_at_window_start is not None
 
         # Set up.
         local_snapshot = {
@@ -329,9 +315,6 @@ class Autoscaler:
                         begin=cluster.billing_window_start_s, end=current_time_s
                     )
                 )
-        predicted_latencies = copy.deepcopy(
-            self._predicted_latencies_at_window_start
-        )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
             slo_metric=self._slo_objective.slo_metric,
@@ -347,9 +330,6 @@ class Autoscaler:
             for cluster_name, cluster in local_snapshot.items():
                 qs_and_latencies = cluster.finish_queries_until(
                     current_time_s=time_s,
-                    predicted_latencies=predicted_latencies.get(
-                        cluster_name, {}
-                    ),
                 )
                 if len(qs_and_latencies) > 0:
                     for q, latency_s in qs_and_latencies:
@@ -369,13 +349,12 @@ class Autoscaler:
                 router.route_query(
                     query=query,
                     clusters=snapshot_for_routing,
-                    initial_predicted_latencies=predicted_latencies,
                     iconq_model=self._iconq_model,
                     current_time_s=time_s,
                 )
             )
             local_snapshot[selected_cluster_name].add_query(query)
-            predicted_latencies[selected_cluster_name] = (
+            local_snapshot[selected_cluster_name].predicted_latencies = (
                 new_predicted_latencies_for_cluster
             )
 
@@ -383,7 +362,7 @@ class Autoscaler:
         # the window.
         for cluster_name, cluster in local_snapshot.items():
             for q in cluster.active_queries:
-                pred_lat = predicted_latencies[cluster_name][q.query_id]
+                pred_lat = cluster.predicted_latencies[q.query_id]
                 slo = self._slo_resolver.resolve(q.query_text_id)
                 lat_and_slos.append((pred_lat, slo))
 

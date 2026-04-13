@@ -1,14 +1,11 @@
-import copy
 import heapq
 import json
 import logging
 import os
 import shutil
-from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 import yaml
@@ -274,10 +271,6 @@ class WorkloadSimulator:
         # ── Instance Variables ───────────────────────────────────────────────
         self._pending_events: list[SimulatorEvent] = []
         self._current_sim_time_s = 0.0
-        self._predicted_latencies: dict[str, dict[str, float]] = defaultdict(
-            dict
-        )
-        """cluster_name → {query_id → current best latency estimate}."""
 
     @property
     def out_dir(self) -> str:
@@ -546,11 +539,11 @@ class WorkloadSimulator:
 
         # Route the query.
         snapshot = self._pool.snapshot(only_ready=True)
+        predicted_latencies = self._pool.get_predicted_latencies()
         selected_cluster_name, new_predicted_latencies_on_selected = (
             self._router.route_query(
                 query=query,
                 clusters=snapshot,
-                initial_predicted_latencies=self._predicted_latencies,
                 iconq_model=self._iconq_model,
                 current_time_s=self._current_sim_time_s,
             )
@@ -573,10 +566,9 @@ class WorkloadSimulator:
         )
 
         # Update latencies of existing queries as needed (including the new one)
+        old_latencies = predicted_latencies.get(selected_cluster_name, {})
         for qid, latency_s in new_predicted_latencies_on_selected.items():
-            old_latency_s = self._predicted_latencies[
-                selected_cluster_name
-            ].get(qid, None)
+            old_latency_s = old_latencies.get(qid, None)
 
             if (old_latency_s is not None) and (
                 abs(latency_s - old_latency_s) < 1e-3
@@ -584,7 +576,6 @@ class WorkloadSimulator:
                 # No change in latency prediction for this query, so skip the update.
                 continue
 
-            self._predicted_latencies[selected_cluster_name][qid] = latency_s
             completion_time_s = self._current_sim_time_s + latency_s
             emit_structured(
                 {
@@ -611,7 +602,10 @@ class WorkloadSimulator:
                 ),
             )
 
-        # Update pool and notify autoscaler of the new query.
+        # Commit the winning cluster's latencies and update pool state.
+        self._pool.commit_predicted_latencies(
+            selected_cluster_name, new_predicted_latencies_on_selected
+        )
         self._pool.on_query_start(
             query=query,
             cluster_name=selected_cluster_name,
@@ -622,7 +616,6 @@ class WorkloadSimulator:
                 current_time_s=self._current_sim_time_s,
                 current_query=query,
                 pool_snapshot_with_current_query=post_snapshot,
-                predicted_latencies=self._predicted_latencies,
             )
         )
         for action in autoscaler_suggested_actions:
@@ -654,7 +647,8 @@ class WorkloadSimulator:
         latency_s_from_event = event.details["latency_s"]
 
         # Verify that this is a valid completion event for an active query.
-        currently_predicted_latency_s = self._predicted_latencies.get(
+        current_predicted_latencies = self._pool.get_predicted_latencies()
+        currently_predicted_latency_s = current_predicted_latencies.get(
             cluster_name, {}
         ).get(query_id)
         if (currently_predicted_latency_s is None) or (
@@ -672,8 +666,6 @@ class WorkloadSimulator:
             )
             return
 
-        # Clean up this query's state.
-        del self._predicted_latencies[cluster_name][query_id]
         self._pool.on_query_finish(
             query_id=query_id,
             cluster_name=cluster_name,

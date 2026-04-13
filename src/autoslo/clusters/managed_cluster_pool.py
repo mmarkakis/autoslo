@@ -408,6 +408,31 @@ class ManagedClusterPool:
                 if cond(cluster)
             }
 
+    def get_predicted_latencies(self) -> dict[str, dict[str, float]]:
+        """Snapshot the predicted latencies for all clusters.
+
+        Returns a fresh ``{cluster_name: {query_id: latency_s}}`` dict
+        that is safe to read and mutate without holding the pool lock.
+        """
+        with self._lock:
+            return {
+                cluster_name: dict(cluster.predicted_latencies)
+                for cluster_name, cluster in self._clusters.items()
+                if cluster.predicted_latencies
+            }
+
+    def commit_predicted_latencies(
+        self,
+        cluster_name: str,
+        new_latencies: dict[str, float],
+    ) -> None:
+        """
+        Atomically update predicted latencies on a cluster.
+        """
+        with self._lock:
+            cluster = self._clusters[cluster_name]
+            cluster.predicted_latencies = dict(new_latencies)
+
     def ready_and_pending_counts_per_rpu(self) -> Counter[int]:
         """RPU → count for READY + PENDING clusters.
 
