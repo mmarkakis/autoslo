@@ -70,7 +70,6 @@ class Cluster:
     # Invariant: queries.keys() == _neighbor_ids.keys()
     #
     state: ClusterState = ClusterState.PENDING
-    predicted_ready_time_s: Optional[float] = None
     billing_window_start_s: Optional[float] = field(default=None, repr=False)
 
     queries: dict[str, Query] = field(default_factory=dict, repr=False)
@@ -88,7 +87,6 @@ class Cluster:
         conn_info: Optional[ClusterConnInfo] = None,
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
         state: ClusterState = ClusterState.PENDING,
-        predicted_ready_time_s: Optional[float] = None,
         billing_window_start_s: Optional[float] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
@@ -108,7 +106,6 @@ class Cluster:
         self.conn_info = conn_info
         self.cost_per_rpu_hour = cost_per_rpu_hour
         self.state = state
-        self.predicted_ready_time_s = predicted_ready_time_s
         self.billing_window_start_s = billing_window_start_s
         self.most_recent_query_completion_time_s: float = self.creation_time_s
 
@@ -127,7 +124,6 @@ class Cluster:
             conn_info=self.conn_info,
             cost_per_rpu_hour=self.cost_per_rpu_hour,
             state=self.state,
-            predicted_ready_time_s=self.predicted_ready_time_s,
             billing_window_start_s=self.billing_window_start_s,
         )
         c.queries = dict(self.queries)

@@ -33,6 +33,8 @@ import pandas as pd
 
 import autoslo.utils.paths as pu
 
+from autoslo.workload_definition.query import QueryTextId
+
 _REGISTRY_SUBDIR = "__query_texts"
 _REGISTRY_FILENAME = "query_texts.parquet"
 
@@ -48,7 +50,7 @@ class QueryTextRegistry:
     # ------------------------------------------------------------------
 
     @classmethod
-    def get(cls, schema_name: str, query_text_id: str) -> Optional[str]:
+    def get(cls, schema_name: str, query_text_id: QueryTextId | str) -> Optional[str]:
         """Return the SQL text for *query_text_id* within *schema_name*.
 
         Loads the schema's registry file on first access.  Returns ``None``
@@ -66,6 +68,8 @@ class QueryTextRegistry:
         str or None
             The SQL string, or ``None`` if not found.
         """
+        if isinstance(query_text_id, QueryTextId):
+            query_text_id = str(query_text_id)
         cls._ensure_loaded(schema_name)
         return _cache.get(schema_name, {}).get(query_text_id)
 

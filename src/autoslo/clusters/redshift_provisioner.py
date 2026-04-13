@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 import time
 from typing import Optional
+import boto3
+
 
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
@@ -132,7 +134,6 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
     def _get_client(self, service: str):  # noqa: ANN201
         """Lazy boto3 client (import deferred so tests without boto3 skip)."""
-        import boto3
 
         return boto3.client(service, region_name=self._aws_region)
 
@@ -515,7 +516,6 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             user=self._admin_username,
             password=self._admin_password,
         )
-
         cluster = Cluster(rpu=rpu, name=wg_name, conn_info=conn_info)
         spin_up_duration = time.time() - spin_up_start
         logger.info(

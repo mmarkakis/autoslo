@@ -84,23 +84,11 @@ class SimulatedProvisioner(ClusterProvisioner):
 
     def __init__(self, spin_up_delay_s: float = 120.0) -> None:
         self._spin_up_delay_s = spin_up_delay_s
-        self._spun_up: list[tuple[Cluster, float]] = []
-        self._torn_down: list[tuple[str, float]] = []
 
     @property
     def spin_up_delay_s(self) -> float:
         """The configured spin-up delay (for the simulator to use)."""
         return self._spin_up_delay_s
-
-    @property
-    def spun_up(self) -> list[tuple[Cluster, float]]:
-        """Clusters created so far (for test inspection)."""
-        return list(self._spun_up)
-
-    @property
-    def torn_down(self) -> list[tuple[str, float]]:
-        """Cluster names torn down so far (for test inspection)."""
-        return list(self._torn_down)
 
     def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
         """Create a spec-only cluster instantly.
@@ -110,7 +98,6 @@ class SimulatedProvisioner(ClusterProvisioner):
         A new ``Cluster`` with auto-generated name and no connection info.
         """
         cluster = Cluster(rpu=rpu, creation_time_s=current_time_s)
-        self._spun_up.append((cluster, current_time_s))
         logger.debug(
             "SimulatedProvisioner: spun up %s (%d RPU) at time %.2f",
             cluster.name,
@@ -121,7 +108,6 @@ class SimulatedProvisioner(ClusterProvisioner):
 
     def tear_down(self, cluster_name: str, current_time_s: float) -> None:
         """Record a tear-down (no-op for simulation)."""
-        self._torn_down.append((cluster_name, current_time_s))
         logger.debug(
             "SimulatedProvisioner: tore down %s at time %.2f",
             cluster_name,
