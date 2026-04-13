@@ -494,49 +494,15 @@ class WorkloadSimulator:
         capacity against the checkpoint's requirements, and if there is a gap,
         trigger the necessary spin-ups to meet the checkpoint.
         """
-        cp: CapacityCheckpoint = event.details["checkpoint"]
-        current_counts_per_rpu = self._pool.ready_and_pending_counts_per_rpu()
-        spin_ups_needed = cp.spin_ups_needed(current_counts_per_rpu)
+        checkpoint: CapacityCheckpoint = event.details["checkpoint"]
+        checkpoint.reconcile(
+            pool=self._pool,
+            current_time_s=self._current_sim_time_s,
+            source="WorkloadSimulator",
+            on_spin_up=self._on_sim_spin_up,
+            write_text_log=self._write_text_log,
+        )
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "capacity_checkpoint_reconciliation",
-                    "source": "WorkloadSimulator",
-                    "checkpoint_rel_time_s": cp.rel_time_s,
-                    "desired_rpus": list(cp.min_rpus),
-                    "current_rpus": dict(current_counts_per_rpu),
-                }
-            )
-
-        if not spin_ups_needed:
-            if self._write_text_log:
-                logging.debug(
-                    "Checkpoint t=%.1f: already satisfied (current %s).",
-                    cp.rel_time_s,
-                    dict(current_counts_per_rpu),
-                )
-            return
-
-        if self._write_text_log:
-            logging.debug(
-                "Checkpoint t=%.1f — spinning up %d clusters",
-                cp.rel_time_s,
-                len(spin_ups_needed),
-            )
-        for action in spin_ups_needed:
-            self._on_sim_spin_up(action)
-            if _has_structured():
-                emit_structured(
-                    {
-                        "timestamp": self._current_sim_time_s,
-                        "event_type": "spin_up",
-                        "source": "WorkloadSimulator",
-                        "rpu": action.rpu,
-                        "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
-                    }
-                )
 
     def _handle_cluster_ready(self, event: SimulatorEvent) -> None:
         """
@@ -549,7 +515,6 @@ class WorkloadSimulator:
         self._pool.on_cluster_ready(cluster_name, self._current_sim_time_s)
         rpu = Cluster.rpu_for_cluster_name(cluster_name)
 
-        snapshot = self._pool.snapshot(only_ready=False)
         if _has_structured():
             emit_structured(
                 {
