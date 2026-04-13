@@ -24,7 +24,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
@@ -222,11 +222,11 @@ class ManagedClusterPool:
         cluster_name: str,
         current_time_s: float,
         force: bool = False,
-    ) -> None:
+    ) -> bool:
         """Transition READY → DRAINING (or straight to REMOVED).
 
-        Raises ``ValueError`` if this is the last READY cluster and
-        ``force`` is False.
+        Returns True if the tear-down was initiated, False if it was blocked
+        by the last-cluster guard.  If *force* is True, bypasses the guard.
         """
         with self._lock:
             cluster = self._clusters[cluster_name]
@@ -236,7 +236,7 @@ class ManagedClusterPool:
                     f"state is {cluster.state.value}."
                 )
             if cluster.state == ClusterState.DRAINING:
-                return  # already draining, idempotent
+                return True
 
             # Guard: refuse to tear down the last READY cluster.
             if not force:
@@ -257,6 +257,7 @@ class ManagedClusterPool:
                                 "reason": "last_routable_cluster",
                             }
                         )
+                return False
 
             cluster.update_state(ClusterState.DRAINING)
             if _has_structured():
@@ -274,6 +275,7 @@ class ManagedClusterPool:
         # If no active queries, proceed to removal immediately.
         if not has_active:
             self._finalize_removal(cluster_name, current_time_s)
+        return True
 
     def _finalize_removal(
         self, cluster_name: str, current_time_s: float
@@ -399,7 +401,7 @@ class ManagedClusterPool:
             self._finalize_removal(cluster_name, current_time_s)
 
     # ------------------------------------------------------------------
-    # Routing support
+    # Routing and checkpointing support
     # ------------------------------------------------------------------
 
     def snapshot(self, only_ready: bool) -> dict[str, Cluster]:
@@ -416,8 +418,7 @@ class ManagedClusterPool:
                 if cond(cluster)
             }
 
-    @property
-    def ready_and_pending_cluster_rpu_multiset(self) -> dict[int, int]:
+    def ready_and_pending_counts_per_rpu(self) -> Counter[int]:
         """RPU → count for READY + PENDING clusters.
 
         Used by :meth:`Autoscaler.reconcile_checkpoints_up_to` to
@@ -430,7 +431,7 @@ class ManagedClusterPool:
                 for cluster in self._clusters.values()
                 if cluster.state in (ClusterState.READY, ClusterState.PENDING)
             ]
-        return dict(Counter(rpus))
+        return Counter(rpus)
 
     # ------------------------------------------------------------------
     # Billing / completed queries
