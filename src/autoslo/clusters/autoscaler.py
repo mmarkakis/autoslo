@@ -1,40 +1,22 @@
-import logging
-from collections import deque
-from dataclasses import dataclass
-from enum import Enum
 import copy
-from typing import TYPE_CHECKING, Any, Optional
+import logging
+from typing import Optional
 
+from intervaltree import Interval  # type: ignore[import]
+
+from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
-from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
+from autoslo.utils.billing import Billing
 from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 from autoslo.workload_definition.query import Query
-from autoslo.utils.billing import Billing
-from intervaltree import Interval  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
-
-class AutoscalingActionType(Enum):
-    SPIN_UP = "spin_up"
-    TEAR_DOWN = "tear_down"
-
-
-@dataclass(frozen=True)
-class AutoscalingAction:
-    """
-    Returned back to the runner/simulator to indicate what action to take.
-    """
-
-    action_type: AutoscalingActionType
-    reason: str
-    rpu: Optional[int] = None  # For spin-up actions
-    cluster_name: Optional[str] = None  # For tear-down actions
 
 class Autoscaler:
     """
@@ -131,9 +113,9 @@ class Autoscaler:
         current_query: Query,
         pool_snapshot_with_current_query: dict[str, Cluster],
         predicted_latencies: dict[str, dict[str, float]],
-    ) -> list[AutoscalingAction]:
+    ) -> list[ScalingAction]:
 
-        actions: list[AutoscalingAction] = []
+        actions: list[ScalingAction] = []
 
         # Start new window if needed.
         if (self._window_start_time_s is None) or (
@@ -182,7 +164,7 @@ class Autoscaler:
         current_time_s: float,
         pool_snapshot_with_current_query: dict[str, Cluster],
         predicted_latencies: dict[str, dict[str, float]],
-    ) -> list[AutoscalingAction]:
+    ) -> list[SpinUpAction]:
         """
         Recommend spinning up a cluster if both are true:
         1. The window has at least ``min_observations_to_act`` queries.
@@ -192,7 +174,7 @@ class Autoscaler:
         Use the window to determine the size of the window to spin up.
         """
 
-        # Determine if we are disallowed from spinning up. 
+        # Determine if we are disallowed from spinning up.
         if len(self.allowed_rpu_sizes) == 0:
             return []
 
@@ -223,8 +205,7 @@ class Autoscaler:
 
         # Find the best size to spin up.
         best_rpu = self._select_rpu(current_time_s)
-        action = AutoscalingAction(
-            action_type=AutoscalingActionType.SPIN_UP,
+        action = SpinUpAction(
             reason=(
                 f"num_queries_in_window={len(self._window_queries)}, "
                 f"slo_metric={self._slo_objective.slo_metric}, "
@@ -239,14 +220,14 @@ class Autoscaler:
         self,
         current_time_s: float,
         pool_snapshot_with_current_query: dict[str, Cluster],
-    ) -> list[AutoscalingAction]:
+    ) -> list[TearDownAction]:
         """
         Recommend tearing down any cluster(s) that have:
         1. Been idle for at least ``idle_time_before_tear_down_s`` seconds, and
         2. Exceeded the minimum cluster lifetime of ``min_cluster_lifetime_s``.
         """
 
-        tear_down_actions: list[AutoscalingAction] = []
+        tear_down_actions: list[TearDownAction] = []
 
         for cluster_name, cluster in pool_snapshot_with_current_query.items():
             if (cluster.state != ClusterState.READY) or (
@@ -262,8 +243,7 @@ class Autoscaler:
             if (idle_time_s >= self._idle_time_before_tear_down_s) and (
                 lifetime_s >= self._min_cluster_lifetime_s
             ):
-                action = AutoscalingAction(
-                    action_type=AutoscalingActionType.TEAR_DOWN,
+                action = TearDownAction(
                     reason=(
                         f"creation_time: {cluster.creation_time_s:.0f}s, "
                         f"most_recent_query_completion_time: "
@@ -351,7 +331,7 @@ class Autoscaler:
                 )
         predicted_latencies = copy.deepcopy(
             self._predicted_latencies_at_window_start
-        )        
+        )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
             slo_metric=self._slo_objective.slo_metric,

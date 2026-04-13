@@ -22,15 +22,10 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
 )
-from autoslo.clusters.autoscaler import (
-    Autoscaler,
-    AutoscalingAction,
-    AutoscalingActionType,
-)
+from autoslo.clusters.autoscaler import Autoscaler
+from autoslo.clusters.actions import SpinUpAction, TearDownAction, ScalingAction
 
-from autoslo.clusters.capacity_checkpoint import (
-    CapacityCheckpoint,
-)
+from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.managed_cluster_pool import (
@@ -44,7 +39,6 @@ from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.paralellism import inner_level_num_cpus
-
 from autoslo.utils.structured_log import (
     LOGGER_NAME,
     emit_structured,
@@ -253,9 +247,6 @@ class WorkloadSimulator:
         dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Logging ───────────────────────────────────────────────────────────
-        self._structured_handler = setup_structured_logging(
-            out_dir=self._out_dir
-        )
         if self._write_text_log:
             logger = logging.getLogger()
             logger.setLevel(logging.INFO)
@@ -276,6 +267,9 @@ class WorkloadSimulator:
             # Prevent propagation to other loggers (which may print to console).
             logger.propagate = False
             logging.info(f"Run directory created at {self._out_dir}")
+        self._structured_handler = setup_structured_logging(
+            out_dir=self._out_dir
+        )
 
         # ── Instance Variables ───────────────────────────────────────────────
         self._pending_events: list[SimulatorEvent] = []
@@ -323,10 +317,9 @@ class WorkloadSimulator:
     # Dynamic provisioning helpers
     # ------------------------------------------------------------------
 
-    def _on_sim_spin_up(self, action: AutoscalingAction) -> None:
+    def _on_sim_spin_up(self, action: SpinUpAction) -> None:
         """Capacity-controller callback: schedule a new cluster."""
         rpu = action.rpu
-        assert rpu is not None, "RPU must be specified for spin-up actions."
         cluster_name = self._pool.request_spin_up(rpu, self._current_sim_time_s)
         ready_time = (
             self._current_sim_time_s + self._provisioner.spin_up_delay_s
@@ -358,7 +351,7 @@ class WorkloadSimulator:
             }
         )
 
-    def _on_sim_tear_down(self, action: AutoscalingAction) -> None:
+    def _on_sim_tear_down(self, action: TearDownAction) -> None:
         """Capacity-controller callback: begin graceful tear-down.
 
         Delegates to the pool, which marks the cluster as DRAINING.
@@ -366,11 +359,12 @@ class WorkloadSimulator:
         the pool automatically finalises removal.
         """
         cluster_name = action.cluster_name
-        assert cluster_name is not None
-        # Pre-check for logging: pool will guard against last-cluster
-        # removal, but we want a specific log entry.
-        ready_names = self._pool.clusters_in_state(ClusterState.READY)
-        if len(ready_names) <= 1:
+
+        snapshot = self._pool.snapshot(only_ready=False)
+        will_tear_down = self._pool.request_tear_down(
+            cluster_name, self._current_sim_time_s
+        )
+        if not will_tear_down:
             if self._write_text_log:
                 logging.debug(
                     "Skipping tear-down of %s — it is the last routable "
@@ -387,13 +381,9 @@ class WorkloadSimulator:
                         "reason": "last_cluster",
                     }
                 )
-
             return
 
-        snapshot = self._pool.snapshot(only_ready=False)
         active = snapshot[cluster_name].active_queries
-        self._pool.request_tear_down(cluster_name, self._current_sim_time_s)
-
         if active:
             if self._write_text_log:
                 logging.debug(
@@ -570,7 +560,7 @@ class WorkloadSimulator:
         emit_structured(
             {
                 "timestamp": self._current_sim_time_s,
-                "event_type": "routing",
+                "event_type": "query_routed",
                 "query_id": query.query_id,
                 "query_text_id": query.query_text_id.value,
                 "cluster_name": selected_cluster_name,
@@ -627,7 +617,7 @@ class WorkloadSimulator:
             cluster_name=selected_cluster_name,
         )
         post_snapshot = self._pool.snapshot(only_ready=False)
-        autoscaler_suggested_actions: list[AutoscalingAction] = (
+        autoscaler_suggested_actions: list[ScalingAction] = (
             self._autoscaler.inform(
                 current_time_s=self._current_sim_time_s,
                 current_query=query,
@@ -636,15 +626,15 @@ class WorkloadSimulator:
             )
         )
         for action in autoscaler_suggested_actions:
-            match action.action_type:
-                case AutoscalingActionType.SPIN_UP:
+            match type(action):
+                case SpinUpAction():
                     self._on_sim_spin_up(action)
-                case AutoscalingActionType.TEAR_DOWN:
+                case TearDownAction():
                     self._on_sim_tear_down(action)
                 case _:
                     if self._write_text_log:
                         logging.warning(
-                            f"Unknown autoscaling action type: {action.action_type}"
+                            f"Unknown autoscaling action type: {type(action)}"
                         )
 
     def _handle_query_completion(
@@ -728,9 +718,8 @@ class WorkloadSimulator:
         trigger the necessary spin-ups to meet the checkpoint.
         """
         cp: CapacityCheckpoint = event.details["checkpoint"]
-        current = Counter(self._pool.ready_and_pending_cluster_rpu_multiset)
-        desired = Counter(cp.min_rpus)
-        gap = desired - current  # keeps only positive differences
+        current_counts_per_rpu = self._pool.ready_and_pending_counts_per_rpu()
+        spin_ups_needed = cp.spin_ups_needed(current_counts_per_rpu)
 
         if _has_structured():
             emit_structured(
@@ -740,44 +729,37 @@ class WorkloadSimulator:
                     "source": "WorkloadSimulator",
                     "checkpoint_rel_time_s": cp.rel_time_s,
                     "desired_rpus": list(cp.min_rpus),
-                    "current_rpus": sorted(current.elements()),
-                    "gap_spin_ups": str(dict(gap)) if gap else "",
+                    "current_rpus": dict(current_counts_per_rpu),
                 }
             )
 
-        if not gap:
+        if not spin_ups_needed:
             if self._write_text_log:
                 logging.debug(
                     "Checkpoint t=%.1f: already satisfied (current %s).",
                     cp.rel_time_s,
-                    dict(current),
+                    dict(current_counts_per_rpu),
                 )
             return
 
         if self._write_text_log:
             logging.debug(
-                "Checkpoint t=%.1f: gap %s — spinning up.",
+                "Checkpoint t=%.1f — spinning up %d clusters",
                 cp.rel_time_s,
-                dict(gap),
+                len(spin_ups_needed),
             )
-        for rpu, count in sorted(gap.items()):
-            for _ in range(count):
-                action = AutoscalingAction(
-                    action_type=AutoscalingActionType.SPIN_UP,
-                    rpu=rpu,
-                    reason=f"capacity_checkpoint@t={cp.rel_time_s}",
+        for action in spin_ups_needed:
+            self._on_sim_spin_up(action)
+            if _has_structured():
+                emit_structured(
+                    {
+                        "timestamp": self._current_sim_time_s,
+                        "event_type": "spin_up",
+                        "source": "WorkloadSimulator",
+                        "rpu": action.rpu,
+                        "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
+                    }
                 )
-                self._on_sim_spin_up(action)
-                if _has_structured():
-                    emit_structured(
-                        {
-                            "timestamp": self._current_sim_time_s,
-                            "event_type": "spin_up",
-                            "source": "WorkloadSimulator",
-                            "rpu": rpu,
-                            "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
-                        }
-                    )
 
     def _handle_cluster_ready(self, event: SimulatorEvent) -> None:
         """
