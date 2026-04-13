@@ -111,6 +111,7 @@ class Cluster:
 
         self.queries = {}
         self.id_to_neighbors = {}
+        self.predicted_latencies: dict[str, float] = {}
 
     def clone(self) -> Cluster:
         """
@@ -130,6 +131,7 @@ class Cluster:
         c.id_to_neighbors = {
             qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
         }
+        c.predicted_latencies = dict(self.predicted_latencies)
         return c
 
     # --- Derived properties ----------------------------------------------
@@ -217,6 +219,7 @@ class Cluster:
 
         q = self.queries.pop(query_id)
         self.id_to_neighbors.pop(query_id, None)
+        self.predicted_latencies.pop(query_id, None)
 
         if (self.billing_window_start_s is not None) and (
             (current_time_s - self.billing_window_start_s)
@@ -230,7 +233,6 @@ class Cluster:
     def finish_queries_until(
         self,
         current_time_s: float,
-        predicted_latencies: dict[str, float],
         min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
     ) -> list[tuple[Query, float]]:
         """
@@ -243,12 +245,14 @@ class Cluster:
             time since the start of the current billing window exceeds this
             threshold, the billing window is closed.
         """
-        if not set(self.active_query_ids).issubset(predicted_latencies.keys()):
+        if not set(self.active_query_ids).issubset(
+            self.predicted_latencies.keys()
+        ):
             breakpoint()
         times_and_ids_of_finished_queries = []
         for qid, q in self.queries.items():
             predicted_completion_time_s = (
-                q.rel_start_time_s + predicted_latencies[qid]
+                q.rel_start_time_s + self.predicted_latencies[qid]
             )
             if predicted_completion_time_s <= current_time_s:
                 times_and_ids_of_finished_queries.append(

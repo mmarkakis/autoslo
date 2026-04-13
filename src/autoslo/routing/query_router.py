@@ -46,7 +46,6 @@ class QueryRouter:
         self,
         query: Query,
         clusters: dict[str, Cluster],
-        initial_predicted_latencies: dict[str, dict[str, float]],
         iconq_model: IconqModel,
         current_time_s: float,
     ) -> tuple[str, dict[str, float]]:
@@ -58,7 +57,6 @@ class QueryRouter:
             before_violation, before_cost = self.compute_slo_metric_and_cost(
                 cluster,
                 current_time_s,
-                initial_predicted_latencies.get(cluster_name, {}),
             )
             before_viols_and_costs[cluster_name] = (
                 before_violation,
@@ -82,7 +80,7 @@ class QueryRouter:
             for query_id, pred in all_predictions[cluster_name].items():
                 new_predicted_latencies[cluster_name][query_id] = max(
                     pred.overall_mean_s(),
-                    initial_predicted_latencies.get(cluster_name, {}).get(
+                    clusters[cluster_name].predicted_latencies.get(
                         query_id, 0.0
                     ),
                 )
@@ -91,8 +89,9 @@ class QueryRouter:
         marginal_viols_and_costs = {}
         for cluster_name, cluster in clusters.items():
             before_violation, before_cost = before_viols_and_costs[cluster_name]
+            cluster.predicted_latencies = new_predicted_latencies[cluster_name]
             after_violation, after_cost = self.compute_slo_metric_and_cost(
-                cluster, current_time_s, new_predicted_latencies[cluster_name]
+                cluster, current_time_s,
             )
             marginal_violation = after_violation - before_violation
             marginal_cost = after_cost - before_cost
@@ -142,7 +141,6 @@ class QueryRouter:
         self,
         cluster: Cluster,
         current_time_s: float,
-        predicted_latencies: dict[str, float],
     ) -> tuple[float, float]:
         """
         Compute the cost and SLO-violation metric for a cluster.
@@ -151,10 +149,9 @@ class QueryRouter:
         ----------
         cluster:
             The cluster (or clone) whose before-state to compute.
+            Must have ``predicted_latencies`` populated for all active queries.
         current_time_s:
             Wall-clock (or simulated) time of the incoming query's arrival.
-        latencies:
-            ``{query_id: predicted_latency_s}`` for the currently-active queries.
 
         Returns
         -------
@@ -164,7 +161,7 @@ class QueryRouter:
         intervals = []
 
         for q in cluster.active_queries:
-            lat = predicted_latencies[q.query_id]
+            lat = cluster.predicted_latencies[q.query_id]
             slo = self._slo_resolver.resolve(q.query_text_id)
             interval = Query.query_interval(q.rel_start_time_s, lat, q.query_id)
             lat_and_slos.append((lat, slo))
