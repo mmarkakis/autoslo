@@ -13,28 +13,30 @@ need. The provisioner backend is injected at construction.
 
 from __future__ import annotations
 
-import enum
 import logging
 import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Optional
 
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
+import autoslo.utils.config as cfgu
+from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
+from autoslo.clusters.redshift_run_stats_collector import (
+    RedshiftRunStatsCollector,
+)
 from autoslo.utils.billing import Billing
+from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
-from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
-import autoslo.utils.config as cfgu
-
-from autoslo.clusters.redshift_run_stats_collector import RedshiftRunStatsCollector
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
@@ -79,13 +81,16 @@ class ManagedClusterPoolConfig:
         if mcp_raw is None:
             return ManagedClusterPoolConfig()  # defaults
         mcp_raw = dict(mcp_raw)  # shallow copy — don't mutate the caller's dict
-        if "initial_rpus" in mcp_raw and isinstance(mcp_raw["initial_rpus"], list):
+        if "initial_rpus" in mcp_raw and isinstance(
+            mcp_raw["initial_rpus"], list
+        ):
             mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
         if "allowed_rpu_sizes" in mcp_raw and isinstance(
             mcp_raw["allowed_rpu_sizes"], list
         ):
             mcp_raw["allowed_rpu_sizes"] = tuple(mcp_raw["allowed_rpu_sizes"])
         return ManagedClusterPoolConfig(**mcp_raw)
+
 
 class ManagedClusterPool:
     """Unified, thread-safe cluster pool with query bookkeeping.
@@ -112,8 +117,9 @@ class ManagedClusterPool:
         config: ManagedClusterPoolConfig,
         maxconns: int = 1000,
         search_path: str = "public",
-        collect_cluster_stats: bool = False, 
+        collect_cluster_stats: bool = False,
         run_id: Optional[str] = None,
+        write_text_log: bool = False,
     ) -> None:
         self._provisioner = provisioner
         self._config = config
@@ -129,16 +135,19 @@ class ManagedClusterPool:
         self._completed_queries: dict[str, list[tuple[float, Query]]] = {}
         self._conn_pools: dict[str, ThreadedConnectionPool] = {}
 
-        # Lifecycle log — append-only, never cleared between resets on
-        # purpose (each reset writes fresh events for the new sample).
-        self._lifecycle_log: list[dict[str, Any]] = []
         self._run_id: Optional[str] = run_id
+        self._write_text_log = write_text_log
 
         # Spin up initial clusters.
         rpus = self._config.initial_rpus
         with ThreadPoolExecutor(max_workers=len(rpus)) as executor:
             futures = [
-                executor.submit(self.request_spin_up, rpu, 0.0) for rpu in rpus
+                executor.submit(
+                    self.request_spin_up,
+                    SpinUpAction(rpu=rpu, reason="initial"),
+                    0.0,
+                )
+                for rpu in rpus
             ]
             for f in futures:
                 f.result()  # propagate exceptions
@@ -147,7 +156,9 @@ class ManagedClusterPool:
     # Cluster lifecycle
     # ------------------------------------------------------------------
 
-    def request_spin_up(self, rpu: int, current_time_s: float) -> str:
+    def request_spin_up(
+        self, action: SpinUpAction, current_time_s: float
+    ) -> str:
         """Spin up a new cluster.  Returns its name.
 
         The cluster starts as PENDING.  If the provisioner returns a
@@ -155,20 +166,29 @@ class ManagedClusterPool:
         READY and a connection pool is created.  Otherwise the caller
         must invoke :meth:`on_cluster_ready` when appropriate.
         """
-        cluster = self._provisioner.spin_up(rpu, current_time_s)
-
+        cluster = self._provisioner.spin_up(action.rpu, current_time_s)
         with self._lock:
             if cluster.name in self._clusters:
                 raise ValueError(f"Cluster {cluster.name!r} already in pool.")
             self._clusters[cluster.name] = cluster
-            self._lifecycle_log.append(
-                {
-                    "timestamp": current_time_s,
-                    "event_type": _EVT_SPIN_UP_REQUESTED,
-                    "cluster_name": cluster.name,
-                    "rpu": rpu,
-                }
+
+        if self._write_text_log:
+            logging.debug(
+                "Requested spin-up with %d RPU (reason: %s) at time %.2f",
+                action.rpu,
+                action.reason,
+                current_time_s,
             )
+        emit_structured(
+            {
+                "timestamp": current_time_s,
+                "event_type": "request_spin_up",
+                "cluster_name": cluster.name,
+                "rpu": action.rpu,
+                "reason": action.reason,
+                "source": "ManagedClusterPool",
+            }
+        )
 
         if cluster.conn_info is not None:
             self.on_cluster_ready(cluster.name, current_time_s)
@@ -198,35 +218,41 @@ class ManagedClusterPool:
 
         with self._lock:
             cluster.update_state(ClusterState.READY)
-            self._lifecycle_log.append(
-                {
-                    "timestamp": ready_time_s,
-                    "event_type": _EVT_CLUSTER_READY,
-                    "cluster_name": cluster_name,
-                    "rpu": cluster.rpu,
-                }
+
+        if self._write_text_log:
+            logging.debug(
+                "Cluster %s is ready at time %.2f", cluster_name, ready_time_s
             )
+        emit_structured(
+            {
+                "timestamp": ready_time_s,
+                "event_type": _EVT_CLUSTER_READY,
+                "cluster_name": cluster_name,
+                "rpu": cluster.rpu,
+                "source": "ManagedClusterPool",
+            }
+        )
 
     def request_tear_down(
         self,
-        cluster_name: str,
+        action: TearDownAction,
         current_time_s: float,
         force: bool = False,
-    ) -> bool:
+    ) -> None:
         """Transition READY → DRAINING (or straight to REMOVED).
 
-        Returns True if the tear-down was initiated, False if it was blocked
-        by the last-cluster guard.  If *force* is True, bypasses the guard.
+        If *force* is False, the method refuses to tear down the last READY
+        cluster.
         """
         with self._lock:
-            cluster = self._clusters[cluster_name]
+            cluster = self._clusters[action.cluster_name]
             if cluster.state not in (ClusterState.READY, ClusterState.DRAINING):
                 raise ValueError(
-                    f"Cannot tear down {cluster_name!r} — "
+                    f"Cannot tear down {action.cluster_name!r} — "
                     f"state is {cluster.state.value}."
                 )
             if cluster.state == ClusterState.DRAINING:
-                return True
+                return
 
             # Guard: refuse to tear down the last READY cluster.
             if not force:
@@ -236,36 +262,47 @@ class ManagedClusterPool:
                     if c.state == ClusterState.READY
                 )
                 if ready_count <= 1:
+                    if self._write_text_log:
+                        logging.debug(
+                            "Skipping tear-down of %s — it is the last routable "
+                            "cluster.",
+                            action.cluster_name,
+                        )
                     if _has_structured():
                         emit_structured(
                             {
                                 "timestamp": current_time_s,
-                                "source": "managed_cluster_pool",
+                                "source": "ManagedClusterPool",
                                 "event_type": _EVT_TEAR_DOWN_BLOCKED,
-                                "cluster_name": cluster_name,
+                                "cluster_name": action.cluster_name,
                                 "rpu": cluster.rpu,
                                 "reason": "last_routable_cluster",
                             }
                         )
-                return False
+                return
 
             cluster.update_state(ClusterState.DRAINING)
+            active_queries = cluster.active_queries
+            if self._write_text_log:
+                logging.debug(
+                    "Cluster %s marked as draining.",
+                    action.cluster_name,
+                    len(active_queries),
+                )
             if _has_structured():
                 emit_structured(
                     {
                         "timestamp": current_time_s,
-                        "source": "managed_cluster_pool",
+                        "source": "ManagedClusterPool",
                         "event_type": _EVT_TEAR_DOWN_REQUESTED,
-                        "cluster_name": cluster_name,
+                        "cluster_name": action.cluster_name,
                         "rpu": cluster.rpu,
                     }
                 )
-            has_active = bool(cluster.active_queries)
 
         # If no active queries, proceed to removal immediately.
-        if not has_active:
-            self._finalize_removal(cluster_name, current_time_s)
-        return True
+        if not active_queries:
+            self._finalize_removal(action.cluster_name, current_time_s)
 
     def _finalize_removal(
         self, cluster_name: str, current_time_s: float
@@ -296,12 +333,13 @@ class ManagedClusterPool:
                 logger.exception(
                     "Stats collection failed for cluster %s", cluster_name
                 )
+            current_time_s = datetime.now(tz=timezone.utc).timestamp()
 
         if _has_structured():
             emit_structured(
                 {
-                    "timestamp": current_time_s,
-                    "source": "managed_cluster_pool",
+                    "timestamp": current_time_s, 
+                    "source": "ManagedClusterPool",
                     "event_type": _EVT_STATS_COLLECTED,
                     "cluster_name": cluster_name,
                     "rpu": cluster.rpu,
@@ -327,11 +365,17 @@ class ManagedClusterPool:
                 "Provisioner tear-down failed for %s", cluster_name
             )
 
+        if self._write_text_log:
+            logging.debug(
+                "Cluster %s is being removed",
+                cluster_name,
+            )
+
         if _has_structured():
             emit_structured(
                 {
                     "timestamp": current_time_s,
-                    "source": "managed_cluster_pool",
+                    "source": "ManagedClusterPool",
                     "event_type": _EVT_CLUSTER_REMOVED,
                     "cluster_name": cluster_name,
                     "rpu": cluster.rpu,
