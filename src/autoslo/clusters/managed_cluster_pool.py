@@ -8,11 +8,7 @@ Replaces the combination of :class:`ClusterPool` (blueprints) +
 tracks the full cluster lifecycle — from spin-up through draining
 and removal — while providing the routing-snapshot and billing APIs
 that both the :class:`WorkloadSimulator` and :class:`WorkloadRunner`
-need.
-
-The provisioner backend is injected at construction:
-* :class:`SimulatedProvisioner` — for the simulator (instant, no I/O).
-* :class:`RedshiftServerlessProvisioner` — for live execution (AWS).
+need. The provisioner backend is injected at construction.
 """
 
 from __future__ import annotations
@@ -174,8 +170,6 @@ class ManagedClusterPool:
                 }
             )
 
-        # Auto-promote when the provisioner returned full conn_info
-        # (RedshiftServerlessProvisioner blocks until AVAILABLE).
         if cluster.conn_info is not None:
             self.on_cluster_ready(cluster.name, current_time_s)
 

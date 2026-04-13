@@ -4,16 +4,7 @@ cluster_provisioner.py
 Abstract interface and simulated implementation for cluster lifecycle.
 
 The provisioner handles the *infra* side of spin-up / tear-down: actually
-creating or destroying a cluster.  The *decision* of when to spin up or
-tear down lives in :class:`~autoslo.capacity.autoscaler.Autoscaler`.
-
-Two concrete implementations:
-
-* :class:`SimulatedProvisioner` — for the simulator.  Creates lightweight
-  ``Cluster.new()`` objects instantly (the spin-up *delay* is modelled by
-  the simulator's event loop, not by the provisioner itself).
-* :class:`~autoslo.capacity.redshift_provisioner.RedshiftServerlessProvisioner`
-  — for live execution.  Wraps AWS API calls (separate module).
+creating or destroying a cluster.  
 """
 
 from __future__ import annotations

@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
-import boto3
+from datetime import datetime, timezone
 
+import boto3  # type: ignore
+import yaml
 
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
@@ -43,6 +44,8 @@ _DEFAULT_DATASHARE_NAMESPACE_ID = "1015d398-b04c-40d0-bb67-257e0956c96d"
 _DEFAULT_SCHEMA_SCALES = [1, 10, 100, 1000, 3000, 10000]
 _DEFAULT_DB_NAME = "dev"
 _DEFAULT_PORT = 5439
+_DEFAULT_MAX_CAPACITY_RATIO = 1
+_DEFAULT_PRICE_PERFORMANCE_TARGET_LEVEL = None
 
 
 class RedshiftServerlessProvisioner(ClusterProvisioner):
@@ -62,68 +65,41 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
     Parameters
     ----------
-    aws_region :
-        AWS region for all API calls.
-    aws_account_id :
-        AWS account ID (used to form the Redshift Serverless hostname).
-    admin_username :
-        Admin username for newly created namespaces.
-    admin_password :
-        Admin password for newly created namespaces.
-    datashare_account_id :
-        Account ID that owns the TPC-DS datashare.
-    datashare_namespace_id :
-        Namespace ID for the TPC-DS datashare.
-    schema_scales :
-        TPC-DS scale factors to create external schemas for.
-    db_name :
-        Database name for connections.
-    port :
-        Port for connections.
-    max_capacity_ratio :
-        Ratio of ``maxCapacity`` to ``baseCapacity`` passed to
-        ``create_workgroup``.  A value of ``1`` (the default) sets
-        ``maxCapacity`` equal to ``baseCapacity``, disabling automatic
-        scale-out.  A value of e.g. ``4`` would allow the workgroup to
-        scale up to 4× its base capacity.
-    price_performance_target_level :
-        Optional integer level for the ``pricePerformanceTarget``
-        workgroup setting.  Valid values are ``1`` (LOW_COST), ``25``
-        (ECONOMICAL), ``50`` (BALANCED), ``75`` (RESOURCEFUL), and
-        ``100`` (HIGH_PERFORMANCE).  When ``None`` (the default) the
-        parameter is omitted from the ``create_workgroup`` call and AWS
-        uses its own default.
+    aws_config_path:
+        Path to YAML file with AWS configuration
     """
 
-    def __init__(
-        self,
-        aws_account_id: str,
-        aws_region: str = _DEFAULT_AWS_REGION,
-        admin_username: str = _DEFAULT_ADMIN_USERNAME,
-        admin_password: str = _DEFAULT_ADMIN_PASSWORD,
-        datashare_account_id: str = _DEFAULT_DATASHARE_ACCOUNT_ID,
-        datashare_namespace_id: str = _DEFAULT_DATASHARE_NAMESPACE_ID,
-        schema_scales: Optional[list[int]] = None,
-        db_name: str = _DEFAULT_DB_NAME,
-        port: int = _DEFAULT_PORT,
-        max_capacity_ratio: float = 1,
-        price_performance_target_level: Optional[int] = None,
-    ) -> None:
-        self._aws_region = aws_region
-        self._aws_account_id = aws_account_id
-        self._admin_username = admin_username
-        self._admin_password = admin_password
-        self._datashare_account_id = datashare_account_id
-        self._datashare_namespace_id = datashare_namespace_id
-        self._schema_scales = (
-            schema_scales
-            if schema_scales is not None
-            else _DEFAULT_SCHEMA_SCALES
+    def __init__(self, aws_config_path: str) -> None:
+        with open(aws_config_path) as f:
+            cfg = yaml.safe_load(f)
+
+        if "aws_account_id" not in cfg:
+            raise ValueError(f"Missing required config key: aws_account_id")
+
+        self._aws_account_id = cfg["aws_account_id"]
+        self._aws_region = cfg.get("aws_region", _DEFAULT_AWS_REGION)
+        self._admin_username = cfg.get(
+            "admin_username", _DEFAULT_ADMIN_USERNAME
         )
-        self._db_name = db_name
-        self._port = port
-        self._max_capacity_ratio = max_capacity_ratio
-        self._price_performance_target_level = price_performance_target_level
+        self._admin_password = cfg.get(
+            "admin_password", _DEFAULT_ADMIN_PASSWORD
+        )
+        self._datashare_account_id = cfg.get(
+            "datashare_account_id", _DEFAULT_DATASHARE_ACCOUNT_ID
+        )
+        self._datashare_namespace_id = cfg.get(
+            "datashare_namespace_id", _DEFAULT_DATASHARE_NAMESPACE_ID
+        )
+        self._schema_scales = cfg.get("schema_scales", _DEFAULT_SCHEMA_SCALES)
+        self._db_name = cfg.get("db_name", _DEFAULT_DB_NAME)
+        self._port = cfg.get("port", _DEFAULT_PORT)
+        self._max_capacity_ratio = cfg.get(
+            "max_capacity_ratio", _DEFAULT_MAX_CAPACITY_RATIO
+        )
+        self._price_performance_target_level = cfg.get(
+            "price_performance_target_level",
+            _DEFAULT_PRICE_PERFORMANCE_TARGET_LEVEL,
+        )
 
         self._seq_counter = 0
 
@@ -463,9 +439,10 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         RuntimeError
             If any provisioning step fails.
         """
-        ts = int(time.time())
-        wg_name, ns_name = self._workgroup_and_namespace_names(rpu, ts)
-        spin_up_start = time.time()
+        spin_up_start = datetime.now(tz=timezone.utc).timestamp()
+        wg_name, ns_name = self._workgroup_and_namespace_names(
+            rpu, int(spin_up_start)
+        )
 
         logger.info("Spinning up workgroup %s with %d RPU ...", wg_name, rpu)
         if _has_structured():
@@ -516,8 +493,11 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             user=self._admin_username,
             password=self._admin_password,
         )
-        cluster = Cluster(rpu=rpu, name=wg_name, conn_info=conn_info)
-        spin_up_duration = time.time() - spin_up_start
+        now = datetime.now(tz=timezone.utc).timestamp()
+        cluster = Cluster(
+            creation_time_s=now, rpu=rpu, name=wg_name, conn_info=conn_info
+        )
+        spin_up_duration = now - spin_up_start
         logger.info(
             "Workgroup %s (%d RPU) is ready (%.1fs).",
             wg_name,
