@@ -24,10 +24,10 @@ from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.structured_log import (
+from autoslo.utils.logging import (
     LOGGER_NAME,
     emit_structured,
-    setup_structured_logging,
+    setup_run_logging,
 )
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query
@@ -73,28 +73,7 @@ class WorkloadRunner:
         self._closed_loop: bool = bool(
             cfgu.getd(self._cfg, "workload_config.closed_loop", False)
         )
-
-        workload_name: str = cfgu.getd(
-            self._cfg, "workload_config.workload_name", required=True
-        )
-        abs_start_time_start: str | None = cfgu.getd(
-            self._cfg, "workload_config.abs_start_time_start"
-        )
-        abs_start_time_end: str | None = cfgu.getd(
-            self._cfg, "workload_config.abs_start_time_end"
-        )
-        rescale_factor: float | None = cfgu.getd(
-            self._cfg, "workload_config.rescale_factor", None
-        )
-        self._workload = Workload(
-            workload_name=workload_name,
-            schema_name=self._schema.name,
-        )
-        self._workload.slice_by_abs_time(
-            abs_start_time_start, abs_start_time_end
-        )
-        self._workload.set_rel_start_times_from_zero()
-        self._workload.rescale_rel_start_times(rescale_factor)
+        self._workload = Workload.from_cfg(self._cfg, self._schema.name)
         self._workload.print_summary()
 
         # ── SLO ──────────────────────────────────────────────────────────
@@ -198,28 +177,9 @@ class WorkloadRunner:
         dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Logging ───────────────────────────────────────────────────────────
-        if self._write_text_log:
-            logger = logging.getLogger()
-            logger.setLevel(logging.INFO)
-            # Remove all existing handlers (console and file alike) so that
-            # log records are emitted only to the run-specific file and the
-            # structured log — never to the caller's console.
-            for h in list(logger.handlers):
-                logger.removeHandler(h)
-
-            log_file_path = os.path.join(self._out_dir, "run.log")
-            file_handler = logging.FileHandler(log_file_path)
-            file_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter(
-                "%(asctime)s - %(levelname)s - %(message)s"
-            )
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
-            # Prevent propagation to other loggers (which may print to console).
-            logger.propagate = False
-            logging.info(f"Run directory created at {self._out_dir}")
-        self._structured_handler = setup_structured_logging(
-            out_dir=self._out_dir
+        self._structured_handler = setup_run_logging(
+            out_dir=self._out_dir,
+            write_text_log=self._write_text_log,
         )
 
         # ── Instance Variables ───────────────────────────────────────────────

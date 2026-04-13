@@ -28,7 +28,7 @@ import yaml
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
-from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import LOGGER_NAME, emit_structured
 
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(

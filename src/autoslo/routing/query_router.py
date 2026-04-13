@@ -12,7 +12,7 @@ from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.billing import Billing
-from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import LOGGER_NAME, emit_structured
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)

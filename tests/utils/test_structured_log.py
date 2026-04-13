@@ -8,7 +8,7 @@ import tempfile
 import pandas as pd
 import pytest
 
-from autoslo.utils.structured_log import (
+from autoslo.utils.logging import (
     LOGGER_NAME,
     REQUIRED_KEYS,
     StructuredLogHandler,
