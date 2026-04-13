@@ -312,8 +312,9 @@ class WorkloadSimulator:
 
     def _on_sim_spin_up(self, action: SpinUpAction) -> None:
         """Capacity-controller callback: schedule a new cluster."""
-        rpu = action.rpu
-        cluster_name = self._pool.request_spin_up(rpu, self._current_sim_time_s)
+        cluster_name = self._pool.request_spin_up(
+            action, self._current_sim_time_s
+        )
         ready_time = (
             self._current_sim_time_s + self._provisioner.spin_up_delay_s
         )
@@ -325,86 +326,6 @@ class WorkloadSimulator:
                 details={"cluster_name": cluster_name},
             ),
         )
-        if self._write_text_log:
-            logging.debug(
-                "Scheduled cluster %s (%d RPU) ready at t=%.1f",
-                cluster_name,
-                rpu,
-                ready_time,
-            )
-        emit_structured(
-            {
-                "timestamp": self._current_sim_time_s,
-                "event_type": "spin_up_scheduled",
-                "cluster_name": cluster_name,
-                "rpu": rpu,
-                "reason": action.reason,
-                "end_time_s": ready_time,
-                "source": "WorkloadSimulator",
-            }
-        )
-
-    def _on_sim_tear_down(self, action: TearDownAction) -> None:
-        """Capacity-controller callback: begin graceful tear-down.
-
-        Delegates to the pool, which marks the cluster as DRAINING.
-        When the last active query finishes (via ``on_query_finish``),
-        the pool automatically finalises removal.
-        """
-        cluster_name = action.cluster_name
-
-        snapshot = self._pool.snapshot(only_ready=False)
-        will_tear_down = self._pool.request_tear_down(
-            cluster_name, self._current_sim_time_s
-        )
-        if not will_tear_down:
-            if self._write_text_log:
-                logging.debug(
-                    "Skipping tear-down of %s — it is the last routable "
-                    "cluster.",
-                    cluster_name,
-                )
-            if _has_structured():
-                emit_structured(
-                    {
-                        "timestamp": self._current_sim_time_s,
-                        "source": "WorkloadSimulator",
-                        "event_type": "tear_down_skipped",
-                        "cluster_name": cluster_name,
-                        "reason": "last_cluster",
-                    }
-                )
-            return
-
-        active = snapshot[cluster_name].active_queries
-        if active:
-            if self._write_text_log:
-                logging.debug(
-                    "Cluster %s marked as draining with %d active queries.",
-                    cluster_name,
-                    len(active),
-                )
-            emit_structured(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "tear_down_requested",
-                    "cluster_name": cluster_name,
-                    "reason": "draining",
-                    "num_active_queries": len(active),
-                    "source": "WorkloadSimulator",
-                }
-            )
-        else:
-            emit_structured(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "tear_down_requested",
-                    "cluster_name": cluster_name,
-                    "reason": "immediate",
-                    "num_active_queries": 0,
-                    "source": "WorkloadSimulator",
-                }
-            )
 
     # ------------------------------------------------------------------
     # Simulation
@@ -623,7 +544,9 @@ class WorkloadSimulator:
                 case SpinUpAction():
                     self._on_sim_spin_up(action)
                 case TearDownAction():
-                    self._on_sim_tear_down(action)
+                    self._pool.request_tear_down(
+                        action, self._current_sim_time_s
+                    )
                 case _:
                     if self._write_text_log:
                         logging.warning(

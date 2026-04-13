@@ -223,7 +223,7 @@ class WorkloadRunner:
         )
 
         # ── Instance Variables ───────────────────────────────────────────────
-        # Futures for in-flight background spin-ups (see _on_live_spin_up).
+        # Futures for in-flight background spin-ups.
         self._pending_spin_ups: list[asyncio.Future] = []
 
     # ------------------------------------------------------------------
@@ -300,22 +300,10 @@ class WorkloadRunner:
         loop = asyncio.get_running_loop()
         ts = self._ts()
         future = loop.run_in_executor(
-            self._executor, self._pool.request_spin_up, action.rpu, ts
+            self._executor, self._pool.request_spin_up, action, ts
         )
         self._pending_spin_ups.append(future)
-        logging.info(
-            "Autoscaler spin-up: %s (rpu=%d)", action.reason, action.rpu
-        )
 
-    def _on_live_tear_down(self, action: TearDownAction) -> None:
-        """Autoscaler callback: tear down a cluster.
-
-        Mirrors the simulator's ``_on_sim_tear_down`` guard: refuses to
-        tear down the last routable cluster so the run can continue.
-        """
-        cluster_name = action.cluster_name
-        self._pool.request_tear_down(cluster_name, self._ts())
-        logging.info("Autoscaler tear-down: %s", cluster_name)
 
     # ------------------------------------------------------------------
     # Timestamps
@@ -532,7 +520,7 @@ class WorkloadRunner:
                 case SpinUpAction():
                     self._on_live_spin_up(action)
                 case TearDownAction():
-                    self._on_live_tear_down(action)
+                    self._pool.request_tear_down(action, self._ts())
                 case _:
                     if self._write_text_log:
                         logging.warning(
@@ -644,7 +632,10 @@ class WorkloadRunner:
                         self._executor,
                         partial(
                             self._pool.request_tear_down,
-                            cn,
+                            TearDownAction(
+                                reason="run_cleanup",
+                                cluster_name=cn,
+                            ),
                             self._ts(),
                             force=True,
                         ),
