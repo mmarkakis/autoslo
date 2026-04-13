@@ -34,7 +34,7 @@ from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
 from autoslo.utils.billing import Billing
-from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import LOGGER_NAME, emit_structured
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 

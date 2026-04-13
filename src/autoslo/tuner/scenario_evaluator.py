@@ -29,7 +29,7 @@ from autoslo.utils.paralellism import (
     deg_of_paralellism,
     inner_level_num_cpus,
 )
-from autoslo.utils.structured_log import StructuredLogHandler, emit_structured
+from autoslo.utils.logging import StructuredLogHandler, emit_structured
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 

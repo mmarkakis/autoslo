@@ -26,7 +26,7 @@ from autoslo.tuner.tuner_utils import (
     SimulationResult,
 )
 from autoslo.utils.config import copy_and_apply_overrides
-from autoslo.utils.structured_log import setup_structured_logging
+from autoslo.utils.logging import setup_structured_logging
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.workload import Workload
 

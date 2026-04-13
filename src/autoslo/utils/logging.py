@@ -271,3 +271,27 @@ def setup_structured_logging(
         logger.setLevel(logging.DEBUG)
 
     return handler
+
+def setup_run_logging(
+    out_dir: str,
+    write_text_log: bool,
+) -> StructuredLogHandler | None:
+    """Configure file-based text logging and structured logging for a run.
+
+    Returns the StructuredLogHandler (or None) so the caller can call
+    .finalize() at the end of the run.
+    """
+    if write_text_log:
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+        fh = logging.FileHandler(os.path.join(out_dir, "run.log"))
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        logger.addHandler(fh)
+        logger.propagate = False
+        logging.info(f"Run directory created at {out_dir}")
+    return setup_structured_logging(out_dir=out_dir)
