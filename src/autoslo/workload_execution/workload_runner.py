@@ -193,57 +193,23 @@ class WorkloadRunner:
 
     async def _reconcile_checkpoint_async(
         self,
-        cp: CapacityCheckpoint,
+        checkpoint: CapacityCheckpoint,
         async_reference_ts: float,
     ) -> None:
         """Wait until *checkpoint.rel_time_s* elapses, then reconcile."""
-        target = async_reference_ts + cp.rel_time_s
+        target = async_reference_ts + checkpoint.rel_time_s
         delay = target - self._ts()
         if delay > 0:
             await asyncio.sleep(delay)
-        current_time_s = self._ts()
-        current_counts_per_rpu = self._pool.ready_and_pending_counts_per_rpu()
-        spin_ups_needed = cp.spin_ups_needed(current_counts_per_rpu)
+        checkpoint.reconcile(
+            pool=self._pool,
+            current_time_s=self._ts(),
+            source="WorkloadRunner",
+            on_spin_up=self._on_live_spin_up,
+            write_text_log=self._write_text_log,
+        )
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": current_time_s,
-                    "event_type": "capacity_checkpoint_reconciliation",
-                    "source": "WorkloadRunner",
-                    "checkpoint_rel_time_s": cp.rel_time_s,
-                    "desired_rpus": list(cp.min_rpus),
-                    "current_rpus": dict(current_counts_per_rpu),
-                }
-            )
 
-        if not spin_ups_needed:
-            if self._write_text_log:
-                logging.debug(
-                    "Checkpoint t=%.1f: already satisfied (current %s).",
-                    cp.rel_time_s,
-                    dict(current_counts_per_rpu),
-                )
-            return
-
-        if self._write_text_log:
-            logging.debug(
-                "Checkpoint t=%.1f — spinning up %d clusters",
-                cp.rel_time_s,
-                len(spin_ups_needed),
-            )
-        for action in spin_ups_needed:
-            self._on_live_spin_up(action)
-            if _has_structured():
-                emit_structured(
-                    {
-                        "timestamp": current_time_s,
-                        "event_type": "spin_up",
-                        "source": "WorkloadRunner",
-                        "rpu": action.rpu,
-                        "reason": f"capacity_checkpoint@t={cp.rel_time_s}",
-                    }
-                )
 
     # ------------------------------------------------------------------
     # Autoscaler callbacks
