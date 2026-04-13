@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
-from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
+from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import ClusterState
@@ -21,6 +21,7 @@ from autoslo.clusters.managed_cluster_pool import (
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
+from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -264,7 +265,6 @@ class WorkloadRunner:
         )
         self._pending_spin_ups.append(future)
 
-
     # ------------------------------------------------------------------
     # Timestamps
     # ------------------------------------------------------------------
@@ -386,6 +386,20 @@ class WorkloadRunner:
                 f"is in the past (delay={delay:.2f}s). Starting immediately."
             )
 
+        # ── Route at arrival time ────────────────────────────────────
+        selected_cluster_name = route_and_update_bookkeeping(
+            source="WorkloadRunner",
+            current_time_getter=self._ts,
+            pool=self._pool,
+            router=self._router,
+            query=query,
+            iconq_model=self._iconq_model,
+            autoscaler=self._autoscaler,
+            on_spin_up=self._on_live_spin_up,
+            write_text_log=self._write_text_log,
+            simulator_pending_events_heap=None,  # Not used in live runner
+        )
+
         # ── Find query text ────────────────────────────────────────────────
         query_text = QueryTextRegistry.get(
             self._schema.name, query.query_text_id
@@ -397,95 +411,6 @@ class WorkloadRunner:
                 f"{query.query_id}."
             )
             return
-
-        # ── Route at arrival time ────────────────────────────────────
-        route_start_ts = self._ts()
-        snapshot = self._pool.snapshot(only_ready=True)
-        old_predicted_latencies = {
-            cluster_name: dict(cluster.predicted_latencies)
-            for cluster_name, cluster in snapshot.items()
-        }
-        selected_cluster_name, new_predicted_latencies_on_selected = (
-            self._router.route_query(
-                query=query,
-                clusters=snapshot,
-                iconq_model=self._iconq_model,
-                current_time_s=route_start_ts,
-            )
-        )
-        self_latency_s = new_predicted_latencies_on_selected[query.query_id]
-        route_end_ts = self._ts()
-
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": route_end_ts,
-                    "event_type": "query_routed",
-                    "query_id": query.query_id,
-                    "query_text_id": query.query_text_id.value,
-                    "cluster_name": selected_cluster_name,
-                    "old_latency_s": None,
-                    "raw_model_latency_s": None,
-                    "latency_s": self_latency_s,
-                    "end_time_s": route_end_ts + self_latency_s,
-                    "source": "WorkloadRunner",
-                }
-            )
-
-        # Update latencies of existing queries as needed (including the new one)
-        for qid, latency_s in new_predicted_latencies_on_selected.items():
-            old_latency_s = old_predicted_latencies.get(
-                selected_cluster_name, {}
-            ).get(qid, None)
-
-            if (old_latency_s is not None) and (
-                abs(latency_s - old_latency_s) < 1e-3
-            ):
-                # No change in latency prediction for this query, so skip the
-                # update.
-                continue
-
-            completion_time_s = route_end_ts + latency_s
-            emit_structured(
-                {
-                    "timestamp": route_end_ts,
-                    "event_type": "latency_update",
-                    "source": "WorkloadRunner",
-                    "query_id": qid,
-                    "cluster_name": selected_cluster_name,
-                    "old_latency_s": old_latency_s,
-                    "latency_s": latency_s,
-                    "end_time_s": completion_time_s,
-                }
-            )
-
-        #  ── Notify pool and autoscaler ────────────────────────────────────
-        self._pool.commit_predicted_latencies(
-            selected_cluster_name, new_predicted_latencies_on_selected
-        )
-        self._pool.on_query_start(
-            query=query,
-            cluster_name=selected_cluster_name,
-        )
-        post_snapshot = self._pool.snapshot(only_ready=False)
-        autoscaler_suggested_actions: list[ScalingAction] = (
-            self._autoscaler.inform(
-                current_time_s=self._ts(),
-                current_query=query,
-                pool_snapshot_with_current_query=post_snapshot,
-            )
-        )
-        for action in autoscaler_suggested_actions:
-            match type(action):
-                case SpinUpAction():
-                    self._on_live_spin_up(action)
-                case TearDownAction():
-                    self._pool.request_tear_down(action, self._ts())
-                case _:
-                    if self._write_text_log:
-                        logging.warning(
-                            f"Unknown autoscaling action type: {type(action)}"
-                        )
 
         # ── Execute ──────────────────────────────────────────────────
         try:

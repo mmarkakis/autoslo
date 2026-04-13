@@ -19,9 +19,8 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     export_gantt_video,
     render_gantt_scrubber,
 )
+from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.autoscaler import Autoscaler
-from autoslo.clusters.actions import SpinUpAction, TearDownAction, ScalingAction
-
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
@@ -31,16 +30,17 @@ from autoslo.clusters.managed_cluster_pool import (
 )
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
+from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
-from autoslo.utils.paralellism import inner_level_num_cpus
 from autoslo.utils.logging import (
     LOGGER_NAME,
     emit_structured,
     setup_run_logging,
 )
+from autoslo.utils.paralellism import inner_level_num_cpus
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
@@ -401,100 +401,19 @@ class WorkloadSimulator:
             }
         )
 
-        # Route the query.
-        snapshot = self._pool.snapshot(only_ready=True)
-        predicted_latencies = self._pool.get_predicted_latencies()
-        selected_cluster_name, new_predicted_latencies_on_selected = (
-            self._router.route_query(
-                query=query,
-                clusters=snapshot,
-                iconq_model=self._iconq_model,
-                current_time_s=self._current_sim_time_s,
-            )
-        )
-        self_latency_s = new_predicted_latencies_on_selected[query.query_id]
-        seq_num_to_cluster_name[index] = selected_cluster_name
-        emit_structured(
-            {
-                "timestamp": self._current_sim_time_s,
-                "event_type": "query_routed",
-                "query_id": query.query_id,
-                "query_text_id": query.query_text_id.value,
-                "cluster_name": selected_cluster_name,
-                "old_latency_s": None,
-                "raw_model_latency_s": None,
-                "latency_s": self_latency_s,
-                "end_time_s": self._current_sim_time_s + self_latency_s,
-                "source": "WorkloadSimulator",
-            }
-        )
-
-        # Update latencies of existing queries as needed (including the new one)
-        old_latencies = predicted_latencies.get(selected_cluster_name, {})
-        for qid, latency_s in new_predicted_latencies_on_selected.items():
-            old_latency_s = old_latencies.get(qid, None)
-
-            if (old_latency_s is not None) and (
-                abs(latency_s - old_latency_s) < 1e-3
-            ):
-                # No change in latency prediction for this query, so skip the update.
-                continue
-
-            completion_time_s = self._current_sim_time_s + latency_s
-            emit_structured(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "latency_update",
-                    "source": "WorkloadSimulator",
-                    "query_id": qid,
-                    "cluster_name": selected_cluster_name,
-                    "old_latency_s": old_latency_s,
-                    "latency_s": latency_s,
-                    "end_time_s": completion_time_s,
-                }
-            )
-            heapq.heappush(
-                self._pending_events,
-                SimulatorEvent(
-                    rel_time_s=completion_time_s,
-                    event_type=SimulatorEventType.QUERY_COMPLETION,
-                    details={
-                        "query_id": qid,
-                        "cluster_name": selected_cluster_name,
-                        "latency_s": latency_s,
-                    },
-                ),
-            )
-
-        # Commit the winning cluster's latencies and update pool state.
-        self._pool.commit_predicted_latencies(
-            selected_cluster_name, new_predicted_latencies_on_selected
-        )
-        self._pool.on_query_start(
+        selected_cluster_name = route_and_update_bookkeeping(
+            source="WorkloadSimulator",
+            current_time_getter=lambda: self._current_sim_time_s,
+            pool=self._pool,
+            router=self._router,
             query=query,
-            cluster_name=selected_cluster_name,
+            iconq_model=self._iconq_model,
+            autoscaler=self._autoscaler,
+            on_spin_up=self._on_sim_spin_up,
+            write_text_log=self._write_text_log,
+            simulator_pending_events_heap=self._pending_events,
         )
-        post_snapshot = self._pool.snapshot(only_ready=False)
-        autoscaler_suggested_actions: list[ScalingAction] = (
-            self._autoscaler.inform(
-                current_time_s=self._current_sim_time_s,
-                current_query=query,
-                pool_snapshot_with_current_query=post_snapshot,
-            )
-        )
-        for action in autoscaler_suggested_actions:
-            match type(action):
-                case SpinUpAction():
-                    self._on_sim_spin_up(action)
-                case TearDownAction():
-                    self._pool.request_tear_down(
-                        action, self._current_sim_time_s
-                    )
-                case _:
-                    if self._write_text_log:
-                        logging.warning(
-                            f"Unknown autoscaling action type: {type(action)}"
-                        )
+        seq_num_to_cluster_name[index] = selected_cluster_name
 
     def _handle_query_completion(
         self,
