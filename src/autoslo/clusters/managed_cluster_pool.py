@@ -38,6 +38,8 @@ from autoslo.workload_execution.conn_utils import ConnWithSetup
 from autoslo.utils.structured_log import LOGGER_NAME, emit_structured
 import autoslo.utils.config as cfgu
 
+from autoslo.clusters.redshift_run_stats_collector import RedshiftRunStatsCollector
+
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
@@ -114,9 +116,7 @@ class ManagedClusterPool:
         config: ManagedClusterPoolConfig,
         maxconns: int = 1000,
         search_path: str = "public",
-        stats_collector: Optional[
-            Callable[[str, ClusterConnInfo, str], None]
-        ] = None,
+        collect_cluster_stats: bool = False, 
         run_id: Optional[str] = None,
     ) -> None:
         self._provisioner = provisioner
@@ -126,6 +126,7 @@ class ManagedClusterPool:
         )
         self._maxconns = maxconns
         self._search_path = search_path
+        self._collect_cluster_stats = collect_cluster_stats
 
         self._lock = threading.Lock()
         self._clusters: dict[str, Cluster] = {}
@@ -135,11 +136,6 @@ class ManagedClusterPool:
         # Lifecycle log — append-only, never cleared between resets on
         # purpose (each reset writes fresh events for the new sample).
         self._lifecycle_log: list[dict[str, Any]] = []
-
-        # Optional stats-collection callback (live execution only).
-        self._stats_collector: Optional[
-            Callable[[str, ClusterConnInfo, str], None]
-        ] = stats_collector
         self._run_id: Optional[str] = run_id
 
         # Spin up initial clusters.
@@ -294,12 +290,12 @@ class ManagedClusterPool:
 
         # Stats collection (may sleep ~120 s in live mode).
         if (
-            self._stats_collector is not None
+            self._collect_cluster_stats
             and cluster.conn_info is not None
             and self._run_id is not None
         ):
             try:
-                self._stats_collector(
+                RedshiftRunStatsCollector.collect_cluster_stats(
                     cluster_name, cluster.conn_info, self._run_id
                 )
             except Exception:
