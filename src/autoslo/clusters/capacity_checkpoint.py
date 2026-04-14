@@ -31,17 +31,6 @@ class CapacityCheckpoint:
     rel_time_s: float
     min_rpus: tuple[int, ...]
 
-    @staticmethod
-    def parse_from_cfg(cfg: dict) -> list["CapacityCheckpoint"]:
-        raw: list[dict] = cfgu.getd(cfg, "capacity_checkpoints", [])
-        return [
-            CapacityCheckpoint(
-                rel_time_s=float(cp["rel_time_s"]),
-                min_rpus=tuple(cp["min_rpus"]),
-            )
-            for cp in raw
-        ]
-
     def spin_ups_needed(
         self, current_counts_per_rpu: Counter[int]
     ) -> list[SpinUpAction]:

@@ -286,12 +286,12 @@ class WorkloadSimulator:
         latency_s_from_event = event.details["latency_s"]
 
         # Verify that this is a valid completion event for an active query.
-        current_predicted_latencies = self._pool.get_predicted_latencies()
-        currently_predicted_latency_s = current_predicted_latencies.get(
-            cluster_name, {}
-        ).get(query_id)
-        if (currently_predicted_latency_s is None) or (
-            abs(currently_predicted_latency_s - latency_s_from_event) > 1e-3
+        maybe_currently_predicted_latency_s = self._pool.get_predicted_latency(
+            cluster_name, query_id
+        )
+        if (maybe_currently_predicted_latency_s is None) or (
+            abs(maybe_currently_predicted_latency_s - latency_s_from_event)
+            > 1e-3
         ):
             # This was an older completion event, but the latency prediction has
             # changed since.

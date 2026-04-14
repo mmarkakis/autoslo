@@ -93,22 +93,6 @@ class Workload:
 
         self._queries_cache: list[Query] | None = None
 
-    @classmethod
-    def from_cfg(cls, cfg: dict, schema_name: str) -> "Workload":
-        """Build a workload from the workload_config section of a run config."""
-        workload_name = cfgu.getd(
-            cfg, "workload_config.workload_name", required=True
-        )
-        abs_start = cfgu.getd(cfg, "workload_config.abs_start_time_start")
-        abs_end = cfgu.getd(cfg, "workload_config.abs_start_time_end")
-        rescale = cfgu.getd(cfg, "workload_config.rescale_factor", None)
-
-        w = cls(workload_name=workload_name, schema_name=schema_name)
-        w.slice_by_abs_time(abs_start, abs_end)
-        w.set_rel_start_times_from_zero()
-        w.rescale_rel_start_times(rescale)
-        return w
-
     # ------------------------------------------------------------------
     # Core interface
     # ------------------------------------------------------------------
