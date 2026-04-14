@@ -49,11 +49,6 @@ class Query:
 
     query_id: str
     query_text_id: QueryTextId
-    """Opaque key that identifies the query text within its schema.
-
-    The actual SQL can be retrieved via
-    ``QueryTextRegistry.get(schema_name, query_text_id)``.
-    """
 
     featurization: QueryFeaturization = field(default_factory=list)
 

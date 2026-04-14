@@ -275,10 +275,10 @@ def setup_structured_logging(
 def setup_run_logging(
     out_dir: str,
     write_text_log: bool,
-) -> StructuredLogHandler | None:
+) -> StructuredLogHandler:
     """Configure file-based text logging and structured logging for a run.
 
-    Returns the StructuredLogHandler (or None) so the caller can call
+    Returns the StructuredLogHandler so the caller can call
     .finalize() at the end of the run.
     """
     if write_text_log:

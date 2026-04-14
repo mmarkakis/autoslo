@@ -176,6 +176,7 @@ class IconqModel:
 
     def __init__(
         self,
+        id: str,
         init_config: IconqModelInitConfig,
         train_config_sequence: Optional[list[NNModelTrainConfig]] = None,
         device: torch.device = torch.device("cpu"),
@@ -187,6 +188,7 @@ class IconqModel:
         Initializes the LSTM model.
 
         Parameters:
+            id: The identifier of the model.
             init_config: The configuration for the LSTM model.
             train_config_sequence: The sequence of training configurations
                 that have been used to train the model so far.
@@ -195,7 +197,7 @@ class IconqModel:
             model_id: The identifier of the model. If None, a new model ID
                 will be generated.
         """
-
+        self._id = id
         self._device = device
         self._init_config = init_config
         self._train_config_sequence: list[NNModelTrainConfig] = (
@@ -282,6 +284,16 @@ class IconqModel:
         # avoid a write that races with concurrent readers).
         if not _skip_save:
             self._save_params()
+
+    @property
+    def id(self) -> str:
+        """
+        Get the identifier of the model.
+
+        Returns:
+            The identifier of the model.
+        """
+        return self._id
 
     @property
     def stage_model(self) -> StageModel:
@@ -636,6 +648,7 @@ class IconqModel:
             )
 
         model = IconqModel(
+            id=model_id,
             init_config=IconqModelInitConfig(**params["init_config"]),
             train_config_sequence=[
                 NNModelTrainConfig(**tc_dict)
