@@ -53,45 +53,6 @@ _EVT_TEAR_DOWN_BLOCKED = "tear_down_blocked"
 _EVT_STATS_COLLECTED = "stats_collected"
 _EVT_CLUSTER_REMOVED = "cluster_removed"
 
-
-@dataclass(frozen=True)
-class ManagedClusterPoolConfig:
-    """Configuration describing the dynamic cluster environment.
-
-    Attributes
-    ----------
-    initial_rpus : tuple[int, ...]
-        RPU sizes for clusters available from the start of the workload run.
-    allowed_rpu_sizes : tuple[int, ...]
-        RPU sizes that may be spun up dynamically during the workload run.
-    spin_up_delay_s : float
-        If the run is simulated, the amount of time to elapse between requesting
-        a spin-up and the cluster becoming ready.  Ignored for live execution.
-    """
-
-    initial_rpus: tuple[int, ...] = (8,)
-    allowed_rpu_sizes: tuple[int, ...] = tuple(Cluster.ALL_ALLOWED_RPU_SIZES)
-    spin_up_delay_s: float = 120.0
-
-    @staticmethod
-    def parse_from_cfg(
-        cfg: dict,
-    ) -> ManagedClusterPoolConfig:
-        mcp_raw: Optional[dict] = cfgu.getd(cfg, "managed_cluster_pool_config")
-        if mcp_raw is None:
-            return ManagedClusterPoolConfig()  # defaults
-        mcp_raw = dict(mcp_raw)  # shallow copy — don't mutate the caller's dict
-        if "initial_rpus" in mcp_raw and isinstance(
-            mcp_raw["initial_rpus"], list
-        ):
-            mcp_raw["initial_rpus"] = tuple(mcp_raw["initial_rpus"])
-        if "allowed_rpu_sizes" in mcp_raw and isinstance(
-            mcp_raw["allowed_rpu_sizes"], list
-        ):
-            mcp_raw["allowed_rpu_sizes"] = tuple(mcp_raw["allowed_rpu_sizes"])
-        return ManagedClusterPoolConfig(**mcp_raw)
-
-
 class ManagedClusterPool:
     """Unified, thread-safe cluster pool with query bookkeeping.
 
@@ -103,10 +64,6 @@ class ManagedClusterPool:
         RPU sizes for the clusters that should be available at
         construction time.  Each one triggers a ``provisioner.spin_up``
         call; for live provisioners the calls are parallelised.
-    allowed_rpu_sizes :
-        RPU sizes the capacity controller is allowed to spin up later.
-    maxconns :
-        Maximum connections per connection pool (live execution).
     search_path :
         Postgres ``search_path`` for connection pools.
     """
@@ -114,7 +71,7 @@ class ManagedClusterPool:
     def __init__(
         self,
         provisioner: ClusterProvisioner,
-        config: ManagedClusterPoolConfig,
+        initial_rpus: list[int],
         maxconns: int = 1000,
         search_path: str = "public",
         collect_cluster_stats: bool = False,
@@ -122,10 +79,7 @@ class ManagedClusterPool:
         write_text_log: bool = False,
     ) -> None:
         self._provisioner = provisioner
-        self._config = config
-        self._allowed_rpu_sizes: list[int] = sorted(
-            list(config.allowed_rpu_sizes)
-        )
+        self._initial_rpus = initial_rpus
         self._maxconns = maxconns
         self._search_path = search_path
         self._collect_cluster_stats = collect_cluster_stats
@@ -139,7 +93,7 @@ class ManagedClusterPool:
         self._write_text_log = write_text_log
 
         # Spin up initial clusters.
-        rpus = self._config.initial_rpus
+        rpus = self._initial_rpus
         with ThreadPoolExecutor(max_workers=len(rpus)) as executor:
             futures = [
                 executor.submit(
@@ -151,6 +105,10 @@ class ManagedClusterPool:
             ]
             for f in futures:
                 f.result()  # propagate exceptions
+
+    @property
+    def provisioner(self) -> ClusterProvisioner:
+        return self._provisioner
 
     # ------------------------------------------------------------------
     # Cluster lifecycle
