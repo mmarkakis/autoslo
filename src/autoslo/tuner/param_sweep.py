@@ -1,10 +1,11 @@
-"""Shared grid-sweep logic for autoscaler and routing parameter tuning.
+"""Shared sweep logic for autoscaler and routing parameter tuning.
 
 Both the autoscaler sweep (design step 5) and the routing sweep (design
-step 6) follow the same pattern: build a grid, evaluate each point on
-the training set, compute the Pareto front over (violation, cost),
-validate Pareto-optimal points, and select the best.  :class:`ParamSweep`
-encapsulates this logic.
+step 6) follow the same pattern: generate candidate configurations,
+evaluate them on the training set, compute the Pareto front over
+(violation, cost), validate Pareto-optimal points, and select the best.
+:class:`ParamSweep` encapsulates this logic with pluggable search
+strategies (``grid``, ``random``, ``coordinate_descent``).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import random as stdlib_random
 from pathlib import Path
 from typing import Any
 
@@ -99,9 +101,18 @@ class ParamSweep:
         self,
         train_paths: list[Path],
         val_paths: list[Path],
-        param_ranges: dict[str, list],
+        sweep_config: dict[str, Any],
     ) -> dict[str, Any]:
-        """Run a full grid sweep and return the best parameter dict.
+        """Run a parameter sweep and return the best config.
+
+        *sweep_config* format::
+
+            {"strategy": "random", "seed": 42, "budget": 20,
+             "params": {"param.name": [v1, v2], ...}}
+
+        Both ``strategy`` (default ``"grid"``) and ``params`` (default
+        ``{}``) are optional.  Supported strategies: ``"grid"``,
+        ``"random"``, ``"coordinate_descent"``.
 
         Parameters
         ----------
@@ -109,55 +120,49 @@ class ParamSweep:
             Parquet workload paths for training scenarios.
         val_paths :
             Parquet workload paths for validation scenarios.
-        param_ranges :
-            Parameter names → candidate values.  The Cartesian product
-            forms the grid.
+        sweep_config :
+            Sweep configuration (see above).
 
         Returns
         -------
-        The best parameter dict (keys without the section prefix).
+        The full config dict with the best parameter values applied.
         """
+        strategy = sweep_config.get("strategy", "grid")
+        param_ranges = sweep_config.get("params", {})
+        options = {
+            k: v
+            for k, v in sweep_config.items()
+            if k not in ("strategy", "params")
+        }
         metric = cfgu.getd(
             self._config,
             "tuner_config.forecast_config.aggregation_metric",
             "p90",
         )
-        grid = build_grid(param_ranges)
         phase_dir = self._run_dir / self._phase_name
 
-        # ── Pre-flight summary ──────────────────────────────────────
-        self._print_preflight(param_ranges, grid, len(train_paths))
+        # Empty params → nothing to sweep; fall back to grid (evaluates
+        # the base config once).
+        if not param_ranges:
+            strategy = "grid"
+
         dump(self._config, phase_dir / "initial_config.yml")
 
-        # ── Training sweep ──────────────────────────────────────────
-        console.print(f"\n[bold cyan]Training sweep:[/]")
-        grid_results: list[dict[str, Any]] = []
-        all_train_results = self._evaluator.evaluate_batch_from_overrides(
-            phase_name=self._phase_name,
-            workload_paths=train_paths,
-            base_config=self._config,
-            all_config_overrides=grid,
-            out_dir=phase_dir / "train",
-        )
-        for idx in range(len(grid)):
-            train_results = all_train_results[idx]
-            train_agg = SimulationResult.aggregate(train_results, metric)
-            train_primary = train_agg.primary_violation(
-                self._slo_objective.slo_metric
+        # ── Generate & evaluate candidates (strategy-specific) ─────
+        if strategy == "grid":
+            candidates, grid_results = self._sweep_grid(
+                train_paths, param_ranges, metric, phase_dir
             )
-            grid_results.append(
-                {
-                    "grid_point": idx,
-                    "params": grid[idx],
-                    "train_violation_agg": train_primary,
-                    "train_cost_agg": train_agg.cost,
-                    "train_metrics": train_agg,
-                    "is_pareto": False,
-                    "val_primary_violation_agg": None,
-                    "val_cost_agg": None,
-                    "val_metrics": None,
-                }
+        elif strategy == "random":
+            candidates, grid_results = self._sweep_random(
+                train_paths, param_ranges, options, metric, phase_dir
             )
+        elif strategy == "coordinate_descent":
+            candidates, grid_results = self._sweep_coordinate_descent(
+                train_paths, param_ranges, options, metric, phase_dir
+            )
+        else:
+            raise ValueError(f"Unknown sweep strategy: {strategy!r}")
 
         # ── Pareto front ───────────────────────────────────────────
         points = [
@@ -170,12 +175,12 @@ class ParamSweep:
 
         console.print(
             f"\n  [cyan]Pareto front:[/] {len(pareto_indices)} of "
-            f"{len(grid)} points"
+            f"{len(candidates)} points"
         )
 
         # ── Validate Pareto-optimal points ─────────────────────────
         console.print(f"\n[bold cyan]Validation sweep:[/]")
-        val_overrides = [grid[idx] for idx in pareto_indices]
+        val_overrides = [candidates[idx] for idx in pareto_indices]
         all_val_results = self._evaluator.evaluate_batch_from_overrides(
             phase_name=self._phase_name,
             workload_paths=val_paths,
@@ -195,7 +200,7 @@ class ParamSweep:
 
         # ── Select best ───────────────────────────────────────────
         best_idx = self._select_best(grid_results, pareto_indices)
-        best_params = grid[best_idx]
+        best_params = candidates[best_idx]
 
         # ── Rich summary table ─────────────────────────────────────
         self._print_pareto_table(grid_results, pareto_indices, best_idx)
@@ -206,6 +211,208 @@ class ParamSweep:
         dump(final_config, phase_dir / "final_config.yml")
 
         return final_config
+
+    # ------------------------------------------------------------------
+    # Strategy implementations
+    # ------------------------------------------------------------------
+
+    def _evaluate_candidates(
+        self,
+        train_paths: list[Path],
+        candidates: list[dict[str, Any]],
+        metric: str,
+        out_dir: Path,
+    ) -> list[dict[str, Any]]:
+        """Evaluate *candidates* on training scenarios and return result dicts."""
+        all_train_results = self._evaluator.evaluate_batch_from_overrides(
+            phase_name=self._phase_name,
+            workload_paths=train_paths,
+            base_config=self._config,
+            all_config_overrides=candidates,
+            out_dir=out_dir,
+        )
+        grid_results: list[dict[str, Any]] = []
+        for idx, candidate in enumerate(candidates):
+            train_agg = SimulationResult.aggregate(
+                all_train_results[idx], metric
+            )
+            train_primary = train_agg.primary_violation(
+                self._slo_objective.slo_metric
+            )
+            grid_results.append(
+                {
+                    "grid_point": idx,
+                    "params": candidate,
+                    "train_violation_agg": train_primary,
+                    "train_cost_agg": train_agg.cost,
+                    "train_metrics": train_agg,
+                    "is_pareto": False,
+                    "val_primary_violation_agg": None,
+                    "val_cost_agg": None,
+                    "val_metrics": None,
+                }
+            )
+        return grid_results
+
+    def _sweep_grid(
+        self,
+        train_paths: list[Path],
+        param_ranges: dict[str, list],
+        metric: str,
+        phase_dir: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Exhaustive grid search (original strategy)."""
+        grid = build_grid(param_ranges)
+        self._print_preflight(param_ranges, grid, len(train_paths))
+        console.print(f"\n[bold cyan]Training sweep:[/]")
+        grid_results = self._evaluate_candidates(
+            train_paths, grid, metric, phase_dir / "train"
+        )
+        return grid, grid_results
+
+    def _sweep_random(
+        self,
+        train_paths: list[Path],
+        param_ranges: dict[str, list],
+        options: dict[str, Any],
+        metric: str,
+        phase_dir: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Random search: sample *budget* configs from the grid."""
+        full_grid = build_grid(param_ranges)
+        budget = options.get("budget", len(full_grid))
+        seed = options.get("seed", 42)
+
+        if budget >= len(full_grid):
+            grid = full_grid
+        else:
+            rng = stdlib_random.Random(seed)
+            grid = rng.sample(full_grid, budget)
+
+        self._print_preflight(
+            param_ranges,
+            grid,
+            len(train_paths),
+            strategy_label=f"Random (budget={budget}, seed={seed})",
+        )
+        console.print(f"\n[bold cyan]Training sweep:[/]")
+        grid_results = self._evaluate_candidates(
+            train_paths, grid, metric, phase_dir / "train"
+        )
+        return grid, grid_results
+
+    def _sweep_coordinate_descent(
+        self,
+        train_paths: list[Path],
+        param_ranges: dict[str, list],
+        options: dict[str, Any],
+        metric: str,
+        phase_dir: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Coordinate descent: optimise one parameter at a time."""
+        max_cycles = options.get("max_cycles", 3)
+        starting_point = options.get("starting_point", None)
+
+        # Default starting point: middle value for each parameter.
+        if starting_point is None:
+            starting_point = {
+                name: values[len(values) // 2]
+                for name, values in param_ranges.items()
+            }
+
+        current_best = dict(starting_point)
+        all_candidates: list[dict[str, Any]] = []
+        all_grid_results: list[dict[str, Any]] = []
+        evaluated_cache: dict[frozenset, int] = {}
+
+        def _config_key(cfg: dict[str, Any]) -> frozenset:
+            return frozenset(sorted(cfg.items()))
+
+        total_values = sum(len(v) for v in param_ranges.values())
+        console.print(
+            f"\n[bold cyan]Coordinate descent[/]  "
+            f"max_cycles={max_cycles}  |  "
+            f"params={len(param_ranges)}  |  "
+            f"total values={total_values}  |  "
+            f"training scenarios={len(train_paths)}  |  "
+            f"max evals={max_cycles * total_values * len(train_paths)}"
+        )
+        console.print(f"  Starting point: {current_best}")
+
+        for cycle in range(max_cycles):
+            console.print(f"\n  [bold cyan]Cycle {cycle + 1}/{max_cycles}:[/]")
+            changed = False
+
+            for param_name, param_values in param_ranges.items():
+                # Candidate configs: vary only this param.
+                candidates_for_param = []
+                for val in param_values:
+                    point = dict(current_best)
+                    point[param_name] = val
+                    candidates_for_param.append(point)
+
+                # Identify configs not yet evaluated.
+                new_candidates = [
+                    c
+                    for c in candidates_for_param
+                    if _config_key(c) not in evaluated_cache
+                ]
+
+                # Evaluate new candidates.
+                if new_candidates:
+                    out_dir = (
+                        phase_dir
+                        / "train"
+                        / f"cycle_{cycle}"
+                        / param_name.replace(".", "_")
+                    )
+                    batch_results = self._evaluate_candidates(
+                        train_paths, new_candidates, metric, out_dir
+                    )
+                    for j, c in enumerate(new_candidates):
+                        idx = len(all_candidates)
+                        batch_results[j]["grid_point"] = idx
+                        all_candidates.append(c)
+                        all_grid_results.append(batch_results[j])
+                        evaluated_cache[_config_key(c)] = idx
+
+                # Select best value for this parameter.
+                indices = [
+                    evaluated_cache[_config_key(c)]
+                    for c in candidates_for_param
+                ]
+                cd_candidates = [
+                    (
+                        all_grid_results[i]["train_violation_agg"],
+                        all_grid_results[i]["train_cost_agg"],
+                    )
+                    for i in indices
+                ]
+                best_local = threshold_aware_select(
+                    cd_candidates, self._slo_objective.slo_threshold
+                )
+                best_val = param_values[best_local]
+
+                if best_val != current_best[param_name]:
+                    console.print(
+                        f"    {param_name}: "
+                        f"{current_best[param_name]} → {best_val}"
+                    )
+                    current_best[param_name] = best_val
+                    changed = True
+                else:
+                    console.print(
+                        f"    {param_name}: unchanged "
+                        f"({current_best[param_name]})"
+                    )
+
+            if not changed:
+                console.print(
+                    f"\n  [dim]Converged after {cycle + 1} cycle(s).[/dim]"
+                )
+                break
+
+        return all_candidates, all_grid_results
 
     # ------------------------------------------------------------------
     # Selection logic
@@ -243,8 +450,11 @@ class ParamSweep:
         param_ranges: dict[str, list],
         grid: list[dict[str, Any]],
         n_train: int,
+        strategy_label: str = "Grid",
     ) -> None:
-        table = Table(title="Parameter Ranges", show_lines=True)
+        table = Table(
+            title=f"Parameter Ranges — {strategy_label}", show_lines=True
+        )
         table.add_column("Parameter", justify="left")
         table.add_column("Values", justify="left")
         table.add_column("Count", justify="right")

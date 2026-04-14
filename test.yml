@@ -76,10 +76,12 @@ tuner_config:
     min_rel_improvement_for_acceptance: 0.01
 
   autoscaling_param_sweep:
-    "autoscaling_config.eta_crit": [0.05, 0.10, 0.20]
-    "autoscaling_config.idle_periods_before_tear_down": [5, 10, 20]
-    "autoscaling_config.capacity_poll_interval_s": [30.0, 60.0, 120.0]
-    "autoscaling_config.min_cluster_lifetime_s": [1200.0, 3600.0]
+    strategy: grid
+    params:
+      "autoscaling_config.eta_crit": [0.05, 0.10, 0.20]
+      "autoscaling_config.idle_periods_before_tear_down": [5, 10, 20]
+      "autoscaling_config.capacity_poll_interval_s": [30.0, 60.0, 120.0]
+      "autoscaling_config.min_cluster_lifetime_s": [1200.0, 3600.0]
   routing_param_sweep: {}
 
   static_baselines:

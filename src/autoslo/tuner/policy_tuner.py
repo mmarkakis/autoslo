@@ -55,11 +55,10 @@ class PolicyTuner:
 
         # Check overwrite setting and dump config.
         if self._run_dir.exists() and not self._cfgd(
-            "basic_config.overwrite", False
+            "tuner_config.force", False
         ):
             raise FileExistsError(
                 f"Output directory {self._run_dir} already exists. "
-                "Set basic_config.overwrite: true to overwrite."
             )
         self._run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -215,9 +214,7 @@ class PolicyTuner:
             )
             return train_paths, val_paths
 
-        initial_seed = self._cfgd(
-            "tuner_config.forecast_config.initial_seed", 42
-        )
+        initial_seed = self._cfgd("tuner_config.seed", 42)
 
         _, train_paths = self._forecast_policy.forecast_n_scenarios(
             target_date=target_date,
@@ -417,7 +414,7 @@ class PolicyTuner:
             post_sweep_config = sweeper.sweep(
                 train_paths=train_paths,
                 val_paths=val_paths,
-                param_ranges=self._cfgd(f"tuner_config.{phase_name}", {}),
+                sweep_config=self._cfgd(f"tuner_config.{phase_name}", {}),
             )
         return post_sweep_config
 
