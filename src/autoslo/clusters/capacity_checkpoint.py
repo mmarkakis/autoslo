@@ -71,8 +71,14 @@ class CapacityCheckpoint:
                     "event_type": "capacity_checkpoint_reconciliation",
                     "source": source,
                     "checkpoint_rel_time_s": self.rel_time_s,
-                    "desired_rpus": list(self.min_rpus),
-                    "current_rpus": dict(current_counts),
+                    "desired_rpus": ",".join(
+                        f"{rpu}:{count}"
+                        for rpu, count in Counter(self.min_rpus).items()
+                    ),
+                    "current_rpus": ",".join(
+                        f"{rpu}:{count}"
+                        for rpu, count in current_counts.items()
+                    ),
                 }
             )
 

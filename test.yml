@@ -56,9 +56,10 @@ output_config:
   write_text_log: false
 
 tuner_config:
-  force: false
+  force: true
   parallelism: auto
   holdout_evaluation: true
+  seed: 42
 
   forecast_config:
     history_abs_start_time_start: "2024-04-27T00:00:00"
@@ -67,7 +68,6 @@ tuner_config:
     decay_factor: 0.5
     num_scenarios: 20
     train_fraction: 0.6
-    initial_seed: 42
     aggregation_metric: mean
 
   checkpoint_phase:

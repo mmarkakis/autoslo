@@ -276,7 +276,7 @@ class Autoscaler:
                     {
                         "timestamp": current_time_s,
                         "event_type": "rpu_counterfactual",
-                        "source": "headroom_policy",
+                        "source": "Autoscaler",
                         "candidate_rpu": rpu,
                         "metric_and_cost": f"{slo_viol_and_cost[0]:.4f}, {slo_viol_and_cost[1]:.4f}",
                         "slo_threshold": self._slo_objective.slo_threshold,

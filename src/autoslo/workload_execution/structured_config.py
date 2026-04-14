@@ -10,10 +10,7 @@ from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
-from autoslo.clusters.managed_cluster_pool import (
-    ManagedClusterPool,
-    ManagedClusterPoolConfig,
-)
+from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
