@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
 from typing import Optional
@@ -9,32 +8,14 @@ from typing import Optional
 from tqdm.auto import tqdm
 
 import autoslo.utils.config as cfgu
-import autoslo.utils.paths as pu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
-from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import ClusterState
-from autoslo.clusters.managed_cluster_pool import (
-    ManagedClusterPool,
-    ManagedClusterPoolConfig,
-)
-from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
-from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.routing.wrapper import route_and_update_bookkeeping
-from autoslo.slo.slo_metric import SloMetric
-from autoslo.slo.slo_objective import SloObjective
-from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.logging import (
-    LOGGER_NAME,
-    emit_structured,
-    setup_run_logging,
-)
+from autoslo.utils.logging import LOGGER_NAME, emit_structured
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query
-from autoslo.workload_definition.query_text_registry import QueryTextRegistry
-from autoslo.workload_definition.schema import Schema
-from autoslo.workload_definition.workload import Workload
+from autoslo.workload_execution.structured_config import StructuredConfig
 
 _has_structured = lambda: bool(
     logging.getLogger(LOGGER_NAME).handlers
@@ -56,135 +37,35 @@ class WorkloadRunner:
         Initialize the runner with the given configuration.
         """
 
-        # ── basic ────────────────────────────────────────────────────────
+        # ── Determine run_id ─────────────────────────────────────────
         self._run_id = str(int(self._ts()))
         self._cfg = cfgu.copy_and_apply_overrides(
             cfg, {"basic_config.run_id": self._run_id}
         )
-        schema_name: str = cfgu.getd(
-            self._cfg, "basic_config.schema_name", required=True
-        )
-        self._schema = Schema.load(schema_name)
-        self._iconq_model_id: str = cfgu.getd(
-            self._cfg, "basic_config.iconq_model_id", required=True
-        )
-        self._iconq_model = IconqModel.load(self._iconq_model_id)
 
-        # ── workload ─────────────────────────────────────────────────────
-        self._closed_loop: bool = bool(
-            cfgu.getd(self._cfg, "workload_config.closed_loop", False)
-        )
-        self._workload = Workload.from_cfg(self._cfg, self._schema.name)
-        self._workload.print_summary()
-
-        # ── SLO ──────────────────────────────────────────────────────────
-        self._slo_s: float = cfgu.getd(self._cfg, "slo_config.slo_s", 10.0)
-        self._slo_metric = SloMetric(
-            cfgu.getd(self._cfg, "slo_config.slo_metric", "relative")
-        )
-        self._slo_threshold: float = float(
-            cfgu.getd(self._cfg, "slo_config.slo_threshold", 0.0)
-        )
-        self._slo_dict_filename: Optional[str] = cfgu.getd(
-            self._cfg, "slo_config.slo_dict_filename"
-        )
-        self._slo_resolver = SloResolver(self._slo_s, self._slo_dict_filename)
-        self._slo_objective = SloObjective(
-            slo_metric=self._slo_metric,
-            slo_threshold=self._slo_threshold,
+        # ── Build, parse and dump structured config ──────────────────────────────
+        structured_config = StructuredConfig.build(
+            self._cfg, self._run_id, is_runner=True
         )
 
-        # ── Runner-specific ──────────────────────────────────────────────────
-        maxconns = int(cfgu.getd(self._cfg, "runner_config.maxconns", 1000))
-        max_threads = cfgu.getd(self._cfg, "runner_config.max_threads", 10)
-        self._executor = ThreadPoolExecutor(max_workers=max_threads)
-        relative_aws_config_path = cfgu.getd(
-            self._cfg,
-            "runner_config.aws_config_path",
-            "data/__run_configs/aws.yml",
-        )
-        absolute_aws_config_path = os.path.join(
-            pu.AUTOSLO_ROOT, relative_aws_config_path
-        )
+        self._query_text_registry = structured_config.query_text_registry
+        self._iconq_model = structured_config.iconq_model
+        self._closed_loop = structured_config.closed_loop
+        self._workload = structured_config.workload
+        self._slo_objective = structured_config.slo_objective
+        self._slo_resolver = structured_config.slo_resolver
+        self._executor = structured_config.thread_pool_executor
+        self._pool = structured_config.pool
+        self._capacity_checkpoints = structured_config.capacity_checkpoints
+        self._router = structured_config.router
+        self._autoscaler = structured_config.autoscaler
+        self._out_dir = structured_config.out_dir
+        self._write_text_log = structured_config.write_text_log
+        self._structured_handler = structured_config.structured_log_handler
 
-        # ── Managed Cluster Pool ─────────────────────────────────────────────
-        self._managed_cluster_pool_config = (
-            ManagedClusterPoolConfig.parse_from_cfg(self._cfg)
-        )
-        self._allowed_rpu_sizes = list(
-            self._managed_cluster_pool_config.allowed_rpu_sizes
-        )
-        self._provisioner = RedshiftServerlessProvisioner(
-            aws_config_path=absolute_aws_config_path,
-        )
-        self._pool: ManagedClusterPool = ManagedClusterPool(
-            provisioner=self._provisioner,
-            config=self._managed_cluster_pool_config,
-            maxconns=maxconns,
-            search_path=self._schema.search_path,
-            collect_cluster_stats=True,
-            run_id=self._run_id,
-        )
-        self._capacity_checkpoints = CapacityCheckpoint.parse_from_cfg(
-            self._cfg
-        )
-
-        # ── QueryRouter ──────────────────────────────────────────────────────
-        routing_policy_str: str = cfgu.getd(
-            self._cfg, "routing_config.routing_policy", "use_iconq_model"
-        )
-        self._routing_policy = QueryRouterPolicy(routing_policy_str)
-        self._router: QueryRouter = QueryRouter(
-            slo_resolver=self._slo_resolver,
-            slo_metric=self._slo_metric,
-            routing_policy=self._routing_policy,
-        )
-
-        # ── Autoscaler ──────────────────────────────────────────────────────
-        self._autoscaler = Autoscaler(
-            slo_resolver=self._slo_resolver,
-            slo_objective=self._slo_objective,
-            allowed_rpu_sizes=self._allowed_rpu_sizes,
-            iconq_model=self._iconq_model,
-            routing_policy=self._routing_policy,
-            min_cluster_lifetime_s=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.min_cluster_lifetime_s",
-                1200.0,
-            ),
-            idle_time_before_tear_down_s=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.idle_time_before_tear_down_s",
-                600.0,
-            ),
-            observation_window_s=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.observation_window_s",
-                300.0,
-            ),
-            min_observations_to_act=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.min_observations_to_act",
-                5,
-            ),
-        )
-
-        # ── Output ───────────────────────────────────────────────────────────
-        self._write_text_log: bool = cfgu.getd(
-            self._cfg, "output_config.write_text_log", False
-        )
-        self._out_dir = os.path.join(pu.get_runs_path(), self._run_id)
-        os.makedirs(self._out_dir, exist_ok=False)
         dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
-        # ── Logging ───────────────────────────────────────────────────────────
-        self._structured_handler = setup_run_logging(
-            out_dir=self._out_dir,
-            write_text_log=self._write_text_log,
-        )
-
         # ── Instance Variables ───────────────────────────────────────────────
-        # Futures for in-flight background spin-ups.
         self._pending_spin_ups: list[asyncio.Future] = []
 
     # ------------------------------------------------------------------
@@ -208,8 +89,6 @@ class WorkloadRunner:
             on_spin_up=self._on_live_spin_up,
             write_text_log=self._write_text_log,
         )
-
-
 
     # ------------------------------------------------------------------
     # Autoscaler callbacks
@@ -352,6 +231,17 @@ class WorkloadRunner:
                 f"is in the past (delay={delay:.2f}s). Starting immediately."
             )
 
+        # ── Find query text ────────────────────────────────────────────────
+        query_text = self._query_text_registry.get(query.query_text_id)
+        if query_text is None:
+            logging.error(
+                f"No text found for schema "
+                f"'{self._query_text_registry.schema_name}', "
+                f"query_text_id '{query.query_text_id}'. Skipping query "
+                f"{query.query_id}."
+            )
+            return
+
         # ── Route at arrival time ────────────────────────────────────
         selected_cluster_name = route_and_update_bookkeeping(
             source="WorkloadRunner",
@@ -365,18 +255,6 @@ class WorkloadRunner:
             write_text_log=self._write_text_log,
             simulator_pending_events_heap=None,  # Not used in live runner
         )
-
-        # ── Find query text ────────────────────────────────────────────────
-        query_text = QueryTextRegistry.get(
-            self._schema.name, query.query_text_id
-        )
-        if query_text is None:
-            logging.error(
-                f"No text found for schema '{self._schema.name}', "
-                f"query_text_id '{query.query_text_id}'. Skipping query "
-                f"{query.query_id}."
-            )
-            return
 
         # ── Execute ──────────────────────────────────────────────────
         try:

@@ -2,10 +2,8 @@ import heapq
 import json
 import logging
 import os
-import shutil
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 import torch
 import yaml
@@ -20,34 +18,22 @@ from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
     render_gantt_scrubber,
 )
 from autoslo.clusters.actions import SpinUpAction
-from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
-from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
-from autoslo.clusters.managed_cluster_pool import (
-    ManagedClusterPool,
-    ManagedClusterPoolConfig,
-)
-from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.slo.slo_metric import SloMetric
-from autoslo.slo.slo_objective import SloObjective
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
-from autoslo.utils.logging import (
-    LOGGER_NAME,
-    emit_structured,
-    setup_run_logging,
-)
+from autoslo.utils.logging import LOGGER_NAME, emit_structured
 from autoslo.utils.paralellism import inner_level_num_cpus
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
+from autoslo.workload_execution.structured_config import StructuredConfig
 from autoslo.workload_execution.simulator_event import (
     SimulatorEvent,
     SimulatorEventType,
 )
+from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
@@ -75,141 +61,43 @@ class WorkloadSimulator:
         Initialize the simulator with the given config.
         """
 
-        # ── basic ────────────────────────────────────────────────────────────
+        # ── Determine run_id ─────────────────────────────────────────
         self._run_id: Optional[str] = cfgu.getd(
             cfg, "basic_config.run_id"
         ) or str(int(datetime.now().timestamp() * 1000))
         self._cfg = cfgu.copy_and_apply_overrides(
             cfg, {"basic_config.run_id": self._run_id}
         )
-        self._schema_name: str = cfgu.getd(
-            self._cfg, "basic_config.schema_name", required=True
+
+        # ── Build, parse and dump structured config ──────────────────────────────
+        structured_config = StructuredConfig.build(
+            self._cfg, self._run_id, workload=workload, is_runner=False
         )
+
+        self._iconq_model = structured_config.iconq_model
+        self._closed_loop = structured_config.closed_loop
+        self._workload = structured_config.workload
+        self._slo_objective = structured_config.slo_objective
+        self._slo_resolver = structured_config.slo_resolver
+        self._pool = structured_config.pool
+        self._capacity_checkpoints = structured_config.capacity_checkpoints
+        self._router = structured_config.router
+        self._autoscaler = structured_config.autoscaler
+        self._out_dir = structured_config.out_dir
+        self._write_text_log = structured_config.write_text_log
+        self._structured_handler = structured_config.structured_log_handler
         self._experiment_name: Optional[str] = cfgu.getd(
             self._cfg, "basic_config.experiment_name"
         )
-        self._overwrite_experiment: bool = cfgu.getd(
-            self._cfg, "basic_config.overwrite_experiment", False
-        )
-        self._iconq_model_id: str = cfgu.getd(
-            self._cfg, "basic_config.iconq_model_id", required=True
-        )
-        self._iconq_model = IconqModel.load(self._iconq_model_id)
 
-        # ── workload ─────────────────────────────────────────────────────
-        self._closed_loop: bool = bool(
-            cfgu.getd(self._cfg, "workload_config.closed_loop", False)
-        )
-        self._workload = workload or Workload.from_cfg(
-            self._cfg, self._schema_name
-        )
+        dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
-        # ── SLO ──────────────────────────────────────────────────────────────
-        self._slo_s: float = cfgu.getd(self._cfg, "slo_config.slo_s", 10.0)
-        self._slo_metric = SloMetric(
-            cfgu.getd(self._cfg, "slo_config.slo_metric", "relative")
-        )
-        self._slo_threshold: float = float(
-            cfgu.getd(self._cfg, "slo_config.slo_threshold", 0.0)
-        )
-        self._slo_dict_filename: Optional[str] = cfgu.getd(
-            self._cfg, "slo_config.slo_dict_filename"
-        )
-        self._slo_resolver = SloResolver(self._slo_s, self._slo_dict_filename)
-        self._slo_objective = SloObjective(
-            slo_metric=self._slo_metric,
-            slo_threshold=self._slo_threshold,
-        )
-
-        # ── Managed Cluster Pool ─────────────────────────────────────────────
-        self._managed_cluster_pool_config = (
-            ManagedClusterPoolConfig.parse_from_cfg(self._cfg)
-        )
-        self._allowed_rpu_sizes = list(
-            self._managed_cluster_pool_config.allowed_rpu_sizes
-        )
-        self._provisioner: SimulatedProvisioner = SimulatedProvisioner(
-            spin_up_delay_s=self._managed_cluster_pool_config.spin_up_delay_s
-        )
-        self._pool: ManagedClusterPool = ManagedClusterPool(
-            provisioner=self._provisioner,
-            config=self._managed_cluster_pool_config,
-        )
-        self._capacity_checkpoints = CapacityCheckpoint.parse_from_cfg(
-            self._cfg
-        )
-
-        # Activate initial clusters immediately (no spin-up delay).
+        # ── Activate initial clusters immediately (no spin-up delay) ──────
         pending_cluster_names = self._pool.clusters_in_state(
             ClusterState.PENDING
         )
         for name in pending_cluster_names:
             self._pool.on_cluster_ready(name, 0.0)
-
-        # ── QueryRouter ──────────────────────────────────────────────────────
-        routing_policy_str: str = cfgu.getd(
-            self._cfg, "routing_config.routing_policy", "use_iconq_model"
-        )
-        self._routing_policy = QueryRouterPolicy(routing_policy_str)
-        self._router: QueryRouter = QueryRouter(
-            slo_resolver=self._slo_resolver,
-            slo_metric=self._slo_metric,
-            routing_policy=self._routing_policy,
-        )
-
-        # ── Autoscaler ──────────────────────────────────────────────────────
-        self._autoscaler = Autoscaler(
-            slo_resolver=self._slo_resolver,
-            slo_objective=self._slo_objective,
-            allowed_rpu_sizes=self._allowed_rpu_sizes,
-            iconq_model=self._iconq_model,
-            routing_policy=self._routing_policy,
-            min_cluster_lifetime_s=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.min_cluster_lifetime_s",
-                1200.0,
-            ),
-            idle_time_before_tear_down_s=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.idle_time_before_tear_down_s",
-                600.0,
-            ),
-            observation_window_s=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.observation_window_s",
-                300.0,
-            ),
-            min_observations_to_act=cfgu.getd(
-                self._cfg,
-                "autoscaling_config.min_observations_to_act",
-                5,
-            ),
-        )
-
-        # ── Output ───────────────────────────────────────────────────────────
-        self._write_text_log: bool = cfgu.getd(
-            self._cfg, "output_config.write_text_log", False
-        )
-        self._export_video: bool = cfgu.getd(
-            self._cfg, "output_config.export_video", False
-        )
-        self._video_frame_duration: float = cfgu.getd(
-            self._cfg, "output_config.video_frame_duration", 1.0
-        )
-        out_dir_override = cfgu.getd(self._cfg, "output_config.out_dir", None)
-        self._out_dir = WorkloadSimulator._make_out_dir(
-            run_id=self._run_id,
-            out_dir_override=out_dir_override,
-            experiment_name=self._experiment_name,
-            overwrite_experiment=self._overwrite_experiment,
-        )
-        dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
-
-        # ── Logging ───────────────────────────────────────────────────────────
-        self._structured_handler = setup_run_logging(
-            out_dir=self._out_dir,
-            write_text_log=self._write_text_log,
-        )
 
         # ── Instance Variables ───────────────────────────────────────────────
         self._pending_events: list[SimulatorEvent] = []
@@ -221,35 +109,6 @@ class WorkloadSimulator:
         return self._out_dir
 
     # ------------------------------------------------------------------
-    # helper: build/return the output directory path
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _make_out_dir(
-        run_id: str,
-        out_dir_override: str | None = None,
-        experiment_name: str | None = None,
-        overwrite_experiment: bool = False,
-    ) -> str:
-        if out_dir_override is not None:
-            out_dir = os.path.join(str(out_dir_override), run_id)
-            os.makedirs(out_dir, exist_ok=True)
-            return out_dir
-        if experiment_name:
-            experiment_dir = os.path.join(
-                pu.get_data_path(), "simulator_runs", experiment_name
-            )
-            if os.path.exists(experiment_dir) and overwrite_experiment:
-                shutil.rmtree(experiment_dir)
-            out_dir = os.path.join(
-                experiment_dir,
-                run_id,
-            )
-        else:
-            out_dir = os.path.join(pu.get_data_path(), "simulator_runs", run_id)
-        os.makedirs(out_dir, exist_ok=True)
-        return out_dir
-
-    # ------------------------------------------------------------------
     # Dynamic provisioning helpers
     # ------------------------------------------------------------------
 
@@ -258,9 +117,9 @@ class WorkloadSimulator:
         cluster_name = self._pool.request_spin_up(
             action, self._current_sim_time_s
         )
-        ready_time = (
-            self._current_sim_time_s + self._provisioner.spin_up_delay_s
-        )
+        provisioner = self._pool.provisioner
+        assert type(provisioner) is SimulatedProvisioner
+        ready_time = self._current_sim_time_s + provisioner.spin_up_delay_s
         heapq.heappush(
             self._pending_events,
             SimulatorEvent(
@@ -298,13 +157,8 @@ class WorkloadSimulator:
 
         print(
             f"Simulating routing of {len(queries)} queries from workload "
-            f"{self._workload.workload_name} using "
-            + (
-                f" (model {self._iconq_model_id})"
-                if self._iconq_model_id
-                else ""
-            )
-            + "..."
+            f"{self._workload.workload_name} using  IconqModel "
+            f"{self._iconq_model.id})..."
         )
         print(
             f"The first and last relative query start times are "
@@ -503,7 +357,6 @@ class WorkloadSimulator:
             write_text_log=self._write_text_log,
         )
 
-
     def _handle_cluster_ready(self, event: SimulatorEvent) -> None:
         """
         Handle the event of a cluster becoming ready: update the pool and
@@ -544,9 +397,8 @@ class WorkloadSimulator:
         )
         fig = render_gantt_scrubber(
             [snapshot],
-            slo_s=self._slo_s,
-            slo_metric=self._slo_metric,
-            slo_threshold=self._slo_threshold,
+            slo_objective=self._slo_objective,
+            slo_s=self._slo_resolver.default_slo_s,
             workload_name=self._workload.workload_name,
         )
 
@@ -558,12 +410,11 @@ class WorkloadSimulator:
             video_out_path = os.path.join(self._out_dir, "visualization.mp4")
             export_gantt_video(
                 snapshots=[snapshot],
-                slo_s=self._slo_s,
+                slo_s=self._slo_resolver.default_slo_s,
                 output_path=video_out_path,
                 frame_duration=self._video_frame_duration,
                 constant_layout=True,
-                slo_metric=self._slo_metric,
-                slo_threshold=self._slo_threshold,
+                slo_objective=self._slo_objective,
                 workload_name=self._workload.workload_name,
             )
 
@@ -651,14 +502,14 @@ class WorkloadSimulator:
             log = _pd.read_parquet(log_path)
             completions = log[log["event_type"] == "completion"].copy()
             num_queries = len(completions)
-            if num_queries > 0 and self._slo_s:
+            if num_queries > 0 and self._slo_resolver.default_slo_s:
                 durations = completions["latency_s"].fillna(0.0)
                 # Compute per-row SLO using the resolver so that
                 # per-template overrides are reflected in violation stats.
                 per_row_slo = (
                     completions["query_text_id"]
                     .map(self._slo_resolver.resolve)
-                    .fillna(self._slo_s)
+                    .fillna(self._slo_resolver.default_slo_s)
                 )
 
                 lat_and_slos = [
@@ -675,10 +526,10 @@ class WorkloadSimulator:
 
         run_entry = {
             "run_id": self._run_id,
-            "slo_s": self._slo_s,
-            "slo_metric": self._slo_metric.value,
-            "slo_threshold": self._slo_threshold,
-            "slo_dict_filename": self._slo_dict_filename,
+            "slo_s": self._slo_resolver.default_slo_s,
+            "slo_metric": self._slo_objective.slo_metric.value,
+            "slo_threshold": self._slo_objective.slo_threshold,
+            "slo_dict_filename": self._slo_resolver.slo_dict_filename,
             "slo_dict": self._slo_resolver.slo_dict,
             "violation_rate": round(violation_rate, 6),
             "violation_amount_s": round(violation_amount_s, 4),

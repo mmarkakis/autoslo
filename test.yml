@@ -2,8 +2,6 @@
 
 basic_config:
   schema_name: ext_tpcds1000
-  experiment_name: TESTTEST
-  overwrite: true
   iconq_model_id: "1771539369"
   run_id: "tuner_prev_month"
 
@@ -20,15 +18,17 @@ slo_config:
   slo_threshold: 0.05
   slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
 
+runner_config:
+  max_threads: 512
+  
+provisioner_config:
+  relative_aws_config_path: data/__run_configs/aws.yml
+  spin_up_delay_s: 300.0
+
 managed_cluster_pool_config:
+  maxconns: 1000
   initial_rpus:
     - 16
-  allowed_rpu_sizes:
-    - 4
-    - 8
-    - 16
-    - 32
-  spin_up_delay_s: 300.0
 
 capacity_checkpoints: 
   - rel_time_s: 5438.450446128845
@@ -40,19 +40,20 @@ routing_config:
   routing_policy: use_iconq_model
 
 autoscaling_config:
+  allowed_rpu_sizes:
+    - 4
+    - 8
+    - 16
+    - 32
   min_cluster_lifetime_s: 1200.0
   idle_time_before_tear_down_s: 1200.0
   observation_window_s: 300.0
   min_observations_to_act: 5
 
 output_config:
+  experiment_name: TESTTEST
+  overwrite_experiment: true
   write_text_log: false
-  export_video: false
-
-runner_config:
-  maxconns: 1000
-  max_threads: 512
-  aws_config_path: data/__run_configs/aws.yml
 
 tuner_config:
   force: false
