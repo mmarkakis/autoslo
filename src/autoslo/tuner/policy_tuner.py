@@ -24,6 +24,7 @@ from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
+    threshold_aware_select,
 )
 from autoslo.utils.config import copy_and_apply_overrides
 from autoslo.utils.logging import setup_structured_logging
@@ -47,22 +48,14 @@ class PolicyTuner:
         ts = int(datetime.now().timestamp() * 1000)
         self._run_id = self._cfgd("basic_config.run_id", f"tuner_{ts}")
         self._run_dir = Path("data/tuner_runs") / self._run_id
-        if self._cfgd("basic_config.experiment_name") is not None:
-            experiment_name = self._cfgd("basic_config.experiment_name")
+        if self._cfgd("output_config.experiment_name") is not None:
+            experiment_name = self._cfgd("output_config.experiment_name")
             self._run_dir = (
                 Path("data/tuner_runs") / experiment_name / self._run_id
             )
 
-        # Check overwrite setting and dump config.
-        if self._run_dir.exists() and not self._cfgd(
-            "tuner_config.force", False
-        ):
-            raise FileExistsError(
-                f"Output directory {self._run_dir} already exists. "
-            )
-        self._run_dir.mkdir(parents=True, exist_ok=True)
-
         # Persist config for reproducibility.
+        self._run_dir.mkdir(parents=True, exist_ok=True)
         initial_config_path = self._run_dir / "initial_config.yml"
         dump(self._initial_config, initial_config_path)
 
@@ -316,72 +309,165 @@ class PolicyTuner:
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
     ]:
+        """Phase 4: Find promising checkpoints via greedy optimization.
+
+        When ``tuner_config.initial_rpu_candidates`` is provided, runs
+        checkpoint optimization independently for each candidate initial
+        RPU set, then selects the best (initial_rpus, checkpoint_schedule)
+        pair on the validation set using threshold-aware selection.
+
+        When the key is absent, behaves as before (single candidate
+        from ``managed_cluster_pool_config.initial_rpus``).
         """
-        Phase 4: Find promising checkpoints via greedy training-only optimization.
-        """
-        # Compute or retrieve the post-checkpoint-optimization config.
-        optimizer = CheckpointOptimizer(
-            evaluator=self._evaluator,
-            config=self._initial_config,
-            run_dir=self._run_dir,
+        force = self._cfgd("tuner_config.force", False)
+        ckpt_root = self._run_dir / "checkpoints"
+
+        # Determine candidates.
+        default_rpus = self._cfgd(
+            "managed_cluster_pool_config.initial_rpus", [8]
         )
-        final_config_path = self._run_dir / "checkpoints" / "final_config.yml"
-        if final_config_path.exists() and not self._cfgd(
-            "tuner_config.force", False
-        ):
+        candidates: list[list[int]] = self._cfgd(
+            "tuner_config.checkpoint_phase.initial_rpu_candidates",
+            [default_rpus],
+        )
+
+        # Fast path: cached best config from a previous run.
+        best_config_path = ckpt_root / "best_config.yml"
+        if best_config_path.exists() and not force:
             console.print(
                 f"  Checkpoint optimization results already exist at "
-                f"{final_config_path}; loading from disk."
+                f"{best_config_path}; loading from disk."
             )
-            with open(final_config_path) as f:
-                post_checkpoints_config = yaml.safe_load(f) or {}
-        else:
-            post_checkpoints_config = optimizer.optimize(
-                train_paths=train_paths,
+            with open(best_config_path) as f:
+                best_config = yaml.safe_load(f) or {}
+            train_agg = self._parse_phase_summary(
+                ckpt_root / "best_train_summary.yml"
             )
+            val_agg = self._parse_phase_summary(
+                ckpt_root / "best_val_summary.yml"
+            )
+            return best_config, train_agg, val_agg
 
-        # Validate checkpoint schedule on training and validation data.
-        train_out_dir = self._run_dir / "checkpoints" / "final" / "train"
-        train_results: list[SimulationResult]
-        if train_out_dir.exists() and not self._cfgd(
-            "tuner_config.force", False
-        ):
+        # Run checkpoint optimization for each candidate.
+        candidate_configs: list[dict[str, Any]] = []
+        candidate_val_aggs: list[AggregatedSimulationResults] = []
+        candidate_train_aggs: list[AggregatedSimulationResults] = []
+
+        for i, rpus in enumerate(candidates):
+            tag = f"candidate_{i}"
             console.print(
-                f"  Checkpoint-optimized train results already exist at "
-                f"{train_out_dir}; loading from disk."
+                f"  [bold]Candidate {i}[/]: initial_rpus={rpus}"
             )
-            train_results = SimulationResult.load_batch(
-                train_out_dir / "config_0"
-            )
-        else:
-            train_results_nested = self._evaluator.evaluate_batch_from_configs(
-                phase_name="checkpoints_train",
-                workload_paths=train_paths,
-                configs=[post_checkpoints_config],
-                out_dir=train_out_dir,
-            )
-            train_results = train_results_nested[0]
-        train_agg = SimulationResult.aggregate(train_results, agg_metric)
 
-        val_out_dir = self._run_dir / "checkpoints" / "final" / "val"
-        val_results: list[SimulationResult]
-        if val_out_dir.exists() and not self._cfgd("tuner_config.force", False):
-            console.print(
-                f"  Checkpoint-optimized val results already exist at "
-                f"{val_out_dir}; loading from disk."
+            # Stamp this candidate's initial_rpus into the config.
+            candidate_config = copy_and_apply_overrides(
+                self._initial_config,
+                {"managed_cluster_pool_config.initial_rpus": rpus},
             )
-            val_results = SimulationResult.load_batch(val_out_dir / "config_0")
-        else:
-            val_results_nested = self._evaluator.evaluate_batch_from_configs(
-                phase_name="checkpoints_val",
-                workload_paths=val_paths,
-                configs=[post_checkpoints_config],
-                out_dir=val_out_dir,
-            )
-            val_results = val_results_nested[0]
-        val_agg = SimulationResult.aggregate(val_results, agg_metric)
 
-        return post_checkpoints_config, train_agg, val_agg
+            # Each candidate gets its own subdirectory.
+            candidate_dir = ckpt_root / tag
+            final_cfg_path = candidate_dir / "checkpoints" / "final_config.yml"
+
+            if final_cfg_path.exists() and not force:
+                console.print(
+                    f"    Checkpoint results for {tag} exist; "
+                    "loading from disk."
+                )
+                with open(final_cfg_path) as f:
+                    post_ckpt_config = yaml.safe_load(f) or {}
+            else:
+                optimizer = CheckpointOptimizer(
+                    evaluator=self._evaluator,
+                    config=candidate_config,
+                    run_dir=candidate_dir,
+                )
+                post_ckpt_config = optimizer.optimize(
+                    train_paths=train_paths,
+                )
+
+            # Evaluate on training data.
+            train_out = candidate_dir / "final" / "train"
+            if train_out.exists() and not force:
+                train_results = SimulationResult.load_batch(
+                    train_out / "config_0"
+                )
+            else:
+                nested = self._evaluator.evaluate_batch_from_configs(
+                    phase_name=f"{tag}_ckpt_train",
+                    workload_paths=train_paths,
+                    configs=[post_ckpt_config],
+                    out_dir=train_out,
+                )
+                train_results = nested[0]
+            train_agg = SimulationResult.aggregate(train_results, agg_metric)
+
+            # Evaluate on validation data.
+            val_out = candidate_dir / "final" / "val"
+            if val_out.exists() and not force:
+                val_results = SimulationResult.load_batch(
+                    val_out / "config_0"
+                )
+            else:
+                nested = self._evaluator.evaluate_batch_from_configs(
+                    phase_name=f"{tag}_ckpt_val",
+                    workload_paths=val_paths,
+                    configs=[post_ckpt_config],
+                    out_dir=val_out,
+                )
+                val_results = nested[0]
+            val_agg = SimulationResult.aggregate(val_results, agg_metric)
+
+            candidate_configs.append(post_ckpt_config)
+            candidate_train_aggs.append(train_agg)
+            candidate_val_aggs.append(val_agg)
+
+        # Select the best candidate on validation data.
+        val_scores = [
+            (
+                agg.primary_violation(self._slo_metric),
+                agg.cost,
+            )
+            for agg in candidate_val_aggs
+        ]
+        best_idx = threshold_aware_select(
+            val_scores, self._slo_threshold
+        )
+
+        best_config = candidate_configs[best_idx]
+        best_train_agg = candidate_train_aggs[best_idx]
+        best_val_agg = candidate_val_aggs[best_idx]
+        best_rpus = candidates[best_idx]
+
+        console.print(
+            f"  [green]Selected candidate {best_idx} "
+            f"(initial_rpus={best_rpus})[/]"
+        )
+
+        # Print comparison across all candidates.
+        if len(candidates) > 1:
+            comparison_entries = [
+                (f"Candidate {i} (rpus={candidates[i]})", agg)
+                for i, agg in enumerate(candidate_val_aggs)
+            ]
+            AggregatedSimulationResults.print_comparison(
+                *comparison_entries,
+                console=console,
+                agg_metric=agg_metric,
+                slo_metric=self._slo_metric,
+                highlight_best=True,
+            )
+
+        # Persist best results for caching.
+        dump(best_config, best_config_path)
+        self._write_phase_summary(
+            ckpt_root / "best_train_summary.yml", best_train_agg
+        )
+        self._write_phase_summary(
+            ckpt_root / "best_val_summary.yml", best_val_agg
+        )
+
+        return best_config, best_train_agg, best_val_agg
 
     def param_sweep(
         self,

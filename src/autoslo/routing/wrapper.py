@@ -122,15 +122,13 @@ def route_and_update_bookkeeping(
         pool_snapshot_with_current_query=post_snapshot,
     )
     for action in autoscaler_suggested_actions:
-        match type(action):
-            case SpinUpAction():
-                on_spin_up(action)
-            case TearDownAction():
-                pool.request_tear_down(action, current_time_getter())
-            case _:
-                if write_text_log:
-                    logger.warning(
-                        f"Unknown autoscaling action type: {type(action)}"
-                    )
+        if isinstance(action, SpinUpAction):
+            on_spin_up(action)
+        elif isinstance(action, TearDownAction):
+            pool.request_tear_down(action, current_time_getter())
+        elif write_text_log:
+            logger.warning(
+                f"Unknown autoscaling action type: {type(action)}"
+            )
 
     return selected_cluster_name

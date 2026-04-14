@@ -8,9 +8,11 @@ import pandas as pd
 from rich import print
 from rich.table import Table
 
-import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
 from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.models.iconq_model import IconqModel
+
+from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 
 # Columns that every workload file is expected to provide.
 WORKLOAD_SCHEMA_COLUMNS: list[str] = [
@@ -151,10 +153,53 @@ class Workload:
                     query_text_id=QueryTextId(row["query_text_id"]),
                     repetition_id=str(row.get("repetition_id", "")),
                     rel_start_time_s=float(row.get("rel_start_time_s", -1)),
+                    featurization=row.get("featurization", []),
+                    stage_predictions_per_rpu=row.get(
+                        "stage_predictions_per_rpu", {}
+                    ),
                 )
             )
         self._queries_cache = result
         return result
+
+    def populate_featurizations_and_isolated_predictions(
+        self, iconq_model: IconqModel, allowed_rpu_sizes: list[int]
+    ) -> None:
+        """Populate featurization and isolated predictions for all queries."""
+
+        # Find the distinct query_text_ids in the workload
+        query_text_ids = set(self._df["query_text_id"].unique())
+        # For each query_text_id, compute the featurization and predictions
+        featurization_cache: dict[
+            str, IconqQueryFeaturizer.IconqQueryFeaturization
+        ] = {}
+        for query_text_id in query_text_ids:
+            featurization = (
+                iconq_model.iconq_query_featurizer.featurize_from_query_text_id(
+                    query_text_id
+                )
+            )
+            featurization_cache[query_text_id] = featurization
+
+        # Now also use the stage model to populate stage predictions per RPU for each query
+        isolated_predictions_cache: dict[str, dict[int, float]] = {}
+        for query_text_id in query_text_ids:
+            isolated_predictions_cache[query_text_id] = {}
+            featurization = featurization_cache[query_text_id]
+            for rpu in allowed_rpu_sizes:
+                isolated_predictions_cache[query_text_id][rpu] = (
+                    iconq_model.stage_model.predict_from_query_text_id(
+                        {"0": QueryTextId(query_text_id)}, rpu
+                    )["0"].overall_mean_s()
+                )
+
+        # Now add to the dataframe
+        self._df["featurization"] = self._df["query_text_id"].apply(
+            lambda qtid: featurization_cache[qtid]
+        )
+        self._df["stage_predictions_per_rpu"] = self._df["query_text_id"].apply(
+            lambda qtid: isolated_predictions_cache[qtid]
+        )
 
     # ------------------------------------------------------------------
     # Start time manipulation

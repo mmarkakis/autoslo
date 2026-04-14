@@ -283,6 +283,18 @@ class Autoscaler:
                     }
                 )
 
+        if _has_structured():
+            emit_structured(
+                {
+                    "timestamp": current_time_s,
+                    "event_type": "rpu_selection",
+                    "source": "Autoscaler",
+                    "selected_rpu": best_rpu,
+                    "metric_and_cost": f"{best_viol_and_cost[0]:.4f}, {best_viol_and_cost[1]:.4f}",
+                    "slo_threshold": self._slo_objective.slo_threshold,
+                }
+            )
+
         return best_rpu
 
     def _counterfactual_replay(

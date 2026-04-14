@@ -88,6 +88,7 @@ class Cluster:
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
         state: ClusterState = ClusterState.PENDING,
         billing_window_start_s: Optional[float] = None,
+        most_recent_query_completion_time_s: Optional[float] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
 
@@ -107,7 +108,11 @@ class Cluster:
         self.cost_per_rpu_hour = cost_per_rpu_hour
         self.state = state
         self.billing_window_start_s = billing_window_start_s
-        self.most_recent_query_completion_time_s: float = self.creation_time_s
+        self.most_recent_query_completion_time_s: float = (
+            most_recent_query_completion_time_s
+            if most_recent_query_completion_time_s is not None
+            else self.creation_time_s
+        )
 
         self.queries = {}
         self.id_to_neighbors = {}
@@ -126,6 +131,7 @@ class Cluster:
             cost_per_rpu_hour=self.cost_per_rpu_hour,
             state=self.state,
             billing_window_start_s=self.billing_window_start_s,
+            most_recent_query_completion_time_s=self.most_recent_query_completion_time_s,
         )
         c.queries = dict(self.queries)
         c.id_to_neighbors = {

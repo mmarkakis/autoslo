@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from autoslo.models.iconq_model import IconqModel
+from autoslo.clusters.cluster import Cluster
 import torch
 from rich.progress import (
     BarColumn,
@@ -102,8 +104,14 @@ def _run_one_combination(
     workload.set_rel_start_times_from_zero()
 
     rescale_factor = cfgu.getd(config, "workload_config.rescale_factor", None)
-    if rescale_factor is not None:
-        workload.rescale_rel_start_times(rescale_factor)
+    workload.rescale_rel_start_times(rescale_factor)
+    iconq_model_id = cfgu.getd(config, "models.iconq_model", None)
+    if iconq_model_id is not None:
+        iconq_model = IconqModel.load(iconq_model_id)
+        workload.populate_featurizations_and_isolated_predictions(
+            iconq_model=iconq_model,
+            allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,
+        )
 
     # Apply run-specific config overrides
     config_idx, workload_idx = from_combination_idx(
@@ -112,8 +120,8 @@ def _run_one_combination(
     local_overrides = {
         "basic_config.run_id": f"workload_{workload_idx}",
         "output_config.out_dir": str(combination_out_dir),
-        "output_config.verbose": True,
-        "basic_config.experiment_name": None,
+        "output_config.write_text_log": False,
+        "output_config.experiment_name": None,
     }
     config = cfgu.copy_and_apply_overrides(config, local_overrides)
 

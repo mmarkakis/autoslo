@@ -126,6 +126,10 @@ class StructuredConfig:
             workload.slice_by_abs_time(abs_start, abs_end)
             workload.set_rel_start_times_from_zero()
             workload.rescale_rel_start_times(rescale)
+            workload.populate_featurizations_and_isolated_predictions(
+                iconq_model=iconq_model,
+                allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,
+            )
         if is_runner:
             workload.print_summary()
 
@@ -243,10 +247,10 @@ class StructuredConfig:
 
         # ── Output ───────────────────────────────────────────────────────────
         experiment_name: Optional[str] = cfgu.getd(
-            cfg, "basic_config.experiment_name"
+            cfg, "output_config.experiment_name"
         )
         overwrite_experiment: bool = cfgu.getd(
-            cfg, "basic_config.overwrite_experiment", False
+            cfg, "output_config.overwrite_experiment", False
         )
         write_text_log: bool = cfgu.getd(
             cfg, "output_config.write_text_log", False

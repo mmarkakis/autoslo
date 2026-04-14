@@ -30,11 +30,11 @@ managed_cluster_pool_config:
   initial_rpus:
     - 16
 
-capacity_checkpoints: 
-  - rel_time_s: 5438.450446128845
-    min_rpus:
-    - 16
-    - 16
+# capacity_checkpoints: 
+#   - rel_time_s: 5438.450446128845
+#     min_rpus:
+#     - 16
+#     - 16
 
 routing_config:
   routing_policy: use_iconq_model
@@ -74,14 +74,17 @@ tuner_config:
     max_checkpoints: 5
     min_delinquent_workload_fraction: 0.5
     min_rel_improvement_for_acceptance: 0.01
+    initial_rpu_candidates:
+      - [16]
 
   autoscaling_param_sweep:
     strategy: grid
     params:
-      "autoscaling_config.eta_crit": [0.05, 0.10, 0.20]
-      "autoscaling_config.idle_periods_before_tear_down": [5, 10, 20]
-      "autoscaling_config.capacity_poll_interval_s": [30.0, 60.0, 120.0]
       "autoscaling_config.min_cluster_lifetime_s": [1200.0, 3600.0]
+      "autoscaling_config.idle_time_before_tear_down_s": [300.0, 600.0, 1200.0]
+      "autoscaling_config.observation_window_s": [120.0, 300.0, 600.0]
+      "autoscaling_config.min_observations_to_act": [5, 10, 20]
+      
   routing_param_sweep: {}
 
   static_baselines:
