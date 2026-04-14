@@ -12,11 +12,6 @@ from tqdm import tqdm
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection import log_timeline_builder
-from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
-    export_gantt_video,
-    render_gantt_scrubber,
-)
 from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
@@ -84,11 +79,9 @@ class WorkloadSimulator:
         self._router = structured_config.router
         self._autoscaler = structured_config.autoscaler
         self._out_dir = structured_config.out_dir
+        self._experiment_name = structured_config.experiment_name
         self._write_text_log = structured_config.write_text_log
         self._structured_handler = structured_config.structured_log_handler
-        self._experiment_name: Optional[str] = cfgu.getd(
-            self._cfg, "basic_config.experiment_name"
-        )
 
         dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
@@ -382,41 +375,7 @@ class WorkloadSimulator:
                 }
             )
 
-    def write_out_visualization(self) -> None:
-        """
-        Write out an HTML visualization of the query assignment, built from the
-        structured log (no longer driven by in-memory snapshots).
-        Optionally also exports a video if export_video flag is set.
-        """
-        log_path = os.path.join(self._out_dir, "structured_log.parquet")
-        with open(os.path.join(self._out_dir, "config.yml")) as f:
-            config = yaml.safe_load(f)
-
-        snapshot = log_timeline_builder.build_final_snapshot_from_log(
-            log_path=log_path, config=config
-        )
-        fig = render_gantt_scrubber(
-            [snapshot],
-            slo_objective=self._slo_objective,
-            slo_s=self._slo_resolver.default_slo_s,
-            workload_name=self._workload.workload_name,
-        )
-
-        out_path = os.path.join(self._out_dir, "visualization.html")
-        fig.write_html(out_path, auto_play=False, include_plotlyjs="cdn")
-
-        # Export video if requested
-        if self._export_video:
-            video_out_path = os.path.join(self._out_dir, "visualization.mp4")
-            export_gantt_video(
-                snapshots=[snapshot],
-                slo_s=self._slo_resolver.default_slo_s,
-                output_path=video_out_path,
-                frame_duration=self._video_frame_duration,
-                constant_layout=True,
-                slo_objective=self._slo_objective,
-                workload_name=self._workload.workload_name,
-            )
+    
 
     def write_out_billing_interval_analysis(self) -> None:
         """

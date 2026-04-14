@@ -10,7 +10,7 @@ from torch.utils.data import Subset
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.query_timeline import QueryTimeline
+from autoslo.models.query_timeline import QueryTimeline
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset

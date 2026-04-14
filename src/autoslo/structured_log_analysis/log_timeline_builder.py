@@ -23,7 +23,7 @@ import plotly.graph_objects as go
 import yaml
 from intervaltree import Interval
 
-from autoslo.blueprint_selection.query_timeline_visualizer_2 import (
+from autoslo.structured_log_analysis.gantt import (
     GanttRecorder,
     GanttSnapshot,
     render_gantt_scrubber,

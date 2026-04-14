@@ -6,7 +6,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 import autoslo.utils.paths as pu
-from autoslo.blueprint_selection.query_timeline import QueryTimeline
+from autoslo.models.query_timeline import QueryTimeline
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
