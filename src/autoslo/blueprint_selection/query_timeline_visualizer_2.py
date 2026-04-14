@@ -16,6 +16,8 @@ from autoslo.utils.colors import Palette
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.trace import Trace
 
+from autoslo.slo.slo_objective import SloObjective
+
 
 @dataclass(frozen=True)
 class GanttSnapshot:
@@ -329,12 +331,13 @@ def _build_shapes_for_snapshot(
 def render_gantt_scrubber(
     snapshots: list[Any],
     slo_s: float | dict[str, float],
+    slo_objective: SloObjective,
     title: str = "Cluster Query Assignments Over Time",
-    slo_metric: SloMetric = SloMetric.RELATIVE,
-    slo_threshold: float = 0.0,
     workload_name: Optional[str] = None,
     include_animation_frames: bool = False,
 ) -> go.Figure:
+    slo_metric = slo_objective.slo_metric
+    slo_threshold = slo_objective.slo_threshold
     if not snapshots:
         raise ValueError("No snapshots to render")
 
@@ -645,11 +648,10 @@ def export_gantt_video(
     snapshots: list[GanttSnapshot],
     slo_s: float | dict[str, float],
     output_path: str | Path,
+    slo_objective: SloObjective,
     frame_duration: float = 1.0,
     title: str = "Cluster Query Assignments Over Time",
     constant_layout: bool = False,
-    slo_metric: SloMetric = SloMetric.RELATIVE,
-    slo_threshold: float = 0.0,
     workload_name: Optional[str] = None,
     width: int = 1400,
     height: int = 700,
@@ -673,6 +675,8 @@ def export_gantt_video(
     Raises:
         ValueError: If snapshots list is empty or imageio is not installed
     """
+    slo_metric = slo_objective.slo_metric
+    slo_threshold = slo_objective.slo_threshold
     try:
         import imageio
     except ImportError:

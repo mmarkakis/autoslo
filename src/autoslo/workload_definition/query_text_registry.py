@@ -45,12 +45,37 @@ _cache: dict[str, dict[str, str]] = {}
 class QueryTextRegistry:
     """Lazily-loaded, per-schema registry mapping ``query_text_id`` to SQL."""
 
+    def __init__(self, schema_name: str):
+        self.schema_name = schema_name
+        self._ensure_loaded(schema_name)
+
+    def get(self, query_text_id: QueryTextId | str) -> Optional[str]:
+        """Return the SQL text for *query_text_id* within this registry's schema.
+
+        Returns ``None`` if the id is not found.
+
+        Parameters
+        ----------
+        query_text_id:
+            The opaque key for the desired query text.
+
+        Returns
+        -------
+        str or None
+            The SQL string, or ``None`` if not found.
+        """
+        if isinstance(query_text_id, QueryTextId):
+            query_text_id = str(query_text_id)
+        return _cache.get(self.schema_name, {}).get(query_text_id)
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
     @classmethod
-    def get(cls, schema_name: str, query_text_id: QueryTextId | str) -> Optional[str]:
+    def get(
+        cls, schema_name: str, query_text_id: QueryTextId | str
+    ) -> Optional[str]:
         """Return the SQL text for *query_text_id* within *schema_name*.
 
         Loads the schema's registry file on first access.  Returns ``None``
@@ -119,7 +144,9 @@ class QueryTextRegistry:
                 f"Expected: {path}"
             )
         df = pd.read_parquet(path, columns=["query_text_id", "query_text"])
-        return dict(zip(df["query_text_id"].astype(str), df["query_text"].astype(str)))
+        return dict(
+            zip(df["query_text_id"].astype(str), df["query_text"].astype(str))
+        )
 
     @classmethod
     def save_schema(cls, schema_name: str, mapping: dict[str, str]) -> None:
@@ -159,7 +186,7 @@ class QueryTextRegistry:
             try:
                 _cache[schema_name] = cls.load_schema(schema_name)
             except FileNotFoundError:
-                # Create the summary file from individual query text files if 
+                # Create the summary file from individual query text files if
                 # possible, then retry loading.
                 cls._create_registry_summary_file(schema_name)
                 _cache[schema_name] = cls.load_schema(schema_name)
@@ -174,7 +201,7 @@ class QueryTextRegistry:
         )
 
     @classmethod
-    def _create_registry_summary_file(cls, schema_name:str) -> None:
+    def _create_registry_summary_file(cls, schema_name: str) -> None:
         """Helper to create a registry Parquet file from individual
         query text files for a schema.  Expects the files to be in
         ``{data_root}/__query_texts/{schema_name}/`` with names like
