@@ -17,6 +17,7 @@ from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.trace import Trace
 
 from autoslo.slo.slo_objective import SloObjective
+import os
 
 
 @dataclass(frozen=True)
@@ -764,3 +765,44 @@ def export_gantt_video(
     print(f"  Total duration: {len(snapshots) * frame_duration:.1f}s")
     print(f"  FPS: {fps:.2f}")
     print(f"  Resolution: {width}x{height}")
+
+
+
+
+
+
+def write_out_visualization(self) -> None:
+        """
+        Write out an HTML visualization of the query assignment, built from the
+        structured log (no longer driven by in-memory snapshots).
+        Optionally also exports a video if export_video flag is set.
+        """
+        log_path = os.path.join(self._out_dir, "structured_log.parquet")
+        with open(os.path.join(self._out_dir, "config.yml")) as f:
+            config = yaml.safe_load(f)
+
+        snapshot = log_timeline_builder.build_final_snapshot_from_log(
+            log_path=log_path, config=config
+        )
+        fig = render_gantt_scrubber(
+            [snapshot],
+            slo_objective=self._slo_objective,
+            slo_s=self._slo_resolver.default_slo_s,
+            workload_name=self._workload.workload_name,
+        )
+
+        out_path = os.path.join(self._out_dir, "visualization.html")
+        fig.write_html(out_path, auto_play=False, include_plotlyjs="cdn")
+
+        # Export video if requested
+        if self._export_video:
+            video_out_path = os.path.join(self._out_dir, "visualization.mp4")
+            export_gantt_video(
+                snapshots=[snapshot],
+                slo_s=self._slo_resolver.default_slo_s,
+                output_path=video_out_path,
+                frame_duration=self._video_frame_duration,
+                constant_layout=True,
+                slo_objective=self._slo_objective,
+                workload_name=self._workload.workload_name,
+            )

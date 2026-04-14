@@ -1,4 +1,4 @@
-from autoslo.blueprint_selection.query_timeline import QueryTimeline
+from autoslo.models.query_timeline import QueryTimeline
 from autoslo.models.iconq_model import IconqModel, NNModelTrainConfig
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.nn.runtime_net import RuntimeNet

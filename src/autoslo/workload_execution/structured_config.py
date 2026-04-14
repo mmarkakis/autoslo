@@ -69,6 +69,7 @@ class StructuredConfig:
     router: QueryRouter
     autoscaler: Autoscaler
     out_dir: str
+    experiment_name: Optional[str]
     write_text_log: bool
     structured_log_handler: StructuredLogHandler
 
@@ -281,6 +282,7 @@ class StructuredConfig:
             router=router,
             autoscaler=autoscaler,
             out_dir=out_dir,
+            experiment_name=experiment_name,
             write_text_log=write_text_log,
             structured_log_handler=structured_log_handler,
         )
