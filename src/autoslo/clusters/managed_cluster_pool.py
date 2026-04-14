@@ -53,6 +53,7 @@ _EVT_TEAR_DOWN_BLOCKED = "tear_down_blocked"
 _EVT_STATS_COLLECTED = "stats_collected"
 _EVT_CLUSTER_REMOVED = "cluster_removed"
 
+
 class ManagedClusterPool:
     """Unified, thread-safe cluster pool with query bookkeeping.
 
@@ -296,7 +297,7 @@ class ManagedClusterPool:
         if _has_structured():
             emit_structured(
                 {
-                    "timestamp": current_time_s, 
+                    "timestamp": current_time_s,
                     "source": "ManagedClusterPool",
                     "event_type": _EVT_STATS_COLLECTED,
                     "cluster_name": cluster_name,
@@ -352,10 +353,15 @@ class ManagedClusterPool:
         self,
         cluster_name: str,
         query: Query,
+        new_predicted_latencies_on_selected: dict[str, float],
     ) -> None:
         """Register *query* as actively running on *cluster_name*."""
         with self._lock:
-            self._clusters[cluster_name].add_query(query)
+            cluster = self._clusters[cluster_name]
+            cluster.add_query(query)
+            cluster.predicted_latencies = dict(
+                new_predicted_latencies_on_selected
+            )
 
     def on_query_finish(
         self,
@@ -410,30 +416,13 @@ class ManagedClusterPool:
                 if cond(cluster)
             }
 
-    def get_predicted_latencies(self) -> dict[str, dict[str, float]]:
-        """Snapshot the predicted latencies for all clusters.
-
-        Returns a fresh ``{cluster_name: {query_id: latency_s}}`` dict
-        that is safe to read and mutate without holding the pool lock.
-        """
-        with self._lock:
-            return {
-                cluster_name: dict(cluster.predicted_latencies)
-                for cluster_name, cluster in self._clusters.items()
-                if cluster.predicted_latencies
-            }
-
-    def commit_predicted_latencies(
-        self,
-        cluster_name: str,
-        new_latencies: dict[str, float],
-    ) -> None:
-        """
-        Atomically update predicted latencies on a cluster.
-        """
+    def get_predicted_latency(
+        self, cluster_name: str, query_id: str
+    ) -> Optional[float]:
+        """Get the predicted latency for *query_id* on *cluster_name*."""
         with self._lock:
             cluster = self._clusters[cluster_name]
-            cluster.predicted_latencies = dict(new_latencies)
+            return cluster.predicted_latencies.get(query_id, None)
 
     def ready_and_pending_counts_per_rpu(self) -> Counter[int]:
         """RPU → count for READY + PENDING clusters.

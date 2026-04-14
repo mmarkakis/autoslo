@@ -13,6 +13,7 @@ from autoslo.workload_execution.simulator_event import (
     SimulatorEvent,
     SimulatorEventType,
 )
+
 logger = logging.getLogger(__name__)
 _has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
@@ -109,12 +110,10 @@ def route_and_update_bookkeeping(
             )
 
     #  ── Notify pool and autoscaler ────────────────────────────────────
-    pool.commit_predicted_latencies(
-        selected_cluster_name, new_predicted_latencies_on_selected
-    )
     pool.on_query_start(
         query=query,
         cluster_name=selected_cluster_name,
+        new_predicted_latencies_on_selected=new_predicted_latencies_on_selected,
     )
     post_snapshot = pool.snapshot(only_ready=False)
     autoscaler_suggested_actions: list[ScalingAction] = autoscaler.inform(

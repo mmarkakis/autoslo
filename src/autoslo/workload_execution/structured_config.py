@@ -99,7 +99,6 @@ class StructuredConfig:
             the provisioner type and output directory structure.
         """
 
-
         # ── basic ────────────────────────────────────────────────────────
         schema_name: str = cfgu.getd(
             cfg, "basic_config.schema_name", required=True
@@ -116,7 +115,19 @@ class StructuredConfig:
         closed_loop: bool = bool(
             cfgu.getd(cfg, "workload_config.closed_loop", False)
         )
-        workload = workload or Workload.from_cfg(cfg, schema_name)
+        if workload is None:
+            workload_name = cfgu.getd(
+                cfg, "workload_config.workload_name", required=True
+            )
+            abs_start = cfgu.getd(cfg, "workload_config.abs_start_time_start")
+            abs_end = cfgu.getd(cfg, "workload_config.abs_start_time_end")
+            rescale = cfgu.getd(cfg, "workload_config.rescale_factor", None)
+            workload = Workload(
+                workload_name=workload_name, schema_name=schema_name
+            )
+            workload.slice_by_abs_time(abs_start, abs_end)
+            workload.set_rel_start_times_from_zero()
+            workload.rescale_rel_start_times(rescale)
         if is_runner:
             workload.print_summary()
 
@@ -180,7 +191,13 @@ class StructuredConfig:
             collect_cluster_stats=True,
             run_id=run_id,
         )
-        capacity_checkpoints = CapacityCheckpoint.parse_from_cfg(cfg)
+        capacity_checkpoints = [
+            CapacityCheckpoint(
+                rel_time_s=float(cp["rel_time_s"]),
+                min_rpus=tuple(cp["min_rpus"]),
+            )
+            for cp in cfgu.getd(cfg, "capacity_checkpoints", [])
+        ]
 
         # ── QueryRouter ──────────────────────────────────────────────────────
         routing_policy_str: str = cfgu.getd(

@@ -75,7 +75,7 @@ def new_checkpoints_to_config(
     )
 
     if nonzero_checkpoints:
-        dot_delimited_key = "autoscaling_config.capacity_checkpoints"
+        dot_delimited_key = "capacity_checkpoints"
         existing_checkpoints = cfgu.getd(config, dot_delimited_key, [])
         merged_checkpoints = existing_checkpoints + nonzero_checkpoints
         overrides = cfgu.copy_and_apply_overrides(
@@ -274,11 +274,11 @@ class CheckpointOptimizer:
         self._run_dir = run_dir
 
         self._allowed_rpu_sizes = self._cfgd(
-            "managed_cluster_pool_config.allowed_rpu_sizes",
+            "autoscaling_config.allowed_rpu_sizes",
             Cluster.ALL_ALLOWED_RPU_SIZES,
         )
         self._spin_up_delay_s = self._cfgd(
-            "managed_cluster_pool_config.spin_up_delay_s",
+            "provisioner_config.spin_up_delay_s",
             Cluster.DEFAULT_SPIN_UP_DELAY_S,
         )
 
