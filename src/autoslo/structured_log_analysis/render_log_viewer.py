@@ -75,26 +75,13 @@ def _load_slo_resolver(log_dir: Path) -> SloResolver:
 
 
 def _extract_rpu_from_cluster_name(name: str) -> int:
-    """Extract RPU from cluster names like 'cluster_16_...' or 'autoslo-wg-16rpu-...'."""
-    if name.startswith("cluster_"):
-        parts = name.split("_")
-        if len(parts) >= 2:
-            try:
-                return int(parts[1])
-            except ValueError:
-                pass
-    if "rpu" in name:
-        for part in name.replace("-", "_").split("_"):
-            if part.endswith("rpu"):
-                try:
-                    return int(part[:-3])
-                except ValueError:
-                    pass
-            try:
-                val = int(part)
-                return val
-            except ValueError:
-                continue
+    """Extract RPU from cluster names like 'autoslo-16-...'."""
+    parts = name.split("-")
+    if len(parts) >= 2:
+        try:
+            return int(parts[1])
+        except ValueError:
+            pass
     return 0
 
 

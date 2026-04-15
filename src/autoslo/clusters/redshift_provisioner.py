@@ -415,8 +415,8 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         seq = self._seq_counter
         self._seq_counter += 1
 
-        wg_name = f"autoslo-wg-{rpu}rpu-{ts}-{seq}"
-        ns_name = f"autoslo-ns-{rpu}rpu-{ts}-{seq}"
+        wg_name = f"autoslo-{rpu}-{ts}-{seq}"
+        ns_name = f"autoslo-{rpu}-{ts}-{seq}-ns"
         return wg_name, ns_name
 
     def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
@@ -552,7 +552,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
                 f"Workgroup {cluster_name} was not deleted in time"
             )
 
-        ns = namespace_name or cluster_name.replace("wg", "ns")
+        ns = namespace_name or (cluster_name + "-ns")
         if not self._delete_namespace(ns):
             raise RuntimeError(f"Failed to delete namespace {ns}")
         if not self._wait_for_namespace_deleted(ns):

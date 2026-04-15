@@ -25,7 +25,7 @@ def dt_after(seconds: float) -> datetime:
 
 
 def default_cluster_name() -> str:
-    return "cluster_4_default_0"
+    return "autoslo-4-default-0"
 
 
 _DUMMY_QTID = QueryTextId("ext_tpcds1000#1#001")

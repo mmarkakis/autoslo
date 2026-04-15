@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections import defaultdict
 from functools import lru_cache
 
@@ -73,16 +72,9 @@ def _require_file(path: str, label: str) -> None:
 def _rpu_for_runner_cluster(cluster_name: str) -> int:
     """Extract RPU from runner cluster names.
 
-    Supports:
-    - ``autoslo-wg-{rpu}rpu-{ts}-{seq}``  (live runner convention)
-    - ``cluster_{rpu}_{ts}_{seq}``   (simulator convention)
+    Supports ``autoslo-{rpu}-{ts}-{seq}``.
     """
-    # Try autoslo-wg-{rpu}rpu-{ts} first
-    m = re.search(r"(\d+)rpu", cluster_name)
-    if m:
-        return int(m.group(1))
-    # Fall back to cluster_{rpu}_... convention
-    parts = cluster_name.split("_")
+    parts = cluster_name.split("-")
     if len(parts) >= 2:
         try:
             return int(parts[1])

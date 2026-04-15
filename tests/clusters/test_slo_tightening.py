@@ -36,7 +36,7 @@ def _ready_cluster(
     creation_time_s: float = 0.0,
 ) -> Cluster:
     if name is None:
-        name = f"cluster_{rpu}_test"
+        name = f"autoslo-{rpu}-test"
     cluster = Cluster(
         creation_time_s=creation_time_s,
         rpu=rpu,

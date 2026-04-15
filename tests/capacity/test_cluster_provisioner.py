@@ -152,5 +152,5 @@ class TestClusterFrozen:
             user="admin",
             password="pw",
         )
-        c = Cluster(rpu=8, name="test_8_0_0", conn_info=info)
+        c = Cluster(rpu=8, name="autoslo-8-0-0", conn_info=info)
         assert c.conn_info is info

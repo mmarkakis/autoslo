@@ -260,6 +260,8 @@ class StructuredConfig:
         write_text_log: bool = cfgu.getd(
             cfg, "output_config.write_text_log", False
         )
+        if is_runner:
+            write_text_log = True
         out_dir_override = cfgu.getd(cfg, "output_config.out_dir", None)
         out_dir = _make_out_dir(
             run_id=run_id,

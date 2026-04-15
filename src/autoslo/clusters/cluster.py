@@ -92,14 +92,14 @@ class Cluster:
     ) -> None:
         """Create a fresh cluster with no active queries.
 
-        The name must start with "cluster_{rpu}_".
+        The name must start with "autoslo-{rpu}-".
         """
         if name is None:
             seq = next(Cluster._new_counter)
-            name = f"cluster_{rpu}_{int(datetime.now().timestamp())}_{seq}"
-        elif not name.startswith(f"cluster_{rpu}_"):
+            name = f"autoslo-{rpu}-{int(datetime.now().timestamp())}-{seq}"
+        elif not name.startswith(f"autoslo-{rpu}-"):
             raise ValueError(
-                f"Cluster name {name!r} must start with 'cluster_{rpu}_'."
+                f"Cluster name {name!r} must start with 'autoslo-{rpu}-'."
             )
         self.creation_time_s = creation_time_s
         self.rpu = rpu
@@ -296,11 +296,10 @@ class Cluster:
     def rpu_for_cluster_name(cluster_name: str) -> int:
         """Parse RPU from a cluster name.
 
-        Supports the dynamic naming convention
-        ``"cluster_{rpu}_{timestamp}_{counter}"`` as well as static
-        config names of the form ``"cluster_{rpu}_..."``.
+        Supports the naming convention
+        ``"autoslo-{rpu}-{timestamp}-{counter}"``.
         """
-        parts = cluster_name.split("_")
+        parts = cluster_name.split("-")
         if len(parts) >= 2:
             try:
                 return int(parts[1])
