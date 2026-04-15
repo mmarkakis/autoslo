@@ -158,3 +158,21 @@ class SloResolver:
         """True when at least one per-template override is present."""
         return bool(self._dict)
 
+    # ------------------------------------------------------------------
+    # derived resolvers
+    # ------------------------------------------------------------------
+
+    def tightened(self, factor: float) -> "SloResolver":
+        """Return a copy with all SLOs (default and overrides) scaled by *factor*.
+
+        A *factor* of 0.8 means "pretend SLOs are 80% of real", causing
+        the autoscaler to trigger earlier.
+        """
+        if factor <= 0:
+            raise ValueError(f"Tightening factor must be positive, got {factor}")
+        return SloResolver.from_dict(
+            default_slo_s=self._default * factor,
+            slo_dict={k: v * factor for k, v in self._dict.items()},
+            slo_dict_filename=self._filename,
+        )
+

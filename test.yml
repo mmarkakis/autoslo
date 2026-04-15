@@ -49,6 +49,7 @@ autoscaling_config:
   idle_time_before_tear_down_s: 1200.0
   observation_window_s: 300.0
   min_observations_to_act: 5
+  slo_tightening_factor: 0.8
 
 output_config:
   experiment_name: TESTTEST
@@ -76,15 +77,17 @@ tuner_config:
     min_rel_improvement_for_acceptance: 0.01
     initial_rpu_candidates:
       - [16]
+      - [8]
+      - [32]
 
   autoscaling_param_sweep:
     strategy: grid
     params:
       "autoscaling_config.min_cluster_lifetime_s": [1200.0, 3600.0]
-      "autoscaling_config.idle_time_before_tear_down_s": [300.0, 600.0, 1200.0]
-      "autoscaling_config.observation_window_s": [120.0, 300.0, 600.0]
-      "autoscaling_config.min_observations_to_act": [5, 10, 20]
-      
+      "autoscaling_config.idle_time_before_tear_down_s": [300.0, 600.0]
+      "autoscaling_config.observation_window_s": [120.0, 300.0]
+      "autoscaling_config.min_observations_to_act": [5, 10]
+      "autoscaling_config.slo_tightening_factor": [0.6, 0.8, 1.0]
   routing_param_sweep: {}
 
   static_baselines:

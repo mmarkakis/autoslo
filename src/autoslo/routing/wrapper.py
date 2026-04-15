@@ -105,6 +105,7 @@ def route_and_update_bookkeeping(
                         "query_id": qid,
                         "cluster_name": selected_cluster_name,
                         "latency_s": latency_s,
+                        "query_text_id": query.query_text_id,
                     },
                 ),
             )

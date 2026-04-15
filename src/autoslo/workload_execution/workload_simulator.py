@@ -275,6 +275,7 @@ class WorkloadSimulator:
         draining clusters, which we detect and log here.
         """
         query_id = event.details["query_id"]
+        query_text_id = event.details["query_text_id"]
         cluster_name = event.details["cluster_name"]
         latency_s_from_event = event.details["latency_s"]
 
@@ -309,8 +310,10 @@ class WorkloadSimulator:
                 "event_type": "completion",
                 "source": "WorkloadSimulator",
                 "query_id": query_id,
+                "query_text_id": query_text_id.value,
                 "cluster_name": cluster_name,
                 "latency_s": latency_s_from_event,
+                "slo_s": self._slo_resolver.resolve(query_text_id),
             }
         )
 

@@ -34,6 +34,7 @@ class Autoscaler:
         observation_window_s: float = 120.0,
         min_observations_to_act: int = 5,
         routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
+        slo_tightening_factor: float = 1.0,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
@@ -44,6 +45,12 @@ class Autoscaler:
         self._idle_time_before_tear_down_s = idle_time_before_tear_down_s
         self._observation_window_s = observation_window_s
         self._min_observations_to_act = min_observations_to_act
+        self._slo_tightening_factor = slo_tightening_factor
+        self._trigger_slo_resolver = (
+            slo_resolver.tightened(slo_tightening_factor)
+            if slo_tightening_factor != 1.0
+            else slo_resolver
+        )
 
         # Internal mutable state
         self._window_start_time_s: Optional[float] = None
@@ -84,6 +91,10 @@ class Autoscaler:
     @property
     def min_observations_to_act(self) -> int:
         return self._min_observations_to_act
+
+    @property
+    def slo_tightening_factor(self) -> float:
+        return self._slo_tightening_factor
 
     # ------------------------------------------------------------------
     # Public interface
@@ -174,12 +185,12 @@ class Autoscaler:
             if cluster.state == ClusterState.PENDING:
                 return []
 
-        # Determine if the SLO objective is met.
+        # Determine if the (possibly tightened) SLO objective is met.
         lat_and_slos = []
         for cluster_name, cluster in pool_snapshot_with_current_query.items():
             for q in cluster.active_queries:
                 pred_lat = cluster.predicted_latencies[q.query_id]
-                slo = self._slo_resolver.resolve(q.query_text_id)
+                slo = self._trigger_slo_resolver.resolve(q.query_text_id)
                 lat_and_slos.append((pred_lat, slo))
         slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
             lat_and_slos
@@ -197,7 +208,8 @@ class Autoscaler:
                 f"num_queries_in_window={len(self._window_queries)}, "
                 f"slo_metric={self._slo_objective.slo_metric}, "
                 f"slo_metric_value={slo_metric_value:.4f}, "
-                f"slo_threshold={self._slo_objective.slo_threshold:.4f}"
+                f"slo_threshold={self._slo_objective.slo_threshold:.4f}, "
+                f"slo_tightening_factor={self._slo_tightening_factor}"
             ),
             rpu=best_rpu,
         )

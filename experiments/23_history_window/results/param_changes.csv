@@ -1,24 +1,12 @@
 scenario,parameter,initial,final
-1 day,autoscaling_config.capacity_poll_interval_s,60.0,30.0
-1 day,autoscaling_config.eta_crit,0.05,0.2
-1 day,runner_config.aws_config_path,data/__run_configs/aws.yml,
-1 day,runner_config.max_threads,512,
-1 day,runner_config.maxconns,1000,
-1 day,tuner_config.force,False,True
-1 day,tuner_config.static_baselines,"[{'label': '16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '16+16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16, 16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32+32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32, 32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '64 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [64], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}]","[{'label': '16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}]"
-1 week,autoscaling_config.capacity_poll_interval_s,60.0,120.0
-1 week,autoscaling_config.eta_crit,0.05,0.2
-1 week,runner_config.aws_config_path,data/__run_configs/aws.yml,
-1 week,runner_config.max_threads,512,
-1 week,runner_config.maxconns,1000,
-1 week,tuner_config.force,False,True
-1 week,tuner_config.static_baselines,"[{'label': '16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '16+16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16, 16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32+32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32, 32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '64 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [64], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}]","[{'label': '16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}]"
-1 month,autoscaling_config.capacity_poll_interval_s,60.0,120.0
-1 month,autoscaling_config.eta_crit,0.05,0.2
-1 month,autoscaling_config.idle_periods_before_tear_down,20,10
-1 month,output_config.verbose,False,True
-1 month,runner_config.aws_config_path,data/__run_configs/aws.yml,
-1 month,runner_config.max_threads,512,
-1 month,runner_config.maxconns,1000,
-1 month,tuner_config.force,False,True
-1 month,tuner_config.static_baselines,"[{'label': '16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '16+16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16, 16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32+32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32, 32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '64 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [64], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}]","[{'label': '16 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [16], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}, {'label': '32 RPU', 'overrides': {'managed_cluster_pool_config.initial_rpus': [32], 'autoscaling_config.autoscaling_policy': 'noop', 'autoscaling_config.capacity_checkpoints': [], 'routing_config.routing_policy': 'round_robin'}}]"
+1 day,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
+1 day,autoscaling_config.min_cluster_lifetime_s,1200.0,3600.0
+1 day,autoscaling_config.slo_tightening_factor,0.8,0.6
+1 day,capacity_checkpoints,,"[{'rel_time_s': 3798.443672180176, 'min_rpus': [16, 32]}, {'rel_time_s': 3795.757173538208, 'min_rpus': [16, 16]}, {'rel_time_s': 3795.757173538208, 'min_rpus': [8, 16]}, {'rel_time_s': 3713.9041690826416, 'min_rpus': [16, 32]}]"
+1 week,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
+1 week,capacity_checkpoints,,"[{'rel_time_s': 6091.836346626282, 'min_rpus': [8, 32]}, {'rel_time_s': 6091.199637413025, 'min_rpus': [8, 16]}, {'rel_time_s': 6087.339660644531, 'min_rpus': [8, 8]}, {'rel_time_s': 6087.339660644531, 'min_rpus': [4, 8]}]"
+1 week,managed_cluster_pool_config.initial_rpus,[16],[8]
+1 month,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
+1 month,autoscaling_config.min_cluster_lifetime_s,1200.0,3600.0
+1 month,autoscaling_config.slo_tightening_factor,0.8,0.6
+1 month,capacity_checkpoints,,"[{'rel_time_s': 6296.083255290985, 'min_rpus': [16, 32]}, {'rel_time_s': 6278.8055539131165, 'min_rpus': [8, 16]}]"

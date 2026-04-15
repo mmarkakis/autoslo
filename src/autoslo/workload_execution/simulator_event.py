@@ -4,10 +4,10 @@ from typing import Any
 
 @dataclass
 class SimulatorEventType:
-    QUERY_ARRIVAL: str = "query_arrival"
-    QUERY_COMPLETION: str = "query_completion"
     CAPACITY_CHECKPOINT: str = "capacity_checkpoint"
     CLUSTER_READY: str = "cluster_ready"
+    QUERY_ARRIVAL: str = "query_arrival"
+    QUERY_COMPLETION: str = "query_completion"
 
 
 @dataclass

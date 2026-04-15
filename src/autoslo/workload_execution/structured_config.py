@@ -243,6 +243,11 @@ class StructuredConfig:
                 "autoscaling_config.min_observations_to_act",
                 5,
             ),
+            slo_tightening_factor=cfgu.getd(
+                cfg,
+                "autoscaling_config.slo_tightening_factor",
+                1.0,
+            ),
         )
 
         # ── Output ───────────────────────────────────────────────────────────
