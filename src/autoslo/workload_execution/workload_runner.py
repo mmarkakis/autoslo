@@ -318,7 +318,9 @@ class WorkloadRunner:
                         "query_text_id": query.query_text_id.value,
                         "cluster_name": selected_cluster_name,
                         "latency_s": latency_s,
-                        "slo_s": self._slo_resolver.resolve(query.query_text_id),
+                        "slo_s": self._slo_resolver.resolve(
+                            query.query_text_id
+                        ),
                     }
                 )
             self._pbar.update(1)

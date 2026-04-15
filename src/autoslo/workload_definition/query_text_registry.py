@@ -73,7 +73,7 @@ class QueryTextRegistry:
     # ------------------------------------------------------------------
 
     @classmethod
-    def get(
+    def get_from_schema(
         cls, schema_name: str, query_text_id: QueryTextId | str
     ) -> Optional[str]:
         """Return the SQL text for *query_text_id* within *schema_name*.
