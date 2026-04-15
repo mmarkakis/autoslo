@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 import autoslo.utils.config as cfgu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
-from autoslo.clusters.cluster import ClusterState
+from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.utils.logging import LOGGER_NAME, emit_structured
 from autoslo.utils.yaml_helpers import dump
@@ -108,6 +108,28 @@ class WorkloadRunner:
         future = loop.run_in_executor(
             self._executor, self._pool.request_spin_up, action, ts
         )
+
+        def _on_spin_up_done(fut: asyncio.Future) -> None:
+            exc = fut.exception()
+            if exc is not None:
+                return
+            cluster_name = fut.result()
+            if _has_structured():
+                rpu = Cluster.rpu_for_cluster_name(cluster_name)
+                emit_structured(
+                    {
+                        "timestamp": self._ts(),
+                        "event_type": "cluster_ready",
+                        "source": "WorkloadRunner",
+                        "cluster_name": cluster_name,
+                        "rpu": rpu,
+                        "num_active_clusters": len(
+                            self._pool.clusters_in_state(ClusterState.READY)
+                        ),
+                    }
+                )
+
+        future.add_done_callback(_on_spin_up_done)
         self._pending_spin_ups.append(future)
 
     # ------------------------------------------------------------------
@@ -122,15 +144,12 @@ class WorkloadRunner:
 
     def _run_query_sync(
         self, run_id: str, query_id: str, query_text: str, cluster_name: str
-    ) -> None:
+    ) -> Optional[float]:
         """
         Run a single query synchronously.
 
-        Parameters:
-            run_id: ID of the current run.
-            query_id: ID of the query.
-            query_text: SQL text of the query.
-            cluster_name: Name of the cluster to run the query on.
+        Returns the measured client-side latency in seconds on success,
+        or ``None`` if the query failed (connection error, SQL error, etc.).
         """
         logging.info(f"Starting query {query_id}")
         start_time = self._ts()
@@ -151,7 +170,8 @@ class WorkloadRunner:
             logging.exception(
                 f"Query {query_id} failed to acquire connection: {e}"
             )
-            return
+            return None
+        succeeded = False
         try:
             with conn.cursor() as cur:
                 edited = f"--{run_id}/{query_id}\n{query_text}"
@@ -161,6 +181,7 @@ class WorkloadRunner:
                 except Exception as e:
                     pass  # Some queries do not return results.
             conn.commit()
+            succeeded = True
         except Exception as e:
             # Ensure errors don't prevent returning the connection to the pool.
             try:
@@ -185,7 +206,7 @@ class WorkloadRunner:
                     "client_side_latency_s": latency_s,
                 }
             )
-        self._pbar.update(1)
+        return latency_s if succeeded else None
 
     async def _run_query_async(
         self,
@@ -242,6 +263,18 @@ class WorkloadRunner:
             )
             return
 
+        # ── Emit arrival event (matches simulator) ────────────────
+        if _has_structured():
+            emit_structured(
+                {
+                    "timestamp": self._ts(),
+                    "event_type": "arrival",
+                    "source": "WorkloadRunner",
+                    "query_id": query.query_id,
+                    "query_text_id": query.query_text_id.value,
+                }
+            )
+
         # ── Route at arrival time ────────────────────────────────────
         selected_cluster_name = route_and_update_bookkeeping(
             source="WorkloadRunner",
@@ -257,6 +290,7 @@ class WorkloadRunner:
         )
 
         # ── Execute ──────────────────────────────────────────────────
+        latency_s: Optional[float] = None
         try:
             fn = partial(
                 self._run_query_sync,
@@ -266,7 +300,7 @@ class WorkloadRunner:
                 selected_cluster_name,
             )
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self._executor, fn)
+            latency_s = await loop.run_in_executor(self._executor, fn)
         finally:
             now = self._ts()
             self._pool.on_query_finish(
@@ -274,6 +308,20 @@ class WorkloadRunner:
                 cluster_name=selected_cluster_name,
                 current_time_s=now,
             )
+            if latency_s is not None and _has_structured():
+                emit_structured(
+                    {
+                        "timestamp": now,
+                        "event_type": "completion",
+                        "source": "WorkloadRunner",
+                        "query_id": query.query_id,
+                        "query_text_id": query.query_text_id.value,
+                        "cluster_name": selected_cluster_name,
+                        "latency_s": latency_s,
+                        "slo_s": self._slo_resolver.resolve(query.query_text_id),
+                    }
+                )
+            self._pbar.update(1)
 
     async def run(self) -> None:
         """
