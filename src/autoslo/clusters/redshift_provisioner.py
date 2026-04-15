@@ -18,6 +18,7 @@ Redshift Serverless workgroups.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import time
 from datetime import datetime, timezone
@@ -101,7 +102,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             _DEFAULT_PRICE_PERFORMANCE_TARGET_LEVEL,
         )
 
-        self._seq_counter = 0
+        self._seq_counter = itertools.count()
 
     # ------------------------------------------------------------------
     # Internal AWS helpers (thin wrappers — logic copied from
@@ -412,8 +413,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         self, rpu: int, ts: int
     ) -> tuple[str, str]:
         """Generate a DNS-compatible, globally unique workgroup name."""
-        seq = self._seq_counter
-        self._seq_counter += 1
+        seq = next(self._seq_counter)
 
         wg_name = f"autoslo-{rpu}-{ts}-{seq}"
         ns_name = f"autoslo-{rpu}-{ts}-{seq}-ns"

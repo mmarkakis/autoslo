@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import Optional
 
 from intervaltree import Interval  # type: ignore[import]
@@ -52,7 +53,8 @@ class Autoscaler:
             else slo_resolver
         )
 
-        # Internal mutable state
+        # Internal mutable state (guarded by _lock)
+        self._lock = threading.Lock()
         self._window_start_time_s: Optional[float] = None
         self._snapshot_at_window_start: Optional[dict[str, Cluster]] = None
         self._window_queries: list[Query] = []
@@ -111,6 +113,19 @@ class Autoscaler:
         self._window_queries = []
 
     def inform(
+        self,
+        current_time_s: float,
+        current_query: Query,
+        pool_snapshot_with_current_query: dict[str, Cluster],
+    ) -> list[ScalingAction]:
+        with self._lock:
+            return self._inform_locked(
+                current_time_s,
+                current_query,
+                pool_snapshot_with_current_query,
+            )
+
+    def _inform_locked(
         self,
         current_time_s: float,
         current_query: Query,
@@ -324,7 +339,7 @@ class Autoscaler:
             cluster_name: cluster.clone()
             for cluster_name, cluster in self._snapshot_at_window_start.items()
         }
-        hyp_cluster_name = f"cluster_{candidate_rpu}_hypothetical"
+        hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
         local_snapshot[hyp_cluster_name] = Cluster(
             creation_time_s=current_time_s,
             rpu=candidate_rpu,

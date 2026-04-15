@@ -192,6 +192,7 @@ class StructuredConfig:
             search_path=schema.search_path,
             collect_cluster_stats=True,
             run_id=run_id,
+            background_executor=thread_pool_executor if is_runner else None,
         )
         capacity_checkpoints = [
             CapacityCheckpoint(

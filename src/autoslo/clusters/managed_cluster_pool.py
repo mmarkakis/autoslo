@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -78,17 +78,21 @@ class ManagedClusterPool:
         collect_cluster_stats: bool = False,
         run_id: Optional[str] = None,
         write_text_log: bool = False,
+        background_executor: Optional[ThreadPoolExecutor] = None,
     ) -> None:
         self._provisioner = provisioner
         self._initial_rpus = initial_rpus
         self._maxconns = maxconns
         self._search_path = search_path
         self._collect_cluster_stats = collect_cluster_stats
+        self._background_executor = background_executor
 
         self._lock = threading.Lock()
         self._clusters: dict[str, Cluster] = {}
         self._completed_queries: dict[str, list[tuple[float, Query]]] = {}
         self._conn_pools: dict[str, ThreadedConnectionPool] = {}
+        self._background_futures: list[Future] = []
+        self._bg_futures_lock = threading.Lock()
 
         self._run_id: Optional[str] = run_id
         self._write_text_log = write_text_log
@@ -238,13 +242,28 @@ class ManagedClusterPool:
                                 "reason": "last_routable_cluster",
                             }
                         )
-                return
+                    return
 
             cluster.update_state(ClusterState.DRAINING)
             active_queries = cluster.active_queries
+
+            # When force=True, any remaining active queries are orphans
+            # (the run has ended).  Clear them so finalization — and
+            # therefore stats collection — always proceeds.
+            if force and active_queries:
+                logger.warning(
+                    "Force tear-down of %s: clearing %d orphaned active "
+                    "queries.",
+                    action.cluster_name,
+                    len(active_queries),
+                )
+                cluster.queries.clear()
+                cluster.predicted_latencies.clear()
+                active_queries = []
+
             if self._write_text_log:
                 logging.debug(
-                    "Cluster %s marked as draining.",
+                    "Cluster %s marked as draining (%d active queries).",
                     action.cluster_name,
                     len(active_queries),
                 )
@@ -261,7 +280,7 @@ class ManagedClusterPool:
 
         # If no active queries, proceed to removal immediately.
         if not active_queries:
-            self._finalize_removal(action.cluster_name, current_time_s)
+            self._dispatch_finalize(action.cluster_name, current_time_s)
 
     def _finalize_removal(
         self, cluster_name: str, current_time_s: float
@@ -345,6 +364,17 @@ class ManagedClusterPool:
             cluster.update_state(ClusterState.REMOVED)
             del self._clusters[cluster_name]
 
+    def wait_for_background_tasks(self, timeout: Optional[float] = None) -> None:
+        """Block until all background finalization tasks complete.
+
+        Only relevant when a ``background_executor`` is configured;
+        otherwise returns immediately.
+        """
+        with self._bg_futures_lock:
+            pending = list(self._background_futures)
+        for fut in pending:
+            fut.result(timeout=timeout)
+
     # ------------------------------------------------------------------
     # Query lifecycle
     # ------------------------------------------------------------------
@@ -378,7 +408,23 @@ class ManagedClusterPool:
         should_finalize = False
 
         with self._lock:
-            cluster = self._clusters[cluster_name]
+            cluster = self._clusters.get(cluster_name)
+            if cluster is None:
+                logger.warning(
+                    "on_query_finish for query %s on %s: "
+                    "cluster already removed.",
+                    query_id,
+                    cluster_name,
+                )
+                return
+            if query_id not in cluster.active_query_ids:
+                logger.warning(
+                    "on_query_finish for query %s on %s: "
+                    "query not in active set (already cleared).",
+                    query_id,
+                    cluster_name,
+                )
+                return
             query, latency_s = cluster.finish_query(
                 query_id,
                 current_time_s=current_time_s,
@@ -396,6 +442,24 @@ class ManagedClusterPool:
                 should_finalize = True
 
         if should_finalize:
+            self._dispatch_finalize(cluster_name, current_time_s)
+
+    def _dispatch_finalize(
+        self, cluster_name: str, current_time_s: float
+    ) -> None:
+        """Run ``_finalize_removal`` inline or in the background executor.
+
+        When a ``background_executor`` was provided at construction the
+        heavy work (stats collection, AWS API calls) is submitted to
+        that executor so the calling thread is not blocked.
+        """
+        if self._background_executor is not None:
+            fut = self._background_executor.submit(
+                self._finalize_removal, cluster_name, current_time_s
+            )
+            with self._bg_futures_lock:
+                self._background_futures.append(fut)
+        else:
             self._finalize_removal(cluster_name, current_time_s)
 
     # ------------------------------------------------------------------

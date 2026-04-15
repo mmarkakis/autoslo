@@ -117,19 +117,26 @@ def route_and_update_bookkeeping(
         new_predicted_latencies_on_selected=new_predicted_latencies_on_selected,
     )
     post_snapshot = pool.snapshot(only_ready=False)
-    autoscaler_suggested_actions: list[ScalingAction] = autoscaler.inform(
-        current_time_s=current_time_getter(),
-        current_query=query,
-        pool_snapshot_with_current_query=post_snapshot,
-    )
-    for action in autoscaler_suggested_actions:
-        if isinstance(action, SpinUpAction):
-            on_spin_up(action)
-        elif isinstance(action, TearDownAction):
-            pool.request_tear_down(action, current_time_getter())
-        elif write_text_log:
-            logger.warning(
-                f"Unknown autoscaling action type: {type(action)}"
-            )
+    try:
+        autoscaler_suggested_actions: list[ScalingAction] = autoscaler.inform(
+            current_time_s=current_time_getter(),
+            current_query=query,
+            pool_snapshot_with_current_query=post_snapshot,
+        )
+        for action in autoscaler_suggested_actions:
+            if isinstance(action, SpinUpAction):
+                on_spin_up(action)
+            elif isinstance(action, TearDownAction):
+                pool.request_tear_down(action, current_time_getter())
+            elif write_text_log:
+                logger.warning(
+                    f"Unknown autoscaling action type: {type(action)}"
+                )
+    except Exception:
+        logger.exception(
+            "Autoscaler failed after routing query %s; "
+            "continuing without scaling actions.",
+            query.query_id,
+        )
 
     return selected_cluster_name

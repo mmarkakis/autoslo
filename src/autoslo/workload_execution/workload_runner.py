@@ -1,6 +1,8 @@
 import asyncio
+import concurrent.futures
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from functools import partial
 from typing import Optional
@@ -66,7 +68,9 @@ class WorkloadRunner:
         dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Instance Variables ───────────────────────────────────────────────
-        self._pending_spin_ups: list[asyncio.Future] = []
+        self._routing_lock = threading.Lock()
+        self._spin_ups_lock = threading.Lock()
+        self._pending_spin_ups: list[concurrent.futures.Future] = []
 
     # ------------------------------------------------------------------
     # Async checkpoint reconciliation (live runner)
@@ -97,19 +101,17 @@ class WorkloadRunner:
     def _on_live_spin_up(self, action: SpinUpAction) -> None:
         """Autoscaler callback: spin up a new cluster (non-blocking).
 
-        Offloads the blocking provisioning to a background thread so
-        that the asyncio event loop remains responsive for query
-        scheduling.  The autoscaler is notified via
-        :meth:`notify_cluster_ready` once the cluster is available.
+        Submits the blocking provisioning to the thread-pool executor.
+        Thread-safe — may be called from any thread (event loop,
+        executor thread running routing, etc.).
         """
 
-        loop = asyncio.get_running_loop()
         ts = self._ts()
-        future = loop.run_in_executor(
-            self._executor, self._pool.request_spin_up, action, ts
+        future = self._executor.submit(
+            self._pool.request_spin_up, action, ts
         )
 
-        def _on_spin_up_done(fut: asyncio.Future) -> None:
+        def _on_spin_up_done(fut: concurrent.futures.Future) -> None:
             exc = fut.exception()
             if exc is not None:
                 return
@@ -130,7 +132,8 @@ class WorkloadRunner:
                 )
 
         future.add_done_callback(_on_spin_up_done)
-        self._pending_spin_ups.append(future)
+        with self._spin_ups_lock:
+            self._pending_spin_ups.append(future)
 
     # ------------------------------------------------------------------
     # Timestamps
@@ -141,6 +144,30 @@ class WorkloadRunner:
         Return the current UTC wall-clock time.
         """
         return datetime.now(tz=timezone.utc).timestamp()
+
+    def _route_locked(self, query: Query) -> str:
+        """Route a query under the serialisation lock.
+
+        The lock ensures that routing (snapshot → model inference →
+        ``on_query_start`` → autoscaler) is atomic, preventing
+        concurrent routing calls from clobbering each other's
+        ``predicted_latencies`` updates.
+
+        Called from an executor thread — never from the event loop.
+        """
+        with self._routing_lock:
+            return route_and_update_bookkeeping(
+                source="WorkloadRunner",
+                current_time_getter=self._ts,
+                pool=self._pool,
+                router=self._router,
+                query=query,
+                iconq_model=self._iconq_model,
+                autoscaler=self._autoscaler,
+                on_spin_up=self._on_live_spin_up,
+                write_text_log=self._write_text_log,
+                simulator_pending_events_heap=None,
+            )
 
     def _run_query_sync(
         self, run_id: str, query_id: str, query_text: str, cluster_name: str
@@ -276,17 +303,12 @@ class WorkloadRunner:
             )
 
         # ── Route at arrival time ────────────────────────────────────
-        selected_cluster_name = route_and_update_bookkeeping(
-            source="WorkloadRunner",
-            current_time_getter=self._ts,
-            pool=self._pool,
-            router=self._router,
-            query=query,
-            iconq_model=self._iconq_model,
-            autoscaler=self._autoscaler,
-            on_spin_up=self._on_live_spin_up,
-            write_text_log=self._write_text_log,
-            simulator_pending_events_heap=None,  # Not used in live runner
+        # Routing involves model inference (CPU-bound) and must be
+        # serialised to keep pool state consistent, so it runs in the
+        # thread-pool under _routing_lock.
+        loop = asyncio.get_running_loop()
+        selected_cluster_name = await loop.run_in_executor(
+            self._executor, self._route_locked, query
         )
 
         # ── Execute ──────────────────────────────────────────────────
@@ -299,14 +321,21 @@ class WorkloadRunner:
                 query_text,
                 selected_cluster_name,
             )
-            loop = asyncio.get_running_loop()
             latency_s = await loop.run_in_executor(self._executor, fn)
         finally:
             now = self._ts()
-            self._pool.on_query_finish(
-                query_id=query.query_id,
-                cluster_name=selected_cluster_name,
-                current_time_s=now,
+            # on_query_finish may trigger _finalize_removal, which is
+            # dispatched to the pool's background executor when one is
+            # configured.  The bookkeeping itself is fast but we still
+            # run it off the event loop to avoid lock contention.
+            loop.run_in_executor(
+                self._executor,
+                partial(
+                    self._pool.on_query_finish,
+                    query_id=query.query_id,
+                    cluster_name=selected_cluster_name,
+                    current_time_s=now,
+                ),
             )
             if latency_s is not None and _has_structured():
                 emit_structured(
@@ -389,9 +418,14 @@ class WorkloadRunner:
 
             # Wait for any in-flight background spin-ups to finish
             # before tearing down clusters.
-            if self._pending_spin_ups:
+            with self._spin_ups_lock:
+                spin_up_snapshot = list(self._pending_spin_ups)
+            if spin_up_snapshot:
+                async_futs = [
+                    asyncio.wrap_future(f) for f in spin_up_snapshot
+                ]
                 spin_up_results = await asyncio.gather(
-                    *self._pending_spin_ups, return_exceptions=True
+                    *async_futs, return_exceptions=True
                 )
                 for r in spin_up_results:
                     if isinstance(r, Exception):
@@ -400,9 +434,9 @@ class WorkloadRunner:
             self._pbar.close()
 
             # Graceful cleanup: tear down every remaining READY cluster.
-            # request_tear_down → _finalize_removal is synchronous and
-            # may block (stats collection + provisioner API call), so
-            # we dispatch each call via the default thread-pool executor.
+            # request_tear_down transitions to DRAINING; _finalize_removal
+            # (stats collection + AWS API calls) runs in the pool's
+            # background executor.
             loop = asyncio.get_running_loop()
             remaining = list(self._pool.clusters_in_state(ClusterState.READY))
             for cn in remaining:
@@ -421,6 +455,10 @@ class WorkloadRunner:
                     )
                 except Exception:
                     logging.exception("Failed to tear down cluster %s.", cn)
+
+            # Wait for all background finalization tasks (stats collection,
+            # provisioner tear-down) that the pool dispatched.
+            self._pool.wait_for_background_tasks()
 
         logging.info(f"Run finished at {self._ts()}.")
 
