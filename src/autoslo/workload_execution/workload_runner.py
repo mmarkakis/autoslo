@@ -3,7 +3,6 @@ import concurrent.futures
 import logging
 import os
 import threading
-from datetime import datetime, timezone
 from functools import partial
 from typing import Optional
 
@@ -13,15 +12,22 @@ import autoslo.utils.config as cfgu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
+from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.routing.wrapper import route_and_update_bookkeeping
-from autoslo.utils.logging import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    ArrivalEvent,
+    ClusterReadyEvent,
+    CompletionEvent,
+    QueryExecutionFinishEvent,
+    QueryExecutionStartEvent,
+    RunFinishEvent,
+    RunStartEvent,
+    wall_clock_utc,
+)
 from autoslo.utils.yaml_helpers import dump
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_execution.structured_config import StructuredConfig
-
-_has_structured = lambda: bool(
-    logging.getLogger(LOGGER_NAME).handlers
-)  # noqa: E731
 
 
 class WorkloadRunner:
@@ -40,7 +46,7 @@ class WorkloadRunner:
         """
 
         # ── Determine run_id ─────────────────────────────────────────
-        self._run_id = str(int(self._ts()))
+        self._run_id = str(int(wall_clock_utc()))
         self._cfg = cfgu.copy_and_apply_overrides(
             cfg, {"basic_config.run_id": self._run_id}
         )
@@ -82,16 +88,15 @@ class WorkloadRunner:
         async_reference_ts: float,
     ) -> None:
         """Wait until *checkpoint.rel_time_s* elapses, then reconcile."""
-        target = async_reference_ts + checkpoint.rel_time_s
-        delay = target - self._ts()
+        delay = checkpoint.rel_time_s - self._rel_time_s()
         if delay > 0:
             await asyncio.sleep(delay)
         checkpoint.reconcile(
             pool=self._pool,
-            current_time_s=self._ts(),
             source="WorkloadRunner",
             on_spin_up=self._on_live_spin_up,
             write_text_log=self._write_text_log,
+            rel_time_s_getter=self._rel_time_s,
         )
 
     # ------------------------------------------------------------------
@@ -106,9 +111,8 @@ class WorkloadRunner:
         executor thread running routing, etc.).
         """
 
-        ts = self._ts()
         future = self._executor.submit(
-            self._pool.request_spin_up, action, ts
+            self._pool.request_spin_up, action, self._rel_time_s()
         )
 
         def _on_spin_up_done(fut: concurrent.futures.Future) -> None:
@@ -116,20 +120,18 @@ class WorkloadRunner:
             if exc is not None:
                 return
             cluster_name = fut.result()
-            if _has_structured():
-                rpu = Cluster.rpu_for_cluster_name(cluster_name)
-                emit_structured(
-                    {
-                        "timestamp": self._ts(),
-                        "event_type": "cluster_ready",
-                        "source": "WorkloadRunner",
-                        "cluster_name": cluster_name,
-                        "rpu": rpu,
-                        "num_active_clusters": len(
-                            self._pool.clusters_in_state(ClusterState.READY)
-                        ),
-                    }
+            rpu = Cluster.rpu_for_cluster_name(cluster_name)
+            emit_structured(
+                ClusterReadyEvent(
+                    rel_time_s=self._rel_time_s(),
+                    source="WorkloadRunner",
+                    cluster_name=cluster_name,
+                    rpu=rpu,
+                    num_active_clusters=len(
+                        self._pool.clusters_in_state(ClusterState.READY)
+                    ),
                 )
+            )
 
         future.add_done_callback(_on_spin_up_done)
         with self._spin_ups_lock:
@@ -139,11 +141,9 @@ class WorkloadRunner:
     # Timestamps
     # ------------------------------------------------------------------
 
-    def _ts(self) -> float:
-        """
-        Return the current UTC wall-clock time.
-        """
-        return datetime.now(tz=timezone.utc).timestamp()
+    def _rel_time_s(self) -> float:
+        """Relative time in seconds since run start."""
+        return wall_clock_utc() - self._async_reference_ts
 
     def _route_locked(self, query: Query) -> str:
         """Route a query under the serialisation lock.
@@ -158,7 +158,7 @@ class WorkloadRunner:
         with self._routing_lock:
             return route_and_update_bookkeeping(
                 source="WorkloadRunner",
-                current_time_getter=self._ts,
+                rel_time_s_getter=self._rel_time_s,
                 pool=self._pool,
                 router=self._router,
                 query=query,
@@ -170,7 +170,11 @@ class WorkloadRunner:
             )
 
     def _run_query_sync(
-        self, run_id: str, query_id: str, query_text: str, cluster_name: str
+        self,
+        query_id: str,
+        query_text_id: QueryTextId,
+        query_text: str,
+        cluster_name: str,
     ) -> Optional[float]:
         """
         Run a single query synchronously.
@@ -179,18 +183,16 @@ class WorkloadRunner:
         or ``None`` if the query failed (connection error, SQL error, etc.).
         """
         logging.info(f"Starting query {query_id}")
-        start_time = self._ts()
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": start_time,
-                    "source": "WorkloadRunner",
-                    "event_type": "query_execution_start",
-                    "run_id": run_id,
-                    "query_id": query_id,
-                    "cluster_name": cluster_name,
-                }
+        start_rel_time_s = self._rel_time_s()
+        emit_structured(
+            QueryExecutionStartEvent(
+                rel_time_s=start_rel_time_s,
+                source="WorkloadRunner",
+                query_id=query_id,
+                query_text_id=query_text_id,
+                cluster_name=cluster_name,
             )
+        )
         try:
             conn = self._pool.getconn(cluster_name)
         except Exception as e:
@@ -201,7 +203,7 @@ class WorkloadRunner:
         succeeded = False
         try:
             with conn.cursor() as cur:
-                edited = f"--{run_id}/{query_id}\n{query_text}"
+                edited = f"--{self._run_id}/{query_id}\n{query_text}"
                 cur.execute(edited)
                 try:
                     _ = cur.fetchall()
@@ -218,26 +220,23 @@ class WorkloadRunner:
             logging.exception(f"Query {query_id} failed: {e}")
         finally:
             self._pool.putconn(cluster_name, conn)
-        end_time = self._ts()
-        latency_s = end_time - start_time
+        end_rel_time_s = self._rel_time_s()
+        latency_s = end_rel_time_s - start_rel_time_s
         logging.info(f"Query {query_id} finished after t={latency_s:.2f}s")
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": end_time,
-                    "source": "WorkloadRunner",
-                    "event_type": "query_execution_finish",
-                    "run_id": run_id,
-                    "query_id": query_id,
-                    "cluster_name": cluster_name,
-                    "client_side_latency_s": latency_s,
-                }
+        emit_structured(
+            QueryExecutionFinishEvent(
+                rel_time_s=end_rel_time_s,
+                source="WorkloadRunner",
+                query_id=query_id,
+                query_text_id=query_text_id,
+                cluster_name=cluster_name,
+                latency_s=latency_s,
             )
+        )
         return latency_s if succeeded else None
 
     async def _run_query_async(
         self,
-        run_id: str,
         async_reference_ts: float,
         query: Query,
         skip_wait: bool = False,
@@ -250,32 +249,29 @@ class WorkloadRunner:
         arrival time — not the pool state at the start of the run.
 
         Parameters:
-            run_id: ID of the current run.
             async_reference_ts: Reference timestamp for scheduling.
             query: The Query object to execute.
             skip_wait: If True, skip the initial sleep and route immediately.
         """
-        now = self._ts()
-        scheduled_time = async_reference_ts + query.rel_start_time_s
-        delay = scheduled_time - now
+        delay = query.rel_start_time_s - self._rel_time_s()
 
         if skip_wait:
             logging.info(
                 f"Query {query.query_id} scheduled to start at "
-                f"t={scheduled_time:.2f}s "
+                f"relative time {query.rel_start_time_s:.2f}s "
                 f"(in {delay:.2f}s), but skip_wait=True. Starting immediately."
             )
         elif delay > 0:
             logging.info(
                 f"Query {query.query_id} scheduled to start at "
-                f"t={scheduled_time:.2f}s "
+                f"relative time {query.rel_start_time_s:.2f}s "
                 f"(in {delay:.2f}s). Waiting..."
             )
             await asyncio.sleep(delay)
         else:  # delay <= 0
             logging.warning(
                 f"Query {query.query_id} scheduled start time "
-                f"t={scheduled_time:.2f}s "
+                f"relative time {query.rel_start_time_s:.2f}s "
                 f"is in the past (delay={delay:.2f}s). Starting immediately."
             )
 
@@ -291,16 +287,14 @@ class WorkloadRunner:
             return
 
         # ── Emit arrival event (matches simulator) ────────────────
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": self._ts(),
-                    "event_type": "arrival",
-                    "source": "WorkloadRunner",
-                    "query_id": query.query_id,
-                    "query_text_id": query.query_text_id.value,
-                }
+        emit_structured(
+            ArrivalEvent(
+                rel_time_s=self._rel_time_s(),
+                source="WorkloadRunner",
+                query_id=query.query_id,
+                query_text_id=query.query_text_id,
             )
+        )
 
         # ── Route at arrival time ────────────────────────────────────
         # Routing involves model inference (CPU-bound) and must be
@@ -316,14 +310,13 @@ class WorkloadRunner:
         try:
             fn = partial(
                 self._run_query_sync,
-                run_id,
                 query.query_id,
+                query.query_text_id,
                 query_text,
                 selected_cluster_name,
             )
             latency_s = await loop.run_in_executor(self._executor, fn)
         finally:
-            now = self._ts()
             # on_query_finish may trigger _finalize_removal, which is
             # dispatched to the pool's background executor when one is
             # configured.  The bookkeeping itself is fast but we still
@@ -334,23 +327,20 @@ class WorkloadRunner:
                     self._pool.on_query_finish,
                     query_id=query.query_id,
                     cluster_name=selected_cluster_name,
-                    current_time_s=now,
+                    rel_time_s=self._rel_time_s(),
                 ),
             )
-            if latency_s is not None and _has_structured():
+            if latency_s is not None:
                 emit_structured(
-                    {
-                        "timestamp": now,
-                        "event_type": "completion",
-                        "source": "WorkloadRunner",
-                        "query_id": query.query_id,
-                        "query_text_id": query.query_text_id.value,
-                        "cluster_name": selected_cluster_name,
-                        "latency_s": latency_s,
-                        "slo_s": self._slo_resolver.resolve(
-                            query.query_text_id
-                        ),
-                    }
+                    CompletionEvent(
+                        rel_time_s=self._rel_time_s(),
+                        source="WorkloadRunner",
+                        query_id=query.query_id,
+                        query_text_id=query.query_text_id,
+                        cluster_name=selected_cluster_name,
+                        latency_s=latency_s,
+                        slo_s=self._slo_resolver.resolve(query.query_text_id),
+                    )
                 )
             self._pbar.update(1)
 
@@ -361,23 +351,28 @@ class WorkloadRunner:
 
         print(f"Run starting with ID {self._run_id}.")
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": self._ts(),
-                    "source": "WorkloadRunner",
-                    "event_type": "run_start",
-                    "run_id": self._run_id,
-                    "workload_name": self._workload.workload_name,
-                    "num_queries": self._workload.num_queries,
-                    "routing_policy": self._router.routing_policy.value,
-                    "closed_loop": self._closed_loop,
-                }
-            )
-
         # Add a 30-second buffer between the reference timestamp and the first
         # query's scheduled start time for setup.
-        async_reference_ts = self._ts() + 30
+        self._async_reference_ts = wall_clock_utc() + 30
+
+        # Propagate reference time to the provisioner so it can compute
+        # relative timestamps for cluster creation_time_s and events.
+        prov = self._pool.provisioner
+        if isinstance(prov, RedshiftServerlessProvisioner):
+            prov.reference_time_s = self._async_reference_ts
+
+        emit_structured(
+            RunStartEvent(
+                rel_time_s=self._rel_time_s(),
+                source="WorkloadRunner",
+                workload_name=self._workload.workload_name,
+                num_queries=self._workload.num_queries,
+                routing_policy=self._router.routing_policy.value,
+                closed_loop=self._closed_loop,
+            )
+        )
+
+        async_reference_ts = self._async_reference_ts
         logging.info(f"Async reference timestamp: {async_reference_ts:.2f}s")
 
         tasks: list[asyncio.Task] = []
@@ -399,16 +394,14 @@ class WorkloadRunner:
 
                 if not self._closed_loop:
                     task = asyncio.ensure_future(
-                        self._run_query_async(
-                            self._run_id, async_reference_ts, query
-                        )
+                        self._run_query_async(async_reference_ts, query)
                     )
                     tasks.append(task)
                 else:
                     # In closed loop, wait for each query to finish before
                     # starting the next.  Ignore rel_start_time_s.
                     await self._run_query_async(
-                        self._run_id, async_reference_ts, query, skip_wait=True
+                        async_reference_ts, query, skip_wait=True
                     )
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -421,9 +414,7 @@ class WorkloadRunner:
             with self._spin_ups_lock:
                 spin_up_snapshot = list(self._pending_spin_ups)
             if spin_up_snapshot:
-                async_futs = [
-                    asyncio.wrap_future(f) for f in spin_up_snapshot
-                ]
+                async_futs = [asyncio.wrap_future(f) for f in spin_up_snapshot]
                 spin_up_results = await asyncio.gather(
                     *async_futs, return_exceptions=True
                 )
@@ -449,7 +440,7 @@ class WorkloadRunner:
                                 reason="run_cleanup",
                                 cluster_name=cn,
                             ),
-                            self._ts(),
+                            self._rel_time_s(),
                             force=True,
                         ),
                     )
@@ -460,18 +451,15 @@ class WorkloadRunner:
             # provisioner tear-down) that the pool dispatched.
             self._pool.wait_for_background_tasks()
 
-        logging.info(f"Run finished at {self._ts()}.")
+        logging.info(f"Run finished at {wall_clock_utc()}.")
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": self._ts(),
-                    "source": "WorkloadRunner",
-                    "event_type": "run_finish",
-                    "run_id": self._run_id,
-                    "workload_name": self._workload.workload_name,
-                }
+        emit_structured(
+            RunFinishEvent(
+                rel_time_s=self._rel_time_s(),
+                source="WorkloadRunner",
+                workload_name=self._workload.workload_name,
             )
+        )
 
         # Finalize structured log (consolidate shards).
         if (

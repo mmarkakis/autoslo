@@ -3,12 +3,13 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Callable
 
-import autoslo.utils.config as cfgu
 from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
-from autoslo.utils.logging import LOGGER_NAME, emit_structured
-
-_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    CapacityCheckpointReconciliationEvent,
+    SpinUpEvent,
+)
 
 
 @dataclass(frozen=True)
@@ -55,32 +56,33 @@ class CapacityCheckpoint:
     def reconcile(
         self,
         pool: ManagedClusterPool,
-        current_time_s: float,
         source: str,
         on_spin_up: Callable[[SpinUpAction], None],
         write_text_log: bool = False,
+        rel_time_s_getter: Callable[[], float] = lambda: 0.0,
     ) -> None:
         """Check against current capacity and trigger spin-ups."""
         current_counts = pool.ready_and_pending_counts_per_rpu()
         spin_ups_needed = self.spin_ups_needed(current_counts)
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": current_time_s,
-                    "event_type": "capacity_checkpoint_reconciliation",
-                    "source": source,
-                    "checkpoint_rel_time_s": self.rel_time_s,
-                    "desired_rpus": ",".join(
-                        f"{rpu}:{count}"
-                        for rpu, count in Counter(self.min_rpus).items()
-                    ),
-                    "current_rpus": ",".join(
-                        f"{rpu}:{count}"
-                        for rpu, count in current_counts.items()
-                    ),
-                }
+        desired_str = ", ".join(
+            f"{rpu}:{count}"
+            for rpu, count in Counter(self.min_rpus).items()
+        )
+        current_str = ", ".join(
+            f"{rpu}:{count}" for rpu, count in current_counts.items()
+        )
+        emit_structured(
+            CapacityCheckpointReconciliationEvent(
+                rel_time_s=rel_time_s_getter(),
+                source=source,
+                detail=(
+                    f"checkpoint@t={self.rel_time_s}: "
+                    f"desired=[{desired_str}], current=[{current_str}], "
+                    f"spin_ups_needed={len(spin_ups_needed)}"
+                ),
             )
+        )
 
         if not spin_ups_needed:
             if write_text_log:
@@ -99,13 +101,11 @@ class CapacityCheckpoint:
             )
         for action in spin_ups_needed:
             on_spin_up(action)
-            if _has_structured():
-                emit_structured(
-                    {
-                        "timestamp": current_time_s,
-                        "event_type": "spin_up",
-                        "source": source,
-                        "rpu": action.rpu,
-                        "reason": f"capacity_checkpoint@t={self.rel_time_s}",
-                    }
+            emit_structured(
+                SpinUpEvent(
+                    rel_time_s=rel_time_s_getter(),
+                    source=source,
+                    rpu=action.rpu,
+                    detail=f"capacity_checkpoint@t={self.rel_time_s}",
                 )
+            )

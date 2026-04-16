@@ -32,6 +32,7 @@ from autoslo.utils.paralellism import (
     inner_level_num_cpus,
 )
 from autoslo.utils.logging import StructuredLogHandler, emit_structured
+from autoslo.utils.structured_events import ScenarioResultEvent
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
@@ -391,17 +392,16 @@ class ScenarioEvaluator:
     ) -> None:
         """Emit a record to the evolution ledger."""
         emit_structured(
-            {
-                "timestamp": pd.Timestamp.now().isoformat(),
-                "source": "tuner",
-                "event_type": "scenario_result",
-                "phase_name": phase_name,
-                "config_idx": config_idx,
-                "workload_idx": workload_idx,
-                "violation_rate": result.violation_rate,
-                "violation_amount_s": result.violation_amount_s,
-                "violation_relative_mean": result.violation_relative_mean,
-                "total_cost": result.total_cost,
-                "num_queries": result.num_queries,
-            }
+            ScenarioResultEvent(
+                rel_time_s=0.0,
+                source="ScenarioEvaluator",
+                phase=phase_name,
+                grid_point=config_idx,
+                workload_idx=workload_idx,
+                violation_rate=result.violation_rate,
+                violation_amount_s=result.violation_amount_s,
+                violation_relative_mean=result.violation_relative_mean,
+                total_cost=result.total_cost,
+                num_queries=result.num_queries,
+            )
         )

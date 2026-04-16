@@ -18,7 +18,15 @@ from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.utils.billing import Billing
-from autoslo.utils.logging import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    ArrivalEvent,
+    ClusterReadyEvent,
+    CompletionEvent,
+    CompletionIgnoredEvent,
+    RunFinishEvent,
+    RunStartEvent,
+)
 from autoslo.utils.paralellism import inner_level_num_cpus
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query
@@ -29,8 +37,6 @@ from autoslo.workload_execution.simulator_event import (
     SimulatorEventType,
 )
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
-
-_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
 class WorkloadSimulator:
@@ -165,6 +171,17 @@ class WorkloadSimulator:
             progress_callback = self.default_progress_callback
         progress_callback(0, self._total_queries)
 
+        emit_structured(
+            RunStartEvent(
+                rel_time_s=self._current_sim_time_s,
+                source="WorkloadSimulator",
+                workload_name=self._workload.workload_name,
+                num_queries=self._total_queries,
+                routing_policy=self._router.routing_policy.value,
+                closed_loop=self._closed_loop,
+            )
+        )
+
         # Add all the checkpoint creation events to the heap.
         for checkpoint in self._capacity_checkpoints:
             self._pending_events.append(
@@ -218,6 +235,14 @@ class WorkloadSimulator:
                             f"Unknown event type: {event.event_type}"
                         )
 
+        emit_structured(
+            RunFinishEvent(
+                rel_time_s=self._current_sim_time_s,
+                source="WorkloadSimulator",
+                workload_name=self._workload.workload_name,
+            )
+        )
+
         self.write_out_billing_interval_analysis()
         if self._structured_handler is not None:
             self._structured_handler.finalize()
@@ -239,18 +264,17 @@ class WorkloadSimulator:
         index = event.details["index"]
 
         emit_structured(
-            {
-                "timestamp": self._current_sim_time_s,
-                "event_type": "arrival",
-                "source": "WorkloadSimulator",
-                "query_id": query.query_id,
-                "query_text_id": query.query_text_id.value,
-            }
+            ArrivalEvent(
+                rel_time_s=self._current_sim_time_s,
+                source="WorkloadSimulator",
+                query_id=query.query_id,
+                query_text_id=query.query_text_id.value,
+            )
         )
 
         selected_cluster_name = route_and_update_bookkeeping(
             source="WorkloadSimulator",
-            current_time_getter=lambda: self._current_sim_time_s,
+            rel_time_s_getter=lambda: self._current_sim_time_s,
             pool=self._pool,
             router=self._router,
             query=query,
@@ -290,31 +314,31 @@ class WorkloadSimulator:
             # This was an older completion event, but the latency prediction has
             # changed since.
             emit_structured(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "completion_ignored",
-                    "source": "WorkloadSimulator",
-                    "query_id": query_id,
-                }
+                CompletionIgnoredEvent(
+                    rel_time_s=self._current_sim_time_s,
+                    source="WorkloadSimulator",
+                    query_id=query_id,
+                    query_text_id=query_text_id,
+                    cluster_name=cluster_name,
+                )
             )
             return
 
         self._pool.on_query_finish(
             query_id=query_id,
             cluster_name=cluster_name,
-            current_time_s=self._current_sim_time_s,
+            rel_time_s=self._current_sim_time_s,
         )
         emit_structured(
-            {
-                "timestamp": self._current_sim_time_s,
-                "event_type": "completion",
-                "source": "WorkloadSimulator",
-                "query_id": query_id,
-                "query_text_id": query_text_id.value,
-                "cluster_name": cluster_name,
-                "latency_s": latency_s_from_event,
-                "slo_s": self._slo_resolver.resolve(query_text_id),
-            }
+            CompletionEvent(
+                rel_time_s=self._current_sim_time_s,
+                source="WorkloadSimulator",
+                query_id=query_id,
+                query_text_id=query_text_id,
+                cluster_name=cluster_name,
+                latency_s=latency_s_from_event,
+                slo_s=self._slo_resolver.resolve(query_text_id),
+            )
         )
 
         # If we are in closed-loop mode, schedule the next query arrival now that this one has completed.
@@ -347,10 +371,10 @@ class WorkloadSimulator:
         checkpoint: CapacityCheckpoint = event.details["checkpoint"]
         checkpoint.reconcile(
             pool=self._pool,
-            current_time_s=self._current_sim_time_s,
             source="WorkloadSimulator",
             on_spin_up=self._on_sim_spin_up,
             write_text_log=self._write_text_log,
+            rel_time_s_getter=lambda: self._current_sim_time_s,
         )
 
     def _handle_cluster_ready(self, event: SimulatorEvent) -> None:
@@ -364,19 +388,17 @@ class WorkloadSimulator:
         self._pool.on_cluster_ready(cluster_name, self._current_sim_time_s)
         rpu = Cluster.rpu_for_cluster_name(cluster_name)
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": self._current_sim_time_s,
-                    "event_type": "cluster_ready",
-                    "source": "WorkloadSimulator",
-                    "cluster_name": cluster_name,
-                    "rpu": rpu,
-                    "num_active_clusters": len(
-                        self._pool.clusters_in_state(ClusterState.READY)
-                    ),
-                }
+        emit_structured(
+            ClusterReadyEvent(
+                rel_time_s=self._current_sim_time_s,
+                source="WorkloadSimulator",
+                cluster_name=cluster_name,
+                rpu=rpu,
+                num_active_clusters=len(
+                    self._pool.clusters_in_state(ClusterState.READY)
+                ),
             )
+        )
 
     
 

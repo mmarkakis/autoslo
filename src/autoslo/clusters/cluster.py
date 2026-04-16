@@ -88,7 +88,7 @@ class Cluster:
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
         state: ClusterState = ClusterState.PENDING,
         billing_window_start_s: Optional[float] = None,
-        most_recent_query_completion_time_s: Optional[float] = None,
+        most_recent_query_completion_rel_time_s: Optional[float] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
 
@@ -108,9 +108,9 @@ class Cluster:
         self.cost_per_rpu_hour = cost_per_rpu_hour
         self.state = state
         self.billing_window_start_s = billing_window_start_s
-        self.most_recent_query_completion_time_s: float = (
-            most_recent_query_completion_time_s
-            if most_recent_query_completion_time_s is not None
+        self.most_recent_query_completion_rel_time_s: float = (
+            most_recent_query_completion_rel_time_s
+            if most_recent_query_completion_rel_time_s is not None
             else self.creation_time_s
         )
 
@@ -131,7 +131,9 @@ class Cluster:
             cost_per_rpu_hour=self.cost_per_rpu_hour,
             state=self.state,
             billing_window_start_s=self.billing_window_start_s,
-            most_recent_query_completion_time_s=self.most_recent_query_completion_time_s,
+            most_recent_query_completion_rel_time_s=(
+                self.most_recent_query_completion_rel_time_s
+            ),
         )
         c.queries = dict(self.queries)
         c.id_to_neighbors = {
@@ -197,7 +199,7 @@ class Cluster:
     def finish_query(
         self,
         query_id: str,
-        current_time_s: float,
+        rel_time_s: float,
         min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
     ) -> tuple[Query, float]:
         """
@@ -206,7 +208,7 @@ class Cluster:
         Parameters:
         -----------
         query_id: The ID of the query to finish.
-        current_time_s: The current time in seconds
+        rel_time_s: Relative time in seconds since run start.
         min_billing_window_size_s: The minimum size of a billing window. If the
             time since the start of the current billing window exceeds this
             threshold, the billing window is closed.
@@ -228,17 +230,17 @@ class Cluster:
         self.predicted_latencies.pop(query_id, None)
 
         if (self.billing_window_start_s is not None) and (
-            (current_time_s - self.billing_window_start_s)
+            (rel_time_s - self.billing_window_start_s)
             >= min_billing_window_size_s
         ):
             self.billing_window_start_s = None
 
-        self.most_recent_query_completion_time_s = current_time_s
-        return q, current_time_s - q.rel_start_time_s
+        self.most_recent_query_completion_rel_time_s = rel_time_s
+        return q, rel_time_s - q.rel_start_time_s
 
     def finish_queries_until(
         self,
-        current_time_s: float,
+        rel_time_s: float,
         min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
     ) -> list[tuple[Query, float]]:
         """
@@ -246,7 +248,7 @@ class Cluster:
 
         Parameters:
         -----------
-        current_time_s: The current time in seconds.
+        rel_time_s: Relative time in seconds since run start.
         min_billing_window_size_s: The minimum size of a billing window. If the
             time since the start of the current billing window exceeds this
             threshold, the billing window is closed.
@@ -257,24 +259,24 @@ class Cluster:
             breakpoint()
         times_and_ids_of_finished_queries = []
         for qid, q in self.queries.items():
-            predicted_completion_time_s = (
+            predicted_completion_rel_time_s = (
                 q.rel_start_time_s + self.predicted_latencies[qid]
             )
-            if predicted_completion_time_s <= current_time_s:
+            if predicted_completion_rel_time_s <= rel_time_s:
                 times_and_ids_of_finished_queries.append(
-                    (predicted_completion_time_s, qid)
+                    (predicted_completion_rel_time_s, qid)
                 )
         times_and_ids_of_finished_queries.sort()
 
         qs_and_latencies = []
         for (
-            predicted_completion_time_s,
+            predicted_completion_rel_time_s,
             qid,
         ) in times_and_ids_of_finished_queries:
             qs_and_latencies.append(
                 self.finish_query(
                     qid,
-                    predicted_completion_time_s,
+                    predicted_completion_rel_time_s,
                     min_billing_window_size_s=min_billing_window_size_s,
                 )
             )

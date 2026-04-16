@@ -11,11 +11,15 @@ from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
-from autoslo.utils.logging import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    RpuCounterfactualEvent,
+    RpuSelectionEvent,
+    TearDownDecisionEvent,
+)
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
-_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
 class Autoscaler:
@@ -114,20 +118,20 @@ class Autoscaler:
 
     def inform(
         self,
-        current_time_s: float,
+        rel_time_s: float,
         current_query: Query,
         pool_snapshot_with_current_query: dict[str, Cluster],
     ) -> list[ScalingAction]:
         with self._lock:
             return self._inform_locked(
-                current_time_s,
+                rel_time_s,
                 current_query,
                 pool_snapshot_with_current_query,
             )
 
     def _inform_locked(
         self,
-        current_time_s: float,
+        rel_time_s: float,
         current_query: Query,
         pool_snapshot_with_current_query: dict[str, Cluster],
     ) -> list[ScalingAction]:
@@ -136,11 +140,11 @@ class Autoscaler:
 
         # Start new window if needed.
         if (self._window_start_time_s is None) or (
-            (current_time_s - self._window_start_time_s)
+            (rel_time_s - self._window_start_time_s)
             > self._observation_window_s
         ):
             self._reset_window(
-                current_time_s,
+                rel_time_s,
                 pool_snapshot_with_current_query,
             )
             return actions
@@ -150,16 +154,19 @@ class Autoscaler:
         if len(self._window_queries) < self._min_observations_to_act:
             return actions
 
+        # Store rel_time_s for use in structured event emissions.
+        self._latest_rel_time_s = rel_time_s
+
         # Determine whether to take any spinup actions.
         spin_up_actions = self.consider_spin_up(
-            current_time_s,
+            rel_time_s,
             pool_snapshot_with_current_query,
         )
         actions.extend(spin_up_actions)
 
         # Determine whether to take any teardown actions.
         tear_down_actions = self.consider_teardown(
-            current_time_s, pool_snapshot_with_current_query
+            rel_time_s, pool_snapshot_with_current_query
         )
         actions.extend(tear_down_actions)
 
@@ -167,7 +174,7 @@ class Autoscaler:
         # post-action evidence.
         if len(actions) > 0:
             self._reset_window(
-                current_time_s,
+                rel_time_s,
                 pool_snapshot_with_current_query,
             )
 
@@ -175,7 +182,7 @@ class Autoscaler:
 
     def consider_spin_up(
         self,
-        current_time_s: float,
+        rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, Cluster],
     ) -> list[SpinUpAction]:
         """
@@ -217,7 +224,7 @@ class Autoscaler:
             return []
 
         # Find the best size to spin up.
-        best_rpu = self._select_rpu(current_time_s)
+        best_rpu = self._select_rpu(rel_time_s)
         action = SpinUpAction(
             reason=(
                 f"num_queries_in_window={len(self._window_queries)}, "
@@ -232,7 +239,7 @@ class Autoscaler:
 
     def consider_teardown(
         self,
-        current_time_s: float,
+        rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, Cluster],
     ) -> list[TearDownAction]:
         """
@@ -250,9 +257,9 @@ class Autoscaler:
                 continue
 
             idle_time_s = (
-                current_time_s - cluster.most_recent_query_completion_time_s
+                rel_time_s - cluster.most_recent_query_completion_time_s
             )
-            lifetime_s = current_time_s - cluster.creation_time_s
+            lifetime_s = rel_time_s - cluster.creation_time_s
 
             if (idle_time_s >= self._idle_time_before_tear_down_s) and (
                 lifetime_s >= self._min_cluster_lifetime_s
@@ -262,26 +269,25 @@ class Autoscaler:
                         f"creation_time: {cluster.creation_time_s:.0f}s, "
                         f"most_recent_query_completion_time: "
                         f"{cluster.most_recent_query_completion_time_s:.0f}s, "
-                        f"current_time: {current_time_s:.0f}s, "
+                        f"current_time: {rel_time_s:.0f}s, "
                     ),
                     cluster_name=cluster_name,
                 )
                 tear_down_actions.append(action)
 
-                if _has_structured():
-                    emit_structured(
-                        {
-                            "timestamp": current_time_s,
-                            "event_type": "tear_down_decision",
-                            "source": "Autoscaler",
-                            "cluster_name": cluster_name,
-                            "reason": action.reason,
-                        }
+                emit_structured(
+                    TearDownDecisionEvent(
+                        rel_time_s=self._latest_rel_time_s,
+                        source="Autoscaler",
+                        cluster_name=cluster_name,
+                        rpu=cluster.rpu,
+                        detail=action.reason,
                     )
+                )
 
         return tear_down_actions
 
-    def _select_rpu(self, current_time_s: float) -> int:
+    def _select_rpu(self, rel_time_s: float) -> int:
         """
         Select the RPU size for a new cluster based on the current window.
         """
@@ -290,7 +296,7 @@ class Autoscaler:
         best_viol_and_cost: tuple[float, float] = (float("inf"), float("inf"))
 
         for rpu in self._allowed_rpu_sizes:
-            slo_viol_and_cost = self._counterfactual_replay(rpu, current_time_s)
+            slo_viol_and_cost = self._counterfactual_replay(rpu, rel_time_s)
 
             if self._slo_objective.is_b_better(
                 best_viol_and_cost, slo_viol_and_cost
@@ -298,36 +304,42 @@ class Autoscaler:
                 best_rpu = rpu
                 best_viol_and_cost = slo_viol_and_cost
 
-            if _has_structured():
-                emit_structured(
-                    {
-                        "timestamp": current_time_s,
-                        "event_type": "rpu_counterfactual",
-                        "source": "Autoscaler",
-                        "candidate_rpu": rpu,
-                        "metric_and_cost": f"{slo_viol_and_cost[0]:.4f}, {slo_viol_and_cost[1]:.4f}",
-                        "slo_threshold": self._slo_objective.slo_threshold,
-                    }
-                )
-
-        if _has_structured():
+            hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
-                {
-                    "timestamp": current_time_s,
-                    "event_type": "rpu_selection",
-                    "source": "Autoscaler",
-                    "selected_rpu": best_rpu,
-                    "metric_and_cost": f"{best_viol_and_cost[0]:.4f}, {best_viol_and_cost[1]:.4f}",
-                    "slo_threshold": self._slo_objective.slo_threshold,
-                }
+                RpuCounterfactualEvent(
+                    rel_time_s=self._latest_rel_time_s,
+                    source="Autoscaler",
+                    cluster_name=hyp_cluster_name,
+                    rpu=rpu,
+                    slo_metric_and_cost={
+                        "slo_metric": slo_viol_and_cost[0],
+                        "cost": slo_viol_and_cost[1],
+                    },
+                    slo_threshold=self._slo_objective.slo_threshold,
+                )
             )
+
+        best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
+        emit_structured(
+            RpuSelectionEvent(
+                rel_time_s=self._latest_rel_time_s,
+                source="Autoscaler",
+                cluster_name=best_hyp_cluster_name,
+                rpu=best_rpu,
+                slo_metric_and_cost={
+                    "slo_metric": best_viol_and_cost[0],
+                    "cost": best_viol_and_cost[1],
+                },
+                slo_threshold=self._slo_objective.slo_threshold,
+            )
+        )
 
         return best_rpu
 
     def _counterfactual_replay(
         self,
         candidate_rpu: int,
-        current_time_s: float,
+        rel_time_s: float,
     ) -> tuple[float, float]:
         """Replay the routing window with a hypothetical new cluster of
         *candidate_rpu* and return the aggregate SLO-violation metric and cost.
@@ -341,7 +353,7 @@ class Autoscaler:
         }
         hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
         local_snapshot[hyp_cluster_name] = Cluster(
-            creation_time_s=current_time_s,
+            creation_time_s=rel_time_s,
             rpu=candidate_rpu,
             name=hyp_cluster_name,
         )
@@ -351,7 +363,7 @@ class Autoscaler:
             if cluster.billing_window_start_s is not None:
                 billed_intervals[cluster_name].append(
                     Interval(
-                        begin=cluster.billing_window_start_s, end=current_time_s
+                        begin=cluster.billing_window_start_s, end=rel_time_s
                     )
                 )
         router = QueryRouter(
@@ -368,7 +380,7 @@ class Autoscaler:
             # Expire any finished queries.
             for cluster_name, cluster in local_snapshot.items():
                 qs_and_latencies = cluster.finish_queries_until(
-                    current_time_s=time_s,
+                    rel_time_s=time_s,
                 )
                 if len(qs_and_latencies) > 0:
                     for q, latency_s in qs_and_latencies:
@@ -389,7 +401,7 @@ class Autoscaler:
                     query=query,
                     clusters=snapshot_for_routing,
                     iconq_model=self._iconq_model,
-                    current_time_s=time_s,
+                    rel_time_s=time_s,
                 )
             )
             local_snapshot[selected_cluster_name].add_query(query)

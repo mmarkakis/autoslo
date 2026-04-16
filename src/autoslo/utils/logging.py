@@ -35,11 +35,13 @@ from typing import Any
 
 import pandas as pd
 
+from autoslo.utils.structured_events import BaseStructuredEvent
+
 # ---------------------------------------------------------------------------
 # Required keys every record must carry
 # ---------------------------------------------------------------------------
 
-REQUIRED_KEYS_LIST = ["timestamp", "source", "event_type"]
+REQUIRED_KEYS_LIST = ["wall_clock_s", "rel_time_s", "source", "event_type"]
 REQUIRED_KEYS = frozenset(REQUIRED_KEYS_LIST)
 
 # ---------------------------------------------------------------------------
@@ -53,29 +55,26 @@ LOGGER_NAME = "autoslo.structured"
 # ---------------------------------------------------------------------------
 
 
-def emit_structured(record: dict[str, Any]) -> None:
-    """Convenience: emit a structured dict through the canonical logger.
+def emit_structured(event: BaseStructuredEvent) -> None:
+    """Convenience: emit a structured event through the canonical logger.
 
     Parameters
     ----------
-    record :
-        Must contain at least ``timestamp``, ``event_type``, and ``source``.
-        Additional keys are allowed and will become columns in the Parquet
-        output.
+    event :
+        A :class:`BaseStructuredEvent` subclass instance.
 
-    Raises
-    ------
-    ValueError
-        If any of the required keys are missing.  The check is performed
-        eagerly (before enqueueing) so callers get early feedback during
-        development.
+    Short-circuits silently when no handler is attached to the
+    structured logger, eliminating the need for per-call-site guards.
     """
+    _logger = logging.getLogger(LOGGER_NAME)
+    if not _logger.handlers:
+        return
+    record = event.to_dict()
     missing = REQUIRED_KEYS - record.keys()
     if missing:
         raise ValueError(
             f"Structured log record missing required key(s): {sorted(missing)}"
         )
-    _logger = logging.getLogger(LOGGER_NAME)
     _logger.info(record)
 
 

@@ -1,19 +1,28 @@
 """Tests for autoslo.utils.structured_log."""
+
 from __future__ import annotations
 
 import logging
 import os
-import tempfile
 
 import pandas as pd
-import pytest
 
 from autoslo.utils.logging import (
     LOGGER_NAME,
     REQUIRED_KEYS,
+    REQUIRED_KEYS_LIST,
     StructuredLogHandler,
     emit_structured,
     setup_structured_logging,
+)
+from autoslo.utils.structured_events import (
+    ArrivalEvent,
+    BaseStructuredEvent,
+    CompletionEvent,
+    RoutingDecisionEvent,
+    RunStartEvent,
+    ScenarioResultEvent,
+    wall_clock_utc,
 )
 
 
@@ -22,9 +31,26 @@ from autoslo.utils.logging import (
 # ---------------------------------------------------------------------------
 
 
+def _make_event(**overrides) -> BaseStructuredEvent:
+    """Build a minimal valid ArrivalEvent with optional overrides."""
+    defaults = dict(
+        rel_time_s=0.0,
+        source="test_harness",
+        query_id="q0",
+        query_text_id=1,
+    )
+    defaults.update(overrides)
+    return ArrivalEvent(**defaults)
+
+
 def _make_record(**overrides) -> dict:
-    """Build a minimal valid record with optional overrides."""
-    base = {"timestamp": 1.0, "event_type": "test", "source": "test_harness"}
+    """Build a minimal valid record dict for handler-level tests."""
+    base = {
+        "wall_clock_s": 1.0,
+        "rel_time_s": 0.0,
+        "event_type": "test",
+        "source": "test_harness",
+    }
     base.update(overrides)
     return base
 
@@ -35,23 +61,45 @@ def _make_record(**overrides) -> dict:
 
 
 class TestEmitStructuredValidation:
-    """Tests for required-key validation in emit_structured."""
+    """Tests for emit_structured behavior."""
 
-    def test_missing_timestamp_raises(self):
-        with pytest.raises(ValueError, match="timestamp"):
-            emit_structured({"event_type": "x", "source": "y"})
+    def test_short_circuits_without_handler(self):
+        """emit_structured should silently return when no handler is attached."""
+        # Ensure no handler.
+        logger = logging.getLogger(LOGGER_NAME)
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+        # Should not raise.
+        emit_structured(_make_event())
 
-    def test_missing_event_type_raises(self):
-        with pytest.raises(ValueError, match="event_type"):
-            emit_structured({"timestamp": 0, "source": "y"})
+    def test_wall_clock_utc_returns_float(self):
+        ts = wall_clock_utc()
+        assert isinstance(ts, float)
+        assert ts > 0
 
-    def test_missing_source_raises(self):
-        with pytest.raises(ValueError, match="source"):
-            emit_structured({"timestamp": 0, "event_type": "x"})
+    def test_wall_clock_s_auto_populated(self):
+        """wall_clock_s should be auto-filled by wall_clock_utc()."""
+        event = _make_event()
+        assert isinstance(event.wall_clock_s, float)
+        assert event.wall_clock_s > 0
 
-    def test_empty_dict_raises(self):
-        with pytest.raises(ValueError):
-            emit_structured({})
+    def test_event_to_dict_has_required_keys(self):
+        event = _make_event()
+        d = event.to_dict()
+        assert REQUIRED_KEYS <= d.keys()
+
+    def test_all_event_types_have_event_type(self):
+        """Each event subclass should set event_type in __post_init__."""
+        for cls in [
+            ArrivalEvent,
+            CompletionEvent,
+            RoutingDecisionEvent,
+            RunStartEvent,
+            ScenarioResultEvent,
+        ]:
+            ev = cls(source="test")
+            assert ev.event_type != ""
+            assert "event_type" in ev.to_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +113,13 @@ class TestStructuredLogHandler:
     def test_emit_ignores_non_dict(self, tmp_path):
         handler = StructuredLogHandler(out_dir=str(tmp_path))
         lr = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="plain string", args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="plain string",
+            args=None,
+            exc_info=None,
         )
         handler.emit(lr)
         assert handler.buffered_count == 0
@@ -74,20 +127,31 @@ class TestStructuredLogHandler:
     def test_emit_buffers_dict(self, tmp_path):
         handler = StructuredLogHandler(out_dir=str(tmp_path))
         lr = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg=_make_record(), args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg=_make_record(),
+            args=None,
+            exc_info=None,
         )
         handler.emit(lr)
         assert handler.buffered_count == 1
 
     def test_auto_flush_at_threshold(self, tmp_path):
         handler = StructuredLogHandler(
-            out_dir=str(tmp_path), flush_threshold=3,
+            out_dir=str(tmp_path),
+            flush_threshold=3,
         )
         for i in range(3):
             lr = logging.LogRecord(
-                name="test", level=logging.INFO, pathname="", lineno=0,
-                msg=_make_record(timestamp=float(i)), args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=_make_record(wall_clock_s=float(i)),
+                args=None,
+                exc_info=None,
             )
             handler.emit(lr)
         # Buffer should be drained after the 3rd emit.
@@ -97,12 +161,17 @@ class TestStructuredLogHandler:
 
     def test_finalize_consolidates_shards(self, tmp_path):
         handler = StructuredLogHandler(
-            out_dir=str(tmp_path), flush_threshold=2,
+            out_dir=str(tmp_path),
+            flush_threshold=2,
         )
         for i in range(5):
             lr = logging.LogRecord(
-                name="test", level=logging.INFO, pathname="", lineno=0,
-                msg=_make_record(timestamp=float(i), idx=i), args=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=_make_record(wall_clock_s=float(i), idx=i),
+                args=None,
                 exc_info=None,
             )
             handler.emit(lr)
@@ -112,8 +181,8 @@ class TestStructuredLogHandler:
 
         df = pd.read_parquet(out_path)
         assert len(df) == 5
-        # Required columns should appear first.
-        assert list(df.columns[:3]) == sorted(REQUIRED_KEYS)
+        # Required columns should appear first in defined order.
+        assert list(df.columns[: len(REQUIRED_KEYS)]) == REQUIRED_KEYS_LIST
         # No leftover shard files.
         shards = list(tmp_path.glob("_shard_*.parquet"))
         assert len(shards) == 0
@@ -122,33 +191,19 @@ class TestStructuredLogHandler:
         handler = StructuredLogHandler(out_dir=str(tmp_path))
         assert handler.finalize() is None
 
-    def test_finalize_with_legacy_symlink(self, tmp_path):
-        handler = StructuredLogHandler(
-            out_dir=str(tmp_path), flush_threshold=100,
-        )
-        lr = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg=_make_record(), args=None, exc_info=None,
-        )
-        handler.emit(lr)
-        out_path = handler.finalize_with_legacy_symlink()
-        assert out_path is not None
-
-        symlink_path = tmp_path / "solve_log.parquet"
-        assert symlink_path.exists()
-        assert symlink_path.is_symlink()
-        # Both should resolve to the same data.
-        df_main = pd.read_parquet(out_path)
-        df_sym = pd.read_parquet(str(symlink_path))
-        pd.testing.assert_frame_equal(df_main, df_sym)
-
     def test_reset_clears_state(self, tmp_path):
         handler = StructuredLogHandler(
-            out_dir=str(tmp_path), flush_threshold=100,
+            out_dir=str(tmp_path),
+            flush_threshold=100,
         )
         lr = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg=_make_record(), args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg=_make_record(),
+            args=None,
+            exc_info=None,
         )
         handler.emit(lr)
         assert handler.buffered_count == 1
@@ -163,19 +218,29 @@ class TestStructuredLogHandler:
 
     def test_dynamic_columns_discovery(self, tmp_path):
         handler = StructuredLogHandler(
-            out_dir=str(tmp_path), flush_threshold=100,
+            out_dir=str(tmp_path),
+            flush_threshold=100,
         )
         # Record 1: only required keys
         lr1 = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg=_make_record(), args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg=_make_record(),
+            args=None,
+            exc_info=None,
         )
         handler.emit(lr1)
         # Record 2: has extra 'cluster_name' and 'rpu' keys
         lr2 = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
             msg=_make_record(cluster_name="cluster-0", rpu=8),
-            args=None, exc_info=None,
+            args=None,
+            exc_info=None,
         )
         handler.emit(lr2)
         out_path = handler.finalize()
@@ -197,13 +262,21 @@ class TestSetupStructuredLogging:
 
     def test_roundtrip(self, tmp_path):
         handler = setup_structured_logging(out_dir=str(tmp_path))
-        emit_structured(_make_record(timestamp=0.0, event_type="arrival"))
-        emit_structured(_make_record(timestamp=1.0, event_type="routing",
-                                     cluster_name="c0"))
+        emit_structured(_make_event())
+        emit_structured(
+            CompletionEvent(
+                rel_time_s=0.5,
+                source="test_harness",
+                query_id="q1",
+                query_text_id=1,
+                cluster_name="c0",
+                latency_s=0.5,
+            )
+        )
         out = handler.finalize()
         df = pd.read_parquet(out)
         assert len(df) == 2
-        assert set(df["event_type"]) == {"arrival", "routing"}
+        assert set(df["event_type"]) == {"arrival", "completion"}
 
     def test_replaces_previous_handler(self, tmp_path):
         h1 = setup_structured_logging(out_dir=str(tmp_path / "a"))
@@ -238,7 +311,8 @@ class TestThreadSafety:
         import threading
 
         handler = setup_structured_logging(
-            out_dir=str(tmp_path), flush_threshold=50,
+            out_dir=str(tmp_path),
+            flush_threshold=50,
         )
         errors = []
         n_per_thread = 200
@@ -247,8 +321,7 @@ class TestThreadSafety:
             try:
                 for i in range(n_per_thread):
                     emit_structured(
-                        _make_record(
-                            timestamp=float(i),
+                        _make_event(
                             source=f"thread_{thread_idx}",
                         )
                     )

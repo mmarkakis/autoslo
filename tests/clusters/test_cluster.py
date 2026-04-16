@@ -255,7 +255,7 @@ class TestCluster:
         )
         cluster.add_query(q1)
         cluster.finish_query(
-            q1.query_id, current_time_s=160.0, min_billing_window_size_s=60.0
+            q1.query_id, rel_time_s=160.0, min_billing_window_size_s=60.0
         )
         assert cluster.queries == {}
         assert cluster.id_to_neighbors == {}
@@ -279,7 +279,7 @@ class TestCluster:
         )
         cluster.add_query(q1)
         cluster.finish_query(
-            q1.query_id, current_time_s=220.0, min_billing_window_size_s=60.0
+            q1.query_id, rel_time_s=220.0, min_billing_window_size_s=60.0
         )
         assert cluster.queries == {}
         assert cluster.id_to_neighbors == {}

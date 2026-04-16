@@ -21,6 +21,9 @@ class QueryTextId:
     def __str__(self):
         return self.value
 
+    def __repr__(self):
+        return self.value
+
     @property
     def schema_name(self) -> str:
         """Extracts the schema name from the query text ID."""

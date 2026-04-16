@@ -21,7 +21,6 @@ from __future__ import annotations
 import itertools
 import logging
 import time
-from datetime import datetime, timezone
 
 import boto3  # type: ignore
 import yaml
@@ -29,12 +28,16 @@ import yaml
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
-from autoslo.utils.logging import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    ClusterSpinUpCompletedEvent,
+    ClusterSpinUpStartedEvent,
+    ClusterTearDownCompletedEvent,
+    ClusterTearDownStartedEvent,
+    wall_clock_utc,
+)
 
 logger = logging.getLogger(__name__)
-_has_structured = lambda: bool(
-    logging.getLogger(LOGGER_NAME).handlers
-)  # noqa: E731
 
 # Default constants (match workgroup_creation_benchmarking.py)
 _DEFAULT_AWS_REGION = "us-east-1"
@@ -103,6 +106,15 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         )
 
         self._seq_counter = itertools.count()
+        self._reference_time_s: float = 0.0
+
+    @property
+    def reference_time_s(self) -> float:
+        return self._reference_time_s
+
+    @reference_time_s.setter
+    def reference_time_s(self, value: float) -> None:
+        self._reference_time_s = value
 
     # ------------------------------------------------------------------
     # Internal AWS helpers (thin wrappers — logic copied from
@@ -419,7 +431,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         ns_name = f"autoslo-{rpu}-{ts}-{seq}-ns"
         return wg_name, ns_name
 
-    def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
+    def spin_up(self, rpu: int, rel_time_s: float) -> Cluster:
         """Create a Redshift Serverless workgroup and return a ready
         ``Cluster``.
 
@@ -439,22 +451,20 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         RuntimeError
             If any provisioning step fails.
         """
-        spin_up_start = datetime.now(tz=timezone.utc).timestamp()
+        spin_up_start = wall_clock_utc()
         wg_name, ns_name = self._workgroup_and_namespace_names(
             rpu, int(spin_up_start)
         )
 
         logger.info("Spinning up workgroup %s with %d RPU ...", wg_name, rpu)
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": spin_up_start,
-                    "source": "RedshiftServerlessProvisioner",
-                    "event_type": "cluster_spin_up_started",
-                    "cluster_name": wg_name,
-                    "rpu": rpu,
-                }
+        emit_structured(
+            ClusterSpinUpStartedEvent(
+                rel_time_s=rel_time_s,
+                source="RedshiftServerlessProvisioner",
+                cluster_name=wg_name,
+                rpu=rpu,
             )
+        )
 
         if not self._create_namespace(ns_name):
             raise RuntimeError(f"Failed to create namespace {ns_name}")
@@ -493,9 +503,12 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             user=self._admin_username,
             password=self._admin_password,
         )
-        now = datetime.now(tz=timezone.utc).timestamp()
+        now = wall_clock_utc()
         cluster = Cluster(
-            creation_time_s=now, rpu=rpu, name=wg_name, conn_info=conn_info
+            creation_time_s=now - self._reference_time_s,
+            rpu=rpu,
+            name=wg_name,
+            conn_info=conn_info,
         )
         spin_up_duration = now - spin_up_start
         logger.info(
@@ -504,45 +517,43 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             rpu,
             spin_up_duration,
         )
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": time.time(),
-                    "source": "RedshiftServerlessProvisioner",
-                    "event_type": "cluster_spin_up_completed",
-                    "cluster_name": wg_name,
-                    "rpu": rpu,
-                    "duration_s": spin_up_duration,
-                }
+        emit_structured(
+            ClusterSpinUpCompletedEvent(
+                rel_time_s=now - self._reference_time_s,
+                source="RedshiftServerlessProvisioner",
+                cluster_name=wg_name,
+                rpu=rpu,
+                duration_s=spin_up_duration,
             )
+        )
         return cluster
 
-    def tear_down(self, cluster_name: str, current_time_s: float) -> None:
+    def tear_down(self, cluster_name: str, rel_time_s: float) -> None:
         """Delete the workgroup and its namespace.
 
         Parameters
         ----------
         cluster_name :
             The workgroup (= namespace) name to delete.
-        current_time_s :
-            The current time for bookkeeping.
+        rel_time_s :
+            Relative time in seconds since run start.
 
         Raises
         ------
         RuntimeError
             If deletion fails.
         """
-        tear_down_start = time.time()
+        tear_down_start = wall_clock_utc()
         logger.info("Tearing down workgroup %s ...", cluster_name)
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": tear_down_start,
-                    "source": "RedshiftServerlessProvisioner",
-                    "event_type": "cluster_tear_down_started",
-                    "cluster_name": cluster_name,
-                }
+        rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        emit_structured(
+            ClusterTearDownStartedEvent(
+                rel_time_s=rel_time_s,
+                source="RedshiftServerlessProvisioner",
+                cluster_name=cluster_name,
+                rpu=rpu,
             )
+        )
 
         ok, namespace_name = self._delete_workgroup(cluster_name)
         if not ok:
@@ -558,19 +569,18 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         if not self._wait_for_namespace_deleted(ns):
             raise RuntimeError(f"Namespace {ns} was not deleted in time")
 
-        tear_down_duration = time.time() - tear_down_start
+        now = wall_clock_utc()
+        tear_down_duration = now - tear_down_start
         logger.info(
             "Workgroup %s fully torn down (%.1fs).",
             cluster_name,
             tear_down_duration,
         )
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": time.time(),
-                    "source": "RedshiftServerlessProvisioner",
-                    "event_type": "cluster_tear_down_completed",
-                    "cluster_name": cluster_name,
-                    "duration_s": tear_down_duration,
-                }
+        emit_structured(
+            ClusterTearDownCompletedEvent(
+                rel_time_s=now - self._reference_time_s,
+                source="RedshiftServerlessProvisioner",
+                cluster_name=cluster_name,
+                duration_s=tear_down_duration,
             )
+        )

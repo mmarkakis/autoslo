@@ -174,6 +174,33 @@ class StructuredConfig:
             else SimulatedProvisioner(spin_up_delay_s=spin_up_delay_s)
         )
 
+        # ── Output ───────────────────────────────────────────────────────────
+        experiment_name: Optional[str] = cfgu.getd(
+            cfg, "output_config.experiment_name"
+        )
+        overwrite_experiment: bool = cfgu.getd(
+            cfg, "output_config.overwrite_experiment", False
+        )
+        write_text_log: bool = cfgu.getd(
+            cfg, "output_config.write_text_log", False
+        )
+        if is_runner:
+            write_text_log = True
+        out_dir_override = cfgu.getd(cfg, "output_config.out_dir", None)
+        out_dir = _make_out_dir(
+            run_id=run_id,
+            out_dir_override=out_dir_override,
+            experiment_name=experiment_name,
+            overwrite_experiment=overwrite_experiment,
+            is_runner=is_runner,
+        )
+
+        # ── Logging (before pool so provisioner events are captured) ──────
+        structured_log_handler = setup_run_logging(
+            out_dir=out_dir,
+            write_text_log=write_text_log,
+        )
+
         # ── Managed Cluster Pool ─────────────────────────────────────────────
         initial_rpus = cfgu.getd(
             cfg,
@@ -249,33 +276,6 @@ class StructuredConfig:
                 "autoscaling_config.slo_tightening_factor",
                 1.0,
             ),
-        )
-
-        # ── Output ───────────────────────────────────────────────────────────
-        experiment_name: Optional[str] = cfgu.getd(
-            cfg, "output_config.experiment_name"
-        )
-        overwrite_experiment: bool = cfgu.getd(
-            cfg, "output_config.overwrite_experiment", False
-        )
-        write_text_log: bool = cfgu.getd(
-            cfg, "output_config.write_text_log", False
-        )
-        if is_runner:
-            write_text_log = True
-        out_dir_override = cfgu.getd(cfg, "output_config.out_dir", None)
-        out_dir = _make_out_dir(
-            run_id=run_id,
-            out_dir_override=out_dir_override,
-            experiment_name=experiment_name,
-            overwrite_experiment=overwrite_experiment,
-            is_runner=is_runner,
-        )
-
-        # ── Logging ───────────────────────────────────────────────────────────
-        structured_log_handler = setup_run_logging(
-            out_dir=out_dir,
-            write_text_log=write_text_log,
         )
 
         return StructuredConfig(

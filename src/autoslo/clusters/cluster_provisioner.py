@@ -21,15 +21,15 @@ class ClusterProvisioner(ABC):
     """Abstract interface for creating and destroying clusters."""
 
     @abstractmethod
-    def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
+    def spin_up(self, rpu: int, rel_time_s: float) -> Cluster:
         """Create a new cluster with the given RPU.
 
         Parameters
         ----------
         rpu :
             Redshift Processing Units for the new cluster.
-        current_time_s :
-            The current time for bookkeeping.
+        rel_time_s :
+            Relative time in seconds since run start.
 
         Returns
         -------
@@ -39,15 +39,15 @@ class ClusterProvisioner(ABC):
         """
 
     @abstractmethod
-    def tear_down(self, cluster_name: str, current_time_s: float) -> None:
+    def tear_down(self, cluster_name: str, rel_time_s: float) -> None:
         """Destroy the named cluster.
 
         Parameters
         ----------
         cluster_name :
             Name of the cluster to destroy.
-        current_time_s :
-            The current time for bookkeeping.
+        rel_time_s :
+            Relative time in seconds since run start.
 
         Raises
         ------
@@ -81,26 +81,26 @@ class SimulatedProvisioner(ClusterProvisioner):
         """The configured spin-up delay (for the simulator to use)."""
         return self._spin_up_delay_s
 
-    def spin_up(self, rpu: int, current_time_s: float) -> Cluster:
+    def spin_up(self, rpu: int, rel_time_s: float) -> Cluster:
         """Create a spec-only cluster instantly.
 
         Returns
         -------
         A new ``Cluster`` with auto-generated name and no connection info.
         """
-        cluster = Cluster(rpu=rpu, creation_time_s=current_time_s)
+        cluster = Cluster(rpu=rpu, creation_time_s=rel_time_s)
         logger.debug(
             "SimulatedProvisioner: spun up %s (%d RPU) at time %.2f",
             cluster.name,
             rpu,
-            current_time_s,
+            rel_time_s,
         )
         return cluster
 
-    def tear_down(self, cluster_name: str, current_time_s: float) -> None:
+    def tear_down(self, cluster_name: str, rel_time_s: float) -> None:
         """Record a tear-down (no-op for simulation)."""
         logger.debug(
             "SimulatedProvisioner: tore down %s at time %.2f",
             cluster_name,
-            current_time_s,
+            rel_time_s,
         )

@@ -42,24 +42,24 @@ class TestSimulatedProvisioner:
 
     def test_spin_up_returns_cluster(self):
         prov = SimulatedProvisioner()
-        cluster = prov.spin_up(rpu=8, current_time_s=0.0)
+        cluster = prov.spin_up(rpu=8, rel_time_s=0.0)
         assert isinstance(cluster, Cluster)
         assert cluster.rpu == 8
 
     def test_spin_up_name_contains_rpu(self):
         prov = SimulatedProvisioner()
-        cluster = prov.spin_up(rpu=16, current_time_s=0.0)
+        cluster = prov.spin_up(rpu=16, rel_time_s=0.0)
         assert "16" in cluster.name
 
     def test_spin_up_no_conn_info(self):
         prov = SimulatedProvisioner()
-        cluster = prov.spin_up(rpu=8, current_time_s=0.0)
+        cluster = prov.spin_up(rpu=8, rel_time_s=0.0)
         assert cluster.conn_info is None
 
     def test_spin_up_records_history(self):
         prov = SimulatedProvisioner()
-        prov.spin_up(rpu=8, current_time_s=0.0)
-        prov.spin_up(rpu=16, current_time_s=10.0)
+        prov.spin_up(rpu=8, rel_time_s=0.0)
+        prov.spin_up(rpu=16, rel_time_s=10.0)
         assert len(prov.spun_up) == 2
         assert prov.spun_up[0][0].rpu == 8
         assert prov.spun_up[1][0].rpu == 16
@@ -68,8 +68,8 @@ class TestSimulatedProvisioner:
 
     def test_tear_down_records_history(self):
         prov = SimulatedProvisioner()
-        prov.tear_down("c0", current_time_s=5.0)
-        prov.tear_down("c1", current_time_s=15.0)
+        prov.tear_down("c0", rel_time_s=5.0)
+        prov.tear_down("c1", rel_time_s=15.0)
         assert prov.torn_down == [("c0", 5.0), ("c1", 15.0)]
 
     def test_spin_up_unique_names(self):
@@ -77,7 +77,7 @@ class TestSimulatedProvisioner:
         prov = SimulatedProvisioner()
         names = set()
         for _ in range(10):
-            c = prov.spin_up(rpu=8, current_time_s=0.0)
+            c = prov.spin_up(rpu=8, rel_time_s=0.0)
             names.add(c.name)
         # Names should be unique (timestamp may collide within the
         # same second for fast tests, but Cluster.new uses int(time.time()))
@@ -86,7 +86,7 @@ class TestSimulatedProvisioner:
 
     def test_spin_up_cost(self):
         prov = SimulatedProvisioner()
-        cluster = prov.spin_up(rpu=32, current_time_s=0.0)
+        cluster = prov.spin_up(rpu=32, rel_time_s=0.0)
         expected_cost = (
             Cluster.US_EAST_1_COST_PER_RPU_HOUR * 32 / Cluster.ONE_HOUR_S
         )
@@ -95,8 +95,8 @@ class TestSimulatedProvisioner:
     def test_tear_down_is_noop(self):
         """tear_down doesn't raise or modify spin-up history."""
         prov = SimulatedProvisioner()
-        c = prov.spin_up(rpu=8, current_time_s=0.0)
-        prov.tear_down(c.name, current_time_s=1.0)
+        c = prov.spin_up(rpu=8, rel_time_s=0.0)
+        prov.tear_down(c.name, rel_time_s=1.0)
         # spun_up history still has the cluster
         assert len(prov.spun_up) == 1
 

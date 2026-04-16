@@ -1,7 +1,6 @@
 import logging
 import random
 from enum import Enum
-from typing import Optional
 
 from intervaltree import Interval  # type: ignore[import]
 
@@ -12,11 +11,14 @@ from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.billing import Billing
-from autoslo.utils.logging import LOGGER_NAME, emit_structured
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    RoutingDecisionEvent,
+    RoutingScoreEvent,
+)
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
-_has_structured = lambda: bool(logging.getLogger(LOGGER_NAME).handlers)
 
 
 class QueryRouterPolicy(Enum):
@@ -47,7 +49,7 @@ class QueryRouter:
         query: Query,
         clusters: dict[str, Cluster],
         iconq_model: IconqModel,
-        current_time_s: float,
+        rel_time_s: float,
     ) -> tuple[str, dict[str, float]]:
 
         # Collect before-state per cluster
@@ -56,7 +58,7 @@ class QueryRouter:
         for cluster_name, cluster in clusters.items():
             before_violation, before_cost = self.compute_slo_metric_and_cost(
                 cluster,
-                current_time_s,
+                rel_time_s,
             )
             before_viols_and_costs[cluster_name] = (
                 before_violation,
@@ -91,7 +93,8 @@ class QueryRouter:
             before_violation, before_cost = before_viols_and_costs[cluster_name]
             cluster.predicted_latencies = new_predicted_latencies[cluster_name]
             after_violation, after_cost = self.compute_slo_metric_and_cost(
-                cluster, current_time_s,
+                cluster,
+                rel_time_s,
             )
             marginal_violation = after_violation - before_violation
             marginal_cost = after_cost - before_cost
@@ -99,38 +102,39 @@ class QueryRouter:
                 marginal_violation,
                 marginal_cost,
             )
-            if _has_structured():
-                record = {
-                    "timestamp": current_time_s,
-                    "source": "routing",
-                    "event_type": "routing_score",
-                    "query_id": query.query_id,
-                    "cluster_name": cluster_name,
-                    "end_time_s": (
-                        query.rel_start_time_s
-                        + all_predictions[cluster_name][
-                            query.query_id
-                        ].overall_mean_s()
-                    ),
-                    "marginal_slo_violation": marginal_violation,
-                    "marginal_cost": marginal_cost,
-                }
-                emit_structured(record)
+            latency_s = new_predicted_latencies[cluster_name][query.query_id]
+            emit_structured(
+                RoutingScoreEvent(
+                    rel_time_s=rel_time_s,
+                    source="QueryRouter",
+                    query_id=query.query_id,
+                    query_text_id=query.query_text_id,
+                    cluster_name=cluster_name,
+                    latency_s=latency_s,
+                    marginal_slo_violation=marginal_violation,
+                    marginal_cost=marginal_cost,
+                )
+            )
 
         # Choose and return best.
         selected_cluster_name = self.select_best(marginal_viols_and_costs)
 
-        if _has_structured():
-            emit_structured(
-                {
-                    "timestamp": current_time_s,
-                    "event_type": "routing",
-                    "source": "router",
-                    "query_id": str(query.query_id),
-                    "query_text_id": str(query.query_text_id),
-                    "cluster_name": selected_cluster_name,
-                }
+        selected_marginal = marginal_viols_and_costs[selected_cluster_name]
+        selected_latency = new_predicted_latencies[selected_cluster_name][
+            query.query_id
+        ]
+        emit_structured(
+            RoutingDecisionEvent(
+                rel_time_s=rel_time_s,
+                source="QueryRouter",
+                query_id=query.query_id,
+                query_text_id=query.query_text_id,
+                cluster_name=selected_cluster_name,
+                latency_s=selected_latency,
+                marginal_slo_violation=selected_marginal[0],
+                marginal_cost=selected_marginal[1],
             )
+        )
 
         return (
             selected_cluster_name,
@@ -140,7 +144,7 @@ class QueryRouter:
     def compute_slo_metric_and_cost(
         self,
         cluster: Cluster,
-        current_time_s: float,
+        rel_time_s: float,
     ) -> tuple[float, float]:
         """
         Compute the cost and SLO-violation metric for a cluster.
@@ -150,8 +154,8 @@ class QueryRouter:
         cluster:
             The cluster (or clone) whose before-state to compute.
             Must have ``predicted_latencies`` populated for all active queries.
-        current_time_s:
-            Wall-clock (or simulated) time of the incoming query's arrival.
+        rel_time_s:
+            Relative time in seconds since run start.
 
         Returns
         -------
@@ -171,7 +175,7 @@ class QueryRouter:
 
         if cluster.billing_window_start_s is not None:
             intervals.append(
-                Interval(cluster.billing_window_start_s, current_time_s)
+                Interval(cluster.billing_window_start_s, rel_time_s)
             )
         billed_s = Billing.billed_s(intervals)
         cost = cluster.cost_per_second * billed_s
@@ -185,7 +189,9 @@ class QueryRouter:
         cluster_names = sorted(marginal_viols_and_costs.keys())
 
         if self._routing_policy == QueryRouterPolicy.ROUND_ROBIN:
-            cluster_name = cluster_names[self._round_robin_idx % len(cluster_names)]
+            cluster_name = cluster_names[
+                self._round_robin_idx % len(cluster_names)
+            ]
             self._round_robin_idx += 1
             return cluster_name
 

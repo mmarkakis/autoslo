@@ -141,7 +141,7 @@ class TestAutoscalerTightening:
         scaler._window_queries = [query]
 
         actions = scaler.consider_spin_up(
-            current_time_s=1.0,
+            rel_time_s=1.0,
             pool_snapshot_with_current_query=snapshot,
         )
         assert actions == []
@@ -157,7 +157,7 @@ class TestAutoscalerTightening:
         scaler._window_queries = [query]
 
         actions = scaler.consider_spin_up(
-            current_time_s=1.0,
+            rel_time_s=1.0,
             pool_snapshot_with_current_query=snapshot,
         )
         assert len(actions) == 1
@@ -173,7 +173,7 @@ class TestAutoscalerTightening:
         scaler._window_queries = [query]
 
         actions = scaler.consider_spin_up(
-            current_time_s=1.0,
+            rel_time_s=1.0,
             pool_snapshot_with_current_query=snapshot,
         )
         assert actions == []
@@ -189,7 +189,7 @@ class TestAutoscalerTightening:
         scaler._window_queries = [query]
 
         actions = scaler.consider_spin_up(
-            current_time_s=1.0,
+            rel_time_s=1.0,
             pool_snapshot_with_current_query=snapshot,
         )
         assert len(actions) == 1
@@ -219,7 +219,7 @@ class TestAutoscalerTightening:
         scaler._window_queries = [query]
 
         actions = scaler.consider_spin_up(
-            current_time_s=1.0,
+            rel_time_s=1.0,
             pool_snapshot_with_current_query=snapshot,
         )
         assert len(actions) == 1
@@ -252,7 +252,7 @@ class TestAutoscalerTightening:
         scaler._window_queries = [query]
 
         actions = scaler.consider_spin_up(
-            current_time_s=1.0,
+            rel_time_s=1.0,
             pool_snapshot_with_current_query=snapshot,
         )
         assert len(actions) == 1
