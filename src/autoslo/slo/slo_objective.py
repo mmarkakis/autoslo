@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from enum import Enum
 
-from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_metric import LatencySlo, SloMetric
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,7 @@ class SloObjective:
         )
         object.__setattr__(self, "slo_threshold", slo_threshold)
 
-    def is_met(self, per_query_latency_slo: list[tuple[float, float]]) -> bool:
+    def is_met(self, per_query_latency_slo: list[LatencySlo]) -> bool:
         """Return True if the given per-query (latency, SLO) pairs meet the
         SLO objective."""
         aggregated = self.slo_metric.aggregate_batch(per_query_latency_slo)

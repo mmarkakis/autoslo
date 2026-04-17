@@ -13,21 +13,17 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
-from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-import numpy as np
 import pandas as pd
-import yaml
 from rich.console import Console
 from rich.table import Table
 
 import autoslo.utils.config as cfgu
-from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
-from autoslo.slo.slo_metric import SloMetric
+from autoslo.clusters.cluster import Cluster
+from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
@@ -189,9 +185,9 @@ def find_next_checkpoint_time_df(
     events.sort(key=lambda x: x["time"])  # Sort by timestamp
 
     # Process the intervals in the timeline.
-    active_queries: dict[int, dict[str, tuple[float, float]]] = defaultdict(
+    active_queries: dict[int, dict[str, LatencySlo]] = defaultdict(
         dict
-    )  # scenario_id -> query_id -> (latency_s, slo_s)
+    )  # scenario_id -> query_id -> LatencySlo
     delinquency_per_workload: dict[int, bool] = {
         scenario_id: False
         for scenario_id in range(len(completion_structured_logs))
@@ -200,8 +196,10 @@ def find_next_checkpoint_time_df(
         event = events[i]
         if event["event_type"] == "start":
             active_queries[event["scenario_id"]][event["query_id"]] = (
-                event["latency_s"],
-                event["slo_s"],
+                LatencySlo(
+                    event["latency_s"],
+                    event["slo_s"],
+                )
             )
         else:
             active_queries[event["scenario_id"]].pop(event["query_id"], None)
@@ -508,7 +506,7 @@ class CheckpointOptimizer:
             is_best = cp == best_cp
             style = "bold green" if is_best else ""
             table.add_row(
-                ', '.join(str(rpu) for rpu in cp.min_rpus),
+                ", ".join(str(rpu) for rpu in cp.min_rpus),
                 f"{cp.rel_time_s:.0f}",
                 f"{agg.violation_rate:.4f}",
                 f"{agg.violation_amount_s:.4f}",
@@ -544,7 +542,7 @@ class CheckpointOptimizer:
             },
             "candidates": [
                 {
-                    "rpu": ', '.join(str(rpu) for rpu in cp.min_rpus),
+                    "rpu": ", ".join(str(rpu) for rpu in cp.min_rpus),
                     "rel_time_s": cp.rel_time_s,
                     "train_violation": agg.primary_violation(
                         self._slo_objective.slo_metric

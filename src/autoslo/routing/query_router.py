@@ -7,6 +7,7 @@ from intervaltree import Interval  # type: ignore[import]
 from autoslo.clusters.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.billing import Billing
@@ -52,7 +53,7 @@ class QueryRouter:
     ) -> tuple[str, dict[str, float]]:
 
         # Collect before-state raw pairs and cost per cluster.
-        before_pairs: dict[str, list[tuple[float, float]]] = {}
+        before_pairs: dict[str, list[LatencySlo]] = {}
         before_costs: dict[str, float] = {}
         cluster_name_to_queries_to_neighbors = {}
         for cluster_name, cluster in clusters.items():
@@ -98,7 +99,7 @@ class QueryRouter:
 
             # Build pair list: updated pairs for candidate,
             # unchanged before-pairs for all others.
-            all_after_pairs: list[tuple[float, float]] = list(after_pairs)
+            all_after_pairs: list[LatencySlo] = list(after_pairs)
             total_after_cost = after_cost
             for other_name in clusters:
                 if other_name != candidate_name:
@@ -157,7 +158,7 @@ class QueryRouter:
         self,
         cluster: Cluster,
         rel_time_s: float,
-    ) -> tuple[list[tuple[float, float]], float]:
+    ) -> tuple[list[LatencySlo], float]:
         """
         Collect raw (latency, slo) pairs and cost for a single cluster
         without aggregating violations.
@@ -174,14 +175,14 @@ class QueryRouter:
         -------
         (lat_slo_pairs, cost)
         """
-        lat_and_slos: list[tuple[float, float]] = []
+        lat_and_slos: list[LatencySlo] = []
         intervals = []
 
         for q in cluster.active_queries:
             lat = cluster.predicted_latencies[q.query_id]
             slo = self._slo_resolver.resolve(q.query_text_id)
             interval = Query.query_interval(q.rel_start_time_s, lat, q.query_id)
-            lat_and_slos.append((lat, slo))
+            lat_and_slos.append(LatencySlo(lat, slo))
             intervals.append(interval)
 
         if cluster.billing_window_start_s is not None:

@@ -1,5 +1,10 @@
 from enum import Enum
-from typing import Iterable
+from typing import Iterable, NamedTuple
+
+
+class LatencySlo(NamedTuple):
+    latency_s: float
+    slo_s: float
 
 
 class SloMetric(Enum):
@@ -21,11 +26,11 @@ class SloMetric(Enum):
 
     def calculate(self, latency_s: float, slo_s: float) -> float | int:
         """Calculate the SLO violation according to this metric."""
-        return self.calculate_batch([(latency_s, slo_s)])[0]
+        return self.calculate_batch([LatencySlo(latency_s, slo_s)])[0]
 
     def calculate_batch(
         self,
-        lat_and_slos: Iterable[tuple[float, float]],
+        lat_and_slos: Iterable[LatencySlo],
     ) -> list[float] | list[int]:
         """Vectorised version of *metric_dependent_violation*."""
 
@@ -57,11 +62,9 @@ class SloMetric(Enum):
         """
         if len(violations) == 0:
             return 0.0
-        return sum(violations) / len(violations) 
+        return sum(violations) / len(violations)
 
-    def aggregate_batch(
-        self, lat_and_slos: Iterable[tuple[float, float]]
-    ) -> float:
+    def aggregate_batch(self, lat_and_slos: Iterable[LatencySlo]) -> float:
         """Convenience: calculate and aggregate in one step."""
         return self.aggregate(self.calculate_batch(lat_and_slos))
 

@@ -8,6 +8,7 @@ from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
+from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
@@ -226,7 +227,7 @@ class Autoscaler:
             for q in cluster.active_queries:
                 pred_lat = cluster.predicted_latencies[q.query_id]
                 slo = self._trigger_slo_resolver.resolve(q.query_text_id)
-                lat_and_slos.append((pred_lat, slo))
+                lat_and_slos.append(LatencySlo(pred_lat, slo))
         slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
             lat_and_slos
         )
@@ -394,7 +395,7 @@ class Autoscaler:
                 if len(qs_and_latencies) > 0:
                     for q, latency_s in qs_and_latencies:
                         slo = self._slo_resolver.resolve(q.query_text_id)
-                        lat_and_slos.append((latency_s, slo))
+                        lat_and_slos.append(LatencySlo(latency_s, slo))
 
                         billed_intervals[cluster_name].append(
                             Interval(begin=q.rel_start_time_s, end=latency_s)
@@ -424,7 +425,7 @@ class Autoscaler:
             for q in cluster.active_queries:
                 pred_lat = cluster.predicted_latencies[q.query_id]
                 slo = self._slo_resolver.resolve(q.query_text_id)
-                lat_and_slos.append((pred_lat, slo))
+                lat_and_slos.append(LatencySlo(pred_lat, slo))
 
         aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
         total_cost = sum(

@@ -15,10 +15,12 @@ import autoslo.utils.paths as pu
 from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
+from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.routing.wrapper import route_and_update_bookkeeping
-from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
+from autoslo.utils.paralellism import inner_level_num_cpus
 from autoslo.utils.structured_events import (
     ArrivalEvent,
     ClusterReadyEvent,
@@ -27,16 +29,14 @@ from autoslo.utils.structured_events import (
     RunFinishEvent,
     RunStartEvent,
 )
-from autoslo.utils.paralellism import inner_level_num_cpus
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
-from autoslo.workload_execution.structured_config import StructuredConfig
 from autoslo.workload_execution.simulator_event import (
     SimulatorEvent,
     SimulatorEventType,
 )
-from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
+from autoslo.workload_execution.structured_config import StructuredConfig
 
 
 class WorkloadSimulator:
@@ -400,8 +400,6 @@ class WorkloadSimulator:
             )
         )
 
-    
-
     def write_out_billing_interval_analysis(self) -> None:
         """
         Write out a yaml file analyzing the billing intervals per cluster.
@@ -497,7 +495,8 @@ class WorkloadSimulator:
                 )
 
                 lat_and_slos = [
-                    (lat, slo) for lat, slo in zip(durations, per_row_slo)
+                    LatencySlo(lat, slo)
+                    for lat, slo in zip(durations, per_row_slo)
                 ]
 
                 violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)

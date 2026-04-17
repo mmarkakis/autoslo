@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from autoslo.slo.slo_metric import SloMetric
+from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
@@ -233,7 +233,8 @@ class SimulationResult:
                     .fillna(0.0)
                 )
                 lat_and_slos = [
-                    (lat, slo) for lat, slo in zip(durations, per_row_slo)
+                    LatencySlo(lat, slo)
+                    for lat, slo in zip(durations, per_row_slo)
                 ]
                 violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)
                 violation_amount_s = SloMetric.ABSOLUTE_S.aggregate_batch(
