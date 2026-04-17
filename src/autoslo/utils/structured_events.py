@@ -332,7 +332,8 @@ class CapacityCheckpointReconciliationEvent(BaseStructuredEvent):
 class RpuCounterfactualEvent(BaseStructuredEvent):
     cluster_name: str = ""
     rpu: int = 0
-    slo_metric_and_cost: dict[str, float] = field(default_factory=dict)
+    slo_violation: float = 0.0
+    cost: float = 0.0
     slo_threshold: float = 0.0
 
     def __post_init__(self) -> None:
@@ -343,7 +344,8 @@ class RpuCounterfactualEvent(BaseStructuredEvent):
 class RpuSelectionEvent(BaseStructuredEvent):
     cluster_name: str = ""
     rpu: int = 0
-    slo_metric_and_cost: dict[str, float] = field(default_factory=dict)
+    slo_violation: float = 0.0
+    cost: float = 0.0
     slo_threshold: float = 0.0
 
     def __post_init__(self) -> None:

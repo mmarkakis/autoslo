@@ -324,10 +324,8 @@ class Autoscaler:
                     source="Autoscaler",
                     cluster_name=hyp_cluster_name,
                     rpu=rpu,
-                    slo_metric_and_cost={
-                        "slo_metric": slo_viol_and_cost[0],
-                        "cost": slo_viol_and_cost[1],
-                    },
+                    slo_violation=slo_viol_and_cost[0],
+                    cost=slo_viol_and_cost[1],
                     slo_threshold=self._slo_objective.slo_threshold,
                 )
             )
@@ -339,10 +337,8 @@ class Autoscaler:
                 source="Autoscaler",
                 cluster_name=best_hyp_cluster_name,
                 rpu=best_rpu,
-                slo_metric_and_cost={
-                    "slo_metric": best_viol_and_cost[0],
-                    "cost": best_viol_and_cost[1],
-                },
+                slo_violation=best_viol_and_cost[0],
+                cost=best_viol_and_cost[1],
                 slo_threshold=self._slo_objective.slo_threshold,
             )
         )
