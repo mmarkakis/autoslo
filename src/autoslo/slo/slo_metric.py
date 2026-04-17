@@ -51,8 +51,9 @@ class SloMetric(Enum):
         """
         Aggregate multiple per-query violations into a single value.
 
-        For BINARY, this is the violation rate (mean).  For the others, it's
-        the total violation (sum).
+        All metrics use the mean: violation rate for BINARY, mean absolute
+        overshoot for ABSOLUTE_S, mean relative overshoot for RELATIVE /
+        RELATIVE_UNCONSTRAINED.
         """
         if len(violations) == 0:
             return 0.0

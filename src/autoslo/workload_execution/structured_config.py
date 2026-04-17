@@ -237,7 +237,7 @@ class StructuredConfig:
         routing_policy = QueryRouterPolicy(routing_policy_str)
         router: QueryRouter = QueryRouter(
             slo_resolver=slo_resolver,
-            slo_metric=slo_objective.slo_metric,
+            slo_objective=slo_objective,
             routing_policy=routing_policy,
         )
 

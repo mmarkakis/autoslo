@@ -377,7 +377,7 @@ class Autoscaler:
                 )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
-            slo_metric=self._slo_objective.slo_metric,
+            slo_objective=self._slo_objective,
             routing_policy=self._routing_policy,
         )
 

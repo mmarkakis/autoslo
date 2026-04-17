@@ -7,7 +7,6 @@ from intervaltree import Interval  # type: ignore[import]
 from autoslo.clusters.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.billing import Billing
@@ -32,11 +31,11 @@ class QueryRouter:
     def __init__(
         self,
         slo_resolver: SloResolver,
-        slo_metric: SloMetric,
+        slo_objective: SloObjective,
         routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
     ):
         self._slo_resolver = slo_resolver
-        self._slo_metric = slo_metric
+        self._slo_objective = slo_objective
         self._routing_policy = routing_policy
         self._round_robin_idx = 0
 
@@ -52,18 +51,16 @@ class QueryRouter:
         rel_time_s: float,
     ) -> tuple[str, dict[str, float]]:
 
-        # Collect before-state per cluster
-        before_viols_and_costs = {}
+        # Collect before-state raw pairs and cost per cluster.
+        before_pairs: dict[str, list[tuple[float, float]]] = {}
+        before_costs: dict[str, float] = {}
         cluster_name_to_queries_to_neighbors = {}
         for cluster_name, cluster in clusters.items():
-            before_violation, before_cost = self.compute_slo_metric_and_cost(
-                cluster,
-                rel_time_s,
+            pairs, cost = self._collect_cluster_pairs_and_cost(
+                cluster, rel_time_s
             )
-            before_viols_and_costs[cluster_name] = (
-                before_violation,
-                before_cost,
-            )
+            before_pairs[cluster_name] = pairs
+            before_costs[cluster_name] = cost
 
             cluster.add_query(query)
             cluster_name_to_queries_to_neighbors[cluster_name] = (
@@ -87,39 +84,54 @@ class QueryRouter:
                     ),
                 )
 
-        # Compute after-states per cluster
-        marginal_viols_and_costs = {}
-        for cluster_name, cluster in clusters.items():
-            before_violation, before_cost = before_viols_and_costs[cluster_name]
-            cluster.predicted_latencies = new_predicted_latencies[cluster_name]
-            after_violation, after_cost = self.compute_slo_metric_and_cost(
-                cluster,
-                rel_time_s,
+        # For each candidate cluster, compute the global after-state
+        # (aggregating raw pairs across ALL clusters, with the candidate
+        # cluster using updated predictions).
+        all_after_viols_and_costs: dict[str, tuple[float, float]] = {}
+        for candidate_name, cluster in clusters.items():
+            cluster.predicted_latencies = new_predicted_latencies[
+                candidate_name
+            ]
+            after_pairs, after_cost = self._collect_cluster_pairs_and_cost(
+                cluster, rel_time_s
             )
-            marginal_violation = after_violation - before_violation
-            marginal_cost = after_cost - before_cost
-            marginal_viols_and_costs[cluster_name] = (
-                marginal_violation,
-                marginal_cost,
+
+            # Build pair list: updated pairs for candidate,
+            # unchanged before-pairs for all others.
+            all_after_pairs: list[tuple[float, float]] = list(after_pairs)
+            total_after_cost = after_cost
+            for other_name in clusters:
+                if other_name != candidate_name:
+                    all_after_pairs.extend(before_pairs[other_name])
+                    total_after_cost += before_costs[other_name]
+
+            after_violation = self._slo_objective.slo_metric.aggregate_batch(
+                all_after_pairs
             )
-            latency_s = new_predicted_latencies[cluster_name][query.query_id]
+            all_after_viols_and_costs[candidate_name] = (
+                after_violation,
+                total_after_cost,
+            )
+
+            latency_s = new_predicted_latencies[candidate_name][query.query_id]
             emit_structured(
                 RoutingScoreEvent(
                     rel_time_s=rel_time_s,
                     source="QueryRouter",
                     query_id=query.query_id,
                     query_text_id=query.query_text_id,
-                    cluster_name=cluster_name,
+                    cluster_name=candidate_name,
                     latency_s=latency_s,
-                    marginal_slo_violation=marginal_violation,
-                    marginal_cost=marginal_cost,
+                    slo_violation=after_violation,
+                    cost=total_after_cost,
                 )
             )
 
         # Choose and return best.
-        selected_cluster_name = self.select_best(marginal_viols_and_costs)
-
-        selected_marginal = marginal_viols_and_costs[selected_cluster_name]
+        selected_cluster_name = self.select_best(all_after_viols_and_costs)
+        selected_viol, selected_cost = all_after_viols_and_costs[
+            selected_cluster_name
+        ]
         selected_latency = new_predicted_latencies[selected_cluster_name][
             query.query_id
         ]
@@ -131,8 +143,8 @@ class QueryRouter:
                 query_text_id=query.query_text_id,
                 cluster_name=selected_cluster_name,
                 latency_s=selected_latency,
-                marginal_slo_violation=selected_marginal[0],
-                marginal_cost=selected_marginal[1],
+                slo_violation=selected_viol,
+                cost=selected_cost,
             )
         )
 
@@ -141,27 +153,28 @@ class QueryRouter:
             new_predicted_latencies[selected_cluster_name],
         )
 
-    def compute_slo_metric_and_cost(
+    def _collect_cluster_pairs_and_cost(
         self,
         cluster: Cluster,
         rel_time_s: float,
-    ) -> tuple[float, float]:
+    ) -> tuple[list[tuple[float, float]], float]:
         """
-        Compute the cost and SLO-violation metric for a cluster.
+        Collect raw (latency, slo) pairs and cost for a single cluster
+        without aggregating violations.
 
         Parameters
         ----------
         cluster:
-            The cluster (or clone) whose before-state to compute.
+            The cluster whose state to inspect.
             Must have ``predicted_latencies`` populated for all active queries.
         rel_time_s:
             Relative time in seconds since run start.
 
         Returns
         -------
-        (slo_violation, cost)
+        (lat_slo_pairs, cost)
         """
-        lat_and_slos = []
+        lat_and_slos: list[tuple[float, float]] = []
         intervals = []
 
         for q in cluster.active_queries:
@@ -171,8 +184,6 @@ class QueryRouter:
             lat_and_slos.append((lat, slo))
             intervals.append(interval)
 
-        slo_violation = self._slo_metric.aggregate_batch(lat_and_slos)
-
         if cluster.billing_window_start_s is not None:
             intervals.append(
                 Interval(cluster.billing_window_start_s, rel_time_s)
@@ -180,13 +191,13 @@ class QueryRouter:
         billed_s = Billing.billed_s(intervals)
         cost = cluster.cost_per_second * billed_s
 
-        return slo_violation, cost
+        return lat_and_slos, cost
 
     def select_best(
         self,
-        marginal_viols_and_costs: dict[str, tuple[float, float]],
+        viols_and_costs: dict[str, tuple[float, float]],
     ):
-        cluster_names = sorted(marginal_viols_and_costs.keys())
+        cluster_names = sorted(viols_and_costs.keys())
 
         if self._routing_policy == QueryRouterPolicy.ROUND_ROBIN:
             cluster_name = cluster_names[
@@ -200,23 +211,18 @@ class QueryRouter:
 
         # USE_ICONQ_MODEL
         best = cluster_names[0]
-        best_marginal_viol_and_cost = marginal_viols_and_costs[best]
+        best_viol_and_cost = viols_and_costs[best]
 
         if len(cluster_names) == 1:
             return best
 
-        slo_objective = SloObjective(
-            slo_metric=self._slo_metric, slo_threshold=0.0
-        )
-        # Here the threshold is zero because these are marginal.
-
         for cluster_name in cluster_names[1:]:
-            this_marginal_viol_and_cost = marginal_viols_and_costs[cluster_name]
-            if slo_objective.is_b_better(
-                best_marginal_viol_and_cost,
-                this_marginal_viol_and_cost,
+            this_viol_and_cost = viols_and_costs[cluster_name]
+            if self._slo_objective.is_b_better(
+                best_viol_and_cost,
+                this_viol_and_cost,
             ):
                 best = cluster_name
-                best_marginal_viol_and_cost = this_marginal_viol_and_cost
+                best_viol_and_cost = this_viol_and_cost
 
         return best

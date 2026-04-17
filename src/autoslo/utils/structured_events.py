@@ -166,8 +166,8 @@ class RoutingScoreEvent(BaseStructuredEvent):
     query_text_id: QueryTextId = QueryTextId("")
     cluster_name: str = ""
     latency_s: float = 0.0
-    marginal_slo_violation: float = 0.0
-    marginal_cost: float = 0.0
+    slo_violation: float = 0.0
+    cost: float = 0.0
 
     def __post_init__(self) -> None:
         self.event_type = "routing_score"
@@ -179,8 +179,8 @@ class RoutingDecisionEvent(BaseStructuredEvent):
     query_text_id: QueryTextId = QueryTextId("")
     cluster_name: str = ""
     latency_s: float = 0.0
-    marginal_slo_violation: float = 0.0
-    marginal_cost: float = 0.0
+    slo_violation: float = 0.0
+    cost: float = 0.0
 
     def __post_init__(self) -> None:
         self.event_type = "routing"
