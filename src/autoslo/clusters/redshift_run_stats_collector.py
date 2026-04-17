@@ -14,21 +14,22 @@ from autoslo.workload_execution.run_stats_collector import (
     SYS_QUERY_HISTORY_QUERY,
     SYS_SERVERLESS_USAGE_QUERY,
 )
-import autoslo.utils.paths as pu
 
 
 class RedshiftRunStatsCollector:
 
     @staticmethod
     def collect_cluster_stats(
-        cluster_name: str, conn_info: ClusterConnInfo, run_id: str
+        cluster_name: str,
+        conn_info: ClusterConnInfo,
+        run_id: str,
+        out_dir: str,
     ) -> None:
         """Stats-collector callback invoked during cluster tear-down.
 
         Opens a fresh connection to *cluster_name*, queries the five
         Redshift system tables used by :class:`RunStatsCollector`, and
-        writes each result as a Parquet file in the current run
-        directory.
+        writes each result as a Parquet file in *out_dir*.
 
         This method is synchronous and may block for a significant
         amount of time (system tables can take minutes to flush).  It
@@ -65,7 +66,7 @@ class RedshiftRunStatsCollector:
                 SYS_QUERY_HISTORY_QUERY.format(run_id),
                 "sys_query_history",
                 cluster_name,
-                run_id
+                out_dir,
             )
             if history_df is None or history_df.empty:
                 logging.warning(
@@ -102,7 +103,11 @@ class RedshiftRunStatsCollector:
                 ),
             ]:
                 RedshiftRunStatsCollector._query_to_parquet(
-                    conn, query_sql, table_name, cluster_name, run_id
+                    conn,
+                    query_sql,
+                    table_name,
+                    cluster_name,
+                    out_dir,
                 )
         finally:
             try:
@@ -118,7 +123,7 @@ class RedshiftRunStatsCollector:
         query: str,
         table_name: str,
         cluster_name: str,
-        run_id: str
+        out_dir: str,
     ) -> Optional[pd.DataFrame]:
         """Execute *query*, write result as Parquet, return the DataFrame."""
         try:
@@ -132,8 +137,7 @@ class RedshiftRunStatsCollector:
                 )
             df = pd.DataFrame(rows, columns=cols)
             out_path = os.path.join(
-                pu.get_runs_path(),
-                run_id,
+                out_dir,
                 f"{table_name}+{cluster_name}.parquet",
             )
             df.to_parquet(out_path, index=False)

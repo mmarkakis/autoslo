@@ -73,6 +73,8 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         Path to YAML file with AWS configuration
     """
 
+    MAX_NAMESPACES: int = 25
+
     def __init__(self, aws_config_path: str) -> None:
         with open(aws_config_path) as f:
             cfg = yaml.safe_load(f)
@@ -141,6 +143,14 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         except client.exceptions.ConflictException:
             logger.info("Namespace %s already exists.", namespace_name)
             return True
+        except client.exceptions.ServiceQuotaExceededException:
+            logger.error(
+                "Namespace quota exceeded (max %d) while creating %s. "
+                "Delete unused namespaces or request a limit increase.",
+                self.MAX_NAMESPACES,
+                namespace_name,
+            )
+            return False
         except Exception:
             logger.exception("Namespace creation failed for %s", namespace_name)
             return False
@@ -324,8 +334,14 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         logger.error("Statement %s timed out.", label)
         return False
 
+    _DELETE_RETRY_DELAYS_S = (10, 30, 60)
+
     def _delete_workgroup(self, workgroup_name: str) -> tuple[bool, str | None]:
-        """Delete a workgroup, returning ``(success, namespace_name)``."""
+        """Delete a workgroup, returning ``(success, namespace_name)``.
+
+        Retries on ``ConflictException`` (in-flight operation) with
+        exponential backoff.
+        """
         client = self._get_client("redshift-serverless")
         try:
             resp = client.get_workgroup(workgroupName=workgroup_name)
@@ -333,13 +349,38 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         except Exception:
             logger.exception("Failed to look up workgroup %s", workgroup_name)
             return False, None
-        try:
-            client.delete_workgroup(workgroupName=workgroup_name)
-            logger.info("Workgroup %s deletion initiated.", workgroup_name)
-            return True, namespace_name
-        except Exception:
-            logger.exception("Workgroup deletion failed for %s", workgroup_name)
-            return False, namespace_name
+
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate(
+            (0, *self._DELETE_RETRY_DELAYS_S), start=1
+        ):
+            if delay:
+                logger.info(
+                    "Retrying deletion of workgroup %s in %ds (attempt %d).",
+                    workgroup_name, delay, attempt,
+                )
+                time.sleep(delay)
+            try:
+                client.delete_workgroup(workgroupName=workgroup_name)
+                logger.info("Workgroup %s deletion initiated.", workgroup_name)
+                return True, namespace_name
+            except client.exceptions.ConflictException as exc:
+                last_exc = exc
+                logger.warning(
+                    "ConflictException deleting workgroup %s (attempt %d): %s",
+                    workgroup_name, attempt, exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Workgroup deletion failed for %s", workgroup_name
+                )
+                return False, namespace_name
+
+        logger.error(
+            "Workgroup %s deletion failed after %d attempts: %s",
+            workgroup_name, len(self._DELETE_RETRY_DELAYS_S) + 1, last_exc,
+        )
+        return False, namespace_name
 
     def _wait_for_workgroup_deleted(
         self,
@@ -371,22 +412,49 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         return False
 
     def _delete_namespace(self, namespace_name: str) -> bool:
+        """Delete a namespace.
+
+        Retries on ``ConflictException`` with exponential backoff.
+        """
         client = self._get_client("redshift-serverless")
-        try:
-            client.delete_namespace(namespaceName=namespace_name)
-            logger.info("Namespace %s deletion initiated.", namespace_name)
-            return True
-        except client.exceptions.ResourceNotFoundException:
-            # Namespace was already removed (e.g. auto-deleted when the
-            # workgroup was deleted).  The goal is achieved.
-            logger.info(
-                "Namespace %s already gone — nothing to delete.",
-                namespace_name,
-            )
-            return True
-        except Exception:
-            logger.exception("Namespace deletion failed for %s", namespace_name)
-            return False
+
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate(
+            (0, *self._DELETE_RETRY_DELAYS_S), start=1
+        ):
+            if delay:
+                logger.info(
+                    "Retrying deletion of namespace %s in %ds (attempt %d).",
+                    namespace_name, delay, attempt,
+                )
+                time.sleep(delay)
+            try:
+                client.delete_namespace(namespaceName=namespace_name)
+                logger.info("Namespace %s deletion initiated.", namespace_name)
+                return True
+            except client.exceptions.ResourceNotFoundException:
+                logger.info(
+                    "Namespace %s already gone — nothing to delete.",
+                    namespace_name,
+                )
+                return True
+            except client.exceptions.ConflictException as exc:
+                last_exc = exc
+                logger.warning(
+                    "ConflictException deleting namespace %s (attempt %d): %s",
+                    namespace_name, attempt, exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Namespace deletion failed for %s", namespace_name
+                )
+                return False
+
+        logger.error(
+            "Namespace %s deletion failed after %d attempts: %s",
+            namespace_name, len(self._DELETE_RETRY_DELAYS_S) + 1, last_exc,
+        )
+        return False
 
     def _wait_for_namespace_deleted(
         self,
@@ -431,6 +499,37 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         ns_name = f"autoslo-{rpu}-{ts}-{seq}-ns"
         return wg_name, ns_name
 
+    def _best_effort_cleanup(
+        self, workgroup_name: str, namespace_name: str
+    ) -> None:
+        """Attempt to clean up a partially-created workgroup and namespace.
+
+        Called when spin-up fails partway through.  Errors are logged
+        but never raised — the caller will raise the original error.
+        """
+        logger.info(
+            "Attempting best-effort cleanup of %s / %s after failed spin-up.",
+            workgroup_name,
+            namespace_name,
+        )
+        try:
+            ok, _ = self._delete_workgroup(workgroup_name)
+            if ok:
+                self._wait_for_workgroup_deleted(workgroup_name)
+        except Exception:
+            logger.debug(
+                "Cleanup: workgroup %s delete skipped (may not exist).",
+                workgroup_name,
+            )
+        try:
+            if self._delete_namespace(namespace_name):
+                self._wait_for_namespace_deleted(namespace_name)
+        except Exception:
+            logger.debug(
+                "Cleanup: namespace %s delete skipped (may not exist).",
+                namespace_name,
+            )
+
     def spin_up(self, rpu: int, rel_time_s: float) -> Cluster:
         """Create a Redshift Serverless workgroup and return a ready
         ``Cluster``.
@@ -470,12 +569,15 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             raise RuntimeError(f"Failed to create namespace {ns_name}")
 
         if not self._wait_for_namespace_available(ns_name):
+            self._best_effort_cleanup(wg_name, ns_name)
             raise RuntimeError(f"Namespace {ns_name} did not become available")
 
         if not self._create_workgroup(wg_name, rpu, ns_name):
+            self._best_effort_cleanup(wg_name, ns_name)
             raise RuntimeError(f"Failed to create workgroup {wg_name}")
 
         if not self._wait_for_workgroup_available(wg_name):
+            self._best_effort_cleanup(wg_name, ns_name)
             raise RuntimeError(f"Workgroup {wg_name} did not become available")
 
         if not self._attach_tpcds_database(wg_name):

@@ -60,6 +60,7 @@ class ManagedClusterPool:
         search_path: str = "public",
         collect_cluster_stats: bool = False,
         run_id: Optional[str] = None,
+        out_dir: Optional[str] = None,
         write_text_log: bool = False,
         background_executor: Optional[ThreadPoolExecutor] = None,
     ) -> None:
@@ -78,6 +79,7 @@ class ManagedClusterPool:
         self._bg_futures_lock = threading.Lock()
 
         self._run_id: Optional[str] = run_id
+        self._out_dir: Optional[str] = out_dir
         self._write_text_log = write_text_log
 
         # Spin up initial clusters.
@@ -241,10 +243,14 @@ class ManagedClusterPool:
             self._collect_cluster_stats
             and cluster.conn_info is not None
             and self._run_id is not None
+            and self._out_dir is not None
         ):
             try:
                 RedshiftRunStatsCollector.collect_cluster_stats(
-                    cluster_name, cluster.conn_info, self._run_id
+                    cluster_name,
+                    cluster.conn_info,
+                    self._run_id,
+                    self._out_dir,
                 )
             except Exception:
                 logger.exception(

@@ -21,6 +21,8 @@ from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
 
+MAX_CLUSTERS: int = 10
+
 
 class Autoscaler:
     """
@@ -40,6 +42,7 @@ class Autoscaler:
         min_observations_to_act: int = 5,
         routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
         slo_tightening_factor: float = 1.0,
+        max_clusters: int = MAX_CLUSTERS,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
@@ -51,6 +54,7 @@ class Autoscaler:
         self._observation_window_s = observation_window_s
         self._min_observations_to_act = min_observations_to_act
         self._slo_tightening_factor = slo_tightening_factor
+        self._max_clusters = max_clusters
         self._trigger_slo_resolver = (
             slo_resolver.tightened(slo_tightening_factor)
             if slo_tightening_factor != 1.0
@@ -207,6 +211,15 @@ class Autoscaler:
             if cluster.state == ClusterState.PENDING:
                 return []
 
+        # Guard: do not exceed the maximum cluster count.
+        if len(pool_snapshot_with_current_query) >= self._max_clusters:
+            logger.warning(
+                "Skipping spin-up: pool already has %d clusters (max %d).",
+                len(pool_snapshot_with_current_query),
+                self._max_clusters,
+            )
+            return []
+
         # Determine if the (possibly tightened) SLO objective is met.
         lat_and_slos = []
         for cluster_name, cluster in pool_snapshot_with_current_query.items():
@@ -257,7 +270,7 @@ class Autoscaler:
                 continue
 
             idle_time_s = (
-                rel_time_s - cluster.most_recent_query_completion_time_s
+                rel_time_s - cluster.most_recent_query_completion_rel_time_s
             )
             lifetime_s = rel_time_s - cluster.creation_time_s
 
@@ -268,7 +281,7 @@ class Autoscaler:
                     reason=(
                         f"creation_time: {cluster.creation_time_s:.0f}s, "
                         f"most_recent_query_completion_time: "
-                        f"{cluster.most_recent_query_completion_time_s:.0f}s, "
+                        f"{cluster.most_recent_query_completion_rel_time_s:.0f}s, "
                         f"current_time: {rel_time_s:.0f}s, "
                     ),
                     cluster_name=cluster_name,
