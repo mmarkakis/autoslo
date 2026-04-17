@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from autoslo.slo.slo_objective import SloObjective
-from autoslo.tuner.param_sweep import ParamSweep, build_grid, parse_sweep_config
+from autoslo.tuner.param_sweep import ParamSweep, build_grid
 from autoslo.tuner.tuner_utils import SimulationResult
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,7 @@ class TestSelectBest:
             slo_objective=SloObjective(
                 slo_metric="binary", slo_threshold=slo_threshold
             ),
+            agg_metric="mean",
         )
 
     def test_single_pareto_point(self):
@@ -220,12 +221,13 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/train.parquet")],
             val_paths=[Path("/tmp/val.parquet")],
-            param_ranges={"params": {"eta_crit": [0.5]}},
+            sweep_config={"params": {"eta_crit": [0.5]}},
         )
 
         assert best == {"eta_crit": 0.5} | config
@@ -247,12 +249,13 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
         sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={"params": {"eta_crit": [0.5]}},
+            sweep_config={"params": {"eta_crit": [0.5]}},
         )
 
         results_file = run_dir / "test_sweep" / "sweep_results.json"
@@ -292,12 +295,13 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.01),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={"params": {"eta_crit": [0.3, 0.7]}},
+            sweep_config={"params": {"eta_crit": [0.3, 0.7]}},
         )
 
         assert best == {"eta_crit": 0.7} | config
@@ -332,19 +336,20 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.01),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={"params": {"a": [1, 2, 3]}},
+            sweep_config={"params": {"a": [1, 2, 3]}},
         )
 
         # 1 train batch + 1 val batch (Pareto points only)
         assert evaluator.evaluate_batch_from_overrides.call_count == 2
 
     def test_sweep_empty_ranges(self, run_dir: Path, config: dict[str, Any]):
-        """Empty param_ranges → single point with empty params."""
+        """Empty sweep_config → single point with empty params."""
         evaluator = _mock_evaluator(
             [
                 [[_make_scenario_result(0.05, 100.0)]],  # train
@@ -358,12 +363,13 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={},
+            sweep_config={},
         )
 
         assert best == {} | config
@@ -385,12 +391,13 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
         sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={"params": {"routing_config.weight": [0.5]}},
+            sweep_config={"params": {"routing_config.weight": [0.5]}},
         )
 
         call_overrides = evaluator.evaluate_batch_from_overrides.call_args_list[
@@ -420,49 +427,18 @@ class TestParamSweepIntegration:
             run_dir=run_dir,
             phase_name="test_sweep",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={"params": {"a": [1, 2], "b": [10, 20, 30]}},
+            sweep_config={"params": {"a": [1, 2], "b": [10, 20, 30]}},
         )
 
         # Best should have both keys.
         assert "a" in best
         assert "b" in best
-
-
-# ---------------------------------------------------------------------------
-# parse_sweep_config
-# ---------------------------------------------------------------------------
-
-
-class TestParseSweepConfig:
-    def test_new_format_with_strategy(self):
-        strategy, params, options = parse_sweep_config(
-            {
-                "strategy": "random",
-                "seed": 99,
-                "budget": 10,
-                "params": {"x": [1, 2]},
-            }
-        )
-        assert strategy == "random"
-        assert params == {"x": [1, 2]}
-        assert options == {"seed": 99, "budget": 10}
-
-    def test_new_format_defaults_to_grid(self):
-        """If 'params' key present but no 'strategy', default to grid."""
-        strategy, params, _ = parse_sweep_config({"params": {"x": [1]}})
-        assert strategy == "grid"
-        assert params == {"x": [1]}
-
-    def test_empty_config(self):
-        strategy, params, options = parse_sweep_config({})
-        assert strategy == "grid"
-        assert params == {}
-        assert options == {}
 
 
 # ---------------------------------------------------------------------------
@@ -501,12 +477,13 @@ class TestRandomSweep:
             run_dir=run_dir,
             phase_name="test_random",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "random",
                 "budget": 2,
                 "seed": 42,
@@ -540,12 +517,13 @@ class TestRandomSweep:
             run_dir=run_dir,
             phase_name="test_random",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
         sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "random",
                 "budget": 100,
                 "seed": 42,
@@ -574,11 +552,12 @@ class TestRandomSweep:
                 slo_objective=SloObjective(
                     slo_metric="binary", slo_threshold=0.5
                 ),
+                agg_metric="mean",
             )
             sweeper.sweep(
                 train_paths=[Path("/tmp/t.parquet")],
                 val_paths=[Path("/tmp/v.parquet")],
-                param_ranges={
+                sweep_config={
                     "strategy": "random",
                     "budget": 1,
                     "seed": 123,
@@ -666,12 +645,13 @@ class TestCoordinateDescentSweep:
             run_dir=run_dir,
             phase_name="test_cd",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.03),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "coordinate_descent",
                 "max_cycles": 1,
                 "params": {"a": [1, 2, 3], "b": [10, 20, 30]},
@@ -712,12 +692,13 @@ class TestCoordinateDescentSweep:
             run_dir=run_dir,
             phase_name="test_cd",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "coordinate_descent",
                 "max_cycles": 5,  # would run 5 cycles, but should stop at 1
                 "params": {"a": [1, 2, 3]},
@@ -757,12 +738,13 @@ class TestCoordinateDescentSweep:
             run_dir=run_dir,
             phase_name="test_cd",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
         sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "coordinate_descent",
                 "max_cycles": 3,
                 "params": {"a": [1, 2, 3]},
@@ -800,12 +782,13 @@ class TestCoordinateDescentSweep:
             run_dir=run_dir,
             phase_name="test_cd",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
-        best = sweeper.sweep(
+        best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "coordinate_descent",
                 "max_cycles": 1,
                 "starting_point": {"a": 3},
@@ -834,12 +817,13 @@ class TestCoordinateDescentSweep:
             run_dir=run_dir,
             phase_name="test_cd",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
 
         sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            param_ranges={
+            sweep_config={
                 "strategy": "coordinate_descent",
                 "max_cycles": 1,
                 "params": {"a": [1, 2]},
@@ -867,12 +851,13 @@ class TestUnknownStrategy:
             run_dir=tmp_path,
             phase_name="test",
             slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
         )
         with pytest.raises(ValueError, match="Unknown sweep strategy"):
             sweeper.sweep(
                 train_paths=[Path("/tmp/t.parquet")],
                 val_paths=[Path("/tmp/v.parquet")],
-                param_ranges={
+                sweep_config={
                     "strategy": "nonexistent",
                     "params": {"a": [1]},
                 },

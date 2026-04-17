@@ -266,10 +266,12 @@ class CheckpointOptimizer:
         evaluator: ScenarioEvaluator,
         config: dict[str, Any],
         run_dir: Path,
+        agg_metric: str,
     ) -> None:
         self._evaluator = evaluator
         self._config = config
         self._run_dir = run_dir
+        self._agg_metric = agg_metric
 
         self._allowed_rpu_sizes = self._cfgd(
             "autoscaling_config.allowed_rpu_sizes",
@@ -304,7 +306,7 @@ class CheckpointOptimizer:
     def optimize(
         self,
         train_paths: list[Path],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], AggregatedSimulationResults]:
         """Run the greedy checkpoint placement loop.
 
         Checkpoints are placed greedily using training data only.
@@ -317,11 +319,10 @@ class CheckpointOptimizer:
 
         Returns
         -------
-        The full config dict with the best checkpoint schedule applied.
+        A tuple of ``(config, train_agg)`` where *config* is the full
+        config dict with the best checkpoint schedule applied and
+        *train_agg* is the aggregated training results for that config.
         """
-        metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", "p90"
-        )
         max_checkpoints = self._cfgd(
             "tuner_config.checkpoint_phase.max_checkpoints", 5
         )
@@ -338,22 +339,37 @@ class CheckpointOptimizer:
         current_config = copy.deepcopy(self._config)
         dump(current_config, ckpt_dir / "initial_config.yml")
 
+        # Track evaluation results for the current config to avoid
+        # re-evaluation across rounds.  When a candidate is accepted,
+        # its results carry forward as the next round's baseline.
+        current_train_results: list[SimulationResult] | None = None
+        current_train_agg: AggregatedSimulationResults | None = None
+
         for round_idx in range(max_checkpoints):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
             round_dir = ckpt_dir / f"round_{round_idx:03d}"
             dump(current_config, round_dir / "initial_config.yml")
 
-            # 1. Simulate training scenarios with current checkpoints.
-            nested_train_results = self._evaluator.evaluate_batch_from_configs(
-                phase_name=f"round_{round_idx:03d}_baseline",
-                workload_paths=train_paths,
-                configs=[current_config],
-                out_dir=round_dir / "baseline",
-            )
-            train_results = nested_train_results[0]
-            agg_train_results = SimulationResult.aggregate(
-                train_results, metric
-            )
+            # 1. Get baseline results (reuse from previous round
+            #    if available).
+            if current_train_results is not None:
+                train_results = current_train_results
+                assert current_train_agg is not None
+                agg_train_results = current_train_agg
+            else:
+                nested_train_results = (
+                    self._evaluator.evaluate_batch_from_configs(
+                        phase_name=f"round_{round_idx:03d}_baseline",
+                        workload_paths=train_paths,
+                        configs=[current_config],
+                        out_dir=round_dir / "baseline",
+                    )
+                )
+                train_results = nested_train_results[0]
+                agg_train_results = SimulationResult.aggregate(
+                    train_results, self._agg_metric
+                )
+                current_train_agg = agg_train_results
 
             # 2. Find earliest promising checkpoint time.
             next_checkpoint_time = find_next_checkpoint_time(
@@ -397,7 +413,9 @@ class CheckpointOptimizer:
             for i in range(len(self._allowed_rpu_sizes)):
                 checkpoint = checkpoints[i]
                 trial_results = all_trial_results[i]
-                agg = SimulationResult.aggregate(trial_results, metric)
+                agg = SimulationResult.aggregate(
+                    trial_results, self._agg_metric
+                )
                 cands.append((checkpoint, agg))
 
             # 4. Pick best on training set (threshold-aware selection).
@@ -413,7 +431,7 @@ class CheckpointOptimizer:
             AggregatedSimulationResults.print_comparison(
                 ("Current config", agg_train_results),
                 ("Best candidate", cands[best_idx][1]),
-                agg_metric=metric,
+                agg_metric=self._agg_metric,
                 slo_metric=sm,
                 console=console,
             )
@@ -461,6 +479,10 @@ class CheckpointOptimizer:
                 break
 
             current_config = all_configs[best_idx]
+            # Carry forward the accepted candidate's results so the
+            # next round can skip re-evaluating the same config.
+            current_train_results = all_trial_results[best_idx]
+            current_train_agg = cands[best_idx][1]
             console.print(
                 f"  [green]Accepted with SLO metric improvement "
                 f"{relative_improvement:.2%} and cost impact "
@@ -473,7 +495,10 @@ class CheckpointOptimizer:
 
         # Write the final config.
         dump(current_config, ckpt_dir / "final_config.yml")
-        return current_config
+        assert (
+            current_train_agg is not None
+        ), "No checkpoint rounds were configured (max_checkpoints=0)."
+        return current_config, current_train_agg
 
     # ------------------------------------------------------------------
     # Rich output helpers

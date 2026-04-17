@@ -24,6 +24,7 @@ import autoslo.utils.config as cfgu
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
+    AggregatedSimulationResults,
     SimulationResult,
     compute_pareto_front,
     threshold_aware_select,
@@ -86,12 +87,14 @@ class ParamSweep:
         run_dir: Path,
         phase_name: str,
         slo_objective: SloObjective,
+        agg_metric: str,
     ) -> None:
         self._evaluator = evaluator
         self._config = initial_config
         self._run_dir = run_dir
         self._phase_name = phase_name
         self._slo_objective = slo_objective
+        self._agg_metric = agg_metric
 
     # ------------------------------------------------------------------
     # Public API
@@ -102,8 +105,10 @@ class ParamSweep:
         train_paths: list[Path],
         val_paths: list[Path],
         sweep_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Run a parameter sweep and return the best config.
+    ) -> tuple[
+        dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
+    ]:
+        """Run a parameter sweep and return the best config with its metrics.
 
         *sweep_config* format::
 
@@ -134,11 +139,6 @@ class ParamSweep:
             for k, v in sweep_config.items()
             if k not in ("strategy", "params")
         }
-        metric = cfgu.getd(
-            self._config,
-            "tuner_config.forecast_config.aggregation_metric",
-            "p90",
-        )
         phase_dir = self._run_dir / self._phase_name
 
         # Empty params → nothing to sweep; fall back to grid (evaluates
@@ -151,15 +151,15 @@ class ParamSweep:
         # ── Generate & evaluate candidates (strategy-specific) ─────
         if strategy == "grid":
             candidates, grid_results = self._sweep_grid(
-                train_paths, param_ranges, metric, phase_dir
+                train_paths, param_ranges, phase_dir
             )
         elif strategy == "random":
             candidates, grid_results = self._sweep_random(
-                train_paths, param_ranges, options, metric, phase_dir
+                train_paths, param_ranges, options, phase_dir
             )
         elif strategy == "coordinate_descent":
             candidates, grid_results = self._sweep_coordinate_descent(
-                train_paths, param_ranges, options, metric, phase_dir
+                train_paths, param_ranges, options, phase_dir
             )
         else:
             raise ValueError(f"Unknown sweep strategy: {strategy!r}")
@@ -190,7 +190,7 @@ class ParamSweep:
         )
         for i, idx in enumerate(pareto_indices):
             val_results = all_val_results[i]
-            val_agg = SimulationResult.aggregate(val_results, metric)
+            val_agg = SimulationResult.aggregate(val_results, self._agg_metric)
             val_primary = val_agg.primary_violation(
                 self._slo_objective.slo_metric
             )
@@ -210,7 +210,9 @@ class ParamSweep:
         final_config = cfgu.copy_and_apply_overrides(self._config, best_params)
         dump(final_config, phase_dir / "final_config.yml")
 
-        return final_config
+        best_train_agg = grid_results[best_idx]["train_metrics"]
+        best_val_agg = grid_results[best_idx]["val_metrics"]
+        return final_config, best_train_agg, best_val_agg
 
     # ------------------------------------------------------------------
     # Strategy implementations
@@ -220,7 +222,6 @@ class ParamSweep:
         self,
         train_paths: list[Path],
         candidates: list[dict[str, Any]],
-        metric: str,
         out_dir: Path,
     ) -> list[dict[str, Any]]:
         """Evaluate *candidates* on training scenarios and return result dicts."""
@@ -234,7 +235,7 @@ class ParamSweep:
         grid_results: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates):
             train_agg = SimulationResult.aggregate(
-                all_train_results[idx], metric
+                all_train_results[idx], self._agg_metric
             )
             train_primary = train_agg.primary_violation(
                 self._slo_objective.slo_metric
@@ -258,7 +259,6 @@ class ParamSweep:
         self,
         train_paths: list[Path],
         param_ranges: dict[str, list],
-        metric: str,
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Exhaustive grid search (original strategy)."""
@@ -266,7 +266,7 @@ class ParamSweep:
         self._print_preflight(param_ranges, grid, len(train_paths))
         console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results = self._evaluate_candidates(
-            train_paths, grid, metric, phase_dir / "train"
+            train_paths, grid, phase_dir / "train"
         )
         return grid, grid_results
 
@@ -275,7 +275,6 @@ class ParamSweep:
         train_paths: list[Path],
         param_ranges: dict[str, list],
         options: dict[str, Any],
-        metric: str,
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Random search: sample *budget* configs from the grid."""
@@ -297,7 +296,7 @@ class ParamSweep:
         )
         console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results = self._evaluate_candidates(
-            train_paths, grid, metric, phase_dir / "train"
+            train_paths, grid, phase_dir / "train"
         )
         return grid, grid_results
 
@@ -306,7 +305,6 @@ class ParamSweep:
         train_paths: list[Path],
         param_ranges: dict[str, list],
         options: dict[str, Any],
-        metric: str,
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Coordinate descent: optimise one parameter at a time."""
@@ -367,7 +365,7 @@ class ParamSweep:
                         / param_name.replace(".", "_")
                     )
                     batch_results = self._evaluate_candidates(
-                        train_paths, new_candidates, metric, out_dir
+                        train_paths, new_candidates, out_dir
                     )
                     for j, c in enumerate(new_candidates):
                         idx = len(all_candidates)

@@ -92,6 +92,13 @@ class PolicyTuner:
             default_slo_s=slo_s, slo_dict_filename=slo_dict_filename
         )
 
+        # Aggregation metric — shared by all phases.
+        self._agg_metric: str = cfgu.getd(
+            self._initial_config,
+            "tuner_config.forecast_config.aggregation_metric",
+            required=True,
+        )
+
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
@@ -118,7 +125,7 @@ class PolicyTuner:
         """
 
         # Load from disk if it already exists, to save time on re-runs.
-        save_dir = self._run_dir / "reservoir"
+        save_dir = self._run_dir / "01_reservoir"
         if save_dir.exists() and not self._cfgd("tuner_config.force", False):
             console.print(
                 f"  Reservoir already exists at {save_dir}; loading from disk."
@@ -182,8 +189,8 @@ class PolicyTuner:
         n_train = int(num_scenarios * train_fraction)
         n_val = num_scenarios - n_train
 
-        train_dir = self._run_dir / "workloads" / "train"
-        val_dir = self._run_dir / "workloads" / "val"
+        train_dir = self._run_dir / "02_workloads" / "train"
+        val_dir = self._run_dir / "02_workloads" / "val"
 
         target_date = pd.Timestamp(
             self._cfgd(
@@ -225,7 +232,7 @@ class PolicyTuner:
         )
         console.print(
             f"  Sampled {n_train} train + {n_val} val workloads "
-            f"to {self._run_dir / 'workloads'}"
+            f"to {self._run_dir / '02_workloads'}"
         )
 
         assert train_paths and val_paths, "No workload paths returned."
@@ -243,69 +250,55 @@ class PolicyTuner:
         prints a rich table.
 
         Returns ``(train_agg, val_agg)``."""
-        metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", "p90"
-        )
+        force = self._cfgd("tuner_config.force", False)
+        summary_dir = self._run_dir / "03_baseline"
+        train_summary_path = summary_dir / "train_summary.yml"
+        val_summary_path = summary_dir / "val_summary.yml"
 
-        # Training set.
-        console.print(
-            f"Evaluating baseline on {len(train_paths)} training scenarios..."
-        )
-        train_out_dir = self._run_dir / "baseline" / "train"
-        train_results: list[SimulationResult]
-        if train_out_dir.exists() and not self._cfgd(
-            "tuner_config.force", False
+        # Fast path: both summaries already persisted from a previous run.
+        if (
+            train_summary_path.exists()
+            and val_summary_path.exists()
+            and not force
         ):
             console.print(
-                f"  Baseline train results already exist at {train_out_dir}; "
-                "loading from disk."
+                "  Baseline summaries already exist; loading from disk."
             )
-            train_results = SimulationResult.load_batch(
-                train_out_dir / "config_0"
-            )
-        else:
-            train_results_nested = self._evaluator.evaluate_batch_from_configs(
-                phase_name="baseline_train",
-                workload_paths=train_paths,
-                configs=[self._initial_config],
-                out_dir=train_out_dir,
-            )
-            train_results = train_results_nested[0]
+            train_agg = self._parse_phase_summary(train_summary_path)
+            val_agg = self._parse_phase_summary(val_summary_path)
+            return train_agg, val_agg
 
-        train_agg = SimulationResult.aggregate(train_results, metric)
-
-        # Validation set.
+        # Run train + val workloads in a single parallel batch so the
+        # process pool stays fully utilised instead of idling between
+        # the two sequential calls.
+        n_train = len(train_paths)
+        all_paths = train_paths + val_paths
         console.print(
-            f"Evaluating baseline on {len(val_paths)} validation scenarios..."
+            f"Evaluating baseline on {n_train} train + "
+            f"{len(val_paths)} val scenarios..."
         )
-        val_out_dir = self._run_dir / "baseline" / "val"
-        val_results: list[SimulationResult]
-        if val_out_dir.exists() and not self._cfgd("tuner_config.force", False):
-            console.print(
-                f"  Baseline val results already exist at {val_out_dir}; "
-                "loading from disk."
-            )
-            val_results = SimulationResult.load_batch(val_out_dir / "config_0")
-        else:
-            val_results_nested = self._evaluator.evaluate_batch_from_configs(
-                phase_name="baseline_val",
-                workload_paths=val_paths,
-                configs=[self._initial_config],
-                out_dir=val_out_dir,
-            )
-            val_results = val_results_nested[0]
-        val_agg = SimulationResult.aggregate(val_results, metric)
+        all_results_nested = self._evaluator.evaluate_batch_from_configs(
+            phase_name="baseline",
+            workload_paths=all_paths,
+            configs=[self._initial_config],
+            out_dir=summary_dir / "results",
+        )
+        all_results = all_results_nested[0]
+        train_results = all_results[:n_train]
+        val_results = all_results[n_train:]
 
-        # Persist summary.
-        summary_dir = self._run_dir / "baseline"
+        train_agg = SimulationResult.aggregate(train_results, self._agg_metric)
+        val_agg = SimulationResult.aggregate(val_results, self._agg_metric)
+
+        # Persist summaries.
         summary_dir.mkdir(parents=True, exist_ok=True)
-        self._write_phase_summary(summary_dir / "train_summary.yml", train_agg)
-        self._write_phase_summary(summary_dir / "val_summary.yml", val_agg)
+        self._write_phase_summary(train_summary_path, train_agg)
+        self._write_phase_summary(val_summary_path, val_agg)
 
         return train_agg, val_agg
 
     def find_checkpoints(
-        self, train_paths: list[Path], val_paths: list[Path], agg_metric: str
+        self, train_paths: list[Path], val_paths: list[Path]
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
     ]:
@@ -320,7 +313,7 @@ class PolicyTuner:
         from ``managed_cluster_pool_config.initial_rpus``).
         """
         force = self._cfgd("tuner_config.force", False)
-        ckpt_root = self._run_dir / "checkpoints"
+        ckpt_root = self._run_dir / "04_checkpoints"
 
         # Determine candidates.
         default_rpus = self._cfgd(
@@ -355,9 +348,7 @@ class PolicyTuner:
 
         for i, rpus in enumerate(candidates):
             tag = f"candidate_{i}"
-            console.print(
-                f"  [bold]Candidate {i}[/]: initial_rpus={rpus}"
-            )
+            console.print(f"  [bold]Candidate {i}[/]: initial_rpus={rpus}")
 
             # Stamp this candidate's initial_rpus into the config.
             candidate_config = copy_and_apply_overrides(
@@ -368,6 +359,9 @@ class PolicyTuner:
             # Each candidate gets its own subdirectory.
             candidate_dir = ckpt_root / tag
             final_cfg_path = candidate_dir / "checkpoints" / "final_config.yml"
+            train_summary_path = (
+                candidate_dir / "checkpoints" / "train_summary.yml"
+            )
 
             if final_cfg_path.exists() and not force:
                 console.print(
@@ -376,38 +370,23 @@ class PolicyTuner:
                 )
                 with open(final_cfg_path) as f:
                     post_ckpt_config = yaml.safe_load(f) or {}
+                train_agg = self._parse_phase_summary(train_summary_path)
             else:
                 optimizer = CheckpointOptimizer(
                     evaluator=self._evaluator,
                     config=candidate_config,
                     run_dir=candidate_dir,
+                    agg_metric=self._agg_metric,
                 )
-                post_ckpt_config = optimizer.optimize(
+                post_ckpt_config, train_agg = optimizer.optimize(
                     train_paths=train_paths,
                 )
-
-            # Evaluate on training data.
-            train_out = candidate_dir / "final" / "train"
-            if train_out.exists() and not force:
-                train_results = SimulationResult.load_batch(
-                    train_out / "config_0"
-                )
-            else:
-                nested = self._evaluator.evaluate_batch_from_configs(
-                    phase_name=f"{tag}_ckpt_train",
-                    workload_paths=train_paths,
-                    configs=[post_ckpt_config],
-                    out_dir=train_out,
-                )
-                train_results = nested[0]
-            train_agg = SimulationResult.aggregate(train_results, agg_metric)
+                self._write_phase_summary(train_summary_path, train_agg)
 
             # Evaluate on validation data.
             val_out = candidate_dir / "final" / "val"
             if val_out.exists() and not force:
-                val_results = SimulationResult.load_batch(
-                    val_out / "config_0"
-                )
+                val_results = SimulationResult.load_batch(val_out / "config_0")
             else:
                 nested = self._evaluator.evaluate_batch_from_configs(
                     phase_name=f"{tag}_ckpt_val",
@@ -416,7 +395,7 @@ class PolicyTuner:
                     out_dir=val_out,
                 )
                 val_results = nested[0]
-            val_agg = SimulationResult.aggregate(val_results, agg_metric)
+            val_agg = SimulationResult.aggregate(val_results, self._agg_metric)
 
             candidate_configs.append(post_ckpt_config)
             candidate_train_aggs.append(train_agg)
@@ -430,9 +409,7 @@ class PolicyTuner:
             )
             for agg in candidate_val_aggs
         ]
-        best_idx = threshold_aware_select(
-            val_scores, self._slo_threshold
-        )
+        best_idx = threshold_aware_select(val_scores, self._slo_threshold)
 
         best_config = candidate_configs[best_idx]
         best_train_agg = candidate_train_aggs[best_idx]
@@ -453,7 +430,7 @@ class PolicyTuner:
             AggregatedSimulationResults.print_comparison(
                 *comparison_entries,
                 console=console,
-                agg_metric=agg_metric,
+                agg_metric=self._agg_metric,
                 slo_metric=self._slo_metric,
                 highlight_best=True,
             )
@@ -475,20 +452,25 @@ class PolicyTuner:
         val_paths: list[Path],
         initial_config: dict[str, Any],
         phase_name: str,
-    ) -> dict[str, Any]:
+        config_key: str | None = None,
+    ) -> tuple[
+        dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
+    ]:
         """
         Phases 5 & 6: Autoscaler and routing parameter sweeps.
         """
-        sweeper = ParamSweep(
-            evaluator=self._evaluator,
-            initial_config=initial_config,
-            run_dir=self._run_dir,
-            phase_name=phase_name,
-            slo_objective=self._slo_objective,
-        )
-        final_config_path = self._run_dir / phase_name / "final_config.yml"
-        if final_config_path.exists() and not self._cfgd(
-            "tuner_config.force", False
+        if config_key is None:
+            config_key = phase_name
+        phase_dir = self._run_dir / phase_name
+        final_config_path = phase_dir / "final_config.yml"
+        train_summary_path = phase_dir / "best_train_summary.yml"
+        val_summary_path = phase_dir / "best_val_summary.yml"
+
+        if (
+            final_config_path.exists()
+            and train_summary_path.exists()
+            and val_summary_path.exists()
+            and not self._cfgd("tuner_config.force", False)
         ):
             console.print(
                 f"  Parameter sweep results for phase '{phase_name}' already "
@@ -496,13 +478,25 @@ class PolicyTuner:
             )
             with open(final_config_path) as f:
                 post_sweep_config = yaml.safe_load(f) or {}
+            train_agg = self._parse_phase_summary(train_summary_path)
+            val_agg = self._parse_phase_summary(val_summary_path)
         else:
-            post_sweep_config = sweeper.sweep(
+            sweeper = ParamSweep(
+                evaluator=self._evaluator,
+                initial_config=initial_config,
+                run_dir=self._run_dir,
+                phase_name=phase_name,
+                slo_objective=self._slo_objective,
+                agg_metric=self._agg_metric,
+            )
+            post_sweep_config, train_agg, val_agg = sweeper.sweep(
                 train_paths=train_paths,
                 val_paths=val_paths,
-                sweep_config=self._cfgd(f"tuner_config.{phase_name}", {}),
+                sweep_config=self._cfgd(f"tuner_config.{config_key}", {}),
             )
-        return post_sweep_config
+            self._write_phase_summary(train_summary_path, train_agg)
+            self._write_phase_summary(val_summary_path, val_agg)
+        return post_sweep_config, train_agg, val_agg
 
     def tune(self) -> Path:
         """Execute the full tuning pipeline end-to-end.
@@ -510,9 +504,6 @@ class PolicyTuner:
         Returns the path to the final optimised config file.
         """
 
-        agg_metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", "p90"
-        )
 
         ### Phase 1: Build reservoir
         self._print_banner("Phase 1: Building reservoir")
@@ -531,7 +522,7 @@ class PolicyTuner:
             ("Baseline (train)", baseline_train),
             ("Baseline (val)", baseline_val),
             console=console,
-            agg_metric=agg_metric,
+            agg_metric=self._agg_metric,
             slo_metric=self._slo_metric,
             highlight_best=False,
         )
@@ -542,38 +533,40 @@ class PolicyTuner:
             post_checkpoints_config,
             post_checkpoints_train,
             post_checkpoints_val,
-        ) = self.find_checkpoints(train_paths, val_paths, agg_metric=agg_metric)
+        ) = self.find_checkpoints(train_paths, val_paths)
         AggregatedSimulationResults.print_comparison(
             ("Baseline (train)", baseline_train),
             ("Post-checkpoints (train)", post_checkpoints_train),
             console=console,
-            agg_metric=agg_metric,
+            agg_metric=self._agg_metric,
             slo_metric=self._slo_metric,
         )
         AggregatedSimulationResults.print_comparison(
             ("Baseline (val)", baseline_val),
             ("Post-checkpoints (val)", post_checkpoints_val),
             console=console,
-            agg_metric=agg_metric,
+            agg_metric=self._agg_metric,
             slo_metric=self._slo_metric,
         )
 
         ### Phase 5: Autoscaler parameter sweep
         self._print_banner("Phase 5: Autoscaler parameter sweep")
-        post_first_sweep_config = self.param_sweep(
+        post_first_sweep_config, _, _ = self.param_sweep(
             train_paths=train_paths,
             val_paths=val_paths,
             initial_config=post_checkpoints_config,
-            phase_name="autoscaling_param_sweep",
+            phase_name="05_autoscaling_param_sweep",
+            config_key="autoscaling_param_sweep",
         )
 
         ### Phase 6: Routing parameter sweep
         self._print_banner("Phase 6: Routing parameter sweep")
-        post_second_sweep_config = self.param_sweep(
+        post_second_sweep_config, tuned_train, tuned_val = self.param_sweep(
             train_paths=train_paths,
             val_paths=val_paths,
             initial_config=post_first_sweep_config,
-            phase_name="routing_param_sweep",
+            phase_name="06_routing_param_sweep",
+            config_key="routing_param_sweep",
         )
 
         ### Phase 6.5: Persist final config
@@ -583,23 +576,26 @@ class PolicyTuner:
         self._evolution_handler.finalize()
         console.print(f"  Final config written to [bold]{final_path}[/]")
 
-        ### Phase 7: Final evaluation with tuned config
-        self._print_banner("Phase 7: Final evaluation with tuned config")
-        tuned_train, tuned_val = self._evaluate_final(
-            train_paths, val_paths, final_config
+        ### Phase 7: Final comparison with tuned config
+        self._print_banner("Phase 7: Final comparison with tuned config")
+        summary_dir = self._run_dir / "07_final"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        self._write_phase_summary(
+            summary_dir / "train_summary.yml", tuned_train
         )
+        self._write_phase_summary(summary_dir / "val_summary.yml", tuned_val)
         AggregatedSimulationResults.print_comparison(
             ("Initial (train)", baseline_train),
             ("Final (train)", tuned_train),
             console=console,
-            agg_metric=agg_metric,
+            agg_metric=self._agg_metric,
             slo_metric=self._slo_metric,
         )
         AggregatedSimulationResults.print_comparison(
             ("Initial (val)", baseline_val),
             ("Final (val)", tuned_val),
             console=console,
-            agg_metric=agg_metric,
+            agg_metric=self._agg_metric,
             slo_metric=self._slo_metric,
         )
 
@@ -626,58 +622,6 @@ class PolicyTuner:
         console.rule(f"[bold cyan]{message}")
         console.print()
 
-    def _evaluate_final(
-        self,
-        train_paths: list[Path],
-        val_paths: list[Path],
-        final_config: dict[str, Any],
-    ) -> tuple[AggregatedSimulationResults, AggregatedSimulationResults]:
-        """Re-run evaluation with the fully-tuned config.
-
-        Returns ``(train_agg, val_agg)``."""
-        metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", "mean"
-        )
-        summary_dir = self._run_dir / "final"
-        summary_dir.mkdir(parents=True, exist_ok=True)
-        train_summary_path = summary_dir / "train_summary.yml"
-        val_summary_path = summary_dir / "val_summary.yml"
-        if (
-            train_summary_path.exists()
-            and val_summary_path.exists()
-            and not self._cfgd("tuner_config.force", False)
-        ):
-            console.print(
-                f"  Final evaluation results already exist at {summary_dir}; "
-                "loading from disk."
-            )
-            return (
-                self._parse_phase_summary(train_summary_path),
-                self._parse_phase_summary(val_summary_path),
-            )
-
-        all_train_results = self._evaluator.evaluate_batch_from_configs(
-            phase_name="final",
-            out_dir=self._run_dir / "final" / "train",
-            workload_paths=train_paths,
-            configs=[final_config],
-        )
-        train_results = all_train_results[0]
-        train_agg = SimulationResult.aggregate(train_results, metric)
-
-        all_val_results = self._evaluator.evaluate_batch_from_configs(
-            phase_name="final",
-            out_dir=self._run_dir / "final" / "val",
-            workload_paths=val_paths,
-            configs=[final_config],
-        )
-        val_results = all_val_results[0]
-        val_agg = SimulationResult.aggregate(val_results, metric)
-
-        self._write_phase_summary(train_summary_path, train_agg)
-        self._write_phase_summary(val_summary_path, val_agg)
-        return train_agg, val_agg
-
     def _evaluate_target(
         self,
         initial_config: dict[str, Any],
@@ -692,7 +636,7 @@ class PolicyTuner:
 
         ### Extract and save target day.
         schema_name = self._cfgd("basic_config.schema_name", None)
-        target_workload_path = self._run_dir / "workloads" / "target.parquet"
+        target_workload_path = self._run_dir / "02_workloads" / "target.parquet"
         if not target_workload_path.exists() or self._cfgd(
             "tuner_config.force", False
         ):
@@ -712,7 +656,9 @@ class PolicyTuner:
             rescale_factor = self._cfgd("workload_config.rescale_factor", 1.0)
             workload = workload.rescale_rel_start_times(factor=rescale_factor)
             workload = workload.rename_workload("target")
-            workload.save(out_dir=self._run_dir / "workloads", overwrite=True)
+            workload.save(
+                out_dir=self._run_dir / "02_workloads", overwrite=True
+            )
             console.print(
                 f"Extracted target workload from {full_workload_name} with "
                 f"time range {start} to {end}, "
@@ -736,19 +682,16 @@ class PolicyTuner:
         ]
         all_results = self._evaluator.evaluate_batch_from_configs(
             phase_name="target",
-            out_dir=self._run_dir / "target",
+            out_dir=self._run_dir / "08_target",
             workload_paths=[target_workload_path],
             configs=[initial_config, final_config] + baseline_configs,
         )
 
         # Extract initial + final results.
-        metric = self._cfgd(
-            "tuner_config.forecast_config.aggregation_metric", "mean"
-        )
         initial_results = all_results[0]
         final_results = all_results[1]
-        base_agg = SimulationResult.aggregate(initial_results, metric)
-        tuned_agg = SimulationResult.aggregate(final_results, metric)
+        base_agg = SimulationResult.aggregate(initial_results, self._agg_metric)
+        tuned_agg = SimulationResult.aggregate(final_results, self._agg_metric)
 
         comparison_entries: list[tuple[str, AggregatedSimulationResults]] = [
             ("Initial", base_agg),
@@ -760,7 +703,7 @@ class PolicyTuner:
 
         for i, sb in enumerate(static_baselines):
             sb_results = all_results[2 + i]
-            sb_agg = SimulationResult.aggregate(sb_results, metric)
+            sb_agg = SimulationResult.aggregate(sb_results, self._agg_metric)
             static_summaries.append(
                 {
                     "label": sb["label"],
@@ -775,7 +718,7 @@ class PolicyTuner:
 
         AggregatedSimulationResults.print_comparison(
             *comparison_entries,
-            agg_metric=metric,
+            agg_metric=self._agg_metric,
             slo_metric=self._slo_metric,
             console=console,
             highlight_best=True,
@@ -783,7 +726,7 @@ class PolicyTuner:
         self._print_scatter(comparison_entries, self._slo_metric)
 
         # --- Write holdout summary --------------------------------------
-        summary_dir = self._run_dir / "holdout"
+        summary_dir = self._run_dir / "09_holdout"
         summary_dir.mkdir(parents=True, exist_ok=True)
         holdout_summary: dict[str, Any] = {
             "initial_violation": base_agg.primary_violation(self._slo_metric),
