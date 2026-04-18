@@ -59,17 +59,8 @@ class PolicyTuner:
         initial_config_path = self._run_dir / "initial_config.yml"
         dump(self._initial_config, initial_config_path)
 
-        # Set up structured log for the evolution ledger.
-        self._evolution_handler = setup_structured_logging(
-            out_dir=str(self._run_dir),
-            filename="evolution.parquet",
-        )
-
         # Scenario evaluator — shared by all tuning phases.
-        self._evaluator = ScenarioEvaluator(
-            tuner_run_id=self._run_id,
-            evolution_logger=self._evolution_handler,
-        )
+        self._evaluator = ScenarioEvaluator(tuner_run_id=self._run_id)
 
         # SLO objective — drives metric routing and threshold-aware selection.
         self._slo_metric = SloMetric(
@@ -504,7 +495,6 @@ class PolicyTuner:
         Returns the path to the final optimised config file.
         """
 
-
         ### Phase 1: Build reservoir
         self._print_banner("Phase 1: Building reservoir")
         self.build_reservoir()
@@ -573,7 +563,6 @@ class PolicyTuner:
         final_config = post_second_sweep_config
         final_path = self._run_dir / "final_config.yml"
         dump(final_config, final_path)
-        self._evolution_handler.finalize()
         console.print(f"  Final config written to [bold]{final_path}[/]")
 
         ### Phase 7: Final comparison with tuned config

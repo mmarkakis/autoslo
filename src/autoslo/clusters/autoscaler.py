@@ -14,9 +14,8 @@ from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
-    RpuCounterfactualEvent,
-    RpuSelectionEvent,
-    TearDownDecisionEvent,
+    BaseStructuredEvent,
+    EventType,
 )
 from autoslo.workload_definition.query import Query
 
@@ -290,12 +289,14 @@ class Autoscaler:
                 tear_down_actions.append(action)
 
                 emit_structured(
-                    TearDownDecisionEvent(
+                    BaseStructuredEvent(
                         rel_time_s=self._latest_rel_time_s,
+                        event_type=EventType.TEAR_DOWN_DECISION,
                         source="Autoscaler",
                         cluster_name=cluster_name,
-                        rpu=cluster.rpu,
-                        detail=action.reason,
+                        details={
+                            'rpu': cluster.rpu,
+                            'reason': action.reason},
                     )
                 )
 
@@ -320,27 +321,33 @@ class Autoscaler:
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
-                RpuCounterfactualEvent(
+                BaseStructuredEvent(
                     rel_time_s=self._latest_rel_time_s,
+                    event_type=EventType.RPU_COUNTERFACTUAL,
                     source="Autoscaler",
                     cluster_name=hyp_cluster_name,
-                    rpu=rpu,
-                    slo_violation=slo_viol_and_cost[0],
-                    cost=slo_viol_and_cost[1],
-                    slo_threshold=self._slo_objective.slo_threshold,
+                    details={
+                        "rpu": rpu,
+                        "slo_violation": slo_viol_and_cost[0],
+                        "cost": slo_viol_and_cost[1],
+                        "slo_threshold": self._slo_objective.slo_threshold,
+                    },
                 )
             )
 
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
         emit_structured(
-            RpuSelectionEvent(
+            BaseStructuredEvent(
                 rel_time_s=self._latest_rel_time_s,
+                event_type=EventType.RPU_SELECTION,
                 source="Autoscaler",
                 cluster_name=best_hyp_cluster_name,
-                rpu=best_rpu,
-                slo_violation=best_viol_and_cost[0],
-                cost=best_viol_and_cost[1],
-                slo_threshold=self._slo_objective.slo_threshold,
+                details={
+                    "rpu": best_rpu,
+                    "slo_violation": best_viol_and_cost[0],
+                    "cost": best_viol_and_cost[1],
+                    "slo_threshold": self._slo_objective.slo_threshold,
+                },
             )
         )
 

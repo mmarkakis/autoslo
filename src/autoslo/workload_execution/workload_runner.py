@@ -16,13 +16,9 @@ from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
-    ArrivalEvent,
-    ClusterReadyEvent,
-    CompletionEvent,
-    QueryExecutionFinishEvent,
-    QueryExecutionStartEvent,
-    RunFinishEvent,
-    RunStartEvent,
+    BaseStructuredEvent,
+    EventType,
+    QueryRelatedEvent,
     wall_clock_utc,
 )
 from autoslo.utils.yaml_helpers import dump
@@ -122,14 +118,17 @@ class WorkloadRunner:
             cluster_name = fut.result()
             rpu = Cluster.rpu_for_cluster_name(cluster_name)
             emit_structured(
-                ClusterReadyEvent(
+                BaseStructuredEvent(
                     rel_time_s=self._rel_time_s(),
+                    event_type=EventType.CLUSTER_READY,
                     source="WorkloadRunner",
                     cluster_name=cluster_name,
-                    rpu=rpu,
-                    num_active_clusters=len(
-                        self._pool.clusters_in_state(ClusterState.READY)
-                    ),
+                    details={
+                        "rpu": rpu,
+                        "num_active_clusters": len(
+                            self._pool.clusters_in_state(ClusterState.READY)
+                        ),
+                    },
                 )
             )
 
@@ -185,12 +184,13 @@ class WorkloadRunner:
         logging.info(f"Starting query {query_id}")
         start_rel_time_s = self._rel_time_s()
         emit_structured(
-            QueryExecutionStartEvent(
+            QueryRelatedEvent(
                 rel_time_s=start_rel_time_s,
+                event_type=EventType.QUERY_EXECUTION_START,
                 source="WorkloadRunner",
+                cluster_name=cluster_name,
                 query_id=query_id,
                 query_text_id=query_text_id,
-                cluster_name=cluster_name,
             )
         )
         try:
@@ -224,13 +224,14 @@ class WorkloadRunner:
         latency_s = end_rel_time_s - start_rel_time_s
         logging.info(f"Query {query_id} finished after t={latency_s:.2f}s")
         emit_structured(
-            QueryExecutionFinishEvent(
+            QueryRelatedEvent(
                 rel_time_s=end_rel_time_s,
+                event_type=EventType.QUERY_EXECUTION_FINISH,
                 source="WorkloadRunner",
+                cluster_name=cluster_name,
+                details={"latency_s": latency_s},
                 query_id=query_id,
                 query_text_id=query_text_id,
-                cluster_name=cluster_name,
-                latency_s=latency_s,
             )
         )
         return latency_s if succeeded else None
@@ -288,8 +289,9 @@ class WorkloadRunner:
 
         # ── Emit arrival event (matches simulator) ────────────────
         emit_structured(
-            ArrivalEvent(
+            QueryRelatedEvent(
                 rel_time_s=self._rel_time_s(),
+                event_type=EventType.ARRIVAL,
                 source="WorkloadRunner",
                 query_id=query.query_id,
                 query_text_id=query.query_text_id,
@@ -332,14 +334,17 @@ class WorkloadRunner:
             )
             if latency_s is not None:
                 emit_structured(
-                    CompletionEvent(
+                    QueryRelatedEvent(
                         rel_time_s=self._rel_time_s(),
+                        event_type=EventType.COMPLETION,
                         source="WorkloadRunner",
+                        cluster_name=selected_cluster_name,
+                        details={
+                            "latency_s": latency_s,
+                            "slo_s": self._slo_resolver.resolve(query.query_text_id),
+                        },
                         query_id=query.query_id,
                         query_text_id=query.query_text_id,
-                        cluster_name=selected_cluster_name,
-                        latency_s=latency_s,
-                        slo_s=self._slo_resolver.resolve(query.query_text_id),
                     )
                 )
             self._pbar.update(1)
@@ -362,13 +367,16 @@ class WorkloadRunner:
             prov.reference_time_s = self._async_reference_ts
 
         emit_structured(
-            RunStartEvent(
+            BaseStructuredEvent(
                 rel_time_s=self._rel_time_s(),
+                event_type=EventType.RUN_START,
                 source="WorkloadRunner",
-                workload_name=self._workload.workload_name,
-                num_queries=self._workload.num_queries,
-                routing_policy=self._router.routing_policy.value,
-                closed_loop=self._closed_loop,
+                details={
+                    "workload_name": self._workload.workload_name,
+                    "num_queries": self._workload.num_queries,
+                    "routing_policy": self._router.routing_policy.value,
+                    "closed_loop": self._closed_loop,
+                },
             )
         )
 
@@ -454,10 +462,13 @@ class WorkloadRunner:
         logging.info(f"Run finished at {wall_clock_utc()}.")
 
         emit_structured(
-            RunFinishEvent(
+            BaseStructuredEvent(
                 rel_time_s=self._rel_time_s(),
+                event_type=EventType.RUN_FINISH,
                 source="WorkloadRunner",
-                workload_name=self._workload.workload_name,
+                details={
+                    "workload_name": self._workload.workload_name,
+                },
             )
         )
 

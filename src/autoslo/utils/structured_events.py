@@ -3,16 +3,19 @@ structured_events.py
 --------------------
 Typed event dataclasses for the autoslo structured logging system.
 
-Every structured log emission constructs one of the event subclasses
-defined here.  ``BaseStructuredEvent.to_dict()`` serialises it to a
-flat ``dict`` that the :class:`~autoslo.utils.logging.StructuredLogHandler`
-can persist to Parquet.
+Every structured log emission constructs a :class:`BaseStructuredEvent`
+(or :class:`QueryRelatedEvent` for query-scoped events), passing in an
+:class:`EventType` enum member.  ``BaseStructuredEvent.to_dict()``
+serialises the event to a flat ``dict`` that the
+:class:`~autoslo.utils.logging.StructuredLogHandler` can persist to
+Parquet.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from autoslo.workload_definition.query import QueryTextId
@@ -31,342 +34,114 @@ def wall_clock_utc() -> float:
 
 
 # ---------------------------------------------------------------------------
-# Base event
+# Event type enum
+# ---------------------------------------------------------------------------
+
+
+class EventType(str, Enum):
+    """Enumeration of all structured event types."""
+
+    # Run lifecycle
+    RUN_START = "run_start"
+    RUN_FINISH = "run_finish"
+
+    # Query lifecycle
+    ARRIVAL = "arrival"
+    QUERY_EXECUTION_START = "query_execution_start"
+    QUERY_EXECUTION_FINISH = "query_execution_finish"
+    COMPLETION = "completion"
+    COMPLETION_IGNORED = "completion_ignored"
+
+    # Routing
+    QUERY_ROUTED = "query_routed"
+    LATENCY_UPDATE = "latency_update"
+    ROUTING_SCORE = "routing_score"
+    ROUTING = "routing"
+
+    # Cluster lifecycle
+    CLUSTER_READY = "cluster_ready"
+    SPIN_UP_REQUESTED = "spin_up_requested"
+    SPIN_UP = "spin_up"
+    TEAR_DOWN_DECISION = "tear_down_decision"
+    TEAR_DOWN_REQUESTED = "tear_down_requested"
+    TEAR_DOWN_BLOCKED = "tear_down_blocked"
+    STATS_COLLECTED = "stats_collected"
+    CLUSTER_REMOVED = "cluster_removed"
+    CLUSTER_SPIN_UP_STARTED = "cluster_spin_up_started"
+    CLUSTER_SPIN_UP_COMPLETED = "cluster_spin_up_completed"
+    CLUSTER_TEAR_DOWN_STARTED = "cluster_tear_down_started"
+    CLUSTER_TEAR_DOWN_COMPLETED = "cluster_tear_down_completed"
+
+    # Capacity checkpoint
+    CAPACITY_CHECKPOINT_RECONCILIATION = "capacity_checkpoint_reconciliation"
+
+    # Autoscaler
+    RPU_COUNTERFACTUAL = "rpu_counterfactual"
+    RPU_SELECTION = "rpu_selection"
+
+
+# Required details per event type.  Types not listed here have no requirements.
+REQUIRED_DETAILS: dict[EventType, list[str]] = {
+    EventType.RUN_START: [
+        "workload_name",
+        "num_queries",
+        "routing_policy",
+        "closed_loop",
+    ],
+    EventType.RUN_FINISH: ["workload_name"],
+    EventType.LATENCY_UPDATE: ["old_latency_s", "latency_s"],
+    EventType.ROUTING: ["slo_violation", "cost"],
+    EventType.CAPACITY_CHECKPOINT_RECONCILIATION: [
+        "checkpoint_rel_time_s",
+        "desired",
+        "current",
+        "spin_ups_needed",
+    ],
+    EventType.RPU_COUNTERFACTUAL: ["slo_violation", "cost"],
+    EventType.RPU_SELECTION: ["slo_violation", "cost"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Concrete event dataclasses
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class BaseStructuredEvent:
-    """Base class for all structured log events.
+    """Structured log event.
 
-    Subclasses set ``event_type`` via a class-level default.
+    Use this class directly for events that are not query-related.
+    For query-related events, use :class:`QueryRelatedEvent`.
     """
 
+    rel_time_s: float
+    event_type: EventType
+    source: str
+    cluster_name: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
     wall_clock_s: float = field(init=False, default_factory=wall_clock_utc)
-    rel_time_s: float = 0.0
-    event_type: str = field(init=False)
-    source: str = ""
+
+    def __post_init__(self) -> None:
+        required = REQUIRED_DETAILS.get(self.event_type, [])
+        for key in required:
+            if key not in self.details:
+                raise ValueError(
+                    f"Missing required detail '{key}' in {self.event_type} event."
+                )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# ---------------------------------------------------------------------------
-# Run lifecycle
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class RunStartEvent(BaseStructuredEvent):
-    workload_name: str = ""
-    num_queries: int = 0
-    routing_policy: str = ""
-    closed_loop: bool = False
-
-    def __post_init__(self) -> None:
-        self.event_type = "run_start"
+        d = {f.name: getattr(self, f.name) for f in fields(self)}
+        d["event_type"] = self.event_type.value
+        details = d.pop("details", {})
+        d.update(details)
+        return d
 
 
 @dataclass
-class RunFinishEvent(BaseStructuredEvent):
-    workload_name: str = ""
+class QueryRelatedEvent(BaseStructuredEvent):
+    """Structured log event related to a specific query."""
 
-    def __post_init__(self) -> None:
-        self.event_type = "run_finish"
-
-
-# ---------------------------------------------------------------------------
-# Query lifecycle
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ArrivalEvent(BaseStructuredEvent):
     query_id: str = ""
     query_text_id: QueryTextId = QueryTextId("")
 
-    def __post_init__(self) -> None:
-        self.event_type = "arrival"
-
-
-@dataclass
-class CompletionEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-    latency_s: float = 0.0
-    slo_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "completion"
-
-
-@dataclass
-class CompletionIgnoredEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "completion_ignored"
-
-
-@dataclass
-class QueryExecutionStartEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "query_execution_start"
-
-
-@dataclass
-class QueryExecutionFinishEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-    latency_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "query_execution_finish"
-
-
-# ---------------------------------------------------------------------------
-# Routing
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class QueryRoutedEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-    latency_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "query_routed"
-
-
-@dataclass
-class LatencyUpdateEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-    old_latency_s: float | None = None
-    latency_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "latency_update"
-
-
-@dataclass
-class RoutingScoreEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-    latency_s: float = 0.0
-    slo_violation: float = 0.0
-    cost: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "routing_score"
-
-
-@dataclass
-class RoutingDecisionEvent(BaseStructuredEvent):
-    query_id: str = ""
-    query_text_id: QueryTextId = QueryTextId("")
-    cluster_name: str = ""
-    latency_s: float = 0.0
-    slo_violation: float = 0.0
-    cost: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "routing"
-
-
-# ---------------------------------------------------------------------------
-# Cluster lifecycle
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ClusterReadyEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    num_active_clusters: int = 0
-
-    def __post_init__(self) -> None:
-        self.event_type = "cluster_ready"
-
-
-@dataclass
-class SpinUpRequestedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    detail: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "spin_up_requested"
-
-
-@dataclass
-class SpinUpEvent(BaseStructuredEvent):
-    rpu: int = 0
-    detail: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "spin_up"
-
-
-@dataclass
-class TearDownDecisionEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    detail: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "tear_down_decision"
-
-
-@dataclass
-class TearDownBlockedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    detail: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "tear_down_blocked"
-
-
-@dataclass
-class TearDownRequestedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-
-    def __post_init__(self) -> None:
-        self.event_type = "tear_down_requested"
-
-
-@dataclass
-class StatsCollectedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    duration_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "stats_collected"
-
-
-@dataclass
-class ClusterRemovedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-
-    def __post_init__(self) -> None:
-        self.event_type = "cluster_removed"
-
-
-# ---------------------------------------------------------------------------
-# Provisioner
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ClusterSpinUpStartedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-
-    def __post_init__(self) -> None:
-        self.event_type = "cluster_spin_up_started"
-
-
-@dataclass
-class ClusterSpinUpCompletedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    duration_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "cluster_spin_up_completed"
-
-
-@dataclass
-class ClusterTearDownStartedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-
-    def __post_init__(self) -> None:
-        self.event_type = "cluster_tear_down_started"
-
-
-@dataclass
-class ClusterTearDownCompletedEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    duration_s: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "cluster_tear_down_completed"
-
-
-# ---------------------------------------------------------------------------
-# Capacity checkpoint
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class CapacityCheckpointReconciliationEvent(BaseStructuredEvent):
-    detail: str = ""
-
-    def __post_init__(self) -> None:
-        self.event_type = "capacity_checkpoint_reconciliation"
-
-
-# ---------------------------------------------------------------------------
-# Autoscaler
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class RpuCounterfactualEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    slo_violation: float = 0.0
-    cost: float = 0.0
-    slo_threshold: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "rpu_counterfactual"
-
-
-@dataclass
-class RpuSelectionEvent(BaseStructuredEvent):
-    cluster_name: str = ""
-    rpu: int = 0
-    slo_violation: float = 0.0
-    cost: float = 0.0
-    slo_threshold: float = 0.0
-
-    def __post_init__(self) -> None:
-        self.event_type = "rpu_selection"
-
-
-# ---------------------------------------------------------------------------
-# Tuner
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ScenarioResultEvent(BaseStructuredEvent):
-    phase: str = ""
-    grid_point: int = 0
-    workload_idx: int = 0
-    violation_rate: float = 0.0
-    violation_amount_s: float = 0.0
-    violation_relative_mean: float = 0.0
-    total_cost: float = 0.0
-    num_queries: int = 0
-
-    def __post_init__(self) -> None:
-        self.event_type = "scenario_result"

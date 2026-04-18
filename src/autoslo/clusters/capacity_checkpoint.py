@@ -7,8 +7,8 @@ from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
-    CapacityCheckpointReconciliationEvent,
-    SpinUpEvent,
+    BaseStructuredEvent,
+    EventType,
 )
 
 
@@ -65,22 +65,17 @@ class CapacityCheckpoint:
         current_counts = pool.ready_and_pending_counts_per_rpu()
         spin_ups_needed = self.spin_ups_needed(current_counts)
 
-        desired_str = ", ".join(
-            f"{rpu}:{count}"
-            for rpu, count in Counter(self.min_rpus).items()
-        )
-        current_str = ", ".join(
-            f"{rpu}:{count}" for rpu, count in current_counts.items()
-        )
         emit_structured(
-            CapacityCheckpointReconciliationEvent(
+            BaseStructuredEvent(
                 rel_time_s=rel_time_s_getter(),
+                event_type=EventType.CAPACITY_CHECKPOINT_RECONCILIATION,
                 source=source,
-                detail=(
-                    f"checkpoint@t={self.rel_time_s}: "
-                    f"desired=[{desired_str}], current=[{current_str}], "
-                    f"spin_ups_needed={len(spin_ups_needed)}"
-                ),
+                details={
+                    "checkpoint_rel_time_s": f"{self.rel_time_s}",
+                    "desired": str(dict(Counter(self.min_rpus))),
+                    "current": str(dict(current_counts)),
+                    "spin_ups_needed": len(spin_ups_needed),
+                },
             )
         )
 
@@ -102,10 +97,13 @@ class CapacityCheckpoint:
         for action in spin_ups_needed:
             on_spin_up(action)
             emit_structured(
-                SpinUpEvent(
+                BaseStructuredEvent(
                     rel_time_s=rel_time_s_getter(),
+                    event_type=EventType.SPIN_UP,
                     source=source,
-                    rpu=action.rpu,
-                    detail=f"capacity_checkpoint@t={self.rel_time_s}",
+                    details={
+                        "rpu": action.rpu,
+                        "reason": f"capacity_checkpoint",
+                    },
                 )
             )

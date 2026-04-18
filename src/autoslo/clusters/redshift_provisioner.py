@@ -30,10 +30,8 @@ from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
-    ClusterSpinUpCompletedEvent,
-    ClusterSpinUpStartedEvent,
-    ClusterTearDownCompletedEvent,
-    ClusterTearDownStartedEvent,
+    BaseStructuredEvent,
+    EventType,
     wall_clock_utc,
 )
 
@@ -557,11 +555,12 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         logger.info("Spinning up workgroup %s with %d RPU ...", wg_name, rpu)
         emit_structured(
-            ClusterSpinUpStartedEvent(
+            BaseStructuredEvent(
                 rel_time_s=rel_time_s,
+                event_type=EventType.CLUSTER_SPIN_UP_STARTED,
                 source="RedshiftServerlessProvisioner",
                 cluster_name=wg_name,
-                rpu=rpu,
+                details={"rpu": rpu},
             )
         )
 
@@ -620,12 +619,12 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             spin_up_duration,
         )
         emit_structured(
-            ClusterSpinUpCompletedEvent(
+            BaseStructuredEvent(
                 rel_time_s=now - self._reference_time_s,
+                event_type=EventType.CLUSTER_SPIN_UP_COMPLETED,
                 source="RedshiftServerlessProvisioner",
                 cluster_name=wg_name,
-                rpu=rpu,
-                duration_s=spin_up_duration,
+                details={"rpu": rpu},
             )
         )
         return cluster
@@ -649,11 +648,12 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         logger.info("Tearing down workgroup %s ...", cluster_name)
         rpu = Cluster.rpu_for_cluster_name(cluster_name)
         emit_structured(
-            ClusterTearDownStartedEvent(
+            BaseStructuredEvent(
                 rel_time_s=rel_time_s,
+                event_type=EventType.CLUSTER_TEAR_DOWN_STARTED,
                 source="RedshiftServerlessProvisioner",
                 cluster_name=cluster_name,
-                rpu=rpu,
+                details={"rpu": rpu},
             )
         )
 
@@ -679,10 +679,11 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             tear_down_duration,
         )
         emit_structured(
-            ClusterTearDownCompletedEvent(
+            BaseStructuredEvent(
                 rel_time_s=now - self._reference_time_s,
+                event_type=EventType.CLUSTER_TEAR_DOWN_COMPLETED,
                 source="RedshiftServerlessProvisioner",
                 cluster_name=cluster_name,
-                duration_s=tear_down_duration,
+                details={"duration_s": tear_down_duration},
             )
         )

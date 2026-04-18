@@ -14,10 +14,6 @@ class QueryTextId(str):
     Example: "ext_tpcds1000#42#001"
     """
 
-    def __new__(cls, value: str):
-        # Ensure it's actually a string instance
-        return super().__new__(cls, value)
-
     @property
     def schema_name(self) -> str:
         """Extracts the schema name from the query text ID."""

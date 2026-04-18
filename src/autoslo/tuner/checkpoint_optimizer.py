@@ -115,7 +115,7 @@ def find_next_checkpoint_time(
         log = pd.read_parquet(
             log_path,
             columns=[
-                "timestamp",
+                "rel_time_s",
                 "event_type",
                 "query_id",
                 "query_text_id",
@@ -154,7 +154,7 @@ def find_next_checkpoint_time_df(
 
         completions["latency_s"] = completions["latency_s"].fillna(0.0)
         completions["start_time"] = (
-            completions["timestamp"] - completions["latency_s"]
+            completions["rel_time_s"] - completions["latency_s"]
         )
         completions["slo_s"] = (
             completions["query_text_id"].map(slo_resolver.resolve).fillna(0.0)
@@ -174,7 +174,7 @@ def find_next_checkpoint_time_df(
             )
             events.append(
                 {
-                    "time": row["timestamp"],
+                    "time": row["rel_time_s"],
                     "event_type": "end",
                     "latency_s": row["latency_s"],
                     "slo_s": row["slo_s"],

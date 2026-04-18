@@ -31,8 +31,6 @@ from autoslo.utils.paralellism import (
     deg_of_paralellism,
     inner_level_num_cpus,
 )
-from autoslo.utils.logging import StructuredLogHandler, emit_structured
-from autoslo.utils.structured_events import ScenarioResultEvent
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
@@ -158,18 +156,13 @@ class ScenarioEvaluator:
     tuner_run_id :
         Unique identifier for the parent tuner run (used to build per-
         scenario ``simulator_run_id`` values).
-    evolution_logger :
-        :class:`StructuredLogHandler` that receives per-result records
-        for the ``evolution.parquet`` ledger.
     """
 
     def __init__(
         self,
         tuner_run_id: str,
-        evolution_logger: StructuredLogHandler,
     ) -> None:
         self._tuner_run_id = tuner_run_id
-        self._evolution_logger = evolution_logger
 
     # ------------------------------------------------------------------
     # Public API
@@ -344,12 +337,6 @@ class ScenarioEvaluator:
                         if config_idx not in results:
                             results[config_idx] = {}
                         results[config_idx][workload_idx] = result
-                        self._log_result(
-                            phase_name,
-                            config_idx,
-                            workload_idx,
-                            result,
-                        )
                         progress.advance(main_task)
                         progress.advance(per_config_tasks[config_idx])
 
@@ -383,25 +370,4 @@ class ScenarioEvaluator:
             return max(1, deg_of_paralellism())
         return int(p)
 
-    def _log_result(
-        self,
-        phase_name: str,
-        config_idx: int,
-        workload_idx: int,
-        result: SimulationResult,
-    ) -> None:
-        """Emit a record to the evolution ledger."""
-        emit_structured(
-            ScenarioResultEvent(
-                rel_time_s=0.0,
-                source="ScenarioEvaluator",
-                phase=phase_name,
-                grid_point=config_idx,
-                workload_idx=workload_idx,
-                violation_rate=result.violation_rate,
-                violation_amount_s=result.violation_amount_s,
-                violation_relative_mean=result.violation_relative_mean,
-                total_cost=result.total_cost,
-                num_queries=result.num_queries,
-            )
-        )
+ 

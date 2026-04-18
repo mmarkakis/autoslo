@@ -16,12 +16,9 @@ from autoslo.utils.logging import (
     setup_structured_logging,
 )
 from autoslo.utils.structured_events import (
-    ArrivalEvent,
     BaseStructuredEvent,
-    CompletionEvent,
-    RoutingDecisionEvent,
-    RunStartEvent,
-    ScenarioResultEvent,
+    EventType,
+    QueryRelatedEvent,
     wall_clock_utc,
 )
 
@@ -31,16 +28,17 @@ from autoslo.utils.structured_events import (
 # ---------------------------------------------------------------------------
 
 
-def _make_event(**overrides) -> BaseStructuredEvent:
-    """Build a minimal valid ArrivalEvent with optional overrides."""
+def _make_event(**overrides) -> QueryRelatedEvent:
+    """Build a minimal valid arrival QueryRelatedEvent with optional overrides."""
     defaults = dict(
         rel_time_s=0.0,
+        event_type=EventType.ARRIVAL,
         source="test_harness",
         query_id="q0",
         query_text_id=1,
     )
     defaults.update(overrides)
-    return ArrivalEvent(**defaults)
+    return QueryRelatedEvent(**defaults)
 
 
 def _make_record(**overrides) -> dict:
@@ -89,17 +87,19 @@ class TestEmitStructuredValidation:
         assert REQUIRED_KEYS <= d.keys()
 
     def test_all_event_types_have_event_type(self):
-        """Each event subclass should set event_type in __post_init__."""
-        for cls in [
-            ArrivalEvent,
-            CompletionEvent,
-            RoutingDecisionEvent,
-            RunStartEvent,
-            ScenarioResultEvent,
-        ]:
-            ev = cls(source="test")
-            assert ev.event_type != ""
-            assert "event_type" in ev.to_dict()
+        """Every EventType member should produce a valid event."""
+        from autoslo.utils.structured_events import REQUIRED_DETAILS
+
+        for et in EventType:
+            details = {k: None for k in REQUIRED_DETAILS.get(et, [])}
+            ev = BaseStructuredEvent(
+                rel_time_s=0.0, event_type=et, source="test",
+                details=details,
+            )
+            assert ev.event_type == et
+            d = ev.to_dict()
+            assert "event_type" in d
+            assert d["event_type"] == et.value
 
 
 # ---------------------------------------------------------------------------
@@ -264,13 +264,14 @@ class TestSetupStructuredLogging:
         handler = setup_structured_logging(out_dir=str(tmp_path))
         emit_structured(_make_event())
         emit_structured(
-            CompletionEvent(
+            QueryRelatedEvent(
                 rel_time_s=0.5,
+                event_type=EventType.COMPLETION,
                 source="test_harness",
+                cluster_name="c0",
+                details={"latency_s": 0.5},
                 query_id="q1",
                 query_text_id=1,
-                cluster_name="c0",
-                latency_s=0.5,
             )
         )
         out = handler.finalize()

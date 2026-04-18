@@ -13,8 +13,8 @@ from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
-    RoutingDecisionEvent,
-    RoutingScoreEvent,
+    EventType,
+    QueryRelatedEvent,
 )
 from autoslo.workload_definition.query import Query
 
@@ -116,15 +116,18 @@ class QueryRouter:
 
             latency_s = new_predicted_latencies[candidate_name][query.query_id]
             emit_structured(
-                RoutingScoreEvent(
+                QueryRelatedEvent(
                     rel_time_s=rel_time_s,
+                    event_type=EventType.ROUTING_SCORE,
                     source="QueryRouter",
+                    cluster_name=candidate_name,
+                    details={
+                        "latency_s": latency_s,
+                        "slo_violation": after_violation,
+                        "cost": total_after_cost,
+                    },
                     query_id=query.query_id,
                     query_text_id=query.query_text_id,
-                    cluster_name=candidate_name,
-                    latency_s=latency_s,
-                    slo_violation=after_violation,
-                    cost=total_after_cost,
                 )
             )
 
@@ -137,15 +140,18 @@ class QueryRouter:
             query.query_id
         ]
         emit_structured(
-            RoutingDecisionEvent(
+            QueryRelatedEvent(
                 rel_time_s=rel_time_s,
+                event_type=EventType.ROUTING,
                 source="QueryRouter",
+                cluster_name=selected_cluster_name,
+                details={
+                    "latency_s": selected_latency,
+                    "slo_violation": selected_viol,
+                    "cost": selected_cost,
+                },
                 query_id=query.query_id,
                 query_text_id=query.query_text_id,
-                cluster_name=selected_cluster_name,
-                latency_s=selected_latency,
-                slo_violation=selected_viol,
-                cost=selected_cost,
             )
         )
 

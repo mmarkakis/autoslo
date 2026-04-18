@@ -9,8 +9,8 @@ from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
-    LatencyUpdateEvent,
-    QueryRoutedEvent,
+    EventType,
+    QueryRelatedEvent,
 )
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.simulator_event import (
@@ -54,13 +54,14 @@ def route_and_update_bookkeeping(
 
     route_end_rel_s = rel_time_s_getter()
     emit_structured(
-        QueryRoutedEvent(
+        QueryRelatedEvent(
             rel_time_s=route_end_rel_s,
+            event_type=EventType.QUERY_ROUTED,
             source=source,
+            cluster_name=selected_cluster_name,
+            details={"latency_s": self_latency_s},
             query_id=query.query_id,
             query_text_id=query.query_text_id,
-            cluster_name=selected_cluster_name,
-            latency_s=self_latency_s,
         )
     )
 
@@ -80,14 +81,17 @@ def route_and_update_bookkeeping(
 
         completion_time_s = route_end_rel_s + latency_s
         emit_structured(
-            LatencyUpdateEvent(
+            QueryRelatedEvent(
                 rel_time_s=route_end_rel_s,
+                event_type=EventType.LATENCY_UPDATE,
                 source=source,
+                cluster_name=selected_cluster_name,
+                details={
+                    "old_latency_s": old_latency_s,
+                    "latency_s": latency_s,
+                },
                 query_id=qid,
                 query_text_id=query.query_text_id,
-                cluster_name=selected_cluster_name,
-                old_latency_s=old_latency_s,
-                latency_s=latency_s,
             )
         )
 
