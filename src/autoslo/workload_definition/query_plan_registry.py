@@ -66,7 +66,7 @@ class QueryPlanRegistry:
             The parsed plan dict, or ``None`` if not found.
         """
         cls._ensure_loaded(query_text_id.schema_name)
-        return _cache.get(query_text_id.schema_name, {}).get(query_text_id.value)
+        return _cache.get(query_text_id.schema_name, {}).get(query_text_id)
 
     @classmethod
     def register(cls, schema_name: str, mapping: dict[str, Any]) -> None:

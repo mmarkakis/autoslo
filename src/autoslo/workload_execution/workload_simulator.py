@@ -268,7 +268,7 @@ class WorkloadSimulator:
                 rel_time_s=self._current_sim_time_s,
                 source="WorkloadSimulator",
                 query_id=query.query_id,
-                query_text_id=query.query_text_id.value,
+                query_text_id=query.query_text_id,
             )
         )
 

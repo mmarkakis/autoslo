@@ -547,7 +547,7 @@ class Trace:
             )
             df_with_query_text["query_text_id"] = df_with_query_text[
                 "query_text"
-            ].apply(lambda t: Trace.extract_query_text_id(t, schema_name).value)
+            ].apply(lambda t: Trace.extract_query_text_id(t, schema_name))
             s = df_with_query_text.set_index("query_id")["query_text_id"]
             series.append(s)
 
@@ -880,7 +880,6 @@ class Trace:
         for qid in self.query_ids:
             lat = float(latencies[qid])
             qtid = query_text_ids.get(qid)
-            qtid_str = qtid.value if isinstance(qtid, QueryTextId) else qtid
             slo_s = resolver.resolve(qtid)
             is_ab = bool(aborted.get(qid, False))
             if is_ab:
@@ -894,7 +893,7 @@ class Trace:
             rows.append(
                 {
                     "query_id": qid,
-                    "query_text_id": qtid_str,
+                    "query_text_id": qtid,
                     "latency_s": lat,
                     "slo_s": slo_s,
                     "is_aborted": is_ab,

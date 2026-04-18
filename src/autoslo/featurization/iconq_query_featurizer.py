@@ -133,7 +133,7 @@ class IconqQueryFeaturizer:
                     query_id = cast(str, query_id)
                     query_text_id = query_text_ids[query_id]
 
-                    if query_text_id.value in self._featurization_cache:
+                    if query_text_id in self._featurization_cache:
                         continue
                     if (query_id not in info) or (info[query_id] is None):
                         self._featurization_cache[query_text_id] = []
@@ -181,7 +181,7 @@ class IconqQueryFeaturizer:
                 query_id = cast(str, query_id)
                 query_text_id = query_text_ids[query_id]
 
-                if query_text_id.value in self._featurization_cache:
+                if query_text_id in self._featurization_cache:
                     continue
                 if (query_id not in info) or (info[query_id] is None):
                     self._featurization_cache[query_text_id] = []
@@ -487,7 +487,7 @@ class IconqQueryFeaturizer:
         d: dict[str, Any] = {}
         d["query_text"] = query_text
         query_text_id = Trace.extract_query_text_id(query_text, self._schema_name)
-        d["query_text_id"] = query_text_id.value
+        d["query_text_id"] = query_text_id
         d["featurization"] = self.featurize_from_query_text_id(
             query_text_id
         )
@@ -535,7 +535,7 @@ class IconqQueryFeaturizer:
             out_dir = "."
         os.makedirs(out_dir, exist_ok=True)
         out_file_path = os.path.join(
-            out_dir, f'featurization_{d["query_hash"]}.yml'
+            out_dir, f'featurization_{d["query_text_id"]}.yml'
         )
         with open(out_file_path, "w") as f:
             yaml.dump(d, f, sort_keys=False)
