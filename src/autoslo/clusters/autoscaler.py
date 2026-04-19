@@ -248,6 +248,14 @@ class Autoscaler:
             ),
             rpu=best_rpu,
         )
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.SPIN_UP_DECISION,
+                source="Autoscaler",
+                details={"rpu": best_rpu, "reason": action.reason},
+            )
+        )
         return [action]
 
     def consider_teardown(
@@ -294,9 +302,7 @@ class Autoscaler:
                         event_type=EventType.TEAR_DOWN_DECISION,
                         source="Autoscaler",
                         cluster_name=cluster_name,
-                        details={
-                            'rpu': cluster.rpu,
-                            'reason': action.reason},
+                        details={"reason": action.reason},
                     )
                 )
 

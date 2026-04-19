@@ -4,7 +4,7 @@ cluster_provisioner.py
 Abstract interface and simulated implementation for cluster lifecycle.
 
 The provisioner handles the *infra* side of spin-up / tear-down: actually
-creating or destroying a cluster.  
+creating or destroying a cluster.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import logging
 from abc import ABC, abstractmethod
 
 from autoslo.clusters.cluster import Cluster
+from autoslo.utils.structured_events import EventType, BaseStructuredEvent
+from autoslo.utils.logging import emit_structured
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,16 @@ class SimulatedProvisioner(ClusterProvisioner):
         -------
         A new ``Cluster`` with auto-generated name and no connection info.
         """
+
         cluster = Cluster(rpu=rpu, creation_time_s=rel_time_s)
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.SPIN_UP_STARTED,
+                source="SimulatedProvisioner",
+                cluster_name=cluster.name,
+            )
+        )
         logger.debug(
             "SimulatedProvisioner: spun up %s (%d RPU) at time %.2f",
             cluster.name,
@@ -99,6 +110,14 @@ class SimulatedProvisioner(ClusterProvisioner):
 
     def tear_down(self, cluster_name: str, rel_time_s: float) -> None:
         """Record a tear-down (no-op for simulation)."""
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.TEAR_DOWN_STARTED,
+                source="SimulatedProvisioner",
+                cluster_name=cluster_name,
+            )
+        )
         logger.debug(
             "SimulatedProvisioner: tore down %s at time %.2f",
             cluster_name,

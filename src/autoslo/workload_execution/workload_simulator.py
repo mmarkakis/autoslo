@@ -317,23 +317,21 @@ class WorkloadSimulator:
         ):
             # This was an older completion event, but the latency prediction has
             # changed since.
-            emit_structured(
-                QueryRelatedEvent(
-                    rel_time_s=self._current_sim_time_s,
-                    event_type=EventType.COMPLETION_IGNORED,
-                    source="WorkloadSimulator",
-                    cluster_name=cluster_name,
-                    query_id=query_id,
-                    query_text_id=query_text_id,
+            if self._write_text_log:
+                logging.debug(
+                    "Ignoring stale completion event for query %s on %s "
+                    "(predicted=%.3f, event=%.3f).",
+                    query_id,
+                    cluster_name,
+                    (
+                        maybe_currently_predicted_latency_s
+                        if maybe_currently_predicted_latency_s is not None
+                        else float("nan")
+                    ),
+                    latency_s_from_event,
                 )
-            )
             return
 
-        self._pool.on_query_finish(
-            query_id=query_id,
-            cluster_name=cluster_name,
-            rel_time_s=self._current_sim_time_s,
-        )
         emit_structured(
             QueryRelatedEvent(
                 rel_time_s=self._current_sim_time_s,
@@ -341,12 +339,16 @@ class WorkloadSimulator:
                 source="WorkloadSimulator",
                 cluster_name=cluster_name,
                 details={
-                    "latency_s": latency_s_from_event,
-                    "slo_s": self._slo_resolver.resolve(query_text_id),
+                    "success": True,
                 },
                 query_id=query_id,
                 query_text_id=query_text_id,
             )
+        )
+        self._pool.on_query_finish(
+            query_id=query_id,
+            cluster_name=cluster_name,
+            rel_time_s=self._current_sim_time_s,
         )
 
         # If we are in closed-loop mode, schedule the next query arrival now that this one has completed.
@@ -392,7 +394,6 @@ class WorkloadSimulator:
         """
 
         cluster_name = event.details["cluster_name"]
-
         self._pool.on_cluster_ready(cluster_name, self._current_sim_time_s)
         rpu = Cluster.rpu_for_cluster_name(cluster_name)
 

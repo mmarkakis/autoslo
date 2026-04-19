@@ -355,7 +355,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             if delay:
                 logger.info(
                     "Retrying deletion of workgroup %s in %ds (attempt %d).",
-                    workgroup_name, delay, attempt,
+                    workgroup_name,
+                    delay,
+                    attempt,
                 )
                 time.sleep(delay)
             try:
@@ -366,7 +368,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
                 last_exc = exc
                 logger.warning(
                     "ConflictException deleting workgroup %s (attempt %d): %s",
-                    workgroup_name, attempt, exc,
+                    workgroup_name,
+                    attempt,
+                    exc,
                 )
             except Exception:
                 logger.exception(
@@ -376,7 +380,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         logger.error(
             "Workgroup %s deletion failed after %d attempts: %s",
-            workgroup_name, len(self._DELETE_RETRY_DELAYS_S) + 1, last_exc,
+            workgroup_name,
+            len(self._DELETE_RETRY_DELAYS_S) + 1,
+            last_exc,
         )
         return False, namespace_name
 
@@ -423,7 +429,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             if delay:
                 logger.info(
                     "Retrying deletion of namespace %s in %ds (attempt %d).",
-                    namespace_name, delay, attempt,
+                    namespace_name,
+                    delay,
+                    attempt,
                 )
                 time.sleep(delay)
             try:
@@ -440,7 +448,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
                 last_exc = exc
                 logger.warning(
                     "ConflictException deleting namespace %s (attempt %d): %s",
-                    namespace_name, attempt, exc,
+                    namespace_name,
+                    attempt,
+                    exc,
                 )
             except Exception:
                 logger.exception(
@@ -450,7 +460,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         logger.error(
             "Namespace %s deletion failed after %d attempts: %s",
-            namespace_name, len(self._DELETE_RETRY_DELAYS_S) + 1, last_exc,
+            namespace_name,
+            len(self._DELETE_RETRY_DELAYS_S) + 1,
+            last_exc,
         )
         return False
 
@@ -557,10 +569,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         emit_structured(
             BaseStructuredEvent(
                 rel_time_s=rel_time_s,
-                event_type=EventType.CLUSTER_SPIN_UP_STARTED,
+                event_type=EventType.SPIN_UP_STARTED,
                 source="RedshiftServerlessProvisioner",
                 cluster_name=wg_name,
-                details={"rpu": rpu},
             )
         )
 
@@ -611,22 +622,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             name=wg_name,
             conn_info=conn_info,
         )
-        spin_up_duration = now - spin_up_start
-        logger.info(
-            "Workgroup %s (%d RPU) is ready (%.1fs).",
-            wg_name,
-            rpu,
-            spin_up_duration,
-        )
-        emit_structured(
-            BaseStructuredEvent(
-                rel_time_s=now - self._reference_time_s,
-                event_type=EventType.CLUSTER_SPIN_UP_COMPLETED,
-                source="RedshiftServerlessProvisioner",
-                cluster_name=wg_name,
-                details={"rpu": rpu},
-            )
-        )
+
         return cluster
 
     def tear_down(self, cluster_name: str, rel_time_s: float) -> None:
@@ -646,14 +642,12 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         """
         tear_down_start = wall_clock_utc()
         logger.info("Tearing down workgroup %s ...", cluster_name)
-        rpu = Cluster.rpu_for_cluster_name(cluster_name)
         emit_structured(
             BaseStructuredEvent(
                 rel_time_s=rel_time_s,
-                event_type=EventType.CLUSTER_TEAR_DOWN_STARTED,
+                event_type=EventType.TEAR_DOWN_STARTED,
                 source="RedshiftServerlessProvisioner",
                 cluster_name=cluster_name,
-                details={"rpu": rpu},
             )
         )
 
@@ -670,20 +664,3 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             raise RuntimeError(f"Failed to delete namespace {ns}")
         if not self._wait_for_namespace_deleted(ns):
             raise RuntimeError(f"Namespace {ns} was not deleted in time")
-
-        now = wall_clock_utc()
-        tear_down_duration = now - tear_down_start
-        logger.info(
-            "Workgroup %s fully torn down (%.1fs).",
-            cluster_name,
-            tear_down_duration,
-        )
-        emit_structured(
-            BaseStructuredEvent(
-                rel_time_s=now - self._reference_time_s,
-                event_type=EventType.CLUSTER_TEAR_DOWN_COMPLETED,
-                source="RedshiftServerlessProvisioner",
-                cluster_name=cluster_name,
-                details={"duration_s": tear_down_duration},
-            )
-        )

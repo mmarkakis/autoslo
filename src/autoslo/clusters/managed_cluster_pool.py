@@ -31,6 +31,11 @@ from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
 from autoslo.utils.billing import Billing
+from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import (
+    BaseStructuredEvent,
+    EventType,
+)
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 
@@ -112,11 +117,18 @@ class ManagedClusterPool:
         READY and a connection pool is created.  Otherwise the caller
         must invoke :meth:`on_cluster_ready` when appropriate.
         """
-        cluster = self._provisioner.spin_up(action.rpu, rel_time_s)
-        with self._lock:
-            if cluster.name in self._clusters:
-                raise ValueError(f"Cluster {cluster.name!r} already in pool.")
-            self._clusters[cluster.name] = cluster
+
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.SPIN_UP_REQUESTED,
+                source="ManagedClusterPool",
+                cluster_name='',
+                details={
+                    "reason": action.reason,
+                },
+            )
+        )
 
         if self._write_text_log:
             logging.debug(
@@ -125,6 +137,12 @@ class ManagedClusterPool:
                 action.reason,
                 rel_time_s,
             )
+
+        cluster = self._provisioner.spin_up(action.rpu, rel_time_s)
+        with self._lock:
+            if cluster.name in self._clusters:
+                raise ValueError(f"Cluster {cluster.name!r} already in pool.")
+            self._clusters[cluster.name] = cluster
 
         if cluster.conn_info is not None:
             self.on_cluster_ready(cluster.name, rel_time_s)
@@ -159,6 +177,14 @@ class ManagedClusterPool:
             logging.debug(
                 "Cluster %s is ready at time %.2f", cluster_name, ready_time_s
             )
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=ready_time_s,
+                event_type=EventType.CLUSTER_READY,
+                source="ManagedClusterPool",
+                cluster_name=cluster.name,
+            )
+        )
 
     def request_tear_down(
         self,
@@ -171,6 +197,19 @@ class ManagedClusterPool:
         If *force* is False, the method refuses to tear down the last READY
         cluster.
         """
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.TEAR_DOWN_REQUESTED,
+                source="ManagedClusterPool",
+                cluster_name=action.cluster_name,
+                details={
+                    "reason": action.reason,
+                    "force": force,
+                },
+            )
+        )
+
         with self._lock:
             cluster = self._clusters[action.cluster_name]
             if cluster.state not in (ClusterState.READY, ClusterState.DRAINING):
@@ -195,6 +234,14 @@ class ManagedClusterPool:
                             "cluster.",
                             action.cluster_name,
                         )
+                    emit_structured(
+                        BaseStructuredEvent(
+                            rel_time_s=rel_time_s,
+                            event_type=EventType.TEAR_DOWN_BLOCKED,
+                            source="ManagedClusterPool",
+                            cluster_name=action.cluster_name,
+                        )
+                    )
                     return
 
             cluster.update_state(ClusterState.DRAINING)
@@ -252,6 +299,14 @@ class ManagedClusterPool:
                     self._run_id,
                     self._out_dir,
                 )
+                emit_structured(
+                    BaseStructuredEvent(
+                        rel_time_s=rel_time_s,
+                        event_type=EventType.STATS_COLLECTED,
+                        source="ManagedClusterPool",
+                        cluster_name=cluster_name,
+                    )
+                )
             except Exception:
                 logger.exception(
                     "Stats collection failed for cluster %s", cluster_name
@@ -276,15 +331,24 @@ class ManagedClusterPool:
                 "Provisioner tear-down failed for %s", cluster_name
             )
 
-        if self._write_text_log:
-            logging.debug(
-                "Cluster %s is being removed",
-                cluster_name,
-            )
-
         with self._lock:
             cluster.update_state(ClusterState.REMOVED)
             del self._clusters[cluster_name]
+
+        if self._write_text_log:
+            logging.debug(
+                "Cluster %s was removed",
+                cluster_name,
+            )
+
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.CLUSTER_REMOVED,
+                source="ManagedClusterPool",
+                cluster_name=cluster_name,
+            )
+        )
 
     def wait_for_background_tasks(
         self, timeout: Optional[float] = None

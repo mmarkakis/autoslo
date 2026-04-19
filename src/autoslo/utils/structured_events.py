@@ -13,6 +13,7 @@ Parquet.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
@@ -50,7 +51,6 @@ class EventType(str, Enum):
     QUERY_EXECUTION_START = "query_execution_start"
     QUERY_EXECUTION_FINISH = "query_execution_finish"
     COMPLETION = "completion"
-    COMPLETION_IGNORED = "completion_ignored"
 
     # Routing
     QUERY_ROUTED = "query_routed"
@@ -59,18 +59,17 @@ class EventType(str, Enum):
     ROUTING = "routing"
 
     # Cluster lifecycle
-    CLUSTER_READY = "cluster_ready"
+    SPIN_UP_DECISION = "spin_up_decision"
     SPIN_UP_REQUESTED = "spin_up_requested"
-    SPIN_UP = "spin_up"
+    SPIN_UP_STARTED = "spin_up_started"
+    CLUSTER_READY = "cluster_ready"
+
     TEAR_DOWN_DECISION = "tear_down_decision"
     TEAR_DOWN_REQUESTED = "tear_down_requested"
     TEAR_DOWN_BLOCKED = "tear_down_blocked"
+    TEAR_DOWN_STARTED = "tear_down_started"
     STATS_COLLECTED = "stats_collected"
     CLUSTER_REMOVED = "cluster_removed"
-    CLUSTER_SPIN_UP_STARTED = "cluster_spin_up_started"
-    CLUSTER_SPIN_UP_COMPLETED = "cluster_spin_up_completed"
-    CLUSTER_TEAR_DOWN_STARTED = "cluster_tear_down_started"
-    CLUSTER_TEAR_DOWN_COMPLETED = "cluster_tear_down_completed"
 
     # Capacity checkpoint
     CAPACITY_CHECKPOINT_RECONCILIATION = "capacity_checkpoint_reconciliation"
@@ -91,6 +90,10 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     EventType.RUN_FINISH: ["workload_name"],
     EventType.LATENCY_UPDATE: ["old_latency_s", "latency_s"],
     EventType.ROUTING: ["slo_violation", "cost"],
+    EventType.SPIN_UP_DECISION: ["rpu", "reason"],
+    EventType.SPIN_UP_REQUESTED: ["reason"],
+    EventType.TEAR_DOWN_DECISION: ["reason"],
+    EventType.TEAR_DOWN_REQUESTED: ["reason", "force"],
     EventType.CAPACITY_CHECKPOINT_RECONCILIATION: [
         "checkpoint_rel_time_s",
         "desired",
@@ -133,8 +136,9 @@ class BaseStructuredEvent:
     def to_dict(self) -> dict[str, Any]:
         d = {f.name: getattr(self, f.name) for f in fields(self)}
         d["event_type"] = self.event_type.value
-        details = d.pop("details", {})
-        d.update(details)
+        d["details"] = (
+            json.dumps(d["details"], default=str) if d["details"] else ""
+        )
         return d
 
 
@@ -144,4 +148,3 @@ class QueryRelatedEvent(BaseStructuredEvent):
 
     query_id: str = ""
     query_text_id: QueryTextId = QueryTextId("")
-

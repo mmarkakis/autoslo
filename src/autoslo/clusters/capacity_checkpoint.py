@@ -11,7 +11,6 @@ from autoslo.utils.structured_events import (
     EventType,
 )
 
-
 @dataclass(frozen=True)
 class CapacityCheckpoint:
     """Declarative capacity checkpoint.
@@ -96,14 +95,3 @@ class CapacityCheckpoint:
             )
         for action in spin_ups_needed:
             on_spin_up(action)
-            emit_structured(
-                BaseStructuredEvent(
-                    rel_time_s=rel_time_s_getter(),
-                    event_type=EventType.SPIN_UP,
-                    source=source,
-                    details={
-                        "rpu": action.rpu,
-                        "reason": f"capacity_checkpoint",
-                    },
-                )
-            )

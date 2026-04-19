@@ -323,6 +323,17 @@ class WorkloadRunner:
             # dispatched to the pool's background executor when one is
             # configured.  The bookkeeping itself is fast but we still
             # run it off the event loop to avoid lock contention.
+            emit_structured(
+                QueryRelatedEvent(
+                    rel_time_s=self._rel_time_s(),
+                    event_type=EventType.COMPLETION,
+                    source="WorkloadRunner",
+                    cluster_name=selected_cluster_name,
+                    details={"success": (latency_s is not None)},
+                    query_id=query.query_id,
+                    query_text_id=query.query_text_id,
+                )
+            )
             loop.run_in_executor(
                 self._executor,
                 partial(
@@ -332,21 +343,6 @@ class WorkloadRunner:
                     rel_time_s=self._rel_time_s(),
                 ),
             )
-            if latency_s is not None:
-                emit_structured(
-                    QueryRelatedEvent(
-                        rel_time_s=self._rel_time_s(),
-                        event_type=EventType.COMPLETION,
-                        source="WorkloadRunner",
-                        cluster_name=selected_cluster_name,
-                        details={
-                            "latency_s": latency_s,
-                            "slo_s": self._slo_resolver.resolve(query.query_text_id),
-                        },
-                        query_id=query.query_id,
-                        query_text_id=query.query_text_id,
-                    )
-                )
             self._pbar.update(1)
 
     async def run(self) -> None:
@@ -440,6 +436,15 @@ class WorkloadRunner:
             remaining = list(self._pool.clusters_in_state(ClusterState.READY))
             for cn in remaining:
                 try:
+                    emit_structured(
+                        BaseStructuredEvent(
+                            rel_time_s=self._rel_time_s(),
+                            event_type=EventType.TEAR_DOWN_DECISION,
+                            source="WorkloadRunner",
+                            cluster_name=cn,
+                            details={"reason": "run_cleanup"},
+                        )
+                    )
                     await loop.run_in_executor(
                         self._executor,
                         partial(
