@@ -111,7 +111,9 @@ def find_next_checkpoint_time(
         if not log_path.exists():
             raise FileNotFoundError(f"Missing log file: {log_path}")
 
-        # Read in log and compute violations.
+        # Read arrivals and completions, then pivot to compute latency
+        # (latency_s lives inside the JSON ``details`` column, not as a
+        # top-level field).
         log = pd.read_parquet(
             log_path,
             columns=[
@@ -119,12 +121,31 @@ def find_next_checkpoint_time(
                 "event_type",
                 "query_id",
                 "query_text_id",
-                "latency_s",
+                "details",
             ],
         )
-        completions = log[log["event_type"] == "completion"].copy()
-        if completions.empty:
-            raise ValueError(f"No completion events in log: {log_path}")
+        log = log[log["event_type"].isin({"arrival", "completion"})]
+
+
+        # Pivot to get arrival and completion times per query.
+        pivoted = log.pivot(
+            index=["query_id", "query_text_id"],
+            columns="event_type",
+            values="rel_time_s",
+        )
+        if "completion" not in pivoted.columns or pivoted["completion"].dropna().empty:
+            raise ValueError(f"No successful completion events in log: {log_path}")
+
+        completions = pd.DataFrame(
+            {
+                "query_id": pivoted.index.get_level_values("query_id"),
+                "query_text_id": pivoted.index.get_level_values("query_text_id"),
+                "rel_time_s": pivoted["completion"].values,
+                "latency_s": (
+                    pivoted["completion"] - pivoted["arrival"]
+                ).values,
+            }
+        ).dropna(subset=["rel_time_s", "latency_s"])
         completion_structured_logs.append(completions)
 
     return find_next_checkpoint_time_df(

@@ -222,19 +222,37 @@ class SimulationResult:
 
         log_path = simulation_dir / "structured_log.parquet"
         if log_path.exists():
-            log = pd.read_parquet(log_path)
-            completions = log[log["event_type"] == "completion"].copy()
-            num_queries = len(completions)
-            if num_queries > 0:
-                durations = completions["latency_s"].fillna(0.0)
+            log = pd.read_parquet(
+                log_path,
+                columns=[
+                    "rel_time_s",
+                    "event_type",
+                    "query_id",
+                    "query_text_id",
+                ],
+            )
+            log = log[log["event_type"].isin({"arrival", "completion"})]
+            if not log.empty:
+
+                pivoted = log.pivot(
+                    index=["query_id", "query_text_id"],
+                    columns="event_type",
+                    values="rel_time_s",
+                )
+                latencies = (
+                    pivoted["completion"] - pivoted["arrival"]
+                ).tolist()
                 per_row_slo = (
-                    completions["query_text_id"]
+                    pivoted.index.get_level_values("query_text_id")
                     .map(slo_resolver.resolve)
                     .fillna(0.0)
                 )
+
+                ## TODO: Deal with failed queries. Not super needed here because
+                ## in the sumulator all queries succeed, but needed in principle.
                 lat_and_slos = [
                     LatencySlo(lat, slo)
-                    for lat, slo in zip(durations, per_row_slo)
+                    for lat, slo in zip(latencies, per_row_slo)
                 ]
                 violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)
                 violation_amount_s = SloMetric.ABSOLUTE_S.aggregate_batch(

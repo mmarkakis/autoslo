@@ -88,6 +88,7 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
         "closed_loop",
     ],
     EventType.RUN_FINISH: ["workload_name"],
+    EventType.COMPLETION: ["success"],
     EventType.LATENCY_UPDATE: ["old_latency_s", "latency_s"],
     EventType.ROUTING: ["slo_violation", "cost"],
     EventType.SPIN_UP_DECISION: ["rpu", "reason"],

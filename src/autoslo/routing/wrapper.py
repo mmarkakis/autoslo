@@ -8,10 +8,7 @@ from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import (
-    EventType,
-    QueryRelatedEvent,
-)
+from autoslo.utils.structured_events import EventType, QueryRelatedEvent
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.simulator_event import (
     SimulatorEvent,
@@ -64,22 +61,36 @@ def route_and_update_bookkeeping(
             query_text_id=query.query_text_id,
         )
     )
+    if simulator_pending_events_heap is not None:
+        heapq.heappush(
+            simulator_pending_events_heap,
+            SimulatorEvent(
+                rel_time_s=route_end_rel_s + self_latency_s,
+                event_type=SimulatorEventType.QUERY_COMPLETION,
+                details={
+                    "query_id": query.query_id,
+                    "cluster_name": selected_cluster_name,
+                    "latency_s": self_latency_s,
+                    "query_text_id": query.query_text_id,
+                },
+            ),
+        )
 
     #  ── Update existing latencies ────────────────────────────────────
-    old_predicted_latencies_on_selected = old_predicted_latencies.get(
-        selected_cluster_name, {}
-    )
-    for qid, latency_s in new_predicted_latencies_on_selected.items():
-        old_latency_s = old_predicted_latencies_on_selected.get(qid, None)
+    old_latencies = old_predicted_latencies.get(selected_cluster_name, {})
+    for affected_query in snapshot[selected_cluster_name].queries.values():
+        old_latency_s = old_latencies.get(affected_query.query_id, None)
+        updated_latency_s = new_predicted_latencies_on_selected[
+            affected_query.query_id
+        ]
 
         if (old_latency_s is not None) and (
-            abs(latency_s - old_latency_s) < 1e-3
+            abs(updated_latency_s - old_latency_s) < 1e-3
         ):
             # No change in latency prediction for this query, so skip the
             # update.
             continue
 
-        completion_time_s = route_end_rel_s + latency_s
         emit_structured(
             QueryRelatedEvent(
                 rel_time_s=route_end_rel_s,
@@ -88,10 +99,10 @@ def route_and_update_bookkeeping(
                 cluster_name=selected_cluster_name,
                 details={
                     "old_latency_s": old_latency_s,
-                    "latency_s": latency_s,
+                    "latency_s": updated_latency_s,
                 },
-                query_id=qid,
-                query_text_id=query.query_text_id,
+                query_id=affected_query.query_id,
+                query_text_id=affected_query.query_text_id,
             )
         )
 
@@ -99,13 +110,13 @@ def route_and_update_bookkeeping(
             heapq.heappush(
                 simulator_pending_events_heap,
                 SimulatorEvent(
-                    rel_time_s=completion_time_s,
+                    rel_time_s=route_end_rel_s + updated_latency_s,
                     event_type=SimulatorEventType.QUERY_COMPLETION,
                     details={
-                        "query_id": qid,
+                        "query_id": affected_query.query_id,
                         "cluster_name": selected_cluster_name,
-                        "latency_s": latency_s,
-                        "query_text_id": query.query_text_id,
+                        "latency_s": updated_latency_s,
+                        "query_text_id": affected_query.query_text_id,
                     },
                 ),
             )
