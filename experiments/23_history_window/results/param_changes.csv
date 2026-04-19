@@ -1,12 +1,15 @@
 scenario,parameter,initial,final
-1 day,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
+1 day,autoscaling_config.idle_time_before_tear_down_s,1200.0,600.0
 1 day,autoscaling_config.min_cluster_lifetime_s,1200.0,3600.0
+1 day,autoscaling_config.min_observations_to_act,5,10
+1 day,autoscaling_config.observation_window_s,300.0,120.0
 1 day,autoscaling_config.slo_tightening_factor,0.8,0.6
-1 day,capacity_checkpoints,,"[{'rel_time_s': 3798.443672180176, 'min_rpus': [16, 32]}, {'rel_time_s': 3795.757173538208, 'min_rpus': [16, 16]}, {'rel_time_s': 3795.757173538208, 'min_rpus': [8, 16]}, {'rel_time_s': 3713.9041690826416, 'min_rpus': [16, 32]}]"
-1 week,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
-1 week,capacity_checkpoints,,"[{'rel_time_s': 6091.836346626282, 'min_rpus': [8, 32]}, {'rel_time_s': 6091.199637413025, 'min_rpus': [8, 16]}, {'rel_time_s': 6087.339660644531, 'min_rpus': [8, 8]}, {'rel_time_s': 6087.339660644531, 'min_rpus': [4, 8]}]"
-1 week,managed_cluster_pool_config.initial_rpus,[16],[8]
-1 month,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
+1 day,managed_cluster_pool_config.initial_rpus,[16],[32]
+1 week,autoscaling_config.idle_time_before_tear_down_s,1200.0,600.0
+1 week,autoscaling_config.min_cluster_lifetime_s,1200.0,3600.0
+1 week,autoscaling_config.min_observations_to_act,5,10
+1 week,autoscaling_config.observation_window_s,300.0,120.0
+1 week,autoscaling_config.slo_tightening_factor,0.8,0.6
+1 month,autoscaling_config.idle_time_before_tear_down_s,1200.0,600.0
 1 month,autoscaling_config.min_cluster_lifetime_s,1200.0,3600.0
-1 month,autoscaling_config.slo_tightening_factor,0.8,0.6
-1 month,capacity_checkpoints,,"[{'rel_time_s': 6296.083255290985, 'min_rpus': [16, 32]}, {'rel_time_s': 6278.8055539131165, 'min_rpus': [8, 16]}]"
+1 month,managed_cluster_pool_config.initial_rpus,[16],[32]

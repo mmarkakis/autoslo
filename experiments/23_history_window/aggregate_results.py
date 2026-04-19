@@ -42,7 +42,7 @@ _VIOLATION_SUFFIXES = [
     "violation_relative_mean",
 ]
 
-_CHECKPOINT_KEY = "autoscaling_config.capacity_checkpoints"
+_CHECKPOINT_KEY = "capacity_checkpoints"
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ def _collect_scenario_data(scenario_dir: Path, scenario: str) -> dict[str, Any]:
     }
 
     # --- Holdout data (Phase 8: target-period evaluation) -----------------
-    holdout = _load_yaml(scenario_dir / "holdout" / "summary.yml")
+    holdout = _load_yaml(scenario_dir / "09_holdout" / "summary.yml")
     if holdout:
         row["slo_metric"] = holdout.get("slo_metric")
         for prefix in ("initial", "final"):
@@ -197,7 +197,7 @@ def _collect_scenario_data(scenario_dir: Path, scenario: str) -> dict[str, Any]:
 
     # --- Final train/val summaries (Phase 7) ------------------------------
     for split in ("train", "val"):
-        summary = _load_yaml(scenario_dir / "final" / f"{split}_summary.yml")
+        summary = _load_yaml(scenario_dir / "07_final" / f"{split}_summary.yml")
         if summary:
             for suffix in _VIOLATION_SUFFIXES:
                 row[f"final_{split}_{suffix}"] = summary.get(suffix)
@@ -205,7 +205,7 @@ def _collect_scenario_data(scenario_dir: Path, scenario: str) -> dict[str, Any]:
 
     # --- Baseline train/val summaries (Phase 3) ---------------------------
     for split in ("train", "val"):
-        summary = _load_yaml(scenario_dir / "baseline" / f"{split}_summary.yml")
+        summary = _load_yaml(scenario_dir / "03_baseline" / f"{split}_summary.yml")
         if summary:
             for suffix in _VIOLATION_SUFFIXES:
                 row[f"baseline_{split}_{suffix}"] = summary.get(suffix)
