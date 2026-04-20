@@ -2,8 +2,6 @@ import logging
 import threading
 from typing import Optional
 
-from intervaltree import Interval  # type: ignore[import]
-
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.models.iconq_model import IconqModel
@@ -11,12 +9,8 @@ from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import (
-    BaseStructuredEvent,
-    EventType,
-)
+from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
@@ -368,6 +362,7 @@ class Autoscaler:
         *candidate_rpu* and return the aggregate SLO-violation metric and cost.
         """
         assert self._snapshot_at_window_start is not None
+        assert self._window_start_time_s is not None
 
         # Build a fully mutable local snapshot for replay from the frozen views.
         local_cluster_pool: dict[str, Cluster] = {
@@ -376,19 +371,10 @@ class Autoscaler:
         }
         hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
         local_cluster_pool[hyp_cluster_name] = Cluster(
-            creation_time_s=rel_time_s,
+            creation_time_s=self._window_start_time_s,
             rpu=candidate_rpu,
             name=hyp_cluster_name,
         )
-        billed_intervals: dict[str, list[Interval]] = {}
-        for cluster_name, cluster in local_cluster_pool.items():
-            billed_intervals[cluster_name] = []
-            if cluster.billing_window_start_s is not None:
-                billed_intervals[cluster_name].append(
-                    Interval(
-                        begin=cluster.billing_window_start_s, end=rel_time_s
-                    )
-                )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
             slo_objective=self._slo_objective,
@@ -410,10 +396,6 @@ class Autoscaler:
                         slo = self._slo_resolver.resolve(q.query_text_id)
                         lat_and_slos.append(LatencySlo(latency_s, slo))
 
-                        billed_intervals[cluster_name].append(
-                            Interval(begin=q.rel_start_time_s, end=latency_s)
-                        )
-
             # Route and update state for the incoming query.
             # Wrap as ClusterViews for the router
             snapshot_for_routing = {
@@ -433,17 +415,17 @@ class Autoscaler:
             )
 
         # Also add the lat and slo from any queries still active at the end of
-        # the window.
+        # the window, and compute cost directly from the replay cluster state
+        # using the same model as QueryRouter.
+        total_cost = 0.0
         for cluster_name, cluster in local_cluster_pool.items():
-            for q in cluster.active_queries:
-                pred_lat = cluster.predicted_latencies[q.query_id]
-                slo = self._slo_resolver.resolve(q.query_text_id)
-                lat_and_slos.append(LatencySlo(pred_lat, slo))
+            active_pairs = router._collect_cluster_pairs(
+                queries=cluster.active_queries,
+                predicted_latencies=cluster.predicted_latencies,
+            )
+            cluster_cost = cluster.cost_until(rel_time_s)
+            lat_and_slos.extend(active_pairs)
+            total_cost += cluster_cost
 
         aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
-        total_cost = sum(
-            cluster.cost_per_second
-            * Billing.billed_s(billed_intervals.get(cluster_name, []))
-            for cluster_name, cluster in local_cluster_pool.items()
-        )
         return aggregate, total_cost

@@ -248,13 +248,20 @@ class ManagedClusterPool:
             # (the run has ended).  Clear them so finalization — and
             # therefore stats collection — always proceeds.
             if force and active_queries:
+                # TODO: this could be handled in a more graceful way.
                 logger.warning(
                     "Force tear-down of %s: clearing %d orphaned active "
                     "queries.",
                     action.cluster_name,
                     len(active_queries),
                 )
+                if cluster.billing_window_start_s is not None:
+                    cluster.past_billing_intervals.append(
+                        (cluster.billing_window_start_s, rel_time_s)
+                    )
+                    cluster.billing_window_start_s = None
                 cluster.queries.clear()
+                cluster.id_to_neighbors.clear()
                 cluster.predicted_latencies.clear()
                 active_queries = []
 
@@ -407,11 +414,7 @@ class ManagedClusterPool:
                     cluster_name,
                 )
                 return
-            query, latency_s = cluster.finish_query(
-                query_id,
-                rel_time_s=rel_time_s,
-                min_billing_window_size_s=Billing.REDSHIFT_BILLING_THRESHOLD_S,
-            )
+            query, latency_s = cluster.finish_query(query_id, rel_time_s)
             self._completed_queries.setdefault(cluster_name, []).append(
                 (latency_s, query)
             )

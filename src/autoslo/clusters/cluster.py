@@ -6,6 +6,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, ClassVar, Optional
 
+from intervaltree import Interval  # type: ignore[import]
+
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query
@@ -70,6 +72,9 @@ class Cluster:
     #
     state: ClusterState = ClusterState.PENDING
     billing_window_start_s: Optional[float] = field(default=None, repr=False)
+    past_billing_intervals: list[tuple[float, float]] = field(
+        default_factory=list, repr=False
+    )
 
     queries: dict[str, Query] = field(default_factory=dict, repr=False)
     id_to_neighbors: dict[str, list[Query]] = field(
@@ -87,6 +92,7 @@ class Cluster:
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
         state: ClusterState = ClusterState.PENDING,
         billing_window_start_s: Optional[float] = None,
+        past_billing_intervals: Optional[list[tuple[float, float]]] = None,
         most_recent_query_completion_rel_time_s: Optional[float] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
@@ -107,6 +113,7 @@ class Cluster:
         self.cost_per_rpu_hour = cost_per_rpu_hour
         self.state = state
         self.billing_window_start_s = billing_window_start_s
+        self.past_billing_intervals = list(past_billing_intervals or [])
         self.most_recent_query_completion_rel_time_s: float = (
             most_recent_query_completion_rel_time_s
             if most_recent_query_completion_rel_time_s is not None
@@ -130,6 +137,7 @@ class Cluster:
             cost_per_rpu_hour=self.cost_per_rpu_hour,
             state=self.state,
             billing_window_start_s=self.billing_window_start_s,
+            past_billing_intervals=self.past_billing_intervals,
             most_recent_query_completion_rel_time_s=(
                 self.most_recent_query_completion_rel_time_s
             ),
@@ -140,6 +148,37 @@ class Cluster:
         }
         c.predicted_latencies = dict(self.predicted_latencies)
         return c
+
+    @staticmethod
+    def _billed_seconds_from_raw_intervals(
+        intervals: list[tuple[float, float]],
+    ) -> float:
+        if len(intervals) == 0:
+            return 0.0
+        query_intervals = [
+            Interval(begin=start_s, end=end_s)
+            for start_s, end_s in intervals
+            if end_s > start_s
+        ]
+        return Billing.billed_s(query_intervals)
+
+    def billing_intervals_until(
+        self, rel_time_s: float
+    ) -> list[tuple[float, float]]:
+        intervals = list(self.past_billing_intervals)
+        if (self.billing_window_start_s is not None) and (
+            rel_time_s > self.billing_window_start_s
+        ):
+            intervals.append((self.billing_window_start_s, rel_time_s))
+        return intervals
+
+    def billed_seconds_until(self, rel_time_s: float) -> float:
+        return Cluster._billed_seconds_from_raw_intervals(
+            self.billing_intervals_until(rel_time_s)
+        )
+
+    def cost_until(self, rel_time_s: float) -> float:
+        return self.cost_per_second * self.billed_seconds_until(rel_time_s)
 
     # --- Derived properties ----------------------------------------------
 
@@ -202,7 +241,6 @@ class Cluster:
         self,
         query_id: str,
         rel_time_s: float,
-        min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
     ) -> tuple[Query, float]:
         """
         Remove a query from active tracking.
@@ -211,9 +249,6 @@ class Cluster:
         -----------
         query_id: The ID of the query to finish.
         rel_time_s: Relative time in seconds since run start.
-        min_billing_window_size_s: The minimum size of a billing window. If the
-            time since the start of the current billing window exceeds this
-            threshold, the billing window is closed.
 
         Returns:
         --------
@@ -231,10 +266,14 @@ class Cluster:
         self.id_to_neighbors.pop(query_id, None)
         self.predicted_latencies.pop(query_id, None)
 
-        if (self.billing_window_start_s is not None) and (
-            (rel_time_s - self.billing_window_start_s)
-            >= min_billing_window_size_s
+        # Close the current active-service window when the cluster becomes
+        # idle. Billing threshold/granularity is applied by Billing.billed_s.
+        if (len(self.queries) == 0) and (
+            self.billing_window_start_s is not None
         ):
+            self.past_billing_intervals.append(
+                (self.billing_window_start_s, rel_time_s)
+            )
             self.billing_window_start_s = None
 
         self.most_recent_query_completion_rel_time_s = rel_time_s
@@ -243,7 +282,6 @@ class Cluster:
     def finish_queries_until(
         self,
         rel_time_s: float,
-        min_billing_window_size_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
     ) -> list[tuple[Query, float]]:
         """
         Finish all queries that have completed by the given time.
@@ -251,9 +289,6 @@ class Cluster:
         Parameters:
         -----------
         rel_time_s: Relative time in seconds since run start.
-        min_billing_window_size_s: The minimum size of a billing window. If the
-            time since the start of the current billing window exceeds this
-            threshold, the billing window is closed.
         """
         if not set(self.active_query_ids).issubset(
             self.predicted_latencies.keys()
@@ -276,11 +311,7 @@ class Cluster:
             qid,
         ) in times_and_ids_of_finished_queries:
             qs_and_latencies.append(
-                self.finish_query(
-                    qid,
-                    predicted_completion_rel_time_s,
-                    min_billing_window_size_s=min_billing_window_size_s,
-                )
+                self.finish_query(qid, predicted_completion_rel_time_s)
             )
         return qs_and_latencies
 
@@ -327,6 +358,7 @@ class ClusterView:
         "cost_per_rpu_hour",
         "state",
         "billing_window_start_s",
+        "past_billing_intervals",
         "most_recent_query_completion_rel_time_s",
         "queries",
         "id_to_neighbors",
@@ -341,6 +373,7 @@ class ClusterView:
         self.cost_per_rpu_hour = cluster.cost_per_rpu_hour
         self.state = cluster.state
         self.billing_window_start_s = cluster.billing_window_start_s
+        self.past_billing_intervals = list(cluster.past_billing_intervals)
         self.most_recent_query_completion_rel_time_s = (
             cluster.most_recent_query_completion_rel_time_s
         )
@@ -363,6 +396,40 @@ class ClusterView:
     @property
     def cost_per_second(self) -> float:
         return Cluster.cost_per_second_for_rpu(self.rpu, self.cost_per_rpu_hour)
+
+    def billing_intervals_until(
+        self, rel_time_s: float
+    ) -> list[tuple[float, float]]:
+        intervals = list(self.past_billing_intervals)
+        if (self.billing_window_start_s is not None) and (
+            rel_time_s > self.billing_window_start_s
+        ):
+            intervals.append((self.billing_window_start_s, rel_time_s))
+        return intervals
+
+    def billed_seconds_until(self, rel_time_s: float) -> float:
+        return Cluster._billed_seconds_from_raw_intervals(
+            self.billing_intervals_until(rel_time_s)
+        )
+
+    def cost_until(self, rel_time_s: float) -> float:
+        return self.cost_per_second * self.billed_seconds_until(rel_time_s)
+
+    def cost_with_query_start_until(
+        self, query_start_s: float, rel_time_s: float
+    ) -> float:
+        """Cost until *rel_time_s* if a query starts at *query_start_s*."""
+        effective_window_start = (
+            self.billing_window_start_s
+            if self.billing_window_start_s is not None
+            else query_start_s
+        )
+        intervals = list(self.past_billing_intervals)
+        if rel_time_s > effective_window_start:
+            intervals.append((effective_window_start, rel_time_s))
+        return self.cost_per_second * Cluster._billed_seconds_from_raw_intervals(
+            intervals
+        )
 
     def hypothetical_neighbors_with(
         self, query: "Query"
@@ -398,6 +465,7 @@ class ClusterView:
             cost_per_rpu_hour=self.cost_per_rpu_hour,
             state=self.state,
             billing_window_start_s=self.billing_window_start_s,
+            past_billing_intervals=self.past_billing_intervals,
             most_recent_query_completion_rel_time_s=(
                 self.most_recent_query_completion_rel_time_s
             ),
