@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import copy
 import itertools
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional
 
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.utils.billing import Billing
@@ -282,12 +281,6 @@ class Cluster:
             )
         return qs_and_latencies
 
-    def queries_to_neighbors(self) -> dict[Query, list["Query"]]:
-        """Return a mapping from each active query to its active neighbors."""
-        return {
-            self.queries[qid]: nbs for qid, nbs in self.id_to_neighbors.items()
-        }
-
     # --- Static helpers --------------------------------------------------
 
     @staticmethod
@@ -318,3 +311,106 @@ class Cluster:
     ) -> float:
         """Return the cost-per-second for the given RPU size."""
         return cost_per_rpu_hour * rpu / Cluster.ONE_HOUR_S
+
+
+class ClusterView:
+    """Immutable, deep-copied view of a Cluster for safe read-only use."""
+
+    __slots__ = (
+        "creation_time_s",
+        "rpu",
+        "name",
+        "conn_info",
+        "cost_per_rpu_hour",
+        "state",
+        "billing_window_start_s",
+        "most_recent_query_completion_rel_time_s",
+        "queries",
+        "id_to_neighbors",
+        "predicted_latencies",
+    )
+
+    def __init__(self, cluster: "Cluster"):
+        self.creation_time_s = cluster.creation_time_s
+        self.rpu = cluster.rpu
+        self.name = cluster.name
+        self.conn_info = cluster.conn_info
+        self.cost_per_rpu_hour = cluster.cost_per_rpu_hour
+        self.state = cluster.state
+        self.billing_window_start_s = cluster.billing_window_start_s
+        self.most_recent_query_completion_rel_time_s = (
+            cluster.most_recent_query_completion_rel_time_s
+        )
+        # Deep copy all mutable state
+        self.queries = dict(cluster.queries)
+        self.id_to_neighbors = {
+            qid: list(nbs) for qid, nbs in cluster.id_to_neighbors.items()
+        }
+        self.predicted_latencies = dict(cluster.predicted_latencies)
+
+    # --- Read-only properties ---
+    @property
+    def active_queries(self) -> list["Query"]:
+        return list(self.queries.values())
+
+    @property
+    def active_query_ids(self) -> list[str]:
+        return list(self.queries.keys())
+
+    @property
+    def cost_per_second(self) -> float:
+        return Cluster.cost_per_second_for_rpu(self.rpu, self.cost_per_rpu_hour)
+
+    def hypothetical_neighbors_with(
+        self, query: "Query"
+    ) -> dict["Query", list["Query"]]:
+        """
+        Return the neighbor map that would result if *query* were added as active.
+        Mirrors the semantics of Cluster.add_query() without mutating self.
+        """
+        new_query_id = query.query_id
+        # Snapshot of existing state before the new query is added.
+        # id_to_neighbors[new_query_id] = queries currently active (not including itself).
+        existing_active = list(self.queries.values())
+        queries = dict(self.queries)
+        queries[new_query_id] = query
+        id_to_neighbors: dict[str, list[Query]] = {
+            qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
+        }
+        id_to_neighbors[new_query_id] = existing_active
+        # Mirror add_query: append the new query to every existing active query's neighbor list.
+        for active_query_id in self.queries:
+            id_to_neighbors[active_query_id] = list(
+                id_to_neighbors[active_query_id]
+            ) + [query]
+        return {queries[qid]: list(nbs) for qid, nbs in id_to_neighbors.items()}
+
+    def to_cluster(self) -> "Cluster":
+        """Reconstruct a mutable Cluster from this view's deep-copied data."""
+        c = Cluster(
+            creation_time_s=self.creation_time_s,
+            rpu=self.rpu,
+            name=self.name,
+            conn_info=self.conn_info,
+            cost_per_rpu_hour=self.cost_per_rpu_hour,
+            state=self.state,
+            billing_window_start_s=self.billing_window_start_s,
+            most_recent_query_completion_rel_time_s=(
+                self.most_recent_query_completion_rel_time_s
+            ),
+        )
+        c.queries = dict(self.queries)
+        c.id_to_neighbors = {
+            qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
+        }
+        c.predicted_latencies = dict(self.predicted_latencies)
+        return c
+
+    # --- Block all mutation ---
+    def __setattr__(self, name: str, value: Any) -> None:
+        if hasattr(self, name):
+            raise AttributeError(f"ClusterView is immutable: cannot set {name}")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"ClusterView is immutable: cannot delete {name}")

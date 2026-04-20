@@ -24,7 +24,7 @@ import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
-from autoslo.clusters.cluster import Cluster, ClusterState
+from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.clusters.redshift_run_stats_collector import (
@@ -32,10 +32,7 @@ from autoslo.clusters.redshift_run_stats_collector import (
 )
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import (
-    BaseStructuredEvent,
-    EventType,
-)
+from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 
@@ -123,7 +120,7 @@ class ManagedClusterPool:
                 rel_time_s=rel_time_s,
                 event_type=EventType.SPIN_UP_REQUESTED,
                 source="ManagedClusterPool",
-                cluster_name='',
+                cluster_name="",
                 details={
                     "reason": action.reason,
                 },
@@ -452,8 +449,10 @@ class ManagedClusterPool:
     # Routing and checkpointing support
     # ------------------------------------------------------------------
 
-    def snapshot(self, only_ready: bool) -> dict[str, Cluster]:
-        """Return clones the clusters in the pool"""
+    def snapshot(self, only_ready: bool) -> dict[str, ClusterView]:
+        """
+        Return immutable, deep-copied ClusterViews for all clusters in the pool.
+        """
         with self._lock:
             cond = (
                 (lambda c: c.state == ClusterState.READY)
@@ -461,7 +460,7 @@ class ManagedClusterPool:
                 else (lambda c: True)
             )
             return {
-                cluster_name: cluster.clone()
+                cluster_name: ClusterView(cluster)
                 for cluster_name, cluster in self._clusters.items()
                 if cond(cluster)
             }

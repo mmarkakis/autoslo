@@ -5,7 +5,7 @@ from typing import Optional
 from intervaltree import Interval  # type: ignore[import]
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
-from autoslo.clusters.cluster import Cluster, ClusterState
+from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
@@ -64,7 +64,7 @@ class Autoscaler:
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
         self._window_start_time_s: Optional[float] = None
-        self._snapshot_at_window_start: Optional[dict[str, Cluster]] = None
+        self._snapshot_at_window_start: Optional[dict[str, ClusterView]] = None
         self._window_queries: list[Query] = []
 
     # ------------------------------------------------------------------
@@ -113,7 +113,7 @@ class Autoscaler:
     def _reset_window(
         self,
         window_start_time: float,
-        snapshot: dict[str, Cluster],
+        snapshot: dict[str, ClusterView],
     ) -> None:
         """Clear the routing window and all associated state."""
         self._window_start_time_s = window_start_time
@@ -124,7 +124,7 @@ class Autoscaler:
         self,
         rel_time_s: float,
         current_query: Query,
-        pool_snapshot_with_current_query: dict[str, Cluster],
+        pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[ScalingAction]:
         with self._lock:
             return self._inform_locked(
@@ -137,7 +137,7 @@ class Autoscaler:
         self,
         rel_time_s: float,
         current_query: Query,
-        pool_snapshot_with_current_query: dict[str, Cluster],
+        pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[ScalingAction]:
 
         actions: list[ScalingAction] = []
@@ -187,7 +187,7 @@ class Autoscaler:
     def consider_spin_up(
         self,
         rel_time_s: float,
-        pool_snapshot_with_current_query: dict[str, Cluster],
+        pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[SpinUpAction]:
         """
         Recommend spinning up a cluster if both are true:
@@ -261,7 +261,7 @@ class Autoscaler:
     def consider_teardown(
         self,
         rel_time_s: float,
-        pool_snapshot_with_current_query: dict[str, Cluster],
+        pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[TearDownAction]:
         """
         Recommend tearing down any cluster(s) that have:
@@ -369,19 +369,19 @@ class Autoscaler:
         """
         assert self._snapshot_at_window_start is not None
 
-        # Set up.
-        local_snapshot = {
-            cluster_name: cluster.clone()
-            for cluster_name, cluster in self._snapshot_at_window_start.items()
+        # Build a fully mutable local snapshot for replay from the frozen views.
+        local_cluster_pool: dict[str, Cluster] = {
+            cluster_name: view.to_cluster()
+            for cluster_name, view in self._snapshot_at_window_start.items()
         }
         hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
-        local_snapshot[hyp_cluster_name] = Cluster(
+        local_cluster_pool[hyp_cluster_name] = Cluster(
             creation_time_s=rel_time_s,
             rpu=candidate_rpu,
             name=hyp_cluster_name,
         )
         billed_intervals: dict[str, list[Interval]] = {}
-        for cluster_name, cluster in local_snapshot.items():
+        for cluster_name, cluster in local_cluster_pool.items():
             billed_intervals[cluster_name] = []
             if cluster.billing_window_start_s is not None:
                 billed_intervals[cluster_name].append(
@@ -401,7 +401,7 @@ class Autoscaler:
             time_s = query.rel_start_time_s
 
             # Expire any finished queries.
-            for cluster_name, cluster in local_snapshot.items():
+            for cluster_name, cluster in local_cluster_pool.items():
                 qs_and_latencies = cluster.finish_queries_until(
                     rel_time_s=time_s,
                 )
@@ -415,26 +415,27 @@ class Autoscaler:
                         )
 
             # Route and update state for the incoming query.
+            # Wrap as ClusterViews for the router
             snapshot_for_routing = {
-                cluster_name: cluster.clone()
-                for cluster_name, cluster in local_snapshot.items()
+                cluster_name: ClusterView(cluster)
+                for cluster_name, cluster in local_cluster_pool.items()
             }
             selected_cluster_name, new_predicted_latencies_for_cluster = (
                 router.route_query(
                     query=query,
-                    clusters=snapshot_for_routing,
+                    snapshot=snapshot_for_routing,
                     iconq_model=self._iconq_model,
                     rel_time_s=time_s,
                 )
             )
-            local_snapshot[selected_cluster_name].add_query(query)
-            local_snapshot[selected_cluster_name].predicted_latencies = (
+            local_cluster_pool[selected_cluster_name].add_query(query)
+            local_cluster_pool[selected_cluster_name].predicted_latencies = (
                 new_predicted_latencies_for_cluster
             )
 
         # Also add the lat and slo from any queries still active at the end of
         # the window.
-        for cluster_name, cluster in local_snapshot.items():
+        for cluster_name, cluster in local_cluster_pool.items():
             for q in cluster.active_queries:
                 pred_lat = cluster.predicted_latencies[q.query_id]
                 slo = self._slo_resolver.resolve(q.query_text_id)
@@ -444,6 +445,6 @@ class Autoscaler:
         total_cost = sum(
             cluster.cost_per_second
             * Billing.billed_s(billed_intervals.get(cluster_name, []))
-            for cluster_name, cluster in local_snapshot.items()
+            for cluster_name, cluster in local_cluster_pool.items()
         )
         return aggregate, total_cost

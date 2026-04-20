@@ -1,21 +1,19 @@
 import logging
 import random
 from enum import Enum
+from typing import Optional
 
 from intervaltree import Interval  # type: ignore[import]
 
-from autoslo.clusters.cluster import Cluster
+from autoslo.clusters.cluster import ClusterView
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.slo.slo_metric import LatencySlo
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import (
-    EventType,
-    QueryRelatedEvent,
-)
+from autoslo.utils.structured_events import EventType, QueryRelatedEvent
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
@@ -47,25 +45,29 @@ class QueryRouter:
     def route_query(
         self,
         query: Query,
-        clusters: dict[str, Cluster],
+        snapshot: dict[str, ClusterView],
         iconq_model: IconqModel,
         rel_time_s: float,
     ) -> tuple[str, dict[str, float]]:
 
-        # Collect before-state raw pairs and cost per cluster.
+        # Collect before-state raw pairs and cost per cluster, and build the
+        # hypothetical neighbor map for each cluster as if *query* were added.
         before_pairs: dict[str, list[LatencySlo]] = {}
         before_costs: dict[str, float] = {}
         cluster_name_to_queries_to_neighbors = {}
-        for cluster_name, cluster in clusters.items():
+        for cluster_name, cluster in snapshot.items():
             pairs, cost = self._collect_cluster_pairs_and_cost(
-                cluster, rel_time_s
+                queries=cluster.active_queries,
+                predicted_latencies=cluster.predicted_latencies,
+                billing_window_start_s=cluster.billing_window_start_s,
+                cost_per_second=cluster.cost_per_second,
+                rel_time_s=rel_time_s,
             )
             before_pairs[cluster_name] = pairs
             before_costs[cluster_name] = cost
 
-            cluster.add_query(query)
             cluster_name_to_queries_to_neighbors[cluster_name] = (
-                cluster.queries_to_neighbors()
+                cluster.hypothetical_neighbors_with(query)
             )
 
         # Perform the prediction and constraint to non-decreasing latency.
@@ -80,7 +82,7 @@ class QueryRouter:
             for query_id, pred in all_predictions[cluster_name].items():
                 new_predicted_latencies[cluster_name][query_id] = max(
                     pred.overall_mean_s(),
-                    clusters[cluster_name].predicted_latencies.get(
+                    snapshot[cluster_name].predicted_latencies.get(
                         query_id, 0.0
                     ),
                 )
@@ -89,19 +91,25 @@ class QueryRouter:
         # (aggregating raw pairs across ALL clusters, with the candidate
         # cluster using updated predictions).
         all_after_viols_and_costs: dict[str, tuple[float, float]] = {}
-        for candidate_name, cluster in clusters.items():
-            cluster.predicted_latencies = new_predicted_latencies[
-                candidate_name
-            ]
+        for candidate_name, cluster in snapshot.items():
+            hyp_billing_start = (
+                cluster.billing_window_start_s
+                if cluster.billing_window_start_s is not None
+                else query.rel_start_time_s
+            )
             after_pairs, after_cost = self._collect_cluster_pairs_and_cost(
-                cluster, rel_time_s
+                queries=cluster.active_queries + [query],
+                predicted_latencies=new_predicted_latencies[candidate_name],
+                billing_window_start_s=hyp_billing_start,
+                cost_per_second=cluster.cost_per_second,
+                rel_time_s=rel_time_s,
             )
 
             # Build pair list: updated pairs for candidate,
             # unchanged before-pairs for all others.
             all_after_pairs: list[LatencySlo] = list(after_pairs)
             total_after_cost = after_cost
-            for other_name in clusters:
+            for other_name in snapshot:
                 if other_name != candidate_name:
                     all_after_pairs.extend(before_pairs[other_name])
                     total_after_cost += before_costs[other_name]
@@ -162,18 +170,27 @@ class QueryRouter:
 
     def _collect_cluster_pairs_and_cost(
         self,
-        cluster: Cluster,
+        queries: list[Query],
+        predicted_latencies: dict[str, float],
+        billing_window_start_s: Optional[float],
+        cost_per_second: float,
         rel_time_s: float,
     ) -> tuple[list[LatencySlo], float]:
         """
-        Collect raw (latency, slo) pairs and cost for a single cluster
-        without aggregating violations.
+        Collect raw (latency, slo) pairs and cost from the provided query set
+        and latency map, without mutating any cluster.
 
         Parameters
         ----------
-        cluster:
-            The cluster whose state to inspect.
-            Must have ``predicted_latencies`` populated for all active queries.
+        queries:
+            The active queries to evaluate.
+        predicted_latencies:
+            Mapping of query_id → predicted latency in seconds.
+            Must contain an entry for every query in *queries*.
+        billing_window_start_s:
+            Start of the current billing window, or None if no window is open.
+        cost_per_second:
+            The cluster's cost per second.
         rel_time_s:
             Relative time in seconds since run start.
 
@@ -184,19 +201,17 @@ class QueryRouter:
         lat_and_slos: list[LatencySlo] = []
         intervals = []
 
-        for q in cluster.active_queries:
-            lat = cluster.predicted_latencies[q.query_id]
+        for q in queries:
+            lat = predicted_latencies[q.query_id]
             slo = self._slo_resolver.resolve(q.query_text_id)
             interval = Query.query_interval(q.rel_start_time_s, lat, q.query_id)
             lat_and_slos.append(LatencySlo(lat, slo))
             intervals.append(interval)
 
-        if cluster.billing_window_start_s is not None:
-            intervals.append(
-                Interval(cluster.billing_window_start_s, rel_time_s)
-            )
+        if billing_window_start_s is not None:
+            intervals.append(Interval(billing_window_start_s, rel_time_s))
         billed_s = Billing.billed_s(intervals)
-        cost = cluster.cost_per_second * billed_s
+        cost = cost_per_second * billed_s
 
         return lat_and_slos, cost
 

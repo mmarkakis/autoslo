@@ -4,6 +4,7 @@ from typing import Callable, Optional
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.autoscaler import Autoscaler
+from autoslo.clusters.cluster import ClusterView
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
@@ -33,16 +34,12 @@ def route_and_update_bookkeeping(
 
     #  ── Route the query ────────────────────────────────────
     route_start_rel_s = rel_time_s_getter()
-    snapshot = pool.snapshot(only_ready=True)
-    old_predicted_latencies = {
-        cluster_name: dict(cluster.predicted_latencies)
-        for cluster_name, cluster in snapshot.items()
-    }
+    snapshot: dict[str, ClusterView] = pool.snapshot(only_ready=True)
 
     selected_cluster_name, new_predicted_latencies_on_selected = (
         router.route_query(
             query=query,
-            clusters=snapshot,
+            snapshot=snapshot,
             iconq_model=iconq_model,
             rel_time_s=route_start_rel_s,
         )
@@ -77,7 +74,7 @@ def route_and_update_bookkeeping(
         )
 
     #  ── Update existing latencies ────────────────────────────────────
-    old_latencies = old_predicted_latencies.get(selected_cluster_name, {})
+    old_latencies = snapshot[selected_cluster_name].predicted_latencies
     for affected_query in snapshot[selected_cluster_name].queries.values():
         old_latency_s = old_latencies.get(affected_query.query_id, None)
         updated_latency_s = new_predicted_latencies_on_selected[
