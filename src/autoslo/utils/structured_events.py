@@ -78,6 +78,54 @@ class EventType(str, Enum):
     RPU_COUNTERFACTUAL = "rpu_counterfactual"
     RPU_SELECTION = "rpu_selection"
 
+    # ------------------------------------------------------------------
+    # Grouped subsets
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def query_lifecycle_types(cls) -> set[EventType]:
+        """Events that track a query from arrival to completion."""
+        return {
+            cls.ARRIVAL,
+            cls.QUERY_EXECUTION_START,
+            cls.QUERY_EXECUTION_FINISH,
+            cls.COMPLETION,
+        }
+
+    @classmethod
+    def routing_types(cls) -> set[EventType]:
+        """Events emitted during or about query routing."""
+        return {
+            cls.QUERY_ROUTED,
+            cls.LATENCY_UPDATE,
+            cls.ROUTING_SCORE,
+            cls.ROUTING,
+        }
+
+    @classmethod
+    def cluster_lifecycle_types(cls) -> set[EventType]:
+        """Events that track cluster spin-up, readiness, and tear-down."""
+        return {
+            cls.SPIN_UP_DECISION,
+            cls.SPIN_UP_REQUESTED,
+            cls.SPIN_UP_STARTED,
+            cls.CLUSTER_READY,
+            cls.TEAR_DOWN_DECISION,
+            cls.TEAR_DOWN_REQUESTED,
+            cls.TEAR_DOWN_BLOCKED,
+            cls.TEAR_DOWN_STARTED,
+            cls.STATS_COLLECTED,
+            cls.CLUSTER_REMOVED,
+        }
+
+    @classmethod
+    def autoscaler_types(cls) -> set[EventType]:
+        """Events related to autoscaler RPU decisions."""
+        return {
+            cls.RPU_COUNTERFACTUAL,
+            cls.RPU_SELECTION,
+        }
+
 
 # Required details per event type.  Types not listed here have no requirements.
 REQUIRED_DETAILS: dict[EventType, list[str]] = {

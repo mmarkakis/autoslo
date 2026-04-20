@@ -290,6 +290,17 @@ class WorkloadSimulator:
         )
         seq_num_to_cluster_name[index] = selected_cluster_name
 
+        emit_structured(
+            QueryRelatedEvent(
+                rel_time_s=self._current_sim_time_s,
+                event_type=EventType.QUERY_EXECUTION_START,
+                source="WorkloadSimulator",
+                cluster_name=selected_cluster_name,
+                query_id=query.query_id,
+                query_text_id=query.query_text_id,
+            )
+        )
+
     def _handle_query_completion(
         self,
         event: SimulatorEvent,
@@ -331,6 +342,17 @@ class WorkloadSimulator:
                     latency_s_from_event,
                 )
             return
+
+        emit_structured(
+            QueryRelatedEvent(
+                rel_time_s=self._current_sim_time_s,
+                event_type=EventType.QUERY_EXECUTION_FINISH,
+                source="WorkloadSimulator",
+                cluster_name=cluster_name,
+                query_id=query_id,
+                query_text_id=query_text_id,
+            )
+        )
 
         emit_structured(
             QueryRelatedEvent(
