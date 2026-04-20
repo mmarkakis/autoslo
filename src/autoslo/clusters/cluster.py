@@ -179,6 +179,7 @@ class Cluster:
     def add_query(
         self,
         query: "Query",
+        new_predicted_latencies: dict[str, float],
     ) -> None:
         """
         Register a query as actively running.
@@ -194,6 +195,8 @@ class Cluster:
         self.queries[new_query_id] = query
         if self.billing_window_start_s is None:
             self.billing_window_start_s = query.rel_start_time_s
+
+        self.predicted_latencies = dict(new_predicted_latencies)
 
     def finish_query(
         self,

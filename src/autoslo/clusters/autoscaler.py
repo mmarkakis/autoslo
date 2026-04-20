@@ -428,9 +428,8 @@ class Autoscaler:
                     rel_time_s=time_s,
                 )
             )
-            local_cluster_pool[selected_cluster_name].add_query(query)
-            local_cluster_pool[selected_cluster_name].predicted_latencies = (
-                new_predicted_latencies_for_cluster
+            local_cluster_pool[selected_cluster_name].add_query(
+                query, new_predicted_latencies_for_cluster
             )
 
         # Also add the lat and slo from any queries still active at the end of

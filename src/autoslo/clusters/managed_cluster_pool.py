@@ -373,10 +373,7 @@ class ManagedClusterPool:
         """Register *query* as actively running on *cluster_name*."""
         with self._lock:
             cluster = self._clusters[cluster_name]
-            cluster.add_query(query)
-            cluster.predicted_latencies = dict(
-                new_predicted_latencies_on_selected
-            )
+            cluster.add_query(query, new_predicted_latencies_on_selected)
 
     def on_query_finish(
         self,
