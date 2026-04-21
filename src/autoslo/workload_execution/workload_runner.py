@@ -118,7 +118,9 @@ class WorkloadRunner:
             cluster_name = fut.result()
             if cluster_name is None:
                 # Spin-up was denied by the budget; SPIN_UP_BLOCKED was
-                # already emitted by the pool.  Nothing more to do.
+                # already emitted by the pool.  Disable future spin-up
+                # considerations in the autoscaler.
+                self._autoscaler.disable_spin_up()
                 return
             rpu = Cluster.rpu_for_cluster_name(cluster_name)
             emit_structured(

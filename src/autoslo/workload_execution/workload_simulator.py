@@ -114,6 +114,10 @@ class WorkloadSimulator:
             action, self._current_sim_time_s
         )
         if cluster_name is None:
+            # Spin-up was denied by the budget; SPIN_UP_BLOCKED was already 
+            # emitted by the pool.  Disable future spin-up considerations in the 
+            # autoscaler.
+            self._autoscaler.disable_spin_up()
             return
         provisioner = self._pool.provisioner
         assert type(provisioner) is SimulatedProvisioner

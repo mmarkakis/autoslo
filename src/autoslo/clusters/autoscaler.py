@@ -56,6 +56,7 @@ class Autoscaler:
         self._window_start_time_s: Optional[float] = None
         self._snapshot_at_window_start: Optional[dict[str, ClusterView]] = None
         self._window_queries: list[Query] = []
+        self._spin_up_disabled: bool = False
 
     # ------------------------------------------------------------------
     # Properties
@@ -109,6 +110,15 @@ class Autoscaler:
         self._window_start_time_s = window_start_time
         self._snapshot_at_window_start = snapshot
         self._window_queries = []
+
+    def disable_spin_up(self) -> None:
+        """Permanently disable spin-up recommendations.
+
+        Called when a spin-up is rejected because the max cluster budget is
+        exhausted, so future windows no longer waste cycles considering it.
+        """
+        with self._lock:
+            self._spin_up_disabled = True
 
     def inform(
         self,
@@ -189,7 +199,7 @@ class Autoscaler:
         """
 
         # Determine if we are disallowed from spinning up.
-        if len(self.allowed_rpu_sizes) == 0:
+        if len(self.allowed_rpu_sizes) == 0 or self._spin_up_disabled:
             return []
 
         # Determine if we have enough observations to act.
