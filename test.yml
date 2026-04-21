@@ -27,6 +27,7 @@ provisioner_config:
 
 managed_cluster_pool_config:
   maxconns: 1000
+  max_clusters: 10
   initial_rpus:
     - 16
 

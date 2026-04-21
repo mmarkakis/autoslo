@@ -30,7 +30,7 @@ from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
-from autoslo.utils.billing import Billing
+from autoslo.clusters.spin_up_budget import SpinUpBudget
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
@@ -58,6 +58,8 @@ class ManagedClusterPool:
         self,
         provisioner: ClusterProvisioner,
         initial_rpus: list[int],
+        max_clusters: int = 10,
+        num_reserved_clusters: int = 0,
         maxconns: int = 1000,
         search_path: str = "public",
         collect_cluster_stats: bool = False,
@@ -68,6 +70,8 @@ class ManagedClusterPool:
     ) -> None:
         self._provisioner = provisioner
         self._initial_rpus = initial_rpus
+        self._max_clusters = max_clusters
+        self._num_reserved_clusters = num_reserved_clusters
         self._maxconns = maxconns
         self._search_path = search_path
         self._collect_cluster_stats = collect_cluster_stats
@@ -83,6 +87,9 @@ class ManagedClusterPool:
         self._run_id: Optional[str] = run_id
         self._out_dir: Optional[str] = out_dir
         self._write_text_log = write_text_log
+
+        self._budget = SpinUpBudget(max_clusters=max_clusters)
+        self._budget.reserve(num_reserved_clusters)
 
         # Spin up initial clusters.
         rpus = self._initial_rpus
@@ -106,14 +113,54 @@ class ManagedClusterPool:
     # Cluster lifecycle
     # ------------------------------------------------------------------
 
-    def request_spin_up(self, action: SpinUpAction, rel_time_s: float) -> str:
-        """Spin up a new cluster.  Returns its name.
+    def request_spin_up(
+        self, action: SpinUpAction, rel_time_s: float
+    ) -> Optional[str]:
+        """Spin up a new cluster.  Returns its name, or ``None`` on denial.
 
         The cluster starts as PENDING.  If the provisioner returns a
         ``Cluster`` with ``conn_info`` (live mode), it auto-promotes to
         READY and a connection pool is created.  Otherwise the caller
         must invoke :meth:`on_cluster_ready` when appropriate.
         """
+
+        with self._lock:
+            if action.from_reserved_budget:
+                success = self._budget.try_consume_reserved()
+            else:
+                success = self._budget.try_consume()
+            snap = self._budget.snapshot()
+
+        if not success:
+            emit_structured(
+                BaseStructuredEvent(
+                    rel_time_s=rel_time_s,
+                    event_type=EventType.SPIN_UP_BLOCKED,
+                    source="ManagedClusterPool",
+                    cluster_name="",
+                    details={
+                        "reason": "max_clusters_exhausted",
+                        "action_reason": action.reason,
+                        "rpu": action.rpu,
+                        "max": snap["max"],
+                        "used": snap["used"],
+                        "reserved": snap["reserved"],
+                        "available": snap["available"],
+                    },
+                )
+            )
+            if self._write_text_log:
+                logging.warning(
+                    "Spin-up denied: max_clusters=%d exhausted "
+                    "(used=%d, reserved=%d, available=%d). "
+                    "action.reason=%s",
+                    snap["max"],
+                    snap["used"],
+                    snap["reserved"],
+                    snap["available"],
+                    action.reason,
+                )
+            return None
 
         emit_structured(
             BaseStructuredEvent(
@@ -145,6 +192,12 @@ class ManagedClusterPool:
             self.on_cluster_ready(cluster.name, rel_time_s)
 
         return cluster.name
+
+    def release_reserved_spinups(self, n: int) -> None:
+        """Release up to ``n`` reserved spin-ups back to the available pool."""
+        if n > 0:
+            with self._lock:
+                self._budget.release_reservation(n)
 
     def on_cluster_ready(self, cluster_name: str, ready_time_s: float) -> None:
         """Transition PENDING → READY.

@@ -218,14 +218,33 @@ class StructuredConfig:
             "managed_cluster_pool_config.initial_rpus",
             [8],
         )
+        max_clusters = cfgu.getd(
+            cfg, "managed_cluster_pool_config.max_clusters", 10
+        )
         maxconns = cfgu.getd(
             cfg,
             "managed_cluster_pool_config.maxconns",
             1000,
         )
+        
+        num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
+            capacity_checkpoints
+        )
+        total_clusters_needed = len(initial_rpus) + num_reserved_clusters
+        if max_clusters < total_clusters_needed:
+            raise ValueError(
+                f"managed_cluster_pool_config.max_clusters={max_clusters} is "
+                f"too low: initial RPUs ({len(initial_rpus)}) + worst-case "
+                f"checkpoint reservation ({num_reserved_clusters}) "
+                f"requires at least "
+                f"{total_clusters_needed}."
+            )
+
         pool: ManagedClusterPool = ManagedClusterPool(
             provisioner=provisioner,
             initial_rpus=initial_rpus,
+            max_clusters=max_clusters,
+            num_reserved_clusters=num_reserved_clusters,
             maxconns=maxconns,
             search_path=schema.search_path,
             collect_cluster_stats=True,

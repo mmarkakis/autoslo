@@ -62,6 +62,7 @@ class EventType(str, Enum):
     SPIN_UP_DECISION = "spin_up_decision"
     SPIN_UP_REQUESTED = "spin_up_requested"
     SPIN_UP_STARTED = "spin_up_started"
+    SPIN_UP_BLOCKED = "spin_up_blocked"
     CLUSTER_READY = "cluster_ready"
 
     TEAR_DOWN_DECISION = "tear_down_decision"
@@ -109,6 +110,7 @@ class EventType(str, Enum):
             cls.SPIN_UP_DECISION,
             cls.SPIN_UP_REQUESTED,
             cls.SPIN_UP_STARTED,
+            cls.SPIN_UP_BLOCKED,
             cls.CLUSTER_READY,
             cls.TEAR_DOWN_DECISION,
             cls.TEAR_DOWN_REQUESTED,
@@ -141,6 +143,13 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     EventType.ROUTING: ["slo_violation", "cost"],
     EventType.SPIN_UP_DECISION: ["rpu", "reason"],
     EventType.SPIN_UP_REQUESTED: ["reason"],
+    EventType.SPIN_UP_BLOCKED: [
+        "reason",
+        "max",
+        "used",
+        "reserved",
+        "available",
+    ],
     EventType.TEAR_DOWN_DECISION: ["reason"],
     EventType.TEAR_DOWN_REQUESTED: ["reason", "force"],
     EventType.CAPACITY_CHECKPOINT_RECONCILIATION: [

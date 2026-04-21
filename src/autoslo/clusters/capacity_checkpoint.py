@@ -1,7 +1,7 @@
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
@@ -44,6 +44,7 @@ class CapacityCheckpoint:
             for _ in range(count):
                 action = SpinUpAction(
                     rpu=rpu,
+                    from_reserved_budget=True,
                     reason=f"capacity_checkpoint@t={self.rel_time_s}",
                 )
                 actions.append(action)
@@ -76,6 +77,11 @@ class CapacityCheckpoint:
             )
         )
 
+        num_prebudgeted_spinups = len(self.min_rpus)
+        num_spinups_actually_needed = len(spin_ups_needed)
+        excess = num_prebudgeted_spinups - num_spinups_actually_needed
+        pool.release_reserved_spinups(excess)
+
         if not spin_ups_needed:
             if write_text_log:
                 logging.debug(
@@ -93,3 +99,10 @@ class CapacityCheckpoint:
             )
         for action in spin_ups_needed:
             on_spin_up(action)
+
+    @staticmethod
+    def worst_case_total_spinups(
+        checkpoints: Iterable["CapacityCheckpoint"],
+    ) -> int:
+        """Total worst-case spin-ups across all checkpoints."""
+        return sum(len(cp.min_rpus) for cp in checkpoints)

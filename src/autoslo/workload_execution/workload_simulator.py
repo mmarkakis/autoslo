@@ -113,6 +113,8 @@ class WorkloadSimulator:
         cluster_name = self._pool.request_spin_up(
             action, self._current_sim_time_s
         )
+        if cluster_name is None:
+            return
         provisioner = self._pool.provisioner
         assert type(provisioner) is SimulatedProvisioner
         ready_time = self._current_sim_time_s + provisioner.spin_up_delay_s

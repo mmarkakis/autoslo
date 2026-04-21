@@ -116,6 +116,10 @@ class WorkloadRunner:
             if exc is not None:
                 return
             cluster_name = fut.result()
+            if cluster_name is None:
+                # Spin-up was denied by the budget; SPIN_UP_BLOCKED was
+                # already emitted by the pool.  Nothing more to do.
+                return
             rpu = Cluster.rpu_for_cluster_name(cluster_name)
             emit_structured(
                 BaseStructuredEvent(

@@ -421,6 +421,35 @@ class CheckpointOptimizer:
             initial_rpus = cfgu.getd(
                 current_config, "managed_cluster_pool_config.initial_rpus", []
             )
+            existing_checkpoints = [
+                CapacityCheckpoint(
+                    rel_time_s=float(cp["rel_time_s"]),
+                    min_rpus=tuple(cp["min_rpus"]),
+                )
+                for cp in cfgu.getd(current_config, "capacity_checkpoints", [])
+            ]
+            max_clusters = int(
+                cfgu.getd(
+                    current_config,
+                    "autoscaling_config.max_clusters",
+                    10,
+                )
+            )
+            num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
+                existing_checkpoints
+            )
+            total_clusters_needed = (
+                len(initial_rpus) + num_reserved_clusters + 1
+            )  # +1 for the new checkpoint
+            if total_clusters_needed > max_clusters:
+                console.print(
+                    f"[yellow]Cannot place new checkpoint because the initial "
+                    f"setup requires {len(initial_rpus)} clusters and existing "
+                    f"checkpoints reserve {num_reserved_clusters} clusters, "
+                    f"while the max_clusters budget is {max_clusters}."
+                )
+                break
+
             for rpu in self._allowed_rpu_sizes:
                 checkpoint = CapacityCheckpoint(
                     rel_time_s=max(0.0, next_checkpoint_time),
