@@ -126,20 +126,26 @@ def find_next_checkpoint_time(
         )
         log = log[log["event_type"].isin({"arrival", "completion"})]
 
-
         # Pivot to get arrival and completion times per query.
         pivoted = log.pivot(
             index=["query_id", "query_text_id"],
             columns="event_type",
             values="rel_time_s",
         )
-        if "completion" not in pivoted.columns or pivoted["completion"].dropna().empty:
-            raise ValueError(f"No successful completion events in log: {log_path}")
+        if (
+            "completion" not in pivoted.columns
+            or pivoted["completion"].dropna().empty
+        ):
+            raise ValueError(
+                f"No successful completion events in log: {log_path}"
+            )
 
         completions = pd.DataFrame(
             {
                 "query_id": pivoted.index.get_level_values("query_id"),
-                "query_text_id": pivoted.index.get_level_values("query_text_id"),
+                "query_text_id": pivoted.index.get_level_values(
+                    "query_text_id"
+                ),
                 "rel_time_s": pivoted["completion"].values,
                 "latency_s": (
                     pivoted["completion"] - pivoted["arrival"]
@@ -431,7 +437,7 @@ class CheckpointOptimizer:
                 configs=all_configs,
                 out_dir=round_dir / "train",
             )
-            for i in range(len(self._allowed_rpu_sizes)):
+            for i in range(len(checkpoints)):
                 checkpoint = checkpoints[i]
                 trial_results = all_trial_results[i]
                 agg = SimulationResult.aggregate(

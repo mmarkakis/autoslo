@@ -203,6 +203,15 @@ class StructuredConfig:
             write_text_log=write_text_log,
         )
 
+        # ── Capacity Checkpoints ─────────────────────────────────────────────
+        capacity_checkpoints = [
+            CapacityCheckpoint(
+                rel_time_s=float(cp["rel_time_s"]),
+                min_rpus=tuple(cp["min_rpus"]),
+            )
+            for cp in cfgu.getd(cfg, "capacity_checkpoints", [])
+        ]
+
         # ── Managed Cluster Pool ─────────────────────────────────────────────
         initial_rpus = cfgu.getd(
             cfg,
@@ -224,13 +233,6 @@ class StructuredConfig:
             out_dir=out_dir,
             background_executor=thread_pool_executor if is_runner else None,
         )
-        capacity_checkpoints = [
-            CapacityCheckpoint(
-                rel_time_s=float(cp["rel_time_s"]),
-                min_rpus=tuple(cp["min_rpus"]),
-            )
-            for cp in cfgu.getd(cfg, "capacity_checkpoints", [])
-        ]
 
         # ── QueryRouter ──────────────────────────────────────────────────────
         routing_policy_str: str = cfgu.getd(
