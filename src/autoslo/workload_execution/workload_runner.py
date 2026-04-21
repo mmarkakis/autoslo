@@ -254,62 +254,63 @@ class WorkloadRunner:
             query: The Query object to execute.
             skip_wait: If True, skip the initial sleep and route immediately.
         """
-        delay = query.rel_start_time_s - self._rel_time_s()
-
-        if skip_wait:
-            logging.info(
-                f"Query {query.query_id} scheduled to start at "
-                f"relative time {query.rel_start_time_s:.2f}s "
-                f"(in {delay:.2f}s), but skip_wait=True. Starting immediately."
-            )
-        elif delay > 0:
-            logging.info(
-                f"Query {query.query_id} scheduled to start at "
-                f"relative time {query.rel_start_time_s:.2f}s "
-                f"(in {delay:.2f}s). Waiting..."
-            )
-            await asyncio.sleep(delay)
-        else:  # delay <= 0
-            logging.warning(
-                f"Query {query.query_id} scheduled start time "
-                f"relative time {query.rel_start_time_s:.2f}s "
-                f"is in the past (delay={delay:.2f}s). Starting immediately."
-            )
-
-        # ── Find query text ────────────────────────────────────────────────
-        query_text = self._query_text_registry.get(query.query_text_id)
-        if query_text is None:
-            logging.error(
-                f"No text found for schema "
-                f"'{self._query_text_registry.schema_name}', "
-                f"query_text_id '{query.query_text_id}'. Skipping query "
-                f"{query.query_id}."
-            )
-            return
-
-        # ── Emit arrival event (matches simulator) ────────────────
-        emit_structured(
-            QueryRelatedEvent(
-                rel_time_s=self._rel_time_s(),
-                event_type=EventType.ARRIVAL,
-                source="WorkloadRunner",
-                query_id=query.query_id,
-                query_text_id=query.query_text_id,
-            )
-        )
-
-        # ── Route at arrival time ────────────────────────────────────
-        # Routing involves model inference (CPU-bound) and must be
-        # serialised to keep pool state consistent, so it runs in the
-        # thread-pool under _routing_lock.
         loop = asyncio.get_running_loop()
-        selected_cluster_name = await loop.run_in_executor(
-            self._executor, self._route_locked, query
-        )
-
-        # ── Execute ──────────────────────────────────────────────────
+        selected_cluster_name: Optional[str] = None
         latency_s: Optional[float] = None
         try:
+            delay = query.rel_start_time_s - self._rel_time_s()
+
+            if skip_wait:
+                logging.info(
+                    f"Query {query.query_id} scheduled to start at "
+                    f"relative time {query.rel_start_time_s:.2f}s "
+                    f"(in {delay:.2f}s), but skip_wait=True. Starting immediately."
+                )
+            elif delay > 0:
+                logging.info(
+                    f"Query {query.query_id} scheduled to start at "
+                    f"relative time {query.rel_start_time_s:.2f}s "
+                    f"(in {delay:.2f}s). Waiting..."
+                )
+                await asyncio.sleep(delay)
+            else:  # delay <= 0
+                logging.warning(
+                    f"Query {query.query_id} scheduled start time "
+                    f"relative time {query.rel_start_time_s:.2f}s "
+                    f"is in the past (delay={delay:.2f}s). Starting immediately."
+                )
+
+            # ── Find query text ────────────────────────────────────────────
+            query_text = self._query_text_registry.get(query.query_text_id)
+            if query_text is None:
+                logging.error(
+                    f"No text found for schema "
+                    f"'{self._query_text_registry.schema_name}', "
+                    f"query_text_id '{query.query_text_id}'. Skipping query "
+                    f"{query.query_id}."
+                )
+                return
+
+            # ── Emit arrival event (matches simulator) ────────────────
+            emit_structured(
+                QueryRelatedEvent(
+                    rel_time_s=self._rel_time_s(),
+                    event_type=EventType.ARRIVAL,
+                    source="WorkloadRunner",
+                    query_id=query.query_id,
+                    query_text_id=query.query_text_id,
+                )
+            )
+
+            # ── Route at arrival time ────────────────────────────────────
+            # Routing involves model inference (CPU-bound) and must be
+            # serialised to keep pool state consistent, so it runs in the
+            # thread-pool under _routing_lock.
+            selected_cluster_name = await loop.run_in_executor(
+                self._executor, self._route_locked, query
+            )
+
+            # ── Execute ──────────────────────────────────────────────────
             fn = partial(
                 self._run_query_sync,
                 query.query_id,
@@ -319,30 +320,31 @@ class WorkloadRunner:
             )
             latency_s = await loop.run_in_executor(self._executor, fn)
         finally:
-            # on_query_finish may trigger _finalize_removal, which is
-            # dispatched to the pool's background executor when one is
-            # configured.  The bookkeeping itself is fast but we still
-            # run it off the event loop to avoid lock contention.
-            emit_structured(
-                QueryRelatedEvent(
-                    rel_time_s=self._rel_time_s(),
-                    event_type=EventType.COMPLETION,
-                    source="WorkloadRunner",
-                    cluster_name=selected_cluster_name,
-                    details={"success": (latency_s is not None)},
-                    query_id=query.query_id,
-                    query_text_id=query.query_text_id,
+            if selected_cluster_name is not None:
+                # on_query_finish may trigger _finalize_removal, which is
+                # dispatched to the pool's background executor when one is
+                # configured.  The bookkeeping itself is fast but we still
+                # run it off the event loop to avoid lock contention.
+                emit_structured(
+                    QueryRelatedEvent(
+                        rel_time_s=self._rel_time_s(),
+                        event_type=EventType.COMPLETION,
+                        source="WorkloadRunner",
+                        cluster_name=selected_cluster_name,
+                        details={"success": (latency_s is not None)},
+                        query_id=query.query_id,
+                        query_text_id=query.query_text_id,
+                    )
                 )
-            )
-            loop.run_in_executor(
-                self._executor,
-                partial(
-                    self._pool.on_query_finish,
-                    query_id=query.query_id,
-                    cluster_name=selected_cluster_name,
-                    rel_time_s=self._rel_time_s(),
-                ),
-            )
+                loop.run_in_executor(
+                    self._executor,
+                    partial(
+                        self._pool.on_query_finish,
+                        query_id=query.query_id,
+                        cluster_name=selected_cluster_name,
+                        rel_time_s=self._rel_time_s(),
+                    ),
+                )
             self._pbar.update(1)
 
     async def run(self) -> None:

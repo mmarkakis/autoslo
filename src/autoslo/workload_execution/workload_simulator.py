@@ -235,6 +235,18 @@ class WorkloadSimulator:
                             f"Unknown event type: {event.event_type}"
                         )
 
+        # Flush final progress so the bar reflects terminal state even when
+        # the last callback happened at a coarse interval.
+        progress_callback(self._completed_queries, self._total_queries)
+        if self._completed_queries != self._total_queries:
+            logging.warning(
+                "Simulation ended with %d/%d completed queries.",
+                self._completed_queries,
+                self._total_queries,
+            )
+        if hasattr(self, "_progress_bar"):
+            self._progress_bar.close()
+
         emit_structured(
             BaseStructuredEvent(
                 rel_time_s=self._current_sim_time_s,
@@ -380,7 +392,9 @@ class WorkloadSimulator:
             or self._completed_queries == self._total_queries
         ):
             progress_callback(self._completed_queries, self._total_queries)
-        if self._closed_loop:
+        if self._closed_loop and (
+            self._completed_queries < self._total_queries
+        ):
             next_query = self._workload.queries()[self._completed_queries]
             heapq.heappush(
                 self._pending_events,
@@ -516,10 +530,23 @@ class WorkloadSimulator:
             import pandas as _pd
 
             log = _pd.read_parquet(log_path)
-            completions = log[log["event_type"] == "completion"].copy()
+            exec_starts = (
+                log[log["event_type"] == "query_execution_start"]
+                .set_index("query_id")["rel_time_s"]
+                .rename("exec_start_s")
+            )
+            exec_finishes = (
+                log[log["event_type"] == "query_execution_finish"]
+                .set_index("query_id")[["rel_time_s", "query_text_id"]]
+                .rename(columns={"rel_time_s": "exec_finish_s"})
+            )
+            completions = exec_finishes.join(exec_starts, how="inner")
+            completions["latency_s"] = (
+                completions["exec_finish_s"] - completions["exec_start_s"]
+            )
             num_queries = len(completions)
             if num_queries > 0 and self._slo_resolver.default_slo_s:
-                durations = completions["latency_s"].fillna(0.0)
+                durations = completions["latency_s"]
                 # Compute per-row SLO using the resolver so that
                 # per-template overrides are reflected in violation stats.
                 per_row_slo = (

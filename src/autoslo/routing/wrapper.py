@@ -62,7 +62,7 @@ def route_and_update_bookkeeping(
         heapq.heappush(
             simulator_pending_events_heap,
             SimulatorEvent(
-                rel_time_s=route_end_rel_s + self_latency_s,
+                rel_time_s=query.rel_start_time_s + self_latency_s,
                 event_type=SimulatorEventType.QUERY_COMPLETION,
                 details={
                     "query_id": query.query_id,
@@ -107,7 +107,9 @@ def route_and_update_bookkeeping(
             heapq.heappush(
                 simulator_pending_events_heap,
                 SimulatorEvent(
-                    rel_time_s=route_end_rel_s + updated_latency_s,
+                    rel_time_s=(
+                        affected_query.rel_start_time_s + updated_latency_s
+                    ),
                     event_type=SimulatorEventType.QUERY_COMPLETION,
                     details={
                         "query_id": affected_query.query_id,
