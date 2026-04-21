@@ -6,10 +6,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, ClassVar, Optional
 
-from intervaltree import Interval  # type: ignore[import]
-
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
-from autoslo.utils.billing import Billing
+from autoslo.utils.billing import Billing, BillingInterval
 from autoslo.workload_definition.query import Query
 
 _VALID_CLUSTER_STATE_TRANSITIONS = {
@@ -156,7 +154,7 @@ class Cluster:
         if len(intervals) == 0:
             return 0.0
         query_intervals = [
-            Interval(begin=start_s, end=end_s)
+            BillingInterval(start_s, end_s)
             for start_s, end_s in intervals
             if end_s > start_s
         ]
@@ -427,8 +425,9 @@ class ClusterView:
         intervals = list(self.past_billing_intervals)
         if rel_time_s > effective_window_start:
             intervals.append((effective_window_start, rel_time_s))
-        return self.cost_per_second * Cluster._billed_seconds_from_raw_intervals(
-            intervals
+        return (
+            self.cost_per_second
+            * Cluster._billed_seconds_from_raw_intervals(intervals)
         )
 
     def hypothetical_neighbors_with(

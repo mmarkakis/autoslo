@@ -1,7 +1,12 @@
 import math
+from typing import NamedTuple
 
-from intervaltree import Interval  # type: ignore[import]
 import pandas as pd
+
+
+class BillingInterval(NamedTuple):
+    start: float
+    end: float
 
 
 class Billing:
@@ -23,7 +28,7 @@ class Billing:
 
     @staticmethod
     def billed_s(
-        query_intervals: list[Interval],
+        query_intervals: list[BillingInterval],
         threshold_s: float = REDSHIFT_BILLING_THRESHOLD_S,
         granularity_s: float = REDSHIFT_BILLING_GRANULARITY_S,
     ) -> float:
@@ -48,14 +53,8 @@ class Billing:
         )
         if len(billed_intervals) == 0:
             return 0.0
-        total_billed_s = sum(iv.end - iv.begin for iv in billed_intervals)
+        total_billed_s = sum(iv.end - iv.start for iv in billed_intervals)
         return float(total_billed_s)
-
-    @staticmethod
-    def _query_id(interval: Interval) -> str:
-        if interval.data and "query_id" in interval.data:
-            return interval.data["query_id"]
-        return "unknown"
 
     @staticmethod
     def billed_s_from_df(
@@ -100,25 +99,18 @@ class Billing:
                 df[end_col_name] - pd.Timestamp("1970-01-01")
             ) / pd.Timedelta("1s")
 
-        for qid, s, e in zip(
-            df["query_id"], df[start_col_name], df[end_col_name]
-        ):
-            query_id = qid if qid is not None else "unknown"
-            interval = Interval(
-                begin=s,
-                end=e,
-                data={"query_id": query_id},
-            )
+        for s, e in zip(df[start_col_name], df[end_col_name]):
+            interval = BillingInterval(s, e)
             query_intervals.append(interval)
 
         return Billing.billed_s(query_intervals, threshold_s, granularity_s)
 
     @staticmethod
     def billed_intervals(
-        query_intervals: list[Interval],
+        query_intervals: list[BillingInterval],
         threshold_s: float = REDSHIFT_BILLING_THRESHOLD_S,
         granularity_s: float = REDSHIFT_BILLING_GRANULARITY_S,
-    ) -> list[Interval]:
+    ) -> list[BillingInterval]:
         """
         Calculate the billed intervals given the execution intervals of each
         query, considering the billing threshold and granularity.
@@ -136,46 +128,42 @@ class Billing:
             The list of billed intervals.
         """
 
-        billed_intervals: list[Interval] = []
+        billed_intervals: list[BillingInterval] = []
         if not query_intervals or len(query_intervals) == 0:
             return billed_intervals
 
-        ivs = sorted(query_intervals, key=lambda iv: (iv.begin, iv.end))
+        ivs = sorted(query_intervals, key=lambda iv: (iv.start, iv.end))
 
-        current_start = ivs[0].begin
+        current_start = ivs[0].start
         current_end = max(ivs[0].end, current_start + threshold_s)
-        current_query_ids = {Billing._query_id(ivs[0])}
 
         for iv in ivs[1:]:
-            start_time, end_time = iv.begin, iv.end
+            start_time, end_time = iv.start, iv.end
 
             if start_time <= current_end:
                 current_end = max(current_end, end_time)
-                current_query_ids.add(Billing._query_id(iv))
             else:
                 duration_s = current_end - current_start
                 billed_duration_s = max(
                     threshold_s,
                     Billing._round_up(duration_s, granularity_s),
                 )
-                billed_interval = Interval(
-                    begin=current_start,
-                    end=current_start + billed_duration_s,
-                    data={"query_ids": current_query_ids},
+                billed_interval = BillingInterval(
+                    current_start,
+                    current_start + billed_duration_s,
                 )
+
                 billed_intervals.append(billed_interval)
                 current_start = start_time
                 current_end = max(end_time, current_start + threshold_s)
-                current_query_ids = {Billing._query_id(iv)}
 
         duration_s = current_end - current_start
         billed_duration_s = max(
             threshold_s, Billing._round_up(duration_s, granularity_s)
         )
-        billed_interval = Interval(
-            begin=current_start,
-            end=current_start + billed_duration_s,
-            data={"query_ids": current_query_ids},
+        billed_interval = BillingInterval(
+            current_start,
+            current_start + billed_duration_s,
         )
         billed_intervals.append(billed_interval)
 

@@ -490,13 +490,12 @@ class WorkloadSimulator:
                     Query.query_interval(
                         q.rel_start_time_s,
                         latency_s,
-                        q.query_id,
                     )
                     for latency_s, q in completed_queries
                 ],
             )
 
-            total_duration_s = sum(iv.end - iv.begin for iv in billed_intervals)
+            total_duration_s = sum(iv.end - iv.start for iv in billed_intervals)
             rpu = Cluster.rpu_for_cluster_name(cluster_name)
             cost_per_second = Cluster.cost_per_second_for_rpu(rpu)
             d[cluster_name] = {
@@ -507,9 +506,8 @@ class WorkloadSimulator:
                 "total_billed_cost": float(total_duration_s * cost_per_second),
                 "billed_intervals": [
                     {
-                        "begin_s": float(iv.begin),
+                        "start_s": float(iv.start),
                         "end_s": float(iv.end),
-                        "query_ids": sorted(list(iv.data["query_ids"])),
                     }
                     for iv in billed_intervals
                 ],
