@@ -21,13 +21,12 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.utils.config as cfgu
-from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
     compute_pareto_front,
-    threshold_aware_select,
 )
 from autoslo.utils.yaml_helpers import dump
 
@@ -166,7 +165,7 @@ class ParamSweep:
 
         # ── Pareto front ───────────────────────────────────────────
         points = [
-            (r["train_violation_agg"], r["train_cost_agg"])
+            ViolationCost(r["train_violation_agg"], r["train_cost_agg"])
             for r in grid_results
         ]
         pareto_indices = compute_pareto_front(points)
@@ -380,15 +379,13 @@ class ParamSweep:
                     for c in candidates_for_param
                 ]
                 cd_candidates = [
-                    (
+                    ViolationCost(
                         all_grid_results[i]["train_violation_agg"],
                         all_grid_results[i]["train_cost_agg"],
                     )
                     for i in indices
                 ]
-                best_local = threshold_aware_select(
-                    cd_candidates, self._slo_objective.slo_threshold
-                )
+                best_local = self._slo_objective.idx_of_best(cd_candidates)
                 best_val = param_values[best_local]
 
                 if best_val != current_best[param_name]:
@@ -427,16 +424,13 @@ class ParamSweep:
         (feasibility-first, then cheapest) selection.
         """
         candidates = [
-            (
+            ViolationCost(
                 grid_results[i]["val_primary_violation_agg"],
                 grid_results[i]["val_cost_agg"],
             )
             for i in pareto_indices
         ]
-        best_local_idx = threshold_aware_select(
-            candidates,
-            self._slo_objective.slo_threshold,
-        )
+        best_local_idx = self._slo_objective.idx_of_best(candidates)
         return pareto_indices[best_local_idx]
 
     # ------------------------------------------------------------------

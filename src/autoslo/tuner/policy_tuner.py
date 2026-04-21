@@ -15,7 +15,7 @@ from rich.console import Console
 
 import autoslo.utils.config as cfgu
 from autoslo.slo.slo_metric import SloMetric
-from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.forecast_policy import ForecastPolicy
@@ -25,10 +25,8 @@ from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    threshold_aware_select,
 )
 from autoslo.utils.config import copy_and_apply_overrides
-from autoslo.utils.logging import setup_structured_logging
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.workload import Workload
 
@@ -418,13 +416,10 @@ class PolicyTuner:
 
         # Select the best candidate on validation data.
         val_scores = [
-            (
-                agg.primary_violation(self._slo_metric),
-                agg.cost,
-            )
+            ViolationCost(agg.primary_violation(self._slo_metric), agg.cost)
             for agg in candidate_val_aggs
         ]
-        best_idx = threshold_aware_select(val_scores, self._slo_threshold)
+        best_idx = self._slo_objective.idx_of_best(val_scores)
 
         best_config = candidate_configs[best_idx]
         best_train_agg = candidate_train_aggs[best_idx]
@@ -694,7 +689,7 @@ class PolicyTuner:
         """
         target_path = self._extract_and_save_target_workload()
 
-        # Copy the single target workload into train/ and val/ directories so 
+        # Copy the single target workload into train/ and val/ directories so
         # downstream phases find paths in the expected layout.
         train_dir = self._run_dir / "02_workloads" / "train"
         train_dir.mkdir(parents=True, exist_ok=True)
@@ -716,8 +711,6 @@ class PolicyTuner:
             f"under {self._run_dir / '02_workloads'}."
         )
         return train_paths, val_paths
-
-    
 
     def _evaluate_target(
         self,

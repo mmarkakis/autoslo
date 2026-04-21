@@ -24,13 +24,12 @@ import autoslo.utils.config as cfgu
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
-from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    threshold_aware_select,
 )
 from autoslo.utils.yaml_helpers import dump
 
@@ -474,12 +473,13 @@ class CheckpointOptimizer:
                 )
                 cands.append((checkpoint, agg))
 
-            # 4. Pick best on training set (threshold-aware selection).
+            # 4. Pick best on training set.
             sm = self._slo_objective.slo_metric
-            st = self._slo_objective.slo_threshold
-            best_idx = threshold_aware_select(
-                [(agg.primary_violation(sm), agg.cost) for _, agg in cands],
-                st,
+            best_idx = self._slo_objective.idx_of_best(
+                [
+                    ViolationCost(agg.primary_violation(sm), agg.cost)
+                    for _, agg in cands
+                ]
             )
             best_cp, _ = cands[best_idx]
             self._print_candidate_table(round_idx, cands, best_cp)

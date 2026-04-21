@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
+from autoslo.slo.slo_objective import ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
@@ -349,47 +350,12 @@ class SimulationResult:
 
 
 # ---------------------------------------------------------------------------
-# Helpers for metric routing and threshold-aware selection
-# ---------------------------------------------------------------------------
-
-
-def is_feasible(primary_val: float, slo_threshold: float) -> bool:
-    """Return True if *primary_val* satisfies the SLO threshold."""
-    return primary_val <= slo_threshold
-
-
-def threshold_aware_select(
-    candidates: list[tuple[float, float]],
-    slo_threshold: float,
-) -> int:
-    """Return the index of the best candidate under lexicographic selection.
-
-    1. Partition into feasible (primary ≤ threshold) and infeasible.
-    2. If any feasible: return the one with lowest cost.
-    3. If none feasible: return the one with lowest primary violation
-       (tiebreak on cost).
-    """
-    feasible = [
-        (i, pv, cost)
-        for i, (pv, cost) in enumerate(candidates)
-        if pv <= slo_threshold
-    ]
-    if feasible:
-        return min(feasible, key=lambda t: t[2])[0]
-    # None feasible — pick lowest primary violation, tiebreak cost.
-    return min(
-        range(len(candidates)),
-        key=lambda i: (candidates[i][0], candidates[i][1]),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Pareto front computation
 # ---------------------------------------------------------------------------
 
 
 def compute_pareto_front(
-    points: list[tuple[float, float]],
+    points: list[ViolationCost],
 ) -> list[int]:
     """Return indices of Pareto-optimal points (both objectives minimised).
 
@@ -406,12 +372,14 @@ def compute_pareto_front(
         return []
 
     # Sort by first objective; break ties by second.
-    indexed = sorted(enumerate(points), key=lambda t: (t[1][0], t[1][1]))
+    indexed = sorted(
+        enumerate(points), key=lambda t: (t[1].violation, t[1].cost)
+    )
     front: list[int] = []
     best_cost = float("inf")
-    for idx, (_, cost) in indexed:
-        if cost <= best_cost:
+    for idx, point in indexed:
+        if point.cost <= best_cost:
             front.append(idx)
-            best_cost = cost
+            best_cost = point.cost
     front.sort()
     return front

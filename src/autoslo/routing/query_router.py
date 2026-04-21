@@ -6,7 +6,7 @@ from autoslo.clusters.cluster import ClusterView
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.slo.slo_metric import LatencySlo
-from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import EventType, QueryRelatedEvent
@@ -84,7 +84,7 @@ class QueryRouter:
         # For each candidate cluster, compute the global after-state
         # (aggregating raw pairs across ALL clusters, with the candidate
         # cluster using updated predictions).
-        all_after_viols_and_costs: dict[str, tuple[float, float]] = {}
+        all_after_viols_and_costs: dict[str, ViolationCost] = {}
         for candidate_name, cluster in snapshot.items():
             after_pairs = self._collect_cluster_pairs(
                 queries=cluster.active_queries + [query],
@@ -107,7 +107,7 @@ class QueryRouter:
             after_violation = self._slo_objective.slo_metric.aggregate_batch(
                 all_after_pairs
             )
-            all_after_viols_and_costs[candidate_name] = (
+            all_after_viols_and_costs[candidate_name] = ViolationCost(
                 after_violation,
                 total_after_cost,
             )
@@ -131,9 +131,7 @@ class QueryRouter:
 
         # Choose and return best.
         selected_cluster_name = self.select_best(all_after_viols_and_costs)
-        selected_viol, selected_cost = all_after_viols_and_costs[
-            selected_cluster_name
-        ]
+        selected = all_after_viols_and_costs[selected_cluster_name]
         selected_latency = new_predicted_latencies[selected_cluster_name][
             query.query_id
         ]
@@ -145,8 +143,8 @@ class QueryRouter:
                 cluster_name=selected_cluster_name,
                 details={
                     "latency_s": selected_latency,
-                    "slo_violation": selected_viol,
-                    "cost": selected_cost,
+                    "slo_violation": selected.violation,
+                    "cost": selected.cost,
                 },
                 query_id=query.query_id,
                 query_text_id=query.query_text_id,
@@ -188,7 +186,7 @@ class QueryRouter:
 
     def select_best(
         self,
-        viols_and_costs: dict[str, tuple[float, float]],
+        viols_and_costs: dict[str, ViolationCost],
     ):
         cluster_names = sorted(viols_and_costs.keys())
 
@@ -203,19 +201,7 @@ class QueryRouter:
             return random.choice(cluster_names)
 
         # USE_ICONQ_MODEL
-        best = cluster_names[0]
-        best_viol_and_cost = viols_and_costs[best]
-
-        if len(cluster_names) == 1:
-            return best
-
-        for cluster_name in cluster_names[1:]:
-            this_viol_and_cost = viols_and_costs[cluster_name]
-            if self._slo_objective.is_b_better(
-                best_viol_and_cost,
-                this_viol_and_cost,
-            ):
-                best = cluster_name
-                best_viol_and_cost = this_viol_and_cost
-
-        return best
+        best_local_idx = self._slo_objective.idx_of_best(
+            [viols_and_costs[cn] for cn in cluster_names]
+        )
+        return cluster_names[best_local_idx]

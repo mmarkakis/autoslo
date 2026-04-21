@@ -1,6 +1,19 @@
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
+
+
+class ViolationCost(NamedTuple):
+    """Aggregated SLO-violation metric paired with execution cost.
+
+    This is the output type of the SLO evaluation pipeline and the
+    input type for :meth:`SloObjective.is_b_better` /
+    :meth:`SloObjective.idx_of_best`.
+    """
+
+    violation: float
+    cost: float
 
 
 @dataclass(frozen=True)
@@ -62,8 +75,8 @@ class SloObjective:
 
     def is_b_better(
         self,
-        metric_value_and_cost_a: tuple[float, float],
-        metric_value_and_cost_b: tuple[float, float],
+        a: ViolationCost,
+        b: ViolationCost,
         tolerance: float = COMPARISON_TOLERANCE,
     ) -> bool:
         """
@@ -73,12 +86,23 @@ class SloObjective:
         one with the better metric value.
         """
 
-        metric_a, cost_a = metric_value_and_cost_a
-        metric_b, cost_b = metric_value_and_cost_b
-
-        a_meets = self.is_met_from_aggregated(metric_a)
-        b_meets = self.is_met_from_aggregated(metric_b)
+        a_meets = self.is_met_from_aggregated(a.violation)
+        b_meets = self.is_met_from_aggregated(b.violation)
 
         if a_meets and b_meets:
-            return self._cmp_with_tolerance(cost_a, cost_b, tolerance) > 0
-        return self._cmp_with_tolerance(metric_a, metric_b, tolerance) > 0
+            return self._cmp_with_tolerance(a.cost, b.cost, tolerance) > 0
+        return self._cmp_with_tolerance(a.violation, b.violation, tolerance) > 0
+
+    def idx_of_best(self, candidates: list[ViolationCost]) -> int:
+        """Return the index of the best ``(violation, cost)`` candidate.
+
+        Applies the same lexicographic policy as :meth:`is_b_better`:
+        feasible candidates (metric ≤ threshold) are preferred and ranked
+        by cost; if none are feasible, the one with the lowest violation
+        (tiebreak: cost) wins.
+        """
+        best = 0
+        for i in range(1, len(candidates)):
+            if self.is_b_better(candidates[best], candidates[i]):
+                best = i
+        return best

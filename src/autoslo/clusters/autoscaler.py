@@ -7,7 +7,7 @@ from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
-from autoslo.slo.slo_objective import SloObjective
+from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import BaseStructuredEvent, EventType
@@ -304,17 +304,11 @@ class Autoscaler:
         Select the RPU size for a new cluster based on the current window.
         """
 
-        best_rpu: int = 4  # placeholder
-        best_viol_and_cost: tuple[float, float] = (float("inf"), float("inf"))
+        viol_and_costs: list[ViolationCost] = []
 
         for rpu in self._allowed_rpu_sizes:
             slo_viol_and_cost = self._counterfactual_replay(rpu, rel_time_s)
-
-            if self._slo_objective.is_b_better(
-                best_viol_and_cost, slo_viol_and_cost
-            ):
-                best_rpu = rpu
-                best_viol_and_cost = slo_viol_and_cost
+            viol_and_costs.append(slo_viol_and_cost)
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
@@ -325,12 +319,16 @@ class Autoscaler:
                     cluster_name=hyp_cluster_name,
                     details={
                         "rpu": rpu,
-                        "slo_violation": slo_viol_and_cost[0],
-                        "cost": slo_viol_and_cost[1],
+                        "slo_violation": slo_viol_and_cost.violation,
+                        "cost": slo_viol_and_cost.cost,
                         "slo_threshold": self._slo_objective.slo_threshold,
                     },
                 )
             )
+
+        best_local_idx = self._slo_objective.idx_of_best(viol_and_costs)
+        best_rpu = self._allowed_rpu_sizes[best_local_idx]
+        best_viol_and_cost = viol_and_costs[best_local_idx]
 
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
         emit_structured(
@@ -341,8 +339,8 @@ class Autoscaler:
                 cluster_name=best_hyp_cluster_name,
                 details={
                     "rpu": best_rpu,
-                    "slo_violation": best_viol_and_cost[0],
-                    "cost": best_viol_and_cost[1],
+                    "slo_violation": best_viol_and_cost.violation,
+                    "cost": best_viol_and_cost.cost,
                     "slo_threshold": self._slo_objective.slo_threshold,
                 },
             )
@@ -354,7 +352,7 @@ class Autoscaler:
         self,
         candidate_rpu: int,
         rel_time_s: float,
-    ) -> tuple[float, float]:
+    ) -> ViolationCost:
         """Replay the routing window with a hypothetical new cluster of
         *candidate_rpu* and return the aggregate SLO-violation metric and cost.
         """
@@ -425,4 +423,4 @@ class Autoscaler:
             total_cost += cluster_cost
 
         aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
-        return aggregate, total_cost
+        return ViolationCost(aggregate, total_cost)
