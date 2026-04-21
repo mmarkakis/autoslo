@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
-from autoslo.clusters.actions import SpinUpAction
+from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
@@ -246,6 +246,28 @@ class WorkloadSimulator:
             )
         if hasattr(self, "_progress_bar"):
             self._progress_bar.close()
+
+        # Tear down all remaining READY/DRAINING clusters so the log viewer
+        # shows cluster lifetimes correctly (mirrors WorkloadRunner cleanup).
+        remaining = list(self._pool.clusters_in_state(ClusterState.READY))
+        for cn in remaining:
+            emit_structured(
+                BaseStructuredEvent(
+                    rel_time_s=self._current_sim_time_s,
+                    event_type=EventType.TEAR_DOWN_DECISION,
+                    source="WorkloadSimulator",
+                    cluster_name=cn,
+                    details={"reason": "run_cleanup"},
+                )
+            )
+            try:
+                self._pool.request_tear_down(
+                    TearDownAction(reason="run_cleanup", cluster_name=cn),
+                    self._current_sim_time_s,
+                    force=True,
+                )
+            except Exception:
+                logging.exception("Failed to tear down cluster %s.", cn)
 
         emit_structured(
             BaseStructuredEvent(

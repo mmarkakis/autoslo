@@ -360,10 +360,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monos
 
 /* Gantt panel */
 .gantt-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.gantt-controls { padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-.gantt-controls label { font-size: 12px; color: #a0a0a0; }
-.gantt-controls input[type=range] { flex: 1; accent-color: #e94560; }
-.gantt-controls .time-display { font-size: 12px; color: #e94560; font-weight: 600; min-width: 80px; text-align: right; }
+.gantt-controls { padding: 6px 16px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+/* Scrubber row: sits between controls and viewport; spacer aligns thumb with canvas timeline */
+.scrubber-row { display: flex; align-items: center; background: #16213e; border-bottom: 2px solid #0f3460; padding: 3px 0 3px 0; flex-shrink: 0; }
+.scrubber-spacer { flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; }  /* width set by JS to match CLUSTER_LABEL_WIDTH */
+.scrubber-tail { flex-shrink: 0; }  /* width set by JS to match viewport scrollbar gutter */
+.scrubber-row input[type=range] { flex: 1; accent-color: #e94560; margin: 0; }
+.scrubber-row .time-display { font-size: 12px; color: #e94560; font-weight: 600; min-width: 72px; text-align: right; }
 .gantt-viewport { flex: 1; overflow: auto; position: relative; }
 .gantt-canvas-wrap { position: relative; min-height: 100%; }
 canvas#gantt { display: block; }
@@ -422,15 +425,19 @@ canvas#gantt { display: block; }
           <button id="btn-play" title="Play/Pause">&#9654;</button>
           <button id="btn-reset" title="Reset">&#9632;</button>
         </div>
-        <label>Time:</label>
-        <input type="range" id="time-slider" min="0" max="1000" value="1000" step="1">
-        <div class="time-display" id="time-display">0.0s</div>
         <div class="zoom-controls">
           <button id="btn-zoom-in" title="Zoom in (=)">+</button>
           <button id="btn-zoom-out" title="Zoom out (-)">-</button>
           <button id="btn-zoom-fit" title="Zoom to fit (0)">Fit</button>
         </div>
       </div>
+            <div class="scrubber-row" id="scrubber-row">
+                <div class="scrubber-spacer" id="scrubber-spacer">
+                    <div class="time-display" id="time-display">0.0s</div>
+                </div>
+                <input type="range" id="time-slider" min="0" max="1000" value="1000" step="1">
+                <div class="scrubber-tail" id="scrubber-tail"></div>
+            </div>
       <div class="gantt-viewport" id="gantt-viewport">
         <div class="gantt-canvas-wrap">
           <canvas id="gantt"></canvas>
@@ -459,6 +466,13 @@ function escapeHtml(s) {
     if (s == null) return "";
     return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
                     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function formatMaybeNumber(v, digits = 2) {
+    if (v == null || v === "") return "?";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return escapeHtml(v);
+    return n.toFixed(digits);
 }
 
 // ===========================================================================
@@ -497,8 +511,30 @@ const COLORS = {
 const ROW_HEIGHT = 18;
 const LANE_GAP = 2;
 const CLUSTER_PADDING = 6;
-const CLUSTER_LABEL_WIDTH = 140;
-const HEADER_HEIGHT = 30;
+// CLUSTER_LABEL_WIDTH is computed dynamically after realClusters is built.
+const HEADER_HEIGHT = 56;  // two 28px sub-rows: top = minutes, bottom = seconds
+const HEADER_MID = HEADER_HEIGHT / 2;  // y of divider between the two sub-rows
+const MARKER_STRIP_HEIGHT = 10;  // reserved px above query lanes for lifecycle markers
+// Minimum row height to ensure all label lines (name + RPU + queries + active) always fit.
+const CLUSTER_LABEL_MIN_HEIGHT = CLUSTER_PADDING + MARKER_STRIP_HEIGHT + 42 + CLUSTER_PADDING; // 42px covers 3 label lines at 11px line-height
+
+// Off-screen canvas for the diagonal hatch pattern (dead-zone fill)
+const _hatchCanvas = document.createElement("canvas");
+_hatchCanvas.width = 8;
+_hatchCanvas.height = 8;
+(function() {
+    const hctx = _hatchCanvas.getContext("2d");
+    hctx.clearRect(0, 0, 8, 8);
+    hctx.strokeStyle = "rgba(255,255,255,0.06)";
+    hctx.lineWidth = 1;
+    // two diagonal stripes per tile (top-left to bottom-right)
+    hctx.beginPath();
+    hctx.moveTo(0, 0); hctx.lineTo(8, 8);
+    hctx.moveTo(-4, 4); hctx.lineTo(4, -4);
+    hctx.moveTo(4, 12); hctx.lineTo(12, 4);
+    hctx.stroke();
+}());
+let _hatchPattern = null;  // lazily created per canvas context
 
 // ===========================================================================
 // DERIVED DATA
@@ -532,6 +568,13 @@ DATA.cluster_events.forEach(e => {
     }
     if (e.event_type === "cluster_ready") {
         clusterLifecycle[name].readyTime = e.rel_time_s;
+    }
+    if (e.event_type === "cluster_removed") {
+        // Keep earliest removal time in case of multiple events
+        if (clusterLifecycle[name].removedTime == null ||
+            e.rel_time_s < clusterLifecycle[name].removedTime) {
+            clusterLifecycle[name].removedTime = e.rel_time_s;
+        }
     }
 });
 
@@ -580,12 +623,37 @@ realClusters.forEach(name => {
     lanesPerCluster[name] = Math.max(1, packLanes(queriesByCluster[name]));
 });
 
+// Compute CLUSTER_LABEL_WIDTH dynamically so the widest cluster name always fits.
+// We use an off-screen canvas to measure the actual rendered pixel width of the
+// bold 11px monospace font used for the cluster name label.
+(function() {
+    const _mc = document.createElement("canvas").getContext("2d");
+    _mc.font = "bold 11px monospace";
+    let maxW = 100;
+    realClusters.forEach(name => {
+        const w = Math.ceil(_mc.measureText(name).width);
+        if (w > maxW) maxW = w;
+    });
+    // 16px horizontal padding (8px each side)
+    window.CLUSTER_LABEL_WIDTH = maxW + 16;
+}());
+
+// Align scrubber spacer width with the cluster label column so the
+// slider thumb position corresponds to the time position on the canvas.
+function syncScrubberLayout() {
+    document.getElementById("scrubber-spacer").style.width = CLUSTER_LABEL_WIDTH + "px";
+    const scrollbarWidth = Math.max(0, viewport.offsetWidth - viewport.clientWidth);
+    document.getElementById("scrubber-tail").style.width = scrollbarWidth + "px";
+}
+
 // Compute cluster Y positions
+// Each row: CLUSTER_PADDING + MARKER_STRIP_HEIGHT + max(lanes, min_label_lines) + CLUSTER_PADDING
 const clusterYPositions = {};
 let currentY = HEADER_HEIGHT;
 realClusters.forEach(name => {
     const numLanes = lanesPerCluster[name];
-    const height = numLanes * (ROW_HEIGHT + LANE_GAP) + CLUSTER_PADDING * 2;
+    const lanesHeight = numLanes * (ROW_HEIGHT + LANE_GAP);
+    const height = CLUSTER_PADDING + MARKER_STRIP_HEIGHT + Math.max(lanesHeight, CLUSTER_LABEL_MIN_HEIGHT - CLUSTER_PADDING - MARKER_STRIP_HEIGHT - CLUSTER_PADDING) + CLUSTER_PADDING;
     clusterYPositions[name] = { y: currentY, height };
     currentY += height + 1;
 });
@@ -612,7 +680,7 @@ DATA.autoscaler_events.forEach(e => {
 });
 
 (DATA.latency_update_events || []).forEach(e => {
-    allEvents.push({ timestamp: e.rel_time_s, type: "latency_update", detail: escapeHtml(e.query_id) + " on " + escapeHtml(e.cluster_name) + " " + (e.old_latency_s != null ? e.old_latency_s.toFixed(2) : "?") + "s\u2192" + (e.latency_s != null ? e.latency_s.toFixed(2) : "?") + "s" });
+    allEvents.push({ timestamp: e.rel_time_s, type: "latency_update", detail: escapeHtml(e.query_id) + " on " + escapeHtml(e.cluster_name) + " " + formatMaybeNumber(e.old_latency_s, 2) + "s\u2192" + formatMaybeNumber(e.latency_s, 2) + "s" });
 });
 
 DATA.arrival_times.forEach((t, i) => {
@@ -687,46 +755,91 @@ function drawTimeline() {
     const W = parseFloat(canvas.style.width);
     const H = totalHeight;
 
+    // Ensure hatch pattern is created for this canvas context
+    if (!_hatchPattern) {
+        _hatchPattern = ctx.createPattern(_hatchCanvas, "repeat");
+    }
+
     ctx.fillStyle = "#1a1a2e";
     ctx.fillRect(0, 0, W, H);
 
-    // Time axis header
+    // Time axis header — two sub-rows
     ctx.fillStyle = "#16213e";
     ctx.fillRect(0, 0, W, HEADER_HEIGHT);
-    ctx.strokeStyle = COLORS.clusterLine;
+    // Divider between top (minutes) and bottom (seconds) rows
+    ctx.strokeStyle = "#1e2d50";
     ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, HEADER_MID - 0.5);
+    ctx.lineTo(W, HEADER_MID - 0.5);
+    ctx.stroke();
+    // Bottom border of header
+    ctx.strokeStyle = COLORS.clusterLine;
     ctx.beginPath();
     ctx.moveTo(0, HEADER_HEIGHT - 0.5);
     ctx.lineTo(W, HEADER_HEIGHT - 0.5);
     ctx.stroke();
 
-    // Time ticks
-    const pixelsPerSecond = state.zoom;
-    const targetPixelsPerTick = 80;
-    const rawInterval = targetPixelsPerTick / pixelsPerSecond;
+    // --- Interval selection ---
     const niceIntervals = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
-    let tickInterval = niceIntervals.find(n => n >= rawInterval) || 3600;
+    // Major ticks: target ~80px spacing — shown in top row with minute labels
+    let majorIdx = niceIntervals.findIndex(n => n >= 80 / state.zoom);
+    if (majorIdx < 0) majorIdx = niceIntervals.length - 1;
+    const majorInterval = niceIntervals[majorIdx];
+    // Minor ticks: target ~20px spacing — shown in bottom row with second labels
+    let minorIdx = niceIntervals.findIndex(n => n >= 20 / state.zoom);
+    if (minorIdx < 0) minorIdx = niceIntervals.length - 1;
+    const minorInterval = niceIntervals[Math.min(minorIdx, majorIdx)];  // never coarser than major
 
-    ctx.fillStyle = COLORS.text;
-    ctx.font = "10px monospace";
     ctx.textAlign = "center";
 
-    const firstTick = Math.ceil(DATA.time_range[0] / tickInterval) * tickInterval;
-    for (let t = firstTick; t <= DATA.time_range[1]; t += tickInterval) {
+    // --- Major ticks (top row: minutes) ---
+    const firstMajor = Math.ceil(DATA.time_range[0] / majorInterval) * majorInterval;
+    for (let t = firstMajor; t <= DATA.time_range[1]; t += majorInterval) {
         const x = timeToX(t);
         if (x < CLUSTER_LABEL_WIDTH || x > W) continue;
-
+        // Full-height grid line into cluster area
         ctx.strokeStyle = "#0f3460";
+        ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(x, HEADER_HEIGHT);
         ctx.lineTo(x, H);
         ctx.stroke();
+        // Tick mark in top row
+        ctx.strokeStyle = "#445";
+        ctx.beginPath();
+        ctx.moveTo(x, HEADER_MID - 1);
+        ctx.lineTo(x, HEADER_MID - 6);
+        ctx.stroke();
+        // Label in top row
+        const minLabel = majorInterval >= 60
+            ? (t / 60).toFixed(0) + "m"
+            : t.toFixed(0) + "s";
+        ctx.fillStyle = "#c0c0c0";
+        ctx.font = "bold 10px monospace";
+        ctx.fillText(minLabel, x, HEADER_MID - 9);
+    }
 
-        let label;
-        if (tickInterval >= 60) label = (t / 60).toFixed(0) + "m";
-        else label = t.toFixed(0) + "s";
-        ctx.fillStyle = COLORS.text;
-        ctx.fillText(label, x, HEADER_HEIGHT - 8);
+    // --- Minor ticks (bottom row: seconds) ---
+    const firstMinor = Math.ceil(DATA.time_range[0] / minorInterval) * minorInterval;
+    const showMinorLabels = minorInterval * state.zoom >= 25;  // only label if ticks are ≥25px apart
+    for (let t = firstMinor; t <= DATA.time_range[1]; t += minorInterval) {
+        const x = timeToX(t);
+        if (x < CLUSTER_LABEL_WIDTH || x > W) continue;
+        // Tick mark in bottom row
+        ctx.strokeStyle = "#334";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, HEADER_MID + 1);
+        ctx.lineTo(x, HEADER_MID + 5);
+        ctx.stroke();
+        // Label in bottom row
+        if (showMinorLabels) {
+            const secLabel = t.toFixed(0) + "s";
+            ctx.fillStyle = COLORS.text;
+            ctx.font = "10px monospace";
+            ctx.fillText(secLabel, x, HEADER_HEIGHT - 5);
+        }
     }
 
     // Current time line
@@ -751,6 +864,31 @@ function drawTimeline() {
         ctx.fillStyle = COLORS.clusterBg;
         ctx.fillRect(0, pos.y, W, pos.height);
 
+        // Dead zone BEFORE spin_up_started (cluster does not yet exist)
+        const deadStart = DATA.time_range[0];
+        const aliveStart = cl.spinUpStarted ?? cl.readyTime ?? cl.firstSeen;
+        if (aliveStart > deadStart) {
+            const dx0 = Math.max(CLUSTER_LABEL_WIDTH, timeToX(deadStart));
+            const dx1 = timeToX(aliveStart);
+            if (dx1 > CLUSTER_LABEL_WIDTH) {
+                ctx.fillStyle = "rgba(0,0,0,0.55)";
+                ctx.fillRect(dx0, pos.y, dx1 - dx0, pos.height);
+                if (_hatchPattern) {
+                    ctx.fillStyle = _hatchPattern;
+                    ctx.fillRect(dx0, pos.y, dx1 - dx0, pos.height);
+                }
+                // Right edge boundary line
+                ctx.strokeStyle = "rgba(255,255,255,0.18)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.moveTo(dx1, pos.y);
+                ctx.lineTo(dx1, pos.y + pos.height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
         // Pending period: spin_up_started -> cluster_ready
         if (cl.readyTime != null && cl.spinUpStarted != null && cl.spinUpStarted < cl.readyTime) {
             const px0 = Math.max(CLUSTER_LABEL_WIDTH, timeToX(cl.spinUpStarted));
@@ -764,6 +902,29 @@ function drawTimeline() {
                 ctx.beginPath();
                 ctx.moveTo(px1, pos.y);
                 ctx.lineTo(px1, pos.y + pos.height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        // Dead zone AFTER cluster_removed (cluster no longer exists)
+        if (cl.removedTime != null) {
+            const rx0 = Math.max(CLUSTER_LABEL_WIDTH, timeToX(cl.removedTime));
+            const rx1 = timeToX(DATA.time_range[1]);
+            if (rx1 > CLUSTER_LABEL_WIDTH && rx0 < W) {
+                ctx.fillStyle = "rgba(0,0,0,0.55)";
+                ctx.fillRect(rx0, pos.y, rx1 - rx0, pos.height);
+                if (_hatchPattern) {
+                    ctx.fillStyle = _hatchPattern;
+                    ctx.fillRect(rx0, pos.y, rx1 - rx0, pos.height);
+                }
+                // Left edge boundary line
+                ctx.strokeStyle = "rgba(255,255,255,0.18)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.moveTo(rx0, pos.y);
+                ctx.lineTo(rx0, pos.y + pos.height);
                 ctx.stroke();
                 ctx.setLineDash([]);
             }
@@ -786,18 +947,24 @@ function drawTimeline() {
         ctx.lineTo(CLUSTER_LABEL_WIDTH - 0.5, pos.y + pos.height);
         ctx.stroke();
 
+        ctx.save();
+        ctx.rect(0, pos.y, CLUSTER_LABEL_WIDTH - 2, pos.height);
+        ctx.clip();
+
         ctx.fillStyle = "#e0e0e0";
         ctx.font = "bold 11px monospace";
         ctx.textAlign = "left";
-        let displayName = name;
-        if (displayName.length > 18) displayName = displayName.substring(0, 18) + "\u2026";
-        ctx.fillText(displayName, 6, pos.y + 14);
+        ctx.fillText(name, 6, pos.y + 13);
 
         ctx.fillStyle = COLORS.text;
         ctx.font = "10px monospace";
         const numQs = queriesByCluster[name].filter(q => q.start_s <= state.currentTime).length;
         const activeQs = queriesByCluster[name].filter(q => q.start_s <= state.currentTime && q.end_s > state.currentTime).length;
-        ctx.fillText((cl.rpu != null ? cl.rpu + " RPU \u00b7 " : "") + numQs + " queries \u00b7 " + activeQs + " active", 6, pos.y + 28);
+        if (cl.rpu != null) ctx.fillText(cl.rpu + " RPU", 6, pos.y + 25);
+        ctx.fillText(numQs + " queries", 6, pos.y + 36);
+        ctx.fillText(activeQs + " active", 6, pos.y + 47);
+
+        ctx.restore();
     });
 
     // Draw query bars (multi-segment)
@@ -808,7 +975,7 @@ function drawTimeline() {
         queries.forEach(q => {
             if (q.start_s > state.currentTime) return;
 
-            const laneY = pos.y + CLUSTER_PADDING + q._lane * (ROW_HEIGHT + LANE_GAP);
+            const laneY = pos.y + CLUSTER_PADDING + MARKER_STRIP_HEIGHT + q._lane * (ROW_HEIGHT + LANE_GAP);
             const barHeight = ROW_HEIGHT;
             const colors = getQueryColor(q);
             const isCompleted = q.state === "completed" && q.end_s <= state.currentTime;
@@ -856,7 +1023,8 @@ function drawTimeline() {
         const clName = e.cluster_name;
         if (!(clName in clusterYPositions)) return;
         const pos = clusterYPositions[clName];
-        const my = pos.y + 5;
+        // Draw markers in the dedicated strip at top of the cluster row
+        const my = pos.y + CLUSTER_PADDING + Math.floor(MARKER_STRIP_HEIGHT / 2);
 
         switch (e.event_type) {
             case "spin_up_decision":
@@ -903,22 +1071,6 @@ function drawTimeline() {
         }
     });
 
-    // SLO deadline line on hover
-    if (state.hoveredQuery) {
-        const q = state.hoveredQuery;
-        const deadlineX = timeToX(q.exec_start_s + q.slo_s);
-        if (deadlineX >= CLUSTER_LABEL_WIDTH && q.cluster_name in clusterYPositions) {
-            const pos = clusterYPositions[q.cluster_name];
-            ctx.strokeStyle = q.violates_slo ? COLORS.violated : "#666";
-            ctx.lineWidth = 1;
-            ctx.setLineDash([3, 3]);
-            ctx.beginPath();
-            ctx.moveTo(deadlineX, pos.y);
-            ctx.lineTo(deadlineX, pos.y + pos.height);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
-    }
 }
 
 // ===========================================================================
@@ -960,7 +1112,7 @@ function updateEventPanel() {
             html += ' <span class="score-toggle" onclick="document.getElementById(\'' + detailId + '\').classList.toggle(\'open\')">[scores]</span>';
             html += '<div class="score-details" id="' + detailId + '">';
             e.routingScores.forEach(s => {
-                html += '<div>' + escapeHtml(s.cluster_name) + (s.rpu != null ? ' (' + s.rpu + ' RPU)' : '') + ' lat=' + (s.latency_s != null ? s.latency_s.toFixed(2) : '?') + 's cost=' + (s.cost != null ? s.cost : '?') + '</div>';
+                html += '<div>' + escapeHtml(s.cluster_name) + (s.rpu != null ? ' (' + s.rpu + ' RPU)' : '') + ' lat=' + formatMaybeNumber(s.latency_s, 2) + 's cost=' + (s.cost != null ? s.cost : '?') + '</div>';
             });
             html += '</div>';
         }
@@ -1014,7 +1166,7 @@ function hitTest(canvasX, canvasY) {
             const x0 = timeToX(q.start_s);
             const effectiveEnd = Math.min(q.end_s, state.currentTime);
             const x1 = timeToX(effectiveEnd);
-            const laneY = pos.y + CLUSTER_PADDING + q._lane * (ROW_HEIGHT + LANE_GAP);
+            const laneY = pos.y + CLUSTER_PADDING + MARKER_STRIP_HEIGHT + q._lane * (ROW_HEIGHT + LANE_GAP);
 
             if (canvasX >= x0 && canvasX <= x1 && canvasY >= laneY && canvasY <= laneY + ROW_HEIGHT) {
                 return q;
@@ -1166,7 +1318,10 @@ document.addEventListener("keydown", (e) => {
 // INIT
 // ===========================================================================
 
-window.addEventListener("resize", () => { drawTimeline(); });
+window.addEventListener("resize", () => {
+    syncScrubberLayout();
+    drawTimeline();
+});
 
 {
     const viewW = viewport.clientWidth - CLUSTER_LABEL_WIDTH - 40;
@@ -1174,6 +1329,7 @@ window.addEventListener("resize", () => { drawTimeline(); });
     state.zoom = timeSpan > 0 ? viewW / timeSpan : 1;
 }
 setTime(DATA.time_range[1]);
+syncScrubberLayout();  // measure scrollbar after canvas has been sized
 
 </script>
 </body>
