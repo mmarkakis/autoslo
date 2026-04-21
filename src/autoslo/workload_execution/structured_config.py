@@ -123,9 +123,11 @@ class StructuredConfig:
             workload = Workload(
                 workload_name=workload_name, schema_name=schema_name
             )
-            workload.slice_by_abs_time(abs_start, abs_end)
-            workload.set_rel_start_times_from_zero()
-            workload.rescale_rel_start_times(rescale)
+            workload.prepare(
+                abs_start=abs_start,
+                abs_end=abs_end,
+                rescale_factor=rescale,
+            )
             workload.populate_featurizations_and_isolated_predictions(
                 iconq_model=iconq_model,
                 allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,

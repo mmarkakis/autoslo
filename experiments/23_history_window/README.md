@@ -23,18 +23,7 @@ on the *real* May 27 workload (extracted from the same trace).
 ## How to run
 
 ```bash
-# Full experiment (all three scenarios sequentially):
-python experiments/23_history_window/run_experiment.py \
-    --trace data/__workloads/ext_tpcds1000/redbench_provisioned_157_0.parquet
-
-# Or with an explicit base config:
-python experiments/23_history_window/run_experiment.py \
-    --config experiments/23_history_window/configs/base_config.yml \
-    --trace data/__workloads/ext_tpcds1000/redbench_provisioned_157_0.parquet
-
-# Aggregate results into a comparison table + plots:
-python experiments/23_history_window/aggregate_results.py \
-    --run-dir data/tuner_runs/history_exp
+python experiments/23_history_window/run.sh 
 ```
 
 ## Output

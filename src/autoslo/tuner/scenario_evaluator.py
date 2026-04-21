@@ -100,10 +100,8 @@ def _run_one_combination(
     workload_name = workload_path.stem
     schema_name = cfgu.getd(config, "basic_config.schema_name", "default")
     workload = Workload(workload_name, schema_name, df=workload_df)
-    workload.set_rel_start_times_from_zero()
-
     rescale_factor = cfgu.getd(config, "workload_config.rescale_factor", None)
-    workload.rescale_rel_start_times(rescale_factor)
+    workload.prepare(rescale_factor=rescale_factor)
     iconq_model_id = cfgu.getd(config, "models.iconq_model", None)
     if iconq_model_id is not None:
         iconq_model = IconqModel.load(iconq_model_id)

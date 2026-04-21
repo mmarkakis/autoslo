@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -114,6 +115,12 @@ class PolicyTuner:
         """
         Phase 1: Build or load the query reservoir.
         """
+        if (
+            self._cfgd("tuner_config.forecast_config.forecast_policy")
+            == "GroundTruthForecastPolicy"
+        ):
+            console.print("  Skipping reservoir build (ground truth mode).")
+            return
 
         # Load from disk if it already exists, to save time on re-runs.
         save_dir = self._run_dir / "01_reservoir"
@@ -155,6 +162,14 @@ class PolicyTuner:
 
         Returns the lists of train and val workload paths.
         """
+
+        # Ground-truth mode: use the real target-day workload as both
+        # train and val rather than sampling from the reservoir.
+        if (
+            self._cfgd("tuner_config.forecast_config.forecast_policy")
+            == "GroundTruthForecastPolicy"
+        ):
+            return self._sample_ground_truth_workloads()
 
         # Set up forecast policy for sampling.
         self._forecast_policy_name = self._cfgd(
@@ -226,7 +241,16 @@ class PolicyTuner:
             f"to {self._run_dir / '02_workloads'}"
         )
 
-        assert train_paths and val_paths, "No workload paths returned."
+        if not train_paths:
+            raise ValueError(
+                f"train_paths is empty: num_scenarios={num_scenarios}, "
+                f"train_fraction={train_fraction} produced n_train=0."
+            )
+        if not val_paths:
+            raise ValueError(
+                f"val_paths is empty: num_scenarios={num_scenarios}, "
+                f"train_fraction={train_fraction} produced n_val=0."
+            )
         return train_paths, val_paths
 
     def evaluate_baseline(
@@ -611,6 +635,90 @@ class PolicyTuner:
         console.rule(f"[bold cyan]{message}")
         console.print()
 
+    def _extract_and_save_target_workload(self) -> Path:
+        """Extract the real target-day workload from the raw trace and save it.
+
+        Slices the workload defined by ``workload_config`` by the configured
+        absolute time range, zero-aligns relative start times, applies the
+        rescale factor, and persists it to
+        ``<run_dir>/02_workloads/target.parquet``.
+
+        Skips extraction (using the cached file) when the file already exists
+        and ``tuner_config.force`` is not set.
+
+        Returns the path to the saved parquet file.
+        """
+        target_workload_path = self._run_dir / "02_workloads" / "target.parquet"
+        if target_workload_path.exists() and not self._cfgd(
+            "tuner_config.force", False
+        ):
+            console.print(
+                f"  Target workload already exists at {target_workload_path}; "
+                "loading from disk."
+            )
+            return target_workload_path
+
+        schema_name = self._cfgd("basic_config.schema_name", None)
+        full_workload_name = self._cfgd("workload_config.workload_name", None)
+        if (schema_name is None) or (full_workload_name is None):
+            raise ValueError(
+                "workload_config.schema_name and workload_config.workload_name "
+                "must be specified."
+            )
+        workload = Workload(full_workload_name, schema_name=schema_name)
+        start = self._cfgd("workload_config.abs_start_time_start", None)
+        end = self._cfgd("workload_config.abs_start_time_end", None)
+        rescale_factor = self._cfgd("workload_config.rescale_factor", 1.0)
+        workload = workload.prepare(
+            abs_start=start,
+            abs_end=end,
+            rescale_factor=rescale_factor,
+        )
+        workload = workload.rename_workload("target")
+        workload.save(out_dir=self._run_dir / "02_workloads", overwrite=True)
+        console.print(
+            f"Extracted target workload from {full_workload_name} with "
+            f"time range {start} to {end}, "
+            f"rescaled by factor {rescale_factor}, "
+            f"and saved to {target_workload_path}."
+        )
+        return target_workload_path
+
+    def _sample_ground_truth_workloads(self) -> tuple[list[Path], list[Path]]:
+        """Phase 2 (ground truth mode): use the real target-day workload.
+
+        Rather than sampling synthetic scenarios, both the train and val sets
+        consist of the actual target-day workload.  This lets the tuner
+        optimise directly against the ground truth, giving an oracle upper
+        bound for holdout performance.
+        """
+        target_path = self._extract_and_save_target_workload()
+
+        # Copy the single target workload into train/ and val/ directories so 
+        # downstream phases find paths in the expected layout.
+        train_dir = self._run_dir / "02_workloads" / "train"
+        train_dir.mkdir(parents=True, exist_ok=True)
+        dst = train_dir / f"t_0.parquet"
+        if not dst.exists() or self._cfgd("tuner_config.force", False):
+            shutil.copy2(target_path, dst)
+        train_paths = [dst]
+
+        val_dir = self._run_dir / "02_workloads" / "val"
+        val_dir.mkdir(parents=True, exist_ok=True)
+        dst = val_dir / f"v_0.parquet"
+        if not dst.exists() or self._cfgd("tuner_config.force", False):
+            shutil.copy2(target_path, dst)
+        val_paths = [dst]
+
+        console.print(
+            f"  Ground truth mode: copied target workload into "
+            f"1 train + 1 val scenario "
+            f"under {self._run_dir / '02_workloads'}."
+        )
+        return train_paths, val_paths
+
+    
+
     def _evaluate_target(
         self,
         initial_config: dict[str, Any],
@@ -624,41 +732,7 @@ class PolicyTuner:
         """
 
         ### Extract and save target day.
-        schema_name = self._cfgd("basic_config.schema_name", None)
-        target_workload_path = self._run_dir / "02_workloads" / "target.parquet"
-        if not target_workload_path.exists() or self._cfgd(
-            "tuner_config.force", False
-        ):
-            full_workload_name = self._cfgd(
-                "workload_config.workload_name", None
-            )
-            if (schema_name is None) or (full_workload_name is None):
-                raise ValueError(
-                    "workload_config.schema_name and workload_config.workload_name "
-                    "must be specified."
-                )
-            workload = Workload(full_workload_name, schema_name=schema_name)
-            start = self._cfgd("workload_config.abs_start_time_start", None)
-            end = self._cfgd("workload_config.abs_start_time_end", None)
-            workload = workload.slice_by_abs_time(start=start, end=end)
-            workload = workload.set_rel_start_times_from_zero()
-            rescale_factor = self._cfgd("workload_config.rescale_factor", 1.0)
-            workload = workload.rescale_rel_start_times(factor=rescale_factor)
-            workload = workload.rename_workload("target")
-            workload.save(
-                out_dir=self._run_dir / "02_workloads", overwrite=True
-            )
-            console.print(
-                f"Extracted target workload from {full_workload_name} with "
-                f"time range {start} to {end}, "
-                f"rescaled by factor {rescale_factor}, "
-                f"and saved to {target_workload_path}."
-            )
-        else:
-            console.print(
-                f"  Target workload already exists at {target_workload_path}; "
-                "loading from disk."
-            )
+        target_workload_path = self._extract_and_save_target_workload()
 
         # Run the initial config and the static baselines.
         static_baselines = self._cfgd("tuner_config.static_baselines", [])

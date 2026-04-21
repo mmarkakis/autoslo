@@ -28,11 +28,12 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = EXPERIMENT_DIR / "results"
 
 # Scenario names map to run_ids like "tuner_prev_day" under the run root.
-SCENARIOS = ["prev_day", "prev_week", "prev_month"]
+SCENARIOS = ["prev_day", "prev_week", "prev_month", "ground_truth"]
 LABELS = {
     "prev_day": "1 day",
     "prev_week": "1 week",
     "prev_month": "1 month",
+    "ground_truth": "oracle (ground truth)",
 }
 
 # Three violation metrics emitted by the tuner.

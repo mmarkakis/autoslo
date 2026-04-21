@@ -254,6 +254,26 @@ class Workload:
 
         return self
 
+    def prepare(
+        self,
+        abs_start: str | None = None,
+        abs_end: str | None = None,
+        rescale_factor: Optional[float] = None,
+    ) -> Workload:
+        """Slice, rebase, and optionally rescale workload timing.
+
+        This is a convenience wrapper around:
+        - :meth:`slice_by_abs_time`
+        - :meth:`set_rel_start_times_from_zero`
+        - :meth:`rescale_rel_start_times`
+
+        The operation is mutating and returns ``self``.
+        """
+        self.slice_by_abs_time(start=abs_start, end=abs_end)
+        self.set_rel_start_times_from_zero()
+        self.rescale_rel_start_times(factor=rescale_factor)
+        return self
+
     def slice_by_abs_time(
         self,
         start: str | None = None,
