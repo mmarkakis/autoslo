@@ -614,6 +614,27 @@ def main() -> None:
     run_root = Path(args.run_dir)
     console = Console()
 
+    # Fail fast on bad --run-dir to avoid producing misleading empty tables.
+    if not run_root.exists():
+        parent = run_root.parent
+        suggestion = ""
+        if parent.exists():
+            alt = parent / "history_window_exp"
+            if alt.exists():
+                suggestion = f" Did you mean: {alt}?"
+        parser.error(f"Run directory does not exist: {run_root}.{suggestion}")
+
+    missing_scenarios = [
+        str(run_root / f"tuner_{scenario}")
+        for scenario in SCENARIOS
+        if not (run_root / f"tuner_{scenario}").exists()
+    ]
+    if missing_scenarios:
+        parser.error(
+            "Missing expected scenario directories under --run-dir: "
+            + ", ".join(missing_scenarios)
+        )
+
     # ---- Collect data ---------------------------------------------------
     rows: list[dict] = []
     for scenario in SCENARIOS:
