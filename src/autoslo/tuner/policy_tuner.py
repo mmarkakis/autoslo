@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import shutil
-from datetime import datetime
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +16,7 @@ import pandas as pd
 import plotext as plt
 import yaml
 from rich.console import Console
+from rich.table import Table
 
 import autoslo.utils.config as cfgu
 from autoslo.slo.slo_metric import SloMetric
@@ -27,11 +32,23 @@ from autoslo.tuner.tuner_utils import (
     SimulationResult,
 )
 from autoslo.utils.config import copy_and_apply_overrides
+from autoslo.utils.structured_events import wall_clock_utc
 from autoslo.utils.yaml_helpers import dump
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+@dataclass
+class PhaseTimingRecord:
+    """Timing record for a single PolicyTuner pipeline phase."""
+
+    phase_key: str
+    phase_name: str
+    start_wall_utc: float  # epoch seconds from wall_clock_utc()
+    elapsed_s: float
+    was_cached: bool
 
 
 class PolicyTuner:
@@ -89,6 +106,10 @@ class PolicyTuner:
             required=True,
         )
 
+        # Timing instrumentation.
+        self._phase_timings: list[PhaseTimingRecord] = []
+        self._phase_cached_flags: dict[str, bool] = {}
+
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
@@ -118,6 +139,7 @@ class PolicyTuner:
             == "GroundTruthForecastPolicy"
         ):
             console.print("  Skipping reservoir build (ground truth mode).")
+            self._mark_cached("01_reservoir")
             return
 
         # Load from disk if it already exists, to save time on re-runs.
@@ -127,6 +149,7 @@ class PolicyTuner:
                 f"  Reservoir already exists at {save_dir}; loading from disk."
             )
             self._reservoir = QueryReservoir.load(save_dir)
+            self._mark_cached("01_reservoir")
             return
 
         # Build reservoir from workload.
@@ -216,6 +239,7 @@ class PolicyTuner:
                 f"  Sampled workloads already exist; found {len(train_paths)} "
                 f"train and {len(val_paths)} val workloads. Loading from disk."
             )
+            self._mark_cached("02_workloads")
             return train_paths, val_paths
 
         initial_seed = self._cfgd("tuner_config.seed", 42)
@@ -279,6 +303,7 @@ class PolicyTuner:
             )
             train_agg = self._parse_phase_summary(train_summary_path)
             val_agg = self._parse_phase_summary(val_summary_path)
+            self._mark_cached("03_baseline")
             return train_agg, val_agg
 
         # Run train + val workloads in a single parallel batch so the
@@ -352,6 +377,7 @@ class PolicyTuner:
             val_agg = self._parse_phase_summary(
                 ckpt_root / "best_val_summary.yml"
             )
+            self._mark_cached("04_checkpoints")
             return best_config, train_agg, val_agg
 
         # Run checkpoint optimization for each candidate.
@@ -490,6 +516,7 @@ class PolicyTuner:
                 post_sweep_config = yaml.safe_load(f) or {}
             train_agg = self._parse_phase_summary(train_summary_path)
             val_agg = self._parse_phase_summary(val_summary_path)
+            self._mark_cached(phase_name)
         else:
             sweeper = ParamSweep(
                 evaluator=self._evaluator,
@@ -513,111 +540,240 @@ class PolicyTuner:
 
         Returns the path to the final optimised config file.
         """
-
-        ### Phase 1: Build reservoir
-        self._print_banner("Phase 1: Building reservoir")
-        self.build_reservoir()
-
-        ### Phase 2: Preparing workloads
-        self._print_banner("Phase 2: Preparing workloads")
-        train_paths, val_paths = self.sample_workloads()
-
-        ### Phase 3: Baseline evaluation
-        self._print_banner("Phase 3: Baseline evaluation")
-        baseline_train, baseline_val = self.evaluate_baseline(
-            train_paths, val_paths
-        )
-        AggregatedSimulationResults.print_comparison(
-            ("Baseline (train)", baseline_train),
-            ("Baseline (val)", baseline_val),
-            console=console,
-            agg_metric=self._agg_metric,
-            slo_metric=self._slo_metric,
-            highlight_best=False,
-        )
-
-        ### Phase 4: Checkpoint optimization
-        self._print_banner("Phase 4: Checkpoint optimization")
-        (
-            post_checkpoints_config,
-            post_checkpoints_train,
-            post_checkpoints_val,
-        ) = self.find_checkpoints(train_paths, val_paths)
-        AggregatedSimulationResults.print_comparison(
-            ("Baseline (train)", baseline_train),
-            ("Post-checkpoints (train)", post_checkpoints_train),
-            console=console,
-            agg_metric=self._agg_metric,
-            slo_metric=self._slo_metric,
-        )
-        AggregatedSimulationResults.print_comparison(
-            ("Baseline (val)", baseline_val),
-            ("Post-checkpoints (val)", post_checkpoints_val),
-            console=console,
-            agg_metric=self._agg_metric,
-            slo_metric=self._slo_metric,
-        )
-
-        ### Phase 5: Autoscaler parameter sweep
-        self._print_banner("Phase 5: Autoscaler parameter sweep")
-        post_first_sweep_config, _, _ = self.param_sweep(
-            train_paths=train_paths,
-            val_paths=val_paths,
-            initial_config=post_checkpoints_config,
-            phase_name="05_autoscaling_param_sweep",
-            config_key="autoscaling_param_sweep",
-        )
-
-        ### Phase 6: Routing parameter sweep
-        self._print_banner("Phase 6: Routing parameter sweep")
-        post_second_sweep_config, tuned_train, tuned_val = self.param_sweep(
-            train_paths=train_paths,
-            val_paths=val_paths,
-            initial_config=post_first_sweep_config,
-            phase_name="06_routing_param_sweep",
-            config_key="routing_param_sweep",
-        )
-
-        ### Phase 6.5: Persist final config
-        final_config = post_second_sweep_config
         final_path = self._run_dir / "final_config.yml"
-        dump(final_config, final_path)
-        console.print(f"  Final config written to [bold]{final_path}[/]")
+        try:
+            ### Phase 1: Build reservoir
+            with self._timed_phase("01_reservoir", "Phase 1: Building reservoir"):
+                self._print_banner("Phase 1: Building reservoir")
+                self.build_reservoir()
 
-        ### Phase 7: Final comparison with tuned config
-        self._print_banner("Phase 7: Final comparison with tuned config")
-        summary_dir = self._run_dir / "07_final"
-        summary_dir.mkdir(parents=True, exist_ok=True)
-        self._write_phase_summary(
-            summary_dir / "train_summary.yml", tuned_train
-        )
-        self._write_phase_summary(summary_dir / "val_summary.yml", tuned_val)
-        AggregatedSimulationResults.print_comparison(
-            ("Initial (train)", baseline_train),
-            ("Final (train)", tuned_train),
-            console=console,
-            agg_metric=self._agg_metric,
-            slo_metric=self._slo_metric,
-        )
-        AggregatedSimulationResults.print_comparison(
-            ("Initial (val)", baseline_val),
-            ("Final (val)", tuned_val),
-            console=console,
-            agg_metric=self._agg_metric,
-            slo_metric=self._slo_metric,
-        )
+            ### Phase 2: Preparing workloads
+            with self._timed_phase("02_workloads", "Phase 2: Preparing workloads"):
+                self._print_banner("Phase 2: Preparing workloads")
+                train_paths, val_paths = self.sample_workloads()
 
-        ### Phase 8: Evaluation on target-period data
-        self._print_banner("Phase 8: Evaluation on target-period data")
-        self._evaluate_target(
-            initial_config=self._initial_config, final_config=final_config
-        )
+            ### Phase 3: Baseline evaluation
+            with self._timed_phase("03_baseline", "Phase 3: Baseline evaluation"):
+                self._print_banner("Phase 3: Baseline evaluation")
+                baseline_train, baseline_val = self.evaluate_baseline(
+                    train_paths, val_paths
+                )
+                AggregatedSimulationResults.print_comparison(
+                    ("Baseline (train)", baseline_train),
+                    ("Baseline (val)", baseline_val),
+                    console=console,
+                    agg_metric=self._agg_metric,
+                    slo_metric=self._slo_metric,
+                    highlight_best=False,
+                )
 
-        return final_path
+            ### Phase 4: Checkpoint optimization
+            with self._timed_phase(
+                "04_checkpoints", "Phase 4: Checkpoint optimization"
+            ):
+                self._print_banner("Phase 4: Checkpoint optimization")
+                (
+                    post_checkpoints_config,
+                    post_checkpoints_train,
+                    post_checkpoints_val,
+                ) = self.find_checkpoints(train_paths, val_paths)
+                AggregatedSimulationResults.print_comparison(
+                    ("Baseline (train)", baseline_train),
+                    ("Post-checkpoints (train)", post_checkpoints_train),
+                    console=console,
+                    agg_metric=self._agg_metric,
+                    slo_metric=self._slo_metric,
+                )
+                AggregatedSimulationResults.print_comparison(
+                    ("Baseline (val)", baseline_val),
+                    ("Post-checkpoints (val)", post_checkpoints_val),
+                    console=console,
+                    agg_metric=self._agg_metric,
+                    slo_metric=self._slo_metric,
+                )
+
+            ### Phase 5: Autoscaler parameter sweep
+            with self._timed_phase(
+                "05_autoscaling_param_sweep", "Phase 5: Autoscaler param sweep"
+            ):
+                self._print_banner("Phase 5: Autoscaler parameter sweep")
+                post_first_sweep_config, _, _ = self.param_sweep(
+                    train_paths=train_paths,
+                    val_paths=val_paths,
+                    initial_config=post_checkpoints_config,
+                    phase_name="05_autoscaling_param_sweep",
+                    config_key="autoscaling_param_sweep",
+                )
+
+            ### Phase 6: Routing parameter sweep
+            with self._timed_phase(
+                "06_routing_param_sweep", "Phase 6: Routing param sweep"
+            ):
+                self._print_banner("Phase 6: Routing parameter sweep")
+                post_second_sweep_config, tuned_train, tuned_val = self.param_sweep(
+                    train_paths=train_paths,
+                    val_paths=val_paths,
+                    initial_config=post_first_sweep_config,
+                    phase_name="06_routing_param_sweep",
+                    config_key="routing_param_sweep",
+                )
+
+            ### Phase 7: Persist final config and final comparison
+            with self._timed_phase(
+                "07_final", "Phase 7: Persist & compare final"
+            ):
+                self._print_banner("Phase 7: Final comparison with tuned config")
+                final_config = post_second_sweep_config
+                dump(final_config, final_path)
+                console.print(f"  Final config written to [bold]{final_path}[/]")
+                summary_dir = self._run_dir / "07_final"
+                summary_dir.mkdir(parents=True, exist_ok=True)
+                self._write_phase_summary(
+                    summary_dir / "train_summary.yml", tuned_train
+                )
+                self._write_phase_summary(summary_dir / "val_summary.yml", tuned_val)
+                AggregatedSimulationResults.print_comparison(
+                    ("Initial (train)", baseline_train),
+                    ("Final (train)", tuned_train),
+                    console=console,
+                    agg_metric=self._agg_metric,
+                    slo_metric=self._slo_metric,
+                )
+                AggregatedSimulationResults.print_comparison(
+                    ("Initial (val)", baseline_val),
+                    ("Final (val)", tuned_val),
+                    console=console,
+                    agg_metric=self._agg_metric,
+                    slo_metric=self._slo_metric,
+                )
+
+            ### Phase 8: Evaluation on target-period data
+            with self._timed_phase("08_target", "Phase 8: Target evaluation"):
+                self._print_banner("Phase 8: Evaluation on target-period data")
+                self._evaluate_target(
+                    initial_config=self._initial_config, final_config=final_config
+                )
+
+            return final_path
+        finally:
+            csv_path = self._write_timing_csv()
+            self._print_timing_report(csv_path)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _mark_cached(self, phase_key: str) -> None:
+        """Record that a phase was satisfied from disk cache (no computation)."""
+        self._phase_cached_flags[phase_key] = True
+
+    @contextmanager
+    def _timed_phase(self, phase_key: str, phase_name: str):
+        """Context manager that times a pipeline phase and appends a record."""
+        start_wall = wall_clock_utc()
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed_s = time.perf_counter() - t0
+            was_cached = self._phase_cached_flags.get(phase_key, False)
+            self._phase_timings.append(
+                PhaseTimingRecord(
+                    phase_key=phase_key,
+                    phase_name=phase_name,
+                    start_wall_utc=start_wall,
+                    elapsed_s=elapsed_s,
+                    was_cached=was_cached,
+                )
+            )
+
+    @staticmethod
+    def _format_duration(elapsed_s: float) -> str:
+        """Format a duration in seconds as a human-readable string."""
+        total = int(elapsed_s)
+        hours, remainder = divmod(total, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        if minutes > 0:
+            return f"{minutes}m {seconds}s"
+        return f"{elapsed_s:.1f}s"
+
+    def _write_timing_csv(self) -> Path:
+        """Write per-phase timing records to a CSV file; return the path."""
+        csv_path = self._run_dir / "timing_report.csv"
+        total_s = sum(r.elapsed_s for r in self._phase_timings)
+        fieldnames = [
+            "phase_key",
+            "phase_name",
+            "start_wall_utc",
+            "elapsed_s",
+            "was_cached",
+        ]
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in self._phase_timings:
+                writer.writerow(
+                    {
+                        "phase_key": r.phase_key,
+                        "phase_name": r.phase_name,
+                        "start_wall_utc": datetime.fromtimestamp(
+                            r.start_wall_utc, tz=timezone.utc
+                        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "elapsed_s": f"{r.elapsed_s:.3f}",
+                        "was_cached": r.was_cached,
+                    }
+                )
+            if self._phase_timings:
+                writer.writerow(
+                    {
+                        "phase_key": "TOTAL",
+                        "phase_name": "TOTAL",
+                        "start_wall_utc": datetime.fromtimestamp(
+                            self._phase_timings[0].start_wall_utc, tz=timezone.utc
+                        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "elapsed_s": f"{total_s:.3f}",
+                        "was_cached": False,
+                    }
+                )
+        return csv_path
+
+    def _print_timing_report(self, csv_path: Path) -> None:
+        """Print a rich timing table to the console."""
+        total_s = sum(r.elapsed_s for r in self._phase_timings)
+        table = Table(title="Tuning Pipeline — Timing Report", show_footer=True)
+        table.add_column("Phase", footer="[bold]TOTAL[/]")
+        table.add_column("Status", footer="")
+        table.add_column(
+            "Duration",
+            footer=f"[bold]{self._format_duration(total_s)}[/]",
+            justify="right",
+        )
+        table.add_column("Wall start (UTC)", footer="", style="dim")
+        table.add_column("% of total", footer="[bold]100%[/]", justify="right")
+
+        for r in self._phase_timings:
+            status = (
+                "[dim]CACHED[/]" if r.was_cached else "[green]COMPUTED[/]"
+            )
+            duration = (
+                "[dim]–[/]"
+                if r.was_cached
+                else self._format_duration(r.elapsed_s)
+            )
+            wall_str = datetime.fromtimestamp(
+                r.start_wall_utc, tz=timezone.utc
+            ).strftime("%H:%M:%S")
+            pct = (
+                f"{r.elapsed_s / total_s * 100:.0f}%" if total_s > 0 else "–"
+            )
+            table.add_row(r.phase_name, status, duration, wall_str, pct)
+
+        console.print()
+        console.rule("[bold cyan]Timing Report")
+        console.print(table)
+        console.print(f"  Timing report saved to [bold]{csv_path}[/]")
 
     def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
         """Helper to get config values from the initial config."""
