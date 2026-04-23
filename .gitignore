@@ -42,4 +42,7 @@ uis/**/node_modules/
 docs/*.md
 
 data/tuner_runs/*
+data/simulator_runs/TESTTEST/
+
+profile.prof
 
