@@ -33,7 +33,7 @@ from autoslo.tuner.tuner_utils import (
 )
 from autoslo.utils.config import copy_and_apply_overrides
 from autoslo.utils.structured_events import wall_clock_utc
-from autoslo.utils.yaml_helpers import dump
+from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class PolicyTuner:
         # Persist config for reproducibility.
         self._run_dir.mkdir(parents=True, exist_ok=True)
         initial_config_path = self._run_dir / "initial_config.yml"
-        dump(self._initial_config, initial_config_path)
+        dump_yaml(self._initial_config, initial_config_path)
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator(tuner_run_id=self._run_id)
@@ -472,7 +472,7 @@ class PolicyTuner:
             )
 
         # Persist best results for caching.
-        dump(best_config, best_config_path)
+        dump_yaml(best_config, best_config_path)
         self._write_phase_summary(
             ckpt_root / "best_train_summary.yml", best_train_agg
         )
@@ -624,7 +624,7 @@ class PolicyTuner:
             ):
                 self._print_banner("Phase 7: Final comparison with tuned config")
                 final_config = post_second_sweep_config
-                dump(final_config, final_path)
+                dump_yaml(final_config, final_path)
                 console.print(f"  Final config written to [bold]{final_path}[/]")
                 summary_dir = self._run_dir / "07_final"
                 summary_dir.mkdir(parents=True, exist_ok=True)
@@ -957,7 +957,7 @@ class PolicyTuner:
             holdout_summary["static_baselines"] = static_summaries
 
         summary_path = summary_dir / "summary.yml"
-        dump(holdout_summary, summary_path)
+        dump_yaml(holdout_summary, summary_path)
 
     _SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
 
@@ -1048,7 +1048,7 @@ class PolicyTuner:
                 for r in agg.scenario_results
             ],
         }
-        dump(summary, path)
+        dump_yaml(summary, path)
 
     @staticmethod
     def _parse_phase_summary(path: Path) -> AggregatedSimulationResults:

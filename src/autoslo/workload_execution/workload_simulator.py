@@ -26,7 +26,7 @@ from autoslo.utils.structured_events import (
     EventType,
     QueryRelatedEvent,
 )
-from autoslo.utils.yaml_helpers import dump
+from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.simulator_event import (
@@ -86,7 +86,7 @@ class WorkloadSimulator:
         self._write_text_log = structured_config.write_text_log
         self._structured_handler = structured_config.structured_log_handler
 
-        dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
+        dump_yaml(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Activate initial clusters immediately (no spin-up delay) ──────
         pending_cluster_names = self._pool.clusters_in_state(
@@ -291,7 +291,7 @@ class WorkloadSimulator:
             self._structured_handler.finalize()
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
-        dump(seq_num_to_cluster_name, mapping_out_path)
+        dump_yaml(seq_num_to_cluster_name, mapping_out_path)
 
         if self._experiment_name:
             self._write_experiment_meta()
@@ -518,7 +518,7 @@ class WorkloadSimulator:
             }
 
         out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
-        dump(d, out_path)
+        dump_yaml(d, out_path)
 
     def _write_experiment_meta(self) -> None:
         """

@@ -31,7 +31,7 @@ from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
 )
-from autoslo.utils.yaml_helpers import dump
+from autoslo.utils.yaml_helpers import dump_yaml
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -363,7 +363,7 @@ class CheckpointOptimizer:
         ckpt_dir = self._run_dir / "checkpoints"
 
         current_config = copy.deepcopy(self._config)
-        dump(current_config, ckpt_dir / "initial_config.yml")
+        dump_yaml(current_config, ckpt_dir / "initial_config.yml")
 
         # Track evaluation results for the current config to avoid
         # re-evaluation across rounds.  When a candidate is accepted,
@@ -374,7 +374,7 @@ class CheckpointOptimizer:
         for round_idx in range(max_checkpoints):
             console.rule(f"[bold cyan]Checkpoint round {round_idx}")
             round_dir = ckpt_dir / f"round_{round_idx:03d}"
-            dump(current_config, round_dir / "initial_config.yml")
+            dump_yaml(current_config, round_dir / "initial_config.yml")
 
             # 1. Get baseline results (reuse from previous round
             #    if available).
@@ -531,7 +531,7 @@ class CheckpointOptimizer:
                     f"sufficient."
                 )
                 self._write_round_summary(round_idx, cands, best_cp)
-                dump(current_config, round_dir / "final_config.yml")
+                dump_yaml(current_config, round_dir / "final_config.yml")
                 break
 
             current_config = all_configs[best_idx]
@@ -547,10 +547,10 @@ class CheckpointOptimizer:
 
             # Write round summary.
             self._write_round_summary(round_idx, cands, best_cp)
-            dump(current_config, round_dir / "final_config.yml")
+            dump_yaml(current_config, round_dir / "final_config.yml")
 
         # Write the final config.
-        dump(current_config, ckpt_dir / "final_config.yml")
+        dump_yaml(current_config, ckpt_dir / "final_config.yml")
         assert (
             current_train_agg is not None
         ), "No checkpoint rounds were configured (max_checkpoints=0)."
@@ -636,4 +636,4 @@ class CheckpointOptimizer:
                 for cp, agg in candidates
             ],
         }
-        dump(summary, round_dir / "round_summary.yml")
+        dump_yaml(summary, round_dir / "round_summary.yml")

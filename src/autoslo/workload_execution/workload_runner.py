@@ -21,7 +21,7 @@ from autoslo.utils.structured_events import (
     QueryRelatedEvent,
     wall_clock_utc,
 )
-from autoslo.utils.yaml_helpers import dump
+from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_execution.structured_config import StructuredConfig
 
@@ -67,7 +67,7 @@ class WorkloadRunner:
         self._write_text_log = structured_config.write_text_log
         self._structured_handler = structured_config.structured_log_handler
 
-        dump(self._cfg, os.path.join(self._out_dir, "config.yml"))
+        dump_yaml(self._cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Instance Variables ───────────────────────────────────────────────
         self._routing_lock = threading.Lock()

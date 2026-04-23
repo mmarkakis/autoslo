@@ -9,8 +9,8 @@ leading-zero integers as octal.
 from __future__ import annotations
 
 import re
-from typing import IO, Any
 from pathlib import Path
+from typing import Any, Optional
 
 import yaml
 
@@ -30,7 +30,12 @@ def _quote_ambiguous_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
 _QuotingSafeDumper.add_representer(str, _quote_ambiguous_str)
 
 
-def dump(data: Any, path: str | Path, **kwargs: Any) -> None:
+def dump_yaml(
+    data: Any,
+    path: str | Path,
+    header_string: Optional[str] = None,
+    **kwargs: Any,
+) -> None:
     """Write *data* as YAML to *path*, quoting ambiguous string keys.
 
     Accepts the same keyword arguments as :func:`yaml.dump`
@@ -44,4 +49,16 @@ def dump(data: Any, path: str | Path, **kwargs: Any) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
+        if header_string is not None:
+            f.write(f"{header_string}\n")
         yaml.dump(data, f, Dumper=_QuotingSafeDumper, **kwargs)
+
+
+def load_yaml(path: str | Path) -> Any:
+    """
+    Load YAML from *path*.
+
+    If the file is empty, return an empty dict instead of None for convenience.
+    """
+    with open(path) as f:
+        return yaml.safe_load(f) or {}

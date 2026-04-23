@@ -28,7 +28,7 @@ from autoslo.tuner.tuner_utils import (
     SimulationResult,
     compute_pareto_front,
 )
-from autoslo.utils.yaml_helpers import dump
+from autoslo.utils.yaml_helpers import dump_yaml
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -145,7 +145,7 @@ class ParamSweep:
         if not param_ranges:
             strategy = "grid"
 
-        dump(self._config, phase_dir / "initial_config.yml")
+        dump_yaml(self._config, phase_dir / "initial_config.yml")
 
         # ── Generate & evaluate candidates (strategy-specific) ─────
         if strategy == "grid":
@@ -207,7 +207,7 @@ class ParamSweep:
         # ── Persist results ────────────────────────────────────────
         self._write_sweep_results(phase_dir, grid_results, best_idx)
         final_config = cfgu.copy_and_apply_overrides(self._config, best_params)
-        dump(final_config, phase_dir / "final_config.yml")
+        dump_yaml(final_config, phase_dir / "final_config.yml")
 
         best_train_agg = grid_results[best_idx]["train_metrics"]
         best_val_agg = grid_results[best_idx]["val_metrics"]
