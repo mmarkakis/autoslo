@@ -720,7 +720,7 @@ class PolicyTuner:
                         "phase_name": r.phase_name,
                         "start_wall_utc": datetime.fromtimestamp(
                             r.start_wall_utc, tz=timezone.utc
-                        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         "elapsed_s": f"{r.elapsed_s:.3f}",
                         "was_cached": r.was_cached,
                     }
@@ -732,7 +732,7 @@ class PolicyTuner:
                         "phase_name": "TOTAL",
                         "start_wall_utc": datetime.fromtimestamp(
                             self._phase_timings[0].start_wall_utc, tz=timezone.utc
-                        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         "elapsed_s": f"{total_s:.3f}",
                         "was_cached": False,
                     }
