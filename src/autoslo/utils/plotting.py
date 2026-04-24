@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Sequence
 
 import matplotlib.pyplot as plt
@@ -37,20 +38,34 @@ FORMATTING = {
 }
 
 
+def plot_legend_to(path: str | Path):
+    """
+    Plot just the legend as a small image.
+    """
+    fig, ax = plt.subplots(figsize=(3, 1))
+    for fmt in FORMATTING.values():
+        ax.scatter([], [], label=fmt[0], color=fmt[1], marker=fmt[2], s=60)
+    ax.legend(ncol=1, loc="center")
+    ax.axis("off")
+    fig.savefig(path, bbox_inches="tight", dpi=300)
+    plt.close(fig)
+
+
 def cost_vs_compliance_scatter(
     points: Sequence[ScatterPoint],
     *,
     x_metric: str | SloMetric,
     x_scale: Optional[str] = None,
+    existing_xlims: Optional[tuple[float, float]] = None,
+    existing_ylims: Optional[tuple[float, float]] = None,
     title: str | None = None,
     x_pad: float = 0.05,
     y_bottom: float = 0,
     figsize: tuple[float, float] = (6, 5),
-    legend: bool = True,
     ax: Axes | None = None,
     x_threshold_color: str = Palette.light_green,
     x_threshold_objective: SloObjective | None = None,
-) -> tuple[Figure, Axes]:
+) -> tuple[Figure, Axes, tuple[float, float], tuple[float, float]]:
     """Create a cost-vs-compliance scatter plot.
 
     Parameters
@@ -62,17 +77,22 @@ def cost_vs_compliance_scatter(
     x_scale :
         Scale for the x-axis (``"linear"`` or ``"log"``). If None, the scale is
         determined from the SLO metric.
+    existing_xlims :
+        If given, existing x-axis limits from other panels. Make sure we only
+        expand these limits, never shrink them, to ensure consistent x-axis
+        limits across panels.
+    existing_ylims :
+        If given, existing y-axis limits from other panels. Make sure we only
+        expand these limits, never shrink them, to ensure consistent y-axis
+        limits across panels.
     title :
         Optional title for the plot.
     x_pad :
         Relative padding added to the x-axis limits around the data.
     y_bottom :
         Lower bound for the y-axis.
-
     figsize :
         Figure size when creating a new figure (ignored if *ax* given).
-    legend :
-        Whether to draw a legend.
     ax :
         Optional pre-existing axes to draw on.  When *None* a new figure
         is created.
@@ -87,6 +107,12 @@ def cost_vs_compliance_scatter(
     -------
     (fig, ax)
         The matplotlib figure and axes.
+    xlims
+        The x-axis limits after plotting, which may be useful for ensuring
+        consistent limits across panels.
+    ylims
+        The y-axis limits after plotting, which may be useful for ensuring
+        consistent limits across panels.
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -132,8 +158,10 @@ def cost_vs_compliance_scatter(
     ax.set_xlabel(x_metric_asobj.to_plot_axis_label())
     ax.set_ylabel("Cost ($)")
 
-    y_top = max(pt.y for pt in points) * 1.1 if points else 1.0
-    ax.set_ylim(bottom=y_bottom, top=y_top)
+    yvals = [pt.y for pt in points]
+    bottom, top = existing_ylims if existing_ylims else (0, max(yvals))
+    top = max(top, max(yvals) * 1.1)
+    ax.set_ylim(bottom=bottom, top=top)
 
     if x_scale is None:
         x_scale = x_metric_asobj.to_plot_axis_scale()
@@ -143,27 +171,15 @@ def cost_vs_compliance_scatter(
 
     # Relative padding around x data.
     xvals = [pt.x for pt in points]
+    left, right = existing_xlims if existing_xlims else (min(xvals), max(xvals))
     if x_scale == "linear" and len(points) > 0:
         additional = (max(xvals) - min(xvals)) * x_pad
-        ax.set_xlim(0, max(xvals) + additional)
+        left = 0
+        right = max(right, max(xvals) + additional)
     elif x_scale == "log":
         factor = (max(xvals) / min(xvals)) ** x_pad
-        ax.set_xlim(min(xvals) / factor, max(xvals) * factor)
-
-    if legend:
-        # Order the legend according to FORMATTING.
-        handles, labels = ax.get_legend_handles_labels()
-        label_sort_order = [fmt[0] for fmt in FORMATTING.values()]
-        sorted_handles_labels = sorted(
-            zip(handles, labels),
-            key=lambda hl: (
-                label_sort_order.index(hl[1])
-                if hl[1] in label_sort_order
-                else len(label_sort_order)
-            ),
-        )
-        sorted_handles, sorted_labels = zip(*sorted_handles_labels)
-        ax.legend(sorted_handles, sorted_labels, ncols=2)
-
+        left = min(left, min(xvals) / factor)
+        right = max(right, max(xvals) * factor)
+    ax.set_xlim(left, right)
     fig.tight_layout()
-    return fig, ax
+    return fig, ax, (left, right), (bottom, top)

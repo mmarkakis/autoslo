@@ -10,9 +10,8 @@ import argparse
 import csv
 import json
 import os
-import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -23,7 +22,11 @@ from rich.table import Table
 import autoslo.utils.paths as pu
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
-from autoslo.utils.plotting import ScatterPoint, cost_vs_compliance_scatter
+from autoslo.utils.plotting import (
+    ScatterPoint,
+    cost_vs_compliance_scatter,
+    plot_legend_to,
+)
 from autoslo.utils.yaml_helpers import load_yaml
 
 
@@ -137,6 +140,8 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
                 )
             axs = axs.flatten()
 
+            prev_panel_xlims: Optional[tuple[float, float]] = None
+            prev_panel_ylims: Optional[tuple[float, float]] = None
             for panel_idx, (trial_id, trial_rows) in enumerate(
                 summary.groupby("trial", sort=False)
             ):
@@ -153,12 +158,16 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
                         )
                     )
 
-                cost_vs_compliance_scatter(
-                    points,
-                    x_metric=slo_metric,
-                    title=trial_ids_human[trial_id],
-                    x_threshold_objective=slo_objectives[trial_id],
-                    ax=axs[panel_idx],  # type: ignore
+                _, _, prev_panel_xlims, prev_panel_ylims = (
+                    cost_vs_compliance_scatter(
+                        points,
+                        x_metric=slo_metric,
+                        title=trial_ids_human[trial_id],
+                        x_threshold_objective=slo_objectives[trial_id],
+                        ax=axs[panel_idx],  # type: ignore
+                        existing_xlims=prev_panel_xlims,
+                        existing_ylims=prev_panel_ylims,
+                    )
                 )
         else:
             # Assert that for each non-final point, we see the same values
@@ -202,7 +211,7 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
                     )
                 )
 
-            fig, ax = cost_vs_compliance_scatter(
+            fig, _, _, _ = cost_vs_compliance_scatter(
                 points,
                 title=experiment_name_human,
                 x_metric=slo_metric,
@@ -214,6 +223,7 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
         )
         os.makedirs(plot_path.parent, exist_ok=True)
         fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+        plot_legend_to(experiment_definition_dir / "plots" / "legend.png")
         plt.close(fig)
         print(f"Wrote {plot_path}.")
 
