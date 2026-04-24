@@ -1,0 +1,5 @@
+scenario,checkpoint_idx,time_s,min_rpus
+Previous 1 day,0,3348.5150971157445,"[8, 8]"
+Previous 1 day,1,6436.87262053406,"[8, 8]"
+Previous 1 week,0,6115.348997511498,"[4, 8]"
+Previous 1 month,0,6390.825449450916,"[8, 16]"

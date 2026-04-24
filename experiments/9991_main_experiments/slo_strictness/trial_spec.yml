@@ -1,0 +1,28 @@
+experiment_name: slo_strictness_exp
+experiment_name_human: "Simulation Results with Different SLO Thresholds"
+plot_on_one_panel: false
+trials:
+  - trial_id: one_percent
+    trial_id_human: "1% Target SLO violation rate"
+    formatting_id_of_final_point: prev_month
+    overrides:
+      slo_config.slo_threshold: 0.01
+      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
+
+  - trial_id: five_percent
+    trial_id_human: "5% Target SLO violation rate"
+    formatting_id_of_final_point: prev_month
+    overrides:
+      slo_config.slo_threshold: 0.05
+      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
+
+  - trial_id: ten_percent
+    trial_id_human: "10% Target SLO violation rate"
+    formatting_id_of_final_point: prev_month
+    overrides:
+      slo_config.slo_threshold: 0.10
+      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
+ 

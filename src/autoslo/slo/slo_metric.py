@@ -68,16 +68,37 @@ class SloMetric(Enum):
         """Convenience: calculate and aggregate in one step."""
         return self.aggregate(self.calculate_batch(lat_and_slos))
 
-    @property
-    def aggregate_string_description(self) -> str:
+    def to_plot_axis_label(self) -> str:
         """Human-friendly description of the aggregated metric, for plot
         labels and such."""
         if self is SloMetric.BINARY:
-            return "Violation Rate"
+            return "SLO Violation Rate"
         if self is SloMetric.ABSOLUTE_S:
-            return "Violation Amount (s)"
+            return "Mean SLO Violation Amount (s)"
         if self is SloMetric.RELATIVE:
-            return "Mean Relative Violation"
+            return "Mean Relative SLO Violation"
         if self is SloMetric.RELATIVE_UNCONSTRAINED:
-            return "Mean Relative Violation (Unconstrained)"
+            return "Mean Relative SLO Violation (Unconstrained)"
+        raise ValueError(f"Unknown SloMetric: {self}")
+    
+    def to_column_name(self) -> str:
+        """Name of the column in the summary dataframe where this metric is stored."""
+        if self is SloMetric.BINARY:
+            return "violation_rate"
+        if self is SloMetric.ABSOLUTE_S:
+            return "violation_amount_s"
+        if self is SloMetric.RELATIVE:
+            return "violation_relative_mean"
+        if self is SloMetric.RELATIVE_UNCONSTRAINED:
+            return "violation_relative_unconstrained_mean"
+        raise ValueError(f"Unknown SloMetric: {self}")
+    
+    def to_plot_axis_scale(self) -> str:
+        """Recommended scale for plotting this metric."""
+        if self is SloMetric.BINARY:
+            return "linear"
+        if self is SloMetric.ABSOLUTE_S:
+            return "log"
+        if self in (SloMetric.RELATIVE, SloMetric.RELATIVE_UNCONSTRAINED):
+            return "linear"
         raise ValueError(f"Unknown SloMetric: {self}")
