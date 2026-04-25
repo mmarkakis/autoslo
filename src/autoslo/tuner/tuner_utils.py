@@ -348,38 +348,3 @@ class SimulationResult:
 
         raise ValueError(f"Unknown aggregation metric: {metric!r}")
 
-
-# ---------------------------------------------------------------------------
-# Pareto front computation
-# ---------------------------------------------------------------------------
-
-
-def compute_pareto_front(
-    points: list[ViolationCost],
-) -> list[int]:
-    """Return indices of Pareto-optimal points (both objectives minimised).
-
-    Parameters
-    ----------
-    points :
-        List of ``(violation, cost)`` pairs.
-
-    Returns
-    -------
-    Sorted list of indices into *points* that lie on the Pareto front.
-    """
-    if not points:
-        return []
-
-    # Sort by first objective; break ties by second.
-    indexed = sorted(
-        enumerate(points), key=lambda t: (t[1].violation, t[1].cost)
-    )
-    front: list[int] = []
-    best_cost = float("inf")
-    for idx, point in indexed:
-        if point.cost <= best_cost:
-            front.append(idx)
-            best_cost = point.cost
-    front.sort()
-    return front

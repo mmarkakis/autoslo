@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -87,25 +88,47 @@ class SloObjective:
             return 1
         return 0
 
-    def is_b_better(
+    def cmp(
         self,
         a: ViolationCost,
         b: ViolationCost,
         tolerance: float = COMPARISON_TOLERANCE,
-    ) -> bool:
+    ) -> int:
         """
         Compare two (metric_value, cost) pairs according to the SLO objective.
 
         If both are under threshold, return the cheapest. Otherwise, return the
         one with the better metric value.
+
+        Returns -1 if a is better, 0 if approximately equal, 1 if b is better.
         """
 
         a_meets = self.is_met_from_aggregated(a.violation)
         b_meets = self.is_met_from_aggregated(b.violation)
 
         if a_meets and b_meets:
-            return self._cmp_with_tolerance(a.cost, b.cost, tolerance) > 0
-        return self._cmp_with_tolerance(a.violation, b.violation, tolerance) > 0
+            return self._cmp_with_tolerance(a.cost, b.cost, tolerance)
+        viol_comp = self._cmp_with_tolerance(
+            a.violation, b.violation, tolerance
+        )
+        if viol_comp != 0:
+            return viol_comp
+        return self._cmp_with_tolerance(a.cost, b.cost, tolerance)
+
+    def rank_indices(self, candidates: list[ViolationCost]) -> list[int]:
+        """Return candidate indices sorted from best to worst.
+
+        Feasible candidates (violation ≤ threshold) come first, sorted by
+        cost ascending.  Infeasible candidates follow, sorted by violation
+        ascending with cost as tiebreaker.  Uses
+        :meth:`cmp` for all comparisons.
+        """
+
+        key_fn = functools.cmp_to_key(self.cmp)
+        sorted_candidates = sorted(
+            enumerate(candidates), key=lambda t: key_fn(t[1])
+        )
+        return [idx for idx, _ in sorted_candidates]
 
     def idx_of_best(self, candidates: list[ViolationCost]) -> int:
         """Return the index of the best ``(violation, cost)`` candidate.
@@ -115,8 +138,7 @@ class SloObjective:
         by cost; if none are feasible, the one with the lowest violation
         (tiebreak: cost) wins.
         """
-        best = 0
-        for i in range(1, len(candidates)):
-            if self.is_b_better(candidates[best], candidates[i]):
-                best = i
-        return best
+        if len(candidates) == 0:
+            raise ValueError("No candidates provided")
+        best = min(candidates, key=functools.cmp_to_key(self.cmp))
+        return candidates.index(best)

@@ -235,7 +235,7 @@ class TestParamSweepIntegration:
         assert evaluator.evaluate_batch_from_overrides.call_count == 2
 
     def test_sweep_results_written(self, run_dir: Path, config: dict[str, Any]):
-        """Verify sweep_results.json is created."""
+        """Verify sweep_results.json is created with train_rank in each entry."""
         evaluator = _mock_evaluator(
             [
                 [[_make_scenario_result(0.05, 100.0)]],  # train
@@ -263,16 +263,18 @@ class TestParamSweepIntegration:
         data = json.loads(results_file.read_text())
         assert data["best_grid_point"] == 0
         assert data["best_params"] == {"eta_crit": 0.5}
+        assert "train_rank" in data["grid_results"][0]
+        assert "is_pareto" not in data["grid_results"][0]
 
     def test_sweep_two_points_picks_lower_val_violation(
         self, run_dir: Path, config: dict[str, Any]
     ):
-        """With two Pareto-optimal points, pick the one with lower validation violation
+        """With two candidates in top-k, pick the one with lower validation violation
         (when both infeasible w.r.t. slo_threshold)."""
         # Grid: eta_crit = [0.3, 0.7]
         # Point 0 (eta_crit=0.3): train 0.10 viol, $50 cost — low cost, high viol
         # Point 1 (eta_crit=0.7): train 0.03 viol, $90 cost — high cost, low viol
-        # Both are Pareto-optimal.
+        # Both in top-k (k=5 ≥ 2).
         # Val for point 0: 0.12 viol, $55
         # Val for point 1: 0.04 viol, $95
         # With slo_threshold=0.01, both infeasible → lowest violation wins (point 1).
@@ -282,9 +284,9 @@ class TestParamSweepIntegration:
                     [_make_scenario_result(0.10, 50.0)],
                     [_make_scenario_result(0.03, 90.0)],
                 ],
-                [  # val: both Pareto-optimal
-                    [_make_scenario_result(0.12, 55.0)],
-                    [_make_scenario_result(0.04, 95.0)],
+                [  # val: top-k in train-rank order (eta_crit=0.7 ranked first)
+                    [_make_scenario_result(0.04, 95.0)],   # eta_crit=0.7 (rank 0)
+                    [_make_scenario_result(0.12, 55.0)],   # eta_crit=0.3 (rank 1)
                 ],
             ]
         )
@@ -308,24 +310,25 @@ class TestParamSweepIntegration:
         # 1 train batch + 1 val batch
         assert evaluator.evaluate_batch_from_overrides.call_count == 2
 
-    def test_sweep_dominated_point_not_validated(
+    def test_low_ranked_point_not_validated(
         self, run_dir: Path, config: dict[str, Any]
     ):
-        """A dominated grid point should not trigger a validation evaluation."""
+        """The lowest-ranked grid point should not trigger a validation evaluation."""
         # Grid: a = [1, 2, 3]
-        # Point 0: 0.10 viol, $100 — dominated by point 1 (lower on both)
-        # Point 1: 0.05 viol, $50
-        # Point 2: 0.03 viol, $120 — Pareto with point 1
+        # Point 0: 0.10 viol, $100 — highest violation → ranked last
+        # Point 1: 0.05 viol, $50  — mid violation → ranked 2nd
+        # Point 2: 0.03 viol, $120 — lowest violation → ranked 1st
+        # With val_top_k=2, only points 2 and 1 are validated; point 0 is excluded.
         evaluator = _mock_evaluator(
             [
                 [  # train: all 3 grid points
-                    [_make_scenario_result(0.10, 100.0)],  # dominated
-                    [_make_scenario_result(0.05, 50.0)],  # pareto
-                    [_make_scenario_result(0.03, 120.0)],  # pareto
+                    [_make_scenario_result(0.10, 100.0)],  # rank 2 (last)
+                    [_make_scenario_result(0.05, 50.0)],  # rank 1
+                    [_make_scenario_result(0.03, 120.0)],  # rank 0 (best)
                 ],
-                [  # val: only Pareto points (re-indexed 0, 1)
-                    [_make_scenario_result(0.06, 55.0)],
+                [  # val: only top-2 (re-indexed 0, 1)
                     [_make_scenario_result(0.04, 125.0)],
+                    [_make_scenario_result(0.06, 55.0)],
                 ],
             ]
         )
@@ -342,11 +345,13 @@ class TestParamSweepIntegration:
         best, _, _ = sweeper.sweep(
             train_paths=[Path("/tmp/t.parquet")],
             val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"a": [1, 2, 3]}},
+            sweep_config={"params": {"a": [1, 2, 3]}, "val_top_k": 2},
         )
 
-        # 1 train batch + 1 val batch (Pareto points only)
+        # 1 train batch + 1 val batch (top-2 only)
         assert evaluator.evaluate_batch_from_overrides.call_count == 2
+        val_call = evaluator.evaluate_batch_from_overrides.call_args_list[1]
+        assert len(val_call[1]["all_config_overrides"]) == 2
 
     def test_sweep_empty_ranges(self, run_dir: Path, config: dict[str, Any]):
         """Empty sweep_config → single point with empty params."""
@@ -410,11 +415,12 @@ class TestParamSweepIntegration:
         self, run_dir: Path, config: dict[str, Any]
     ):
         """Multi-parameter grid produces correct number of evaluations."""
-        # 2 x 3 = 6 grid points. Assume all Pareto (worst case).
+        # 2 x 3 = 6 grid points. Default val_top_k=5 → 5 validated.
         train_batch = [
             [_make_scenario_result(0.10 - i * 0.01, 50.0 + i * 10)]
             for i in range(6)
         ]
+        # Provide 6 val results; only first 5 are consumed.
         val_batch = [
             [_make_scenario_result(0.11 - i * 0.01, 55.0 + i * 10)]
             for i in range(6)
@@ -674,14 +680,14 @@ class TestCoordinateDescentSweep:
                 # Sweep a (cycle 0):
                 [
                     [_make_scenario_result(0.10, 100.0)],  # a=1
-                    [_make_scenario_result(0.05, 50.0)],  # a=2 (best)
-                    [_make_scenario_result(0.08, 80.0)],  # a=3
+                    [_make_scenario_result(0.05, 50.0)],   # a=2 (cheapest → best)
+                    [_make_scenario_result(0.08, 80.0)],   # a=3
                 ],
-                # Validation:
+                # Validation (top-k order: a=2 rank0, a=3 rank1, a=1 rank2):
                 [
-                    [_make_scenario_result(0.11, 105.0)],
-                    [_make_scenario_result(0.06, 55.0)],
-                    [_make_scenario_result(0.09, 85.0)],
+                    [_make_scenario_result(0.06, 45.0)],   # a=2 (cheapest val → wins)
+                    [_make_scenario_result(0.09, 75.0)],   # a=3
+                    [_make_scenario_result(0.11, 95.0)],   # a=1
                 ],
             ]
         )
@@ -807,7 +813,10 @@ class TestCoordinateDescentSweep:
                     [_make_scenario_result(0.05, 50.0)],
                     [_make_scenario_result(0.10, 100.0)],
                 ],
-                [[_make_scenario_result(0.06, 55.0)]],
+                [  # val: top-k order (a=1 cheapest → rank 0, a=2 rank 1)
+                    [_make_scenario_result(0.06, 55.0)],
+                    [_make_scenario_result(0.11, 105.0)],
+                ],
             ]
         )
 
@@ -862,3 +871,164 @@ class TestUnknownStrategy:
                     "params": {"a": [1]},
                 },
             )
+
+
+# ---------------------------------------------------------------------------
+# Top-k validation behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestTopKValidation:
+    @pytest.fixture()
+    def run_dir(self, tmp_path: Path) -> Path:
+        return tmp_path / "sweep_run"
+
+    @pytest.fixture()
+    def config(self) -> dict[str, Any]:
+        return {"tuner_config": {"aggregation_metric": "mean"}}
+
+    def test_top_k_limits_validation_calls(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """val_top_k=2 on a 5-point grid → validation call has exactly 2 overrides."""
+        train_batch = [
+            [_make_scenario_result(0.10 - i * 0.01, 50.0 + i * 5)]
+            for i in range(5)
+        ]
+        val_batch = [
+            [_make_scenario_result(0.09 - i * 0.01, 52.0 + i * 5)]
+            for i in range(2)
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+
+        sweeper = ParamSweep(
+            evaluator=evaluator,
+            initial_config=config,
+            run_dir=run_dir,
+            phase_name="test_topk",
+            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
+        )
+
+        sweeper.sweep(
+            train_paths=[Path("/tmp/t.parquet")],
+            val_paths=[Path("/tmp/v.parquet")],
+            sweep_config={"params": {"a": [1, 2, 3, 4, 5]}, "val_top_k": 2},
+        )
+
+        val_call = evaluator.evaluate_batch_from_overrides.call_args_list[1]
+        assert len(val_call[1]["all_config_overrides"]) == 2
+
+    def test_top_k_ranks_by_slo_objective(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """Feasible candidate is ranked first and included in top-k."""
+        # 4 candidates: 1 feasible (violation ≤ threshold=0.05), 3 infeasible.
+        # val_top_k=2 → feasible candidate + the least-infeasible one validated.
+        train_batch = [
+            [_make_scenario_result(0.20, 10.0)],  # infeasible, worst viol
+            [_make_scenario_result(0.03, 90.0)],  # feasible (≤0.05)
+            [_make_scenario_result(0.15, 20.0)],  # infeasible
+            [_make_scenario_result(0.10, 30.0)],  # infeasible
+        ]
+        val_batch = [
+            [_make_scenario_result(0.04, 92.0)],
+            [_make_scenario_result(0.11, 32.0)],
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+
+        sweeper = ParamSweep(
+            evaluator=evaluator,
+            initial_config=config,
+            run_dir=run_dir,
+            phase_name="test_topk",
+            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.05),
+            agg_metric="mean",
+        )
+
+        sweeper.sweep(
+            train_paths=[Path("/tmp/t.parquet")],
+            val_paths=[Path("/tmp/v.parquet")],
+            sweep_config={
+                "params": {"a": [1, 2, 3, 4]},
+                "val_top_k": 2,
+            },
+        )
+
+        # The feasible candidate (a=2, idx=1) must appear in the val overrides.
+        val_call = evaluator.evaluate_batch_from_overrides.call_args_list[1]
+        val_overrides = val_call[1]["all_config_overrides"]
+        assert len(val_overrides) == 2
+        assert {"a": 2} in val_overrides
+
+    def test_top_k_greater_than_grid_validates_all(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """val_top_k larger than grid size → all candidates validated."""
+        train_batch = [
+            [_make_scenario_result(0.05, 50.0)],
+            [_make_scenario_result(0.08, 40.0)],
+            [_make_scenario_result(0.03, 70.0)],
+        ]
+        val_batch = [
+            [_make_scenario_result(0.06, 52.0)],
+            [_make_scenario_result(0.09, 42.0)],
+            [_make_scenario_result(0.04, 72.0)],
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+
+        sweeper = ParamSweep(
+            evaluator=evaluator,
+            initial_config=config,
+            run_dir=run_dir,
+            phase_name="test_topk",
+            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
+        )
+
+        sweeper.sweep(
+            train_paths=[Path("/tmp/t.parquet")],
+            val_paths=[Path("/tmp/v.parquet")],
+            sweep_config={
+                "params": {"a": [1, 2, 3]},
+                "val_top_k": 100,
+            },
+        )
+
+        val_call = evaluator.evaluate_batch_from_overrides.call_args_list[1]
+        assert len(val_call[1]["all_config_overrides"]) == 3
+
+    def test_sweep_results_json_has_train_rank(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """Every entry in sweep_results.json has train_rank; none has is_pareto."""
+        train_batch = [
+            [_make_scenario_result(0.05, 50.0)],
+            [_make_scenario_result(0.08, 40.0)],
+        ]
+        val_batch = [
+            [_make_scenario_result(0.06, 52.0)],
+            [_make_scenario_result(0.09, 42.0)],
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+
+        sweeper = ParamSweep(
+            evaluator=evaluator,
+            initial_config=config,
+            run_dir=run_dir,
+            phase_name="test_topk",
+            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
+            agg_metric="mean",
+        )
+
+        sweeper.sweep(
+            train_paths=[Path("/tmp/t.parquet")],
+            val_paths=[Path("/tmp/v.parquet")],
+            sweep_config={"params": {"a": [1, 2]}},
+        )
+
+        results_file = run_dir / "test_topk" / "sweep_results.json"
+        data = json.loads(results_file.read_text())
+        for entry in data["grid_results"]:
+            assert "train_rank" in entry
+            assert "is_pareto" not in entry

@@ -2,9 +2,9 @@
 
 Both the autoscaler sweep (design step 5) and the routing sweep (design
 step 6) follow the same pattern: generate candidate configurations,
-evaluate them on the training set, compute the Pareto front over
-(violation, cost), validate Pareto-optimal points, and select the best.
-:class:`ParamSweep` encapsulates this logic with pluggable search
+evaluate them on the training set, rank them via
+:meth:`SloObjective.rank_indices`, validate the top-k, and select the
+best.  :class:`ParamSweep` encapsulates this logic with pluggable search
 strategies (``grid``, ``random``, ``coordinate_descent``).
 """
 
@@ -26,7 +26,6 @@ from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
     AggregatedSimulationResults,
     SimulationResult,
-    compute_pareto_front,
 )
 from autoslo.utils.yaml_helpers import dump_yaml
 
@@ -60,7 +59,7 @@ def build_grid(param_ranges: dict[str, list]) -> list[dict[str, Any]]:
 
 
 class ParamSweep:
-    """Grid search with Pareto-front analysis and validation-set selection.
+    """Grid search with top-k training ranking and validation-set selection.
 
     Parameters
     ----------
@@ -163,23 +162,25 @@ class ParamSweep:
         else:
             raise ValueError(f"Unknown sweep strategy: {strategy!r}")
 
-        # ── Pareto front ───────────────────────────────────────────
+        # ── Rank training candidates and select top-k for validation ─
+        val_top_k: int = sweep_config.get("val_top_k", 5)
         points = [
             ViolationCost(r["train_violation_agg"], r["train_cost_agg"])
             for r in grid_results
         ]
-        pareto_indices = compute_pareto_front(points)
-        for idx in pareto_indices:
-            grid_results[idx]["is_pareto"] = True
+        ranked_indices = self._slo_objective.rank_indices(points)
+        for rank, idx in enumerate(ranked_indices):
+            grid_results[idx]["train_rank"] = rank
+        top_k_indices = ranked_indices[:val_top_k]
 
         console.print(
-            f"\n  [cyan]Pareto front:[/] {len(pareto_indices)} of "
-            f"{len(candidates)} points"
+            f"\n  [cyan]Top-k validation:[/] {len(top_k_indices)} of "
+            f"{len(candidates)} points (k={val_top_k})"
         )
 
-        # ── Validate Pareto-optimal points ─────────────────────────
+        # ── Validate top-k candidates ──────────────────────────────
         console.print(f"\n[bold cyan]Validation sweep:[/]")
-        val_overrides = [candidates[idx] for idx in pareto_indices]
+        val_overrides = [candidates[idx] for idx in top_k_indices]
         all_val_results = self._evaluator.evaluate_batch_from_overrides(
             phase_name=self._phase_name,
             workload_paths=val_paths,
@@ -187,7 +188,7 @@ class ParamSweep:
             all_config_overrides=val_overrides,
             out_dir=phase_dir / "val",
         )
-        for i, idx in enumerate(pareto_indices):
+        for i, idx in enumerate(top_k_indices):
             val_results = all_val_results[i]
             val_agg = SimulationResult.aggregate(val_results, self._agg_metric)
             val_primary = val_agg.primary_violation(
@@ -198,11 +199,11 @@ class ParamSweep:
             grid_results[idx]["val_metrics"] = val_agg
 
         # ── Select best ───────────────────────────────────────────
-        best_idx = self._select_best(grid_results, pareto_indices)
+        best_idx = self._select_best(grid_results, top_k_indices)
         best_params = candidates[best_idx]
 
         # ── Rich summary table ─────────────────────────────────────
-        self._print_pareto_table(grid_results, pareto_indices, best_idx)
+        self._print_top_k_table(grid_results, top_k_indices, best_idx)
 
         # ── Persist results ────────────────────────────────────────
         self._write_sweep_results(phase_dir, grid_results, best_idx)
@@ -246,7 +247,7 @@ class ParamSweep:
                     "train_violation_agg": train_primary,
                     "train_cost_agg": train_agg.cost,
                     "train_metrics": train_agg,
-                    "is_pareto": False,
+                    "train_rank": None,
                     "val_primary_violation_agg": None,
                     "val_cost_agg": None,
                     "val_metrics": None,
@@ -416,22 +417,21 @@ class ParamSweep:
     def _select_best(
         self,
         grid_results: list[dict[str, Any]],
-        pareto_indices: list[int],
+        candidate_indices: list[int],
     ) -> int:
-        """Pick the best Pareto-optimal point by threshold-aware selection.
-
-        Strategy: among validated Pareto points, apply lexicographic
-        (feasibility-first, then cheapest) selection.
         """
+        Pick the best validated candidate.
+
+       """
         candidates = [
             ViolationCost(
                 grid_results[i]["val_primary_violation_agg"],
                 grid_results[i]["val_cost_agg"],
             )
-            for i in pareto_indices
+            for i in candidate_indices
         ]
         best_local_idx = self._slo_objective.idx_of_best(candidates)
-        return pareto_indices[best_local_idx]
+        return candidate_indices[best_local_idx]
 
     # ------------------------------------------------------------------
     # Rich output
@@ -460,19 +460,20 @@ class ParamSweep:
             f"Total evaluations: [bold]{len(grid) * n_train}[/]"
         )
 
-    def _print_pareto_table(
+    def _print_top_k_table(
         self,
         grid_results: list[dict[str, Any]],
-        pareto_indices: list[int],
+        top_k_indices: list[int],
         best_idx: int,
     ) -> None:
         table = Table(
-            title=f"{self._phase_name} — Pareto Front Results",
+            title=f"{self._phase_name} — Top-K Validation Results",
             show_lines=True,
         )
         slo_label = self._slo_objective.slo_metric
         slo_thresh = self._slo_objective.slo_threshold
         table.add_column("GP", justify="right")
+        table.add_column("Train Rank", justify="right")
         table.add_column("Params", justify="left")
         table.add_column(
             f"Train {slo_label} (≤{slo_thresh:.2f})", justify="right"
@@ -484,7 +485,7 @@ class ParamSweep:
         table.add_column("Val Cost", justify="right")
         table.add_column("Best", justify="center")
 
-        for idx in pareto_indices:
+        for idx in top_k_indices:
             r = grid_results[idx]
             is_best = idx == best_idx
             style = "bold green" if is_best else ""
@@ -500,6 +501,7 @@ class ParamSweep:
             )
             table.add_row(
                 str(idx),
+                str(r["train_rank"]),
                 str(r["params"]),
                 f"{r['train_violation_agg']:.4f}",
                 f"{r['train_cost_agg']:.4f}",
