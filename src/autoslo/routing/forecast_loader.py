@@ -145,11 +145,10 @@ class ForecastDistributionLoader:
         """
         for qi in range(10):
             qtid = QueryTextId(
-                value=f"{self._schema_name}#{template_id}#{qi:03d}"
+                f"{self._schema_name}#{template_id}#{qi:03d}"
             )
             try:
-                feat = self._featurizer.featurize_from_query_text_id(qtid)
-                return np.array(feat[2 * self._m :], dtype=np.float64)
+                return self._featurizer.table_vector_for(qtid)
             except (ValueError, KeyError):
                 continue
         return np.zeros(self._n, dtype=np.float64)

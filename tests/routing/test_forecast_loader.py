@@ -30,14 +30,22 @@ class _StubFeaturizer:
         self._m = m
 
     def featurize_from_query_text_id(self, qtid) -> list[float]:
-        # qtid.value = "schema#tid#index"
-        parts = qtid.value.split("#")
+        # QueryTextId is a str subclass: "schema#tid#index"
+        parts = str(qtid).split("#")
         tid = parts[1]
         if tid not in self._known:
             raise KeyError(f"Unknown template {tid}")
         table_vec = self._known[tid]
         # Full featurization = 2*m zeros (operator dims) + table_vec
         return [0.0] * (2 * self._m) + table_vec
+
+    def table_vector_for(self, qtid) -> np.ndarray:
+        # QueryTextId is a str subclass: "schema#tid#index"
+        parts = str(qtid).split("#")
+        tid = parts[1]
+        if tid not in self._known:
+            raise KeyError(f"Unknown template {tid}")
+        return np.array(self._known[tid], dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------

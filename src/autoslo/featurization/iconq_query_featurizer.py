@@ -405,6 +405,25 @@ class IconqQueryFeaturizer:
             )
         return self._np_featurization_cache[query_text_id]
 
+    def table_vector_for(self, query_text_id: QueryTextId) -> np.ndarray:
+        """Return the table-access slice of the featurization for *query_text_id*.
+
+        Slices off the trailing *N* dimensions (``feat[2*m:]``) and returns
+        them as a float64 array of shape ``(N,)``.  The underlying numpy
+        featurization cache is populated as a side-effect.
+
+        Parameters:
+            query_text_id: The query text ID to look up.
+
+        Returns:
+            A 1-D float64 numpy array of length ``self._n``.
+
+        Raises:
+            ValueError: If *query_text_id* is not in the featurization cache.
+        """
+        feat = self.featurize_from_query_text_id_as_numpy(query_text_id)
+        return feat[2 * self._m :].astype(np.float64)
+
     def warm_up_cache(self, query_text_ids: list[QueryTextId]) -> None:
         """
         Pre-populate both _featurization_cache and _np_featurization_cache for
