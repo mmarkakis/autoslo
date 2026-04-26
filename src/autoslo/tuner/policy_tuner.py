@@ -152,24 +152,10 @@ class PolicyTuner:
             self._mark_cached("01_reservoir")
             return
 
-        # Build reservoir from workload.
-        schema_name = self._cfgd("basic_config.schema_name", "def_schema")
-        workload_name = self._cfgd(
-            "workload_config.workload_name", "def_workload"
-        )
-        workload = Workload(workload_name, schema_name)
-        start = self._cfgd("forecast_config.history_abs_start_time_start")
-        end = self._cfgd("forecast_config.history_abs_start_time_end")
-        if start or end:
-            workload.slice_by_abs_time(start=start, end=end)
-        self._reservoir = QueryReservoir(workload=workload)
+        # Build reservoir from config.
+        self._reservoir = QueryReservoir.from_config(self._initial_config)
         self._reservoir.save(save_dir)
-
-        # TODO: Have the reservoir itself generate a nice `rich` summary.
-        console.print(
-            f"  Built reservoir based on workload {workload_name} over the "
-            f"period {start} to {end}, and saved to {save_dir}."
-        )
+        console.print(f"  Saved reservoir to {save_dir}.")
 
     def sample_workloads(
         self,
