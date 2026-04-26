@@ -39,6 +39,7 @@ managed_cluster_pool_config:
 
 routing_config:
   routing_policy: use_iconq_model
+  cache_state_decay_alpha: 0.7
 
 autoscaling_config:
   allowed_rpu_sizes:

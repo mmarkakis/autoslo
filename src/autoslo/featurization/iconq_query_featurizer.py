@@ -216,6 +216,26 @@ class IconqQueryFeaturizer:
         return (2 * self._m) + self._n
 
     @property
+    def num_tables(self) -> int:
+        """
+        Returns the number of tables (N) that this featurizer considers.
+
+        Returns:
+            The number of tables (N) that this featurizer considers.
+        """
+        return self._n
+
+    @property
+    def num_operators(self) -> int:
+        """
+        Returns the number of operators (M) that this featurizer considers.
+
+        Returns:
+            The number of operators (M) that this featurizer considers.
+        """
+        return self._m
+
+    @property
     def top_table_names(self) -> list[str]:
         """
         Returns the names of the top N tables in the database.

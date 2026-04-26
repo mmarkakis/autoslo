@@ -226,7 +226,15 @@ class StructuredConfig:
             "managed_cluster_pool_config.maxconns",
             1000,
         )
-        
+        cluster_cache_state_updater = ClusterCacheStateUpdater(
+            state_dim=iconq_model.iconq_query_featurizer.num_tables,
+            alpha=cfgu.getd(
+                cfg,
+                "routing_config.cache_state_decay_alpha",
+                0.7,
+            ),
+        )
+
         num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
             capacity_checkpoints
         )
@@ -251,6 +259,7 @@ class StructuredConfig:
             run_id=run_id,
             out_dir=out_dir,
             background_executor=thread_pool_executor if is_runner else None,
+            cluster_cache_state_updater=cluster_cache_state_updater,
         )
 
         # ── QueryRouter ──────────────────────────────────────────────────────
@@ -300,6 +309,7 @@ class StructuredConfig:
                 "autoscaling_config.slo_tightening_factor",
                 1.0,
             ),
+            cluster_cache_state_updater=cluster_cache_state_updater
         )
 
         return StructuredConfig(

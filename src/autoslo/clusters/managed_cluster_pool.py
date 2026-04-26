@@ -18,7 +18,7 @@ import threading
 import time
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Optional
+from typing import Optional
 
 import numpy as np
 import psycopg2
@@ -26,13 +26,15 @@ from psycopg2.pool import ThreadedConnectionPool
 
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
+from autoslo.clusters.cluster_cache_state_updater import (
+    ClusterCacheStateUpdater,
+)
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
 from autoslo.clusters.spin_up_budget import SpinUpBudget
-from autoslo.routing.cluster_cache_state import ClusterCacheState
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
@@ -69,7 +71,7 @@ class ManagedClusterPool:
         out_dir: Optional[str] = None,
         write_text_log: bool = False,
         background_executor: Optional[ThreadPoolExecutor] = None,
-        cache_state_factory: Optional[Callable[[], ClusterCacheState]] = None,
+        cluster_cache_state_updater: Optional[ClusterCacheStateUpdater] = None,
     ) -> None:
         self._provisioner = provisioner
         self._initial_rpus = initial_rpus
@@ -79,7 +81,6 @@ class ManagedClusterPool:
         self._search_path = search_path
         self._collect_cluster_stats = collect_cluster_stats
         self._background_executor = background_executor
-        self._cache_state_factory = cache_state_factory
 
         self._lock = threading.Lock()
         self._clusters: dict[str, Cluster] = {}
@@ -94,6 +95,8 @@ class ManagedClusterPool:
 
         self._budget = SpinUpBudget(max_clusters=max_clusters)
         self._budget.reserve(num_reserved_clusters)
+
+        self._cluster_cache_state_updater = cluster_cache_state_updater
 
         # Spin up initial clusters.
         rpus = self._initial_rpus
@@ -187,8 +190,10 @@ class ManagedClusterPool:
             )
 
         cluster = self._provisioner.spin_up(action.rpu, rel_time_s)
-        if self._cache_state_factory is not None:
-            cluster.cache_state = self._cache_state_factory()
+        if self._cluster_cache_state_updater is not None:
+            cluster.cache_state = np.zeros(
+                self._cluster_cache_state_updater.state_dim, dtype=np.float64
+            )
         with self._lock:
             if cluster.name in self._clusters:
                 raise ValueError(f"Cluster {cluster.name!r} already in pool.")
@@ -435,11 +440,24 @@ class ManagedClusterPool:
         cluster_name: str,
         query: Query,
         new_predicted_latencies_on_selected: dict[str, float],
+        table_vector: Optional[np.ndarray],
     ) -> None:
         """Register *query* as actively running on *cluster_name*."""
         with self._lock:
             cluster = self._clusters[cluster_name]
-            cluster.add_query(query, new_predicted_latencies_on_selected)
+            new_cache_state = (
+                self._cluster_cache_state_updater.update(
+                    current_state=cluster.cache_state,
+                    table_vector=table_vector,
+                )
+                if self._cluster_cache_state_updater is not None
+                else None
+            )
+            cluster.add_query(
+                query,
+                new_predicted_latencies_on_selected,
+                new_cache_state=new_cache_state,
+            )
 
     def on_query_finish(
         self,
@@ -564,42 +582,6 @@ class ManagedClusterPool:
         """Return completed queries across all clusters."""
         with self._lock:
             return dict(self._completed_queries)
-
-    # ------------------------------------------------------------------
-    # Cache-state management
-    # ------------------------------------------------------------------
-
-    @property
-    def cache_state_factory(self) -> Optional[Callable[[], ClusterCacheState]]:
-        """The factory used to attach a fresh :class:`ClusterCacheState` to
-        each newly spun-up cluster, or ``None`` if cache-aware routing is
-        not active."""
-        return self._cache_state_factory
-
-    def update_cache_state(
-        self,
-        name: str,
-        table_vec: np.ndarray,
-        rel_time_s: float,
-    ) -> None:
-        """Update the cache state of cluster *name* with a query's table vector.
-
-        No-op if the cluster has no :class:`ClusterCacheState` attached.
-
-        Parameters
-        ----------
-        name :
-            The name of the cluster to update.
-        table_vec :
-            The table-access vector for the query that was routed to
-            *name* (shape ``(N,)``, float64).
-        rel_time_s :
-            Relative time in seconds since run start.
-        """
-        with self._lock:
-            cluster = self._clusters.get(name)
-            if cluster is not None and cluster.cache_state is not None:
-                cluster.cache_state.update(table_vec, rel_time_s)
 
     # ------------------------------------------------------------------
     # Connection pools (live execution)

@@ -6,8 +6,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, ClassVar, Optional
 
+import numpy as np
+
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
-from autoslo.routing.cluster_cache_state import ClusterCacheState
 from autoslo.utils.billing import Billing, BillingInterval
 from autoslo.workload_definition.query import Query
 
@@ -93,7 +94,7 @@ class Cluster:
         billing_window_start_s: Optional[float] = None,
         past_billing_intervals: Optional[list[tuple[float, float]]] = None,
         most_recent_query_completion_rel_time_s: Optional[float] = None,
-        cache_state: Optional[ClusterCacheState] = None,
+        cache_state: Optional[np.ndarray] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
 
@@ -119,11 +120,11 @@ class Cluster:
             if most_recent_query_completion_rel_time_s is not None
             else self.creation_time_s
         )
+        self.cache_state = cache_state
 
         self.queries = {}
         self.id_to_neighbors = {}
         self.predicted_latencies: dict[str, float] = {}
-        self.cache_state: Optional[ClusterCacheState] = cache_state
 
     def clone(self) -> Cluster:
         """
@@ -149,7 +150,7 @@ class Cluster:
         }
         c.predicted_latencies = dict(self.predicted_latencies)
         c.cache_state = (
-            self.cache_state.clone() if self.cache_state is not None else None
+            self.cache_state.copy() if self.cache_state is not None else None
         )
         return c
 
@@ -223,7 +224,7 @@ class Cluster:
         self,
         query: "Query",
         new_predicted_latencies: dict[str, float],
-        new_cache_state: Optional[ClusterCacheState] = None,
+        new_cache_state: Optional[np.ndarray],
     ) -> None:
         """
         Register a query as actively running.
@@ -241,9 +242,7 @@ class Cluster:
             self.billing_window_start_s = query.rel_start_time_s
 
         self.predicted_latencies = dict(new_predicted_latencies)
-
-        if new_cache_state is not None:
-            self.cache_state = new_cache_state
+        self.cache_state = new_cache_state
 
     def finish_query(
         self,
@@ -393,7 +392,7 @@ class ClusterView:
         }
         self.predicted_latencies = dict(cluster.predicted_latencies)
         self.cache_state = (
-            cluster.cache_state.clone()
+            cluster.cache_state.copy()
             if cluster.cache_state is not None
             else None
         )
@@ -484,15 +483,17 @@ class ClusterView:
             most_recent_query_completion_rel_time_s=(
                 self.most_recent_query_completion_rel_time_s
             ),
+            cache_state=(
+                self.cache_state.copy()
+                if self.cache_state is not None
+                else None
+            ),
         )
         c.queries = dict(self.queries)
         c.id_to_neighbors = {
             qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
         }
         c.predicted_latencies = dict(self.predicted_latencies)
-        c.cache_state = (
-            self.cache_state.clone() if self.cache_state is not None else None
-        )
         return c
 
     # --- Block all mutation ---

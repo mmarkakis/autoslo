@@ -121,10 +121,14 @@ def route_and_update_bookkeeping(
             )
 
     #  ── Notify pool and autoscaler ────────────────────────────────────
+    table_vector = iconq_model.iconq_query_featurizer.table_vector_for(
+        query.query_text_id
+    )
     pool.on_query_start(
         query=query,
         cluster_name=selected_cluster_name,
         new_predicted_latencies_on_selected=new_predicted_latencies_on_selected,
+        table_vector=table_vector,
     )
     post_snapshot = pool.snapshot(only_ready=False)
     try:
