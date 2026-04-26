@@ -12,9 +12,11 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
+import numpy as np
+
 from autoslo.clusters.cluster import Cluster
-from autoslo.utils.structured_events import EventType, BaseStructuredEvent
 from autoslo.utils.logging import emit_structured
+from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +77,11 @@ class SimulatedProvisioner(ClusterProvisioner):
         simulator can proceed independently of wall clock time.
     """
 
-    def __init__(self, spin_up_delay_s: float = 120.0) -> None:
+    def __init__(
+        self, cluster_cache_state_dim: int, spin_up_delay_s: float = 120.0
+    ) -> None:
         self._spin_up_delay_s = spin_up_delay_s
+        self._cluster_cache_state_dim = cluster_cache_state_dim
 
     @property
     def spin_up_delay_s(self) -> float:
@@ -91,7 +96,13 @@ class SimulatedProvisioner(ClusterProvisioner):
         A new ``Cluster`` with auto-generated name and no connection info.
         """
 
-        cluster = Cluster(rpu=rpu, creation_time_s=rel_time_s)
+        cluster = Cluster(
+            rpu=rpu,
+            creation_time_s=rel_time_s,
+            cache_state=np.zeros(
+                self._cluster_cache_state_dim, dtype=np.float32
+            ),
+        )
         emit_structured(
             BaseStructuredEvent(
                 rel_time_s=rel_time_s,

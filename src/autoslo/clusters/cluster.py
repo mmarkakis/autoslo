@@ -87,6 +87,7 @@ class Cluster:
         self,
         creation_time_s: float,
         rpu: int,
+        cache_state: np.ndarray,
         name: str | None = None,
         conn_info: Optional[ClusterConnInfo] = None,
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
@@ -94,7 +95,6 @@ class Cluster:
         billing_window_start_s: Optional[float] = None,
         past_billing_intervals: Optional[list[tuple[float, float]]] = None,
         most_recent_query_completion_rel_time_s: Optional[float] = None,
-        cache_state: Optional[np.ndarray] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
 
@@ -143,15 +143,13 @@ class Cluster:
             most_recent_query_completion_rel_time_s=(
                 self.most_recent_query_completion_rel_time_s
             ),
+            cache_state=self.cache_state.copy(),
         )
         c.queries = dict(self.queries)
         c.id_to_neighbors = {
             qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
         }
         c.predicted_latencies = dict(self.predicted_latencies)
-        c.cache_state = (
-            self.cache_state.copy() if self.cache_state is not None else None
-        )
         return c
 
     @staticmethod
@@ -224,7 +222,7 @@ class Cluster:
         self,
         query: "Query",
         new_predicted_latencies: dict[str, float],
-        new_cache_state: Optional[np.ndarray],
+        new_cache_state: np.ndarray,
     ) -> None:
         """
         Register a query as actively running.
@@ -242,7 +240,7 @@ class Cluster:
             self.billing_window_start_s = query.rel_start_time_s
 
         self.predicted_latencies = dict(new_predicted_latencies)
-        self.cache_state = new_cache_state
+        self.cache_state = new_cache_state.copy()
 
     def finish_query(
         self,

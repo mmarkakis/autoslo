@@ -6,9 +6,6 @@ import numpy as np
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
-from autoslo.clusters.cluster_cache_state_updater import (
-    ClusterCacheStateUpdater,
-)
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
@@ -33,13 +30,14 @@ class Autoscaler:
         slo_objective: SloObjective,
         allowed_rpu_sizes: list[int],
         iconq_model: IconqModel,
+        cluster_cache_state_dim: int,
+        query_router_config: QueryRouterConfig,
         min_cluster_lifetime_s: float = 1200.0,
         idle_time_before_tear_down_s: float = 300.0,  # TODO: should clusters note start of idle period?
         observation_window_s: float = 120.0,
         min_observations_to_act: int = 5,
         routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
         slo_tightening_factor: float = 1.0,
-        cluster_cache_state_updater: Optional[ClusterCacheStateUpdater] = None,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
@@ -51,7 +49,7 @@ class Autoscaler:
         self._observation_window_s = observation_window_s
         self._min_observations_to_act = min_observations_to_act
         self._slo_tightening_factor = slo_tightening_factor
-        self._cluster_cache_state_updater = cluster_cache_state_updater
+        self._cluster_cache_state_dim = cluster_cache_state_dim
         self._trigger_slo_resolver = (
             slo_resolver.tightened(slo_tightening_factor)
             if slo_tightening_factor != 1.0
@@ -376,11 +374,7 @@ class Autoscaler:
             creation_time_s=self._window_start_time_s,
             rpu=candidate_rpu,
             name=hyp_cluster_name,
-            cache_state=(
-                np.zeros(self._cluster_cache_state_updater.state_dim)
-                if self._cluster_cache_state_updater is not None
-                else None
-            ),
+            cache_state=np.zeros(self._cluster_cache_state_dim, dtype=float),
         )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,

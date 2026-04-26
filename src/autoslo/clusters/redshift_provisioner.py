@@ -23,6 +23,7 @@ import logging
 import time
 
 import boto3  # type: ignore
+import numpy as np
 import yaml
 
 from autoslo.clusters.cluster import Cluster
@@ -73,7 +74,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
     MAX_NAMESPACES: int = 25
 
-    def __init__(self, aws_config_path: str) -> None:
+    def __init__(
+        self, aws_config_path: str, cluster_cache_state_dim: int
+    ) -> None:
         with open(aws_config_path) as f:
             cfg = yaml.safe_load(f)
 
@@ -107,6 +110,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         self._seq_counter = itertools.count()
         self._reference_time_s: float = 0.0
+        self._cluster_cache_state_dim = cluster_cache_state_dim
 
     @property
     def reference_time_s(self) -> float:
@@ -619,6 +623,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         cluster = Cluster(
             creation_time_s=now - self._reference_time_s,
             rpu=rpu,
+            cache_state=np.zeros(
+                self._cluster_cache_state_dim, dtype=np.float32
+            ),
             name=wg_name,
             conn_info=conn_info,
         )
