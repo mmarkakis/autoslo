@@ -4,15 +4,15 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from rich import print
 from rich.table import Table
 
 import autoslo.utils.paths as pu
-from autoslo.workload_definition.query import Query, QueryTextId
-from autoslo.models.iconq_model import IconqModel
-
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.models.iconq_model import IconqModel
+from autoslo.workload_definition.query import Query, QueryTextId
 
 # Columns that every workload file is expected to provide.
 WORKLOAD_SCHEMA_COLUMNS: list[str] = [
@@ -249,10 +249,28 @@ class Workload:
             The constant factor by which to multiply all relative start times.
         """
         if factor is not None:
+            self.set_rel_start_times_from_abs()
             self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
         self._queries_cache = None
 
         return self
+
+    def calculate_rescale_factor(self) -> float:
+        """
+        Back-calculate the rescale factor between absolute and relative start
+        times.
+        """
+        range_abs = (
+            self._df["abs_start_time"].max().timestamp()
+            - self._df["abs_start_time"].min().timestamp()
+        )
+        range_rel = (
+            self._df["rel_start_time_s"].max()
+            - self._df["rel_start_time_s"].min()
+        )
+        if range_rel == 0:
+            return 1.0
+        return range_rel / range_abs
 
     def prepare(
         self,
@@ -408,3 +426,38 @@ class Workload:
             str(len(workload_df) / num_unique_days_with_queries),
         )
         print(stats_table)
+
+    def abs_start_time_range(self) -> tuple[pd.Timestamp, pd.Timestamp]:
+        """Return the minimum and maximum absolute start times in the workload."""
+        return (
+            self._df["abs_start_time"].min(),
+            self._df["abs_start_time"].max(),
+        )
+
+    def get_rel_time_s_to_table_vecs(
+        self, iconq_query_featurizer: IconqQueryFeaturizer
+    ) -> dict[float, np.ndarray]:
+        """
+        For each hour in the workload based on *absolute* start times,
+        map the relative time at the start of that hour to a matrix.
+
+        The matrix has shape (num_queries_in_that_hour, table_featurization_dim)
+        and contains the featurizations of the queries that start in that hour.
+        """
+
+        result: dict[float, np.ndarray] = {}
+        for _, group in self._df.groupby(
+            pd.Grouper(key="abs_start_time", freq="H")
+        ):
+            if group.empty:
+                continue
+            rel_time_s = group["rel_start_time_s"].min()
+            table_feats = []
+            for _, row in group.iterrows():
+                table_feats.append(
+                    iconq_query_featurizer.table_vector_for(
+                        row["query_text_id"]
+                    )
+                )
+            result[rel_time_s] = np.stack(table_feats, axis=0)
+        return result

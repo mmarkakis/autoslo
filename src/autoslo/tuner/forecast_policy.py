@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import math
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from datetime import date
-
-import pandas as pd
-from autoslo.tuner.reservoir import QueryReservoir
-
-from autoslo.workload_definition.workload import Workload
-
-import numpy as np
 from pathlib import Path
-
 from typing import Optional
 
+import numpy as np
+import pandas as pd
+
+from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.utils.class_with_factory import ClassWithFactory
+from autoslo.workload_definition.workload import Workload
 
 
 class ForecastPolicy(ClassWithFactory):
@@ -45,6 +41,7 @@ class ForecastPolicy(ClassWithFactory):
         target_date: date,
         seed: int = 42,
         workload_name: str = "forecast",
+        fixed_queries_per_hour: Optional[int] = None,
     ) -> Workload:
         """Return a forcasted workload for the target interval.
 
@@ -67,6 +64,8 @@ class ForecastPolicy(ClassWithFactory):
                 continue
 
             n_samples = self._n_samples(target_date, i, bin_df)
+            if fixed_queries_per_hour is not None:
+                n_samples = fixed_queries_per_hour
             if n_samples == 0:
                 continue
 
