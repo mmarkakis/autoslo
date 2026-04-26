@@ -102,7 +102,7 @@ class PolicyTuner:
         # Aggregation metric — shared by all phases.
         self._agg_metric: str = cfgu.getd(
             self._initial_config,
-            "tuner_config.forecast_config.aggregation_metric",
+            "sampling_config.aggregation_metric",
             required=True,
         )
 
@@ -135,7 +135,7 @@ class PolicyTuner:
         Phase 1: Build or load the query reservoir.
         """
         if (
-            self._cfgd("tuner_config.forecast_config.forecast_policy")
+            self._cfgd("forecast_config.forecast_policy")
             == "GroundTruthForecastPolicy"
         ):
             console.print("  Skipping reservoir build (ground truth mode).")
@@ -158,12 +158,8 @@ class PolicyTuner:
             "workload_config.workload_name", "def_workload"
         )
         workload = Workload(workload_name, schema_name)
-        start = self._cfgd(
-            "tuner_config.forecast_config.history_abs_start_time_start"
-        )
-        end = self._cfgd(
-            "tuner_config.forecast_config.history_abs_start_time_end"
-        )
+        start = self._cfgd("forecast_config.history_abs_start_time_start")
+        end = self._cfgd("forecast_config.history_abs_start_time_end")
         if start or end:
             workload.slice_by_abs_time(start=start, end=end)
         self._reservoir = QueryReservoir(workload=workload)
@@ -186,20 +182,15 @@ class PolicyTuner:
 
         # Ground-truth mode: use the real target-day workload as both
         # train and val rather than sampling from the reservoir.
-        if (
-            self._cfgd("tuner_config.forecast_config.forecast_policy")
-            == "GroundTruthForecastPolicy"
-        ):
+        self._forecast_policy_name = self._cfgd(
+            "forecast_config.forecast_policy",
+            "OneDayForecastPolicy",
+        )
+        if self._forecast_policy_name == "GroundTruthForecastPolicy":
             return self._sample_ground_truth_workloads()
 
         # Set up forecast policy for sampling.
-        self._forecast_policy_name = self._cfgd(
-            "tuner_config.forecast_config.forecast_policy",
-            "OneDayForecastPolicy",
-        )
-        self._forecast_policy_params = self._cfgd(
-            "tuner_config.forecast_config", {}
-        )
+        self._forecast_policy_params = self._cfgd("forecast_config", {})
         self._forecast_policy = ForecastPolicy.from_name(
             name=self._forecast_policy_name,
             reservoir=self._reservoir,
@@ -208,10 +199,10 @@ class PolicyTuner:
 
         # Sample.
         num_scenarios = self._cfgd(
-            "tuner_config.forecast_config.num_scenarios", 20
+            "tuner_config.sampling_config.num_scenarios", 20
         )
         train_fraction = self._cfgd(
-            "tuner_config.forecast_config.train_fraction", 0.6
+            "tuner_config.sampling_config.train_fraction", 0.6
         )
         n_train = int(num_scenarios * train_fraction)
         n_val = num_scenarios - n_train
@@ -543,17 +534,23 @@ class PolicyTuner:
         final_path = self._run_dir / "final_config.yml"
         try:
             ### Phase 1: Build reservoir
-            with self._timed_phase("01_reservoir", "Phase 1: Building reservoir"):
+            with self._timed_phase(
+                "01_reservoir", "Phase 1: Building reservoir"
+            ):
                 self._print_banner("Phase 1: Building reservoir")
                 self.build_reservoir()
 
             ### Phase 2: Preparing workloads
-            with self._timed_phase("02_workloads", "Phase 2: Preparing workloads"):
+            with self._timed_phase(
+                "02_workloads", "Phase 2: Preparing workloads"
+            ):
                 self._print_banner("Phase 2: Preparing workloads")
                 train_paths, val_paths = self.sample_workloads()
 
             ### Phase 3: Baseline evaluation
-            with self._timed_phase("03_baseline", "Phase 3: Baseline evaluation"):
+            with self._timed_phase(
+                "03_baseline", "Phase 3: Baseline evaluation"
+            ):
                 self._print_banner("Phase 3: Baseline evaluation")
                 baseline_train, baseline_val = self.evaluate_baseline(
                     train_paths, val_paths
@@ -610,28 +607,36 @@ class PolicyTuner:
                 "06_routing_param_sweep", "Phase 6: Routing param sweep"
             ):
                 self._print_banner("Phase 6: Routing parameter sweep")
-                post_second_sweep_config, tuned_train, tuned_val = self.param_sweep(
-                    train_paths=train_paths,
-                    val_paths=val_paths,
-                    initial_config=post_first_sweep_config,
-                    phase_name="06_routing_param_sweep",
-                    config_key="routing_param_sweep",
+                post_second_sweep_config, tuned_train, tuned_val = (
+                    self.param_sweep(
+                        train_paths=train_paths,
+                        val_paths=val_paths,
+                        initial_config=post_first_sweep_config,
+                        phase_name="06_routing_param_sweep",
+                        config_key="routing_param_sweep",
+                    )
                 )
 
             ### Phase 7: Persist final config and final comparison
             with self._timed_phase(
                 "07_final", "Phase 7: Persist & compare final"
             ):
-                self._print_banner("Phase 7: Final comparison with tuned config")
+                self._print_banner(
+                    "Phase 7: Final comparison with tuned config"
+                )
                 final_config = post_second_sweep_config
                 dump_yaml(final_config, final_path)
-                console.print(f"  Final config written to [bold]{final_path}[/]")
+                console.print(
+                    f"  Final config written to [bold]{final_path}[/]"
+                )
                 summary_dir = self._run_dir / "07_final"
                 summary_dir.mkdir(parents=True, exist_ok=True)
                 self._write_phase_summary(
                     summary_dir / "train_summary.yml", tuned_train
                 )
-                self._write_phase_summary(summary_dir / "val_summary.yml", tuned_val)
+                self._write_phase_summary(
+                    summary_dir / "val_summary.yml", tuned_val
+                )
                 AggregatedSimulationResults.print_comparison(
                     ("Initial (train)", baseline_train),
                     ("Final (train)", tuned_train),
@@ -651,7 +656,8 @@ class PolicyTuner:
             with self._timed_phase("08_target", "Phase 8: Target evaluation"):
                 self._print_banner("Phase 8: Evaluation on target-period data")
                 self._evaluate_target(
-                    initial_config=self._initial_config, final_config=final_config
+                    initial_config=self._initial_config,
+                    final_config=final_config,
                 )
 
             return final_path
@@ -731,7 +737,8 @@ class PolicyTuner:
                         "phase_key": "TOTAL",
                         "phase_name": "TOTAL",
                         "start_wall_utc": datetime.fromtimestamp(
-                            self._phase_timings[0].start_wall_utc, tz=timezone.utc
+                            self._phase_timings[0].start_wall_utc,
+                            tz=timezone.utc,
                         ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         "elapsed_s": f"{total_s:.3f}",
                         "was_cached": False,
@@ -754,9 +761,7 @@ class PolicyTuner:
         table.add_column("% of total", footer="[bold]100%[/]", justify="right")
 
         for r in self._phase_timings:
-            status = (
-                "[dim]CACHED[/]" if r.was_cached else "[green]COMPUTED[/]"
-            )
+            status = "[dim]CACHED[/]" if r.was_cached else "[green]COMPUTED[/]"
             duration = (
                 "[dim]–[/]"
                 if r.was_cached
@@ -765,9 +770,7 @@ class PolicyTuner:
             wall_str = datetime.fromtimestamp(
                 r.start_wall_utc, tz=timezone.utc
             ).strftime("%H:%M:%S")
-            pct = (
-                f"{r.elapsed_s / total_s * 100:.0f}%" if total_s > 0 else "–"
-            )
+            pct = f"{r.elapsed_s / total_s * 100:.0f}%" if total_s > 0 else "–"
             table.add_row(r.phase_name, status, duration, wall_str, pct)
 
         console.print()
@@ -970,7 +973,7 @@ class PolicyTuner:
         slo_metric_obj = (
             SloMetric(slo_metric) if isinstance(slo_metric, str) else slo_metric
         )
-        x_label = slo_metric_obj.aggregate_string_description
+        x_label = slo_metric_obj.to_plot_axis_label()
 
         labels: list[str] = []
         xs: list[float] = []
