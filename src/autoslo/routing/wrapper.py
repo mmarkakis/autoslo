@@ -36,13 +36,15 @@ def route_and_update_bookkeeping(
     route_start_rel_s = rel_time_s_getter()
     snapshot: dict[str, ClusterView] = pool.snapshot(only_ready=True)
 
-    selected_cluster_name, new_predicted_latencies_on_selected = (
-        router.route_query(
-            query=query,
-            snapshot=snapshot,
-            iconq_model=iconq_model,
-            rel_time_s=route_start_rel_s,
-        )
+    (
+        selected_cluster_name,
+        new_predicted_latencies_on_selected,
+        new_cluster_cache_state,
+    ) = router.route_query(
+        query=query,
+        snapshot=snapshot,
+        iconq_model=iconq_model,
+        rel_time_s=route_start_rel_s,
     )
     self_latency_s = new_predicted_latencies_on_selected[query.query_id]
 
@@ -121,14 +123,11 @@ def route_and_update_bookkeeping(
             )
 
     #  ── Notify pool and autoscaler ────────────────────────────────────
-    table_vector = iconq_model.iconq_query_featurizer.table_vector_for(
-        query.query_text_id
-    )
     pool.on_query_start(
         query=query,
         cluster_name=selected_cluster_name,
         new_predicted_latencies_on_selected=new_predicted_latencies_on_selected,
-        table_vector=table_vector,
+        new_cluster_cache_state=new_cluster_cache_state,
     )
     post_snapshot = pool.snapshot(only_ready=False)
     try:

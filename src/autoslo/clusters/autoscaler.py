@@ -7,7 +7,7 @@ import numpy as np
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
+from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
@@ -36,14 +36,13 @@ class Autoscaler:
         idle_time_before_tear_down_s: float = 300.0,  # TODO: should clusters note start of idle period?
         observation_window_s: float = 120.0,
         min_observations_to_act: int = 5,
-        routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL,
         slo_tightening_factor: float = 1.0,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
         self._allowed_rpu_sizes = sorted(allowed_rpu_sizes)
         self._iconq_model = iconq_model
-        self._routing_policy = routing_policy
+        self._query_router_config = query_router_config
         self._min_cluster_lifetime_s = min_cluster_lifetime_s
         self._idle_time_before_tear_down_s = idle_time_before_tear_down_s
         self._observation_window_s = observation_window_s
@@ -379,7 +378,7 @@ class Autoscaler:
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
             slo_objective=self._slo_objective,
-            routing_policy=self._routing_policy,
+            query_router_config=self._query_router_config,
         )
 
         # Sequential replay.
@@ -403,30 +402,16 @@ class Autoscaler:
                 cluster_name: ClusterView(cluster)
                 for cluster_name, cluster in local_cluster_pool.items()
             }
-            selected_cluster_name, new_predicted_latencies_for_cluster = (
-                router.route_query(
-                    query=query,
-                    snapshot=snapshot_for_routing,
-                    iconq_model=self._iconq_model,
-                    rel_time_s=time_s,
-                )
+            (
+                selected_cluster_name,
+                new_predicted_latencies_for_cluster,
+                new_cache_state,
+            ) = router.route_query(
+                query=query,
+                snapshot=snapshot_for_routing,
+                iconq_model=self._iconq_model,
+                rel_time_s=time_s,
             )
-            # Possibly derive the updated cluster cache state.
-            new_cache_state: Optional[np.ndarray] = None
-            if (self._routing_policy == QueryRouterPolicy.CACHE_AWARE) and (
-                self._cluster_cache_state_updater is not None
-            ):
-                table_vector = (
-                    self.iconq_model.iconq_query_featurizer.table_vector_for(
-                        query.query_text_id
-                    )
-                )
-                new_cache_state = self._cluster_cache_state_updater.update(
-                    current_state=local_cluster_pool[
-                        selected_cluster_name
-                    ].cache_state,
-                    table_vector=table_vector,
-                )
             local_cluster_pool[selected_cluster_name].add_query(
                 query,
                 new_predicted_latencies_for_cluster,

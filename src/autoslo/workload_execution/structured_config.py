@@ -13,10 +13,16 @@ from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
+from autoslo.routing.query_router import (
+    QueryRouter,
+    QueryRouterConfig,
+    QueryRouterPolicy,
+)
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
+from autoslo.tuner.forecast_policy import ForecastPolicy
+from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.utils.logging import StructuredLogHandler, setup_run_logging
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
@@ -168,12 +174,17 @@ class StructuredConfig:
         spin_up_delay_s = cfgu.getd(
             cfg, "provisioner_config.spin_up_delay_s", 300.0
         )
+        cluster_cache_state_dim = iconq_model.iconq_query_featurizer.num_tables
         provisioner = (
             RedshiftServerlessProvisioner(
-                aws_config_path=absolute_aws_config_path
+                aws_config_path=absolute_aws_config_path,
+                cluster_cache_state_dim=cluster_cache_state_dim,
             )
             if is_runner
-            else SimulatedProvisioner(spin_up_delay_s=spin_up_delay_s)
+            else SimulatedProvisioner(
+                spin_up_delay_s=spin_up_delay_s,
+                cluster_cache_state_dim=cluster_cache_state_dim,
+            )
         )
 
         # ── Output ───────────────────────────────────────────────────────────
@@ -226,15 +237,6 @@ class StructuredConfig:
             "managed_cluster_pool_config.maxconns",
             1000,
         )
-        cluster_cache_state_updater = ClusterCacheStateUpdater(
-            state_dim=iconq_model.iconq_query_featurizer.num_tables,
-            alpha=cfgu.getd(
-                cfg,
-                "routing_config.cache_state_decay_alpha",
-                0.7,
-            ),
-        )
-
         num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
             capacity_checkpoints
         )
@@ -259,18 +261,54 @@ class StructuredConfig:
             run_id=run_id,
             out_dir=out_dir,
             background_executor=thread_pool_executor if is_runner else None,
-            cluster_cache_state_updater=cluster_cache_state_updater,
+        )
+
+        # ── Forecasting ──────────────────────────────────────────────────────
+        query_reservoir = QueryReservoir.from_config(cfg)
+        forecast_policy = ForecastPolicy.from_name(
+            name=cfgu.getd(
+                cfg, "forecast_config.forecast_policy", "OneDayForecastPolicy"
+            ),
+            reservoir=query_reservoir,
+            **cfgu.getd(cfg, "forecast_config", {}),
+        )
+        fixed_queries_per_hour = cfgu.getd(
+            cfg, "routing_config.fixed_queries_per_hour", required=True
+        )
+        target_date = workload.abs_start_time_range()[0].date()
+        forecasted_workload = forecast_policy.forecast(
+            target_date=target_date,
+            fixed_queries_per_hour=fixed_queries_per_hour,
+        )
+        forecasted_workload = forecasted_workload.rescale_rel_start_times(
+            factor=workload.calculate_rescale_factor()
+        )
+        rel_time_s_to_forecasted_table_vecs = (
+            forecasted_workload.get_rel_time_s_to_table_vecs(
+                iconq_query_featurizer=iconq_model.iconq_query_featurizer
+            )
         )
 
         # ── QueryRouter ──────────────────────────────────────────────────────
         routing_policy_str: str = cfgu.getd(
             cfg, "routing_config.routing_policy", "use_iconq_model"
         )
-        routing_policy = QueryRouterPolicy(routing_policy_str)
+        cluster_cache_state_update_alpha: float = cfgu.getd(
+            cfg, "routing_config.cluster_cache_state_update_alpha", 0.7
+        )
+        cache_favorableness_weight: float = cfgu.getd(
+            cfg, "routing_config.cache_favorableness_weight", 0
+        )
+        query_router_config = QueryRouterConfig(
+            routing_policy=QueryRouterPolicy(routing_policy_str),
+            cluster_cache_state_update_alpha=cluster_cache_state_update_alpha,
+            cache_favorableness_weight=cache_favorableness_weight,
+            rel_time_s_to_forecasted_table_vecs=rel_time_s_to_forecasted_table_vecs,
+        )
         router: QueryRouter = QueryRouter(
             slo_resolver=slo_resolver,
             slo_objective=slo_objective,
-            routing_policy=routing_policy,
+            query_router_config=query_router_config,
         )
 
         # ── Autoscaler ──────────────────────────────────────────────────────
@@ -278,7 +316,8 @@ class StructuredConfig:
             slo_resolver=slo_resolver,
             slo_objective=slo_objective,
             iconq_model=iconq_model,
-            routing_policy=routing_policy,
+            query_router_config=query_router_config,
+            cluster_cache_state_dim=cluster_cache_state_dim,
             allowed_rpu_sizes=cfgu.getd(
                 cfg,
                 "autoscaling_config.allowed_rpu_sizes",
@@ -309,7 +348,6 @@ class StructuredConfig:
                 "autoscaling_config.slo_tightening_factor",
                 1.0,
             ),
-            cluster_cache_state_updater=cluster_cache_state_updater
         )
 
         return StructuredConfig(
