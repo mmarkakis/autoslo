@@ -8,8 +8,8 @@ trials:
     overrides:
       workload_config.abs_start_time_start: "2024-05-24T00:00:00"
       workload_config.abs_start_time_end: "2024-05-25T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-24T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-24T00:00:00"
+      forecast_config.history_abs_start_time_start: "2024-04-24T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-24T00:00:00"
 
   - trial_id: may_25
     trial_id_human: "May 25"
@@ -17,8 +17,8 @@ trials:
     overrides:
       workload_config.abs_start_time_start: "2024-05-25T00:00:00"
       workload_config.abs_start_time_end: "2024-05-26T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-25T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-25T00:00:00"
+      forecast_config.history_abs_start_time_start: "2024-04-25T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-25T00:00:00"
 
   - trial_id: may_26
     trial_id_human: "May 26"
@@ -26,8 +26,8 @@ trials:
     overrides:
       workload_config.abs_start_time_start: "2024-05-26T00:00:00"
       workload_config.abs_start_time_end: "2024-05-27T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-26T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-26T00:00:00"
+      forecast_config.history_abs_start_time_start: "2024-04-26T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-26T00:00:00"
 
   - trial_id: may_27
     trial_id_human: "May 27"
@@ -35,6 +35,6 @@ trials:
     overrides:
       workload_config.abs_start_time_start: "2024-05-27T00:00:00"
       workload_config.abs_start_time_end: "2024-05-28T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
+      forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
  

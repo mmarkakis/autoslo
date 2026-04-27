@@ -7,21 +7,21 @@ trials:
     formatting_id_of_final_point: prev_month
     overrides:
       slo_config.slo_dict_filename: ext_tpcds1000_rpu16_p90_k1.5.yml
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
+      forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
 
   - trial_id: two_point_five_x
     trial_id_human: "SLO is 2.5x 16-RPU isolated latency"
     formatting_id_of_final_point: prev_month
     overrides:
       slo_config.slo_dict_filename: ext_tpcds1000_rpu16_p90_k2.5.yml
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
+      forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"  
 
   - trial_id: four_x
     trial_id_human: "SLO is 4x 16-RPU isolated latency"
     formatting_id_of_final_point: prev_month
     overrides:
       slo_config.slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
-      tuner_config.forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
+      forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"

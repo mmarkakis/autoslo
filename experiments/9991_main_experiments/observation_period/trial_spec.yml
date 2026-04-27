@@ -6,7 +6,9 @@ trials:
     trial_id_human: "Target day (oracle)"
     formatting_id_of_final_point: ground_truth
     overrides:
-      tuner_config.forecast_config.forecast_policy: GroundTruthForecastPolicy
+      forecast_config.forecast_policy: GroundTruthForecastPolicy
+      forecast_config.history_abs_start_time_start: "2024-05-27T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-28T00:00:00"
 
   - trial_id: prev_day
     trial_id_human: "Previous 1 day"
@@ -16,12 +18,14 @@ trials:
     trial_id_human: "Previous 1 week"
     formatting_id_of_final_point: prev_week
     overrides:
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-05-20T00:00:00"
+      forecast_config.history_abs_start_time_start: "2024-05-20T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
 
   - trial_id: prev_month
     trial_id_human: "Previous 1 month"
     formatting_id_of_final_point: prev_month
     overrides:
-      tuner_config.forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
+      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
 
  
