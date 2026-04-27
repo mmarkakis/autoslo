@@ -123,15 +123,14 @@ class StructuredConfig:
             workload_name = cfgu.getd(
                 cfg, "workload_config.workload_name", required=True
             )
-            abs_start = cfgu.getd(cfg, "workload_config.abs_start_time_start")
-            abs_end = cfgu.getd(cfg, "workload_config.abs_start_time_end")
+            date_str = cfgu.getd(cfg, "workload_config.date")
             rescale = cfgu.getd(cfg, "workload_config.rescale_factor", None)
             workload = Workload(
                 workload_name=workload_name, schema_name=schema_name
             )
             workload.prepare(
-                abs_start=abs_start,
-                abs_end=abs_end,
+                abs_start=date_str,
+                abs_end=date_str,
                 rescale_factor=rescale,
             )
             workload.populate_featurizations_and_isolated_predictions(

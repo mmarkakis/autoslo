@@ -9,8 +9,9 @@ basic_config:
 ### Workload Configuration
 workload_config:
   workload_name: test_workload
-  abs_start_time_start: "2026-01-01T00:00:00"
-  abs_start_time_end: "2026-01-01T00:01:00"
+  # NOTE: This was a 1-minute window before the date-only schema migration;
+  # it is now a full-day window (acceptable for the synthetic test workload).
+  date: "2026-01-01"
   # rescale_factor: 0.5
   closed_loop: false
 

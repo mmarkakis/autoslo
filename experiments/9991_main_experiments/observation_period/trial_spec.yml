@@ -7,8 +7,8 @@ trials:
     formatting_id_of_final_point: ground_truth
     overrides:
       forecast_config.forecast_policy: GroundTruthForecastPolicy
-      forecast_config.history_abs_start_time_start: "2024-05-27T00:00:00"
-      forecast_config.history_abs_start_time_end: "2024-05-28T00:00:00"
+      forecast_config.start_date_inclusive: "2024-05-27"
+      forecast_config.end_date_inclusive: "2024-05-27"
 
   - trial_id: prev_day
     trial_id_human: "Previous 1 day"
@@ -18,14 +18,14 @@ trials:
     trial_id_human: "Previous 1 week"
     formatting_id_of_final_point: prev_week
     overrides:
-      forecast_config.history_abs_start_time_start: "2024-05-20T00:00:00"
-      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
+      forecast_config.start_date_inclusive: "2024-05-20"
+      forecast_config.end_date_inclusive: "2024-05-26"
 
   - trial_id: prev_month
     trial_id_human: "Previous 1 month"
     formatting_id_of_final_point: prev_month
     overrides:
-      forecast_config.history_abs_start_time_start: "2024-04-27T00:00:00"
-      forecast_config.history_abs_start_time_end: "2024-05-27T00:00:00"
+      forecast_config.start_date_inclusive: "2024-04-27"
+      forecast_config.end_date_inclusive: "2024-05-26"
 
  

@@ -197,10 +197,7 @@ class PolicyTuner:
         val_dir = self._run_dir / "02_workloads" / "val"
 
         target_date = pd.Timestamp(
-            self._cfgd(
-                "workload_config.abs_start_time_start",
-                "2024-01-01T00:00:00",
-            )
+            self._cfgd("workload_config.date")
         ).date()
 
         train_paths: list[Path]
@@ -806,19 +803,18 @@ class PolicyTuner:
                 "must be specified."
             )
         workload = Workload(full_workload_name, schema_name=schema_name)
-        start = self._cfgd("workload_config.abs_start_time_start", None)
-        end = self._cfgd("workload_config.abs_start_time_end", None)
+        date_str = self._cfgd("workload_config.date")
         rescale_factor = self._cfgd("workload_config.rescale_factor", 1.0)
         workload = workload.prepare(
-            abs_start=start,
-            abs_end=end,
+            abs_start=date_str,
+            abs_end=date_str,
             rescale_factor=rescale_factor,
         )
         workload = workload.rename_workload("target")
         workload.save(out_dir=self._run_dir / "02_workloads", overwrite=True)
         console.print(
-            f"Extracted target workload from {full_workload_name} with "
-            f"time range {start} to {end}, "
+            f"Extracted target workload from {full_workload_name} for "
+            f"date {date_str}, "
             f"rescaled by factor {rescale_factor}, "
             f"and saved to {target_workload_path}."
         )

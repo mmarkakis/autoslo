@@ -309,6 +309,11 @@ class Workload:
         timezone-aware and the supplied string has no timezone, UTC is
         assumed.  The DataFrame index is reset after filtering.
 
+        Date-only strings (``"YYYY-MM-DD"``) are interpreted as inclusive
+        day boundaries: a *start* of ``"D"`` becomes the midnight that
+        begins day *D*, while an *end* of ``"D"`` becomes the midnight that
+        begins day *D + 1* (so the bound covers all of *D*).
+
         This is a mutating operation; ``rel_start_time_s`` values are *not*
         updated — call :meth:`set_rel_start_times_from_zero` afterwards if
         you want them rebased to the new first query.
@@ -316,16 +321,28 @@ class Workload:
         Parameters
         ----------
         start:
-            ISO 8601 string for the lower bound (inclusive).  ``None`` means
-            no lower bound.
+            ISO 8601 timestamp or ``YYYY-MM-DD`` date for the lower bound
+            (inclusive).  ``None`` means no lower bound.
         end:
-            ISO 8601 string for the upper bound (inclusive).  ``None`` means
-            no upper bound.
+            ISO 8601 timestamp or ``YYYY-MM-DD`` date for the upper bound
+            (inclusive).  ``None`` means no upper bound.
         """
         tz = self._df["abs_start_time"].dt.tz
 
-        def _parse(ts_str: str) -> pd.Timestamp:
+        def _is_date_only(s: str) -> bool:
+            return (
+                len(s) == 10
+                and s[4] == "-"
+                and s[7] == "-"
+                and s[:4].isdigit()
+                and s[5:7].isdigit()
+                and s[8:10].isdigit()
+            )
+
+        def _parse(ts_str: str, *, is_end_bound: bool) -> pd.Timestamp:
             ts = pd.Timestamp(ts_str)
+            if isinstance(ts_str, str) and _is_date_only(ts_str) and is_end_bound:
+                ts = ts + pd.Timedelta(days=1)
             if tz is not None and ts.tzinfo is None:
                 ts = ts.tz_localize(tz)
             elif tz is None and ts.tzinfo is not None:
@@ -334,9 +351,9 @@ class Workload:
 
         mask = pd.Series(True, index=self._df.index)
         if start is not None:
-            mask &= self._df["abs_start_time"] >= _parse(start)
+            mask &= self._df["abs_start_time"] >= _parse(start, is_end_bound=False)
         if end is not None:
-            mask &= self._df["abs_start_time"] <= _parse(end)
+            mask &= self._df["abs_start_time"] <= _parse(end, is_end_bound=True)
 
         self._df = self._df[mask].reset_index(drop=True)
         self._queries_cache = None

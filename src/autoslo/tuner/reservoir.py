@@ -77,8 +77,12 @@ class QueryReservoir:
             cfg, "workload_config.workload_name", required=True
         )
         workload = Workload(workload_name, schema_name)
-        start = cfgu.getd(cfg, "forecast_config.history_abs_start_time_start")
-        end = cfgu.getd(cfg, "forecast_config.history_abs_start_time_end")
+        start = cfgu.getd(
+            cfg, "forecast_config.start_date_inclusive", required=True
+        )
+        end = cfgu.getd(
+            cfg, "forecast_config.end_date_inclusive", required=True
+        )
         workload.slice_by_abs_time(start=start, end=end)
 
         # Input parsing/validation.
