@@ -96,7 +96,9 @@ def consolidate_summaries(
     return pd.DataFrame(rows)
 
 
-def plot_experiment(experiment_definition_dir: Path | str) -> None:
+def plot_experiment(
+    experiment_definition_dir: Path | str, no_initial: bool = False
+) -> None:
     if isinstance(experiment_definition_dir, str):
         experiment_definition_dir = Path(experiment_definition_dir)
     summary = consolidate_summaries(experiment_definition_dir)
@@ -147,6 +149,8 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
             ):
                 points: list[ScatterPoint] = []
                 for _, row in trial_rows.iterrows():
+                    if no_initial and row["label"] == "initial":
+                        continue
                     formatting_id = row["label"]
                     if formatting_id == "final":
                         formatting_id = formatting_ids_of_final_points[trial_id]
@@ -167,6 +171,7 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
                         ax=axs[panel_idx],  # type: ignore
                         existing_xlims=prev_panel_xlims,
                         existing_ylims=prev_panel_ylims,
+                        report_improvement=True,
                     )
                 )
         else:
@@ -203,6 +208,8 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
                     )
                 )
             for _, row in nonfinals.drop_duplicates().iterrows():
+                if no_initial and row["label"] == "initial":
+                    continue
                 points.append(
                     ScatterPoint(
                         formatting_id=row["label"],
@@ -216,6 +223,7 @@ def plot_experiment(experiment_definition_dir: Path | str) -> None:
                 title=experiment_name_human,
                 x_metric=slo_metric,
                 x_threshold_objective=slo_objectives[summary["trial"].iloc[0]],
+                report_improvement=True,
             )
 
         plot_path = (

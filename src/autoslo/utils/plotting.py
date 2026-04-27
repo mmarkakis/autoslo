@@ -65,6 +65,7 @@ def cost_vs_compliance_scatter(
     ax: Axes | None = None,
     x_threshold_color: str = Palette.light_green,
     x_threshold_objective: SloObjective | None = None,
+    report_improvement: bool = False,
 ) -> tuple[Figure, Axes, tuple[float, float], tuple[float, float]]:
     """Create a cost-vs-compliance scatter plot.
 
@@ -149,6 +150,38 @@ def cost_vs_compliance_scatter(
             transform=ax.get_xaxis_transform(),
         )
 
+    # Report improvement, if requested and possible.
+    if report_improvement:
+        # Find the point formatted with "prev_month", the end of the arrow.
+        ending_point = [
+            pt for pt in points if pt.formatting_id.startswith("prev")
+        ]
+        ending_point.sort(key=lambda pt: (pt.x, pt.y))
+        # Find the point formatted with "32+32 RPU", the start of the arrow.
+        starting_point = [pt for pt in points if "RPU" in pt.formatting_id]
+        starting_point.sort(key=lambda pt: (pt.x, pt.y))
+
+        start = starting_point[0]
+        end = ending_point[0]
+        ax.annotate(
+            "",
+            xy=(end.x, end.y),
+            xytext=(start.x, start.y),
+            arrowprops=dict(arrowstyle="->", color=Palette.gray, lw=1),
+            zorder=-10,
+        )
+        violation_ratio = end.x / start.x if start.x > 0 else float("inf")
+        cost_ratio = end.y / start.y if start.y > 0 else float("inf")
+        ax.text(
+            min(start.x, end.x) + abs(end.x - start.x) * 0.6,
+            (start.y + end.y) * 0.5,
+            f"Violation ↓ {1 -violation_ratio:.1%}\nCost ↓ {1 -cost_ratio:.1%}",
+            color=Palette.gray,
+            ha="left",
+            va="center",
+        )
+
+    # Plot points.
     for pt in points:
         label, color, marker = FORMATTING.get(
             pt.formatting_id, (pt.formatting_id, Palette.gray, "o")
