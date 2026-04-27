@@ -48,7 +48,6 @@ class PhaseTimingRecord:
     phase_name: str
     start_wall_utc: float  # epoch seconds from wall_clock_utc()
     elapsed_s: float
-    was_cached: bool
 
 
 class PolicyTuner:
@@ -57,8 +56,10 @@ class PolicyTuner:
     def __init__(
         self,
         initial_config: dict,
+        force: bool = False,
     ) -> None:
         self._initial_config = initial_config
+        self._force = force
 
         # Find or generate a unique run ID and set up output directory.
         ts = int(datetime.now().timestamp() * 1000)
@@ -69,6 +70,16 @@ class PolicyTuner:
             self._run_dir = (
                 Path("data/tuner_runs") / experiment_name / self._run_id
             )
+
+        # The run dir must not already contain results from a previous run.
+        # ``--force`` opts in to wiping it and starting from scratch.
+        if self._run_dir.exists() and any(self._run_dir.iterdir()):
+            if not self._force:
+                raise SystemExit(
+                    f"Tuner run dir {self._run_dir} already exists and is "
+                    f"non-empty. Pass --force to overwrite it."
+                )
+            shutil.rmtree(self._run_dir)
 
         # Persist config for reproducibility.
         self._run_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +119,6 @@ class PolicyTuner:
 
         # Timing instrumentation.
         self._phase_timings: list[PhaseTimingRecord] = []
-        self._phase_cached_flags: dict[str, bool] = {}
 
     # ------------------------------------------------------------------
     # Public properties
@@ -139,20 +149,10 @@ class PolicyTuner:
             == "GroundTruthForecastPolicy"
         ):
             console.print("  Skipping reservoir build (ground truth mode).")
-            self._mark_cached("01_reservoir")
-            return
-
-        # Load from disk if it already exists, to save time on re-runs.
-        save_dir = self._run_dir / "01_reservoir"
-        if save_dir.exists() and not self._cfgd("tuner_config.force", False):
-            console.print(
-                f"  Reservoir already exists at {save_dir}; loading from disk."
-            )
-            self._reservoir = QueryReservoir.load(save_dir)
-            self._mark_cached("01_reservoir")
             return
 
         # Build reservoir from config.
+        save_dir = self._run_dir / "01_reservoir"
         self._reservoir = QueryReservoir.from_config(self._initial_config)
         self._reservoir.save(save_dir)
         console.print(f"  Saved reservoir to {save_dir}.")
@@ -200,22 +200,6 @@ class PolicyTuner:
             self._cfgd("workload_config.date")
         ).date()
 
-        train_paths: list[Path]
-        val_paths: list[Path]
-        if (
-            train_dir.exists()
-            and val_dir.exists()
-            and not self._cfgd("tuner_config.force", False)
-        ):
-            train_paths = sorted(train_dir.glob("*.parquet"))
-            val_paths = sorted(val_dir.glob("*.parquet"))
-            console.print(
-                f"  Sampled workloads already exist; found {len(train_paths)} "
-                f"train and {len(val_paths)} val workloads. Loading from disk."
-            )
-            self._mark_cached("02_workloads")
-            return train_paths, val_paths
-
         initial_seed = self._cfgd("tuner_config.seed", 42)
 
         _, train_paths = self._forecast_policy.forecast_n_scenarios(
@@ -261,24 +245,9 @@ class PolicyTuner:
         prints a rich table.
 
         Returns ``(train_agg, val_agg)``."""
-        force = self._cfgd("tuner_config.force", False)
         summary_dir = self._run_dir / "03_baseline"
         train_summary_path = summary_dir / "train_summary.yml"
         val_summary_path = summary_dir / "val_summary.yml"
-
-        # Fast path: both summaries already persisted from a previous run.
-        if (
-            train_summary_path.exists()
-            and val_summary_path.exists()
-            and not force
-        ):
-            console.print(
-                "  Baseline summaries already exist; loading from disk."
-            )
-            train_agg = self._parse_phase_summary(train_summary_path)
-            val_agg = self._parse_phase_summary(val_summary_path)
-            self._mark_cached("03_baseline")
-            return train_agg, val_agg
 
         # Run train + val workloads in a single parallel batch so the
         # process pool stays fully utilised instead of idling between
@@ -324,7 +293,6 @@ class PolicyTuner:
         When the key is absent, behaves as before (single candidate
         from ``managed_cluster_pool_config.initial_rpus``).
         """
-        force = self._cfgd("tuner_config.force", False)
         ckpt_root = self._run_dir / "04_checkpoints"
 
         # Determine candidates.
@@ -335,24 +303,6 @@ class PolicyTuner:
             "tuner_config.checkpoint_phase.initial_rpu_candidates",
             [default_rpus],
         )
-
-        # Fast path: cached best config from a previous run.
-        best_config_path = ckpt_root / "best_config.yml"
-        if best_config_path.exists() and not force:
-            console.print(
-                f"  Checkpoint optimization results already exist at "
-                f"{best_config_path}; loading from disk."
-            )
-            with open(best_config_path) as f:
-                best_config = yaml.safe_load(f) or {}
-            train_agg = self._parse_phase_summary(
-                ckpt_root / "best_train_summary.yml"
-            )
-            val_agg = self._parse_phase_summary(
-                ckpt_root / "best_val_summary.yml"
-            )
-            self._mark_cached("04_checkpoints")
-            return best_config, train_agg, val_agg
 
         # Run checkpoint optimization for each candidate.
         candidate_configs: list[dict[str, Any]] = []
@@ -371,43 +321,30 @@ class PolicyTuner:
 
             # Each candidate gets its own subdirectory.
             candidate_dir = ckpt_root / tag
-            final_cfg_path = candidate_dir / "checkpoints" / "final_config.yml"
             train_summary_path = (
                 candidate_dir / "checkpoints" / "train_summary.yml"
             )
 
-            if final_cfg_path.exists() and not force:
-                console.print(
-                    f"    Checkpoint results for {tag} exist; "
-                    "loading from disk."
-                )
-                with open(final_cfg_path) as f:
-                    post_ckpt_config = yaml.safe_load(f) or {}
-                train_agg = self._parse_phase_summary(train_summary_path)
-            else:
-                optimizer = CheckpointOptimizer(
-                    evaluator=self._evaluator,
-                    config=candidate_config,
-                    run_dir=candidate_dir,
-                    agg_metric=self._agg_metric,
-                )
-                post_ckpt_config, train_agg = optimizer.optimize(
-                    train_paths=train_paths,
-                )
-                self._write_phase_summary(train_summary_path, train_agg)
+            optimizer = CheckpointOptimizer(
+                evaluator=self._evaluator,
+                config=candidate_config,
+                run_dir=candidate_dir,
+                agg_metric=self._agg_metric,
+            )
+            post_ckpt_config, train_agg = optimizer.optimize(
+                train_paths=train_paths,
+            )
+            self._write_phase_summary(train_summary_path, train_agg)
 
             # Evaluate on validation data.
             val_out = candidate_dir / "final" / "val"
-            if val_out.exists() and not force:
-                val_results = SimulationResult.load_batch(val_out / "config_0")
-            else:
-                nested = self._evaluator.evaluate_batch_from_configs(
-                    phase_name=f"{tag}_ckpt_val",
-                    workload_paths=val_paths,
-                    configs=[post_ckpt_config],
-                    out_dir=val_out,
-                )
-                val_results = nested[0]
+            nested = self._evaluator.evaluate_batch_from_configs(
+                phase_name=f"{tag}_ckpt_val",
+                workload_paths=val_paths,
+                configs=[post_ckpt_config],
+                out_dir=val_out,
+            )
+            val_results = nested[0]
             val_agg = SimulationResult.aggregate(val_results, self._agg_metric)
 
             candidate_configs.append(post_ckpt_config)
@@ -445,7 +382,8 @@ class PolicyTuner:
                 highlight_best=True,
             )
 
-        # Persist best results for caching.
+        # Persist best results.
+        best_config_path = ckpt_root / "best_config.yml"
         dump_yaml(best_config, best_config_path)
         self._write_phase_summary(
             ckpt_root / "best_train_summary.yml", best_train_agg
@@ -472,41 +410,24 @@ class PolicyTuner:
         if config_key is None:
             config_key = phase_name
         phase_dir = self._run_dir / phase_name
-        final_config_path = phase_dir / "final_config.yml"
         train_summary_path = phase_dir / "best_train_summary.yml"
         val_summary_path = phase_dir / "best_val_summary.yml"
 
-        if (
-            final_config_path.exists()
-            and train_summary_path.exists()
-            and val_summary_path.exists()
-            and not self._cfgd("tuner_config.force", False)
-        ):
-            console.print(
-                f"  Parameter sweep results for phase '{phase_name}' already "
-                f"exist at {final_config_path}; loading from disk."
-            )
-            with open(final_config_path) as f:
-                post_sweep_config = yaml.safe_load(f) or {}
-            train_agg = self._parse_phase_summary(train_summary_path)
-            val_agg = self._parse_phase_summary(val_summary_path)
-            self._mark_cached(phase_name)
-        else:
-            sweeper = ParamSweep(
-                evaluator=self._evaluator,
-                initial_config=initial_config,
-                run_dir=self._run_dir,
-                phase_name=phase_name,
-                slo_objective=self._slo_objective,
-                agg_metric=self._agg_metric,
-            )
-            post_sweep_config, train_agg, val_agg = sweeper.sweep(
-                train_paths=train_paths,
-                val_paths=val_paths,
-                sweep_config=self._cfgd(f"tuner_config.{config_key}", {}),
-            )
-            self._write_phase_summary(train_summary_path, train_agg)
-            self._write_phase_summary(val_summary_path, val_agg)
+        sweeper = ParamSweep(
+            evaluator=self._evaluator,
+            initial_config=initial_config,
+            run_dir=self._run_dir,
+            phase_name=phase_name,
+            slo_objective=self._slo_objective,
+            agg_metric=self._agg_metric,
+        )
+        post_sweep_config, train_agg, val_agg = sweeper.sweep(
+            train_paths=train_paths,
+            val_paths=val_paths,
+            sweep_config=self._cfgd(f"tuner_config.{config_key}", {}),
+        )
+        self._write_phase_summary(train_summary_path, train_agg)
+        self._write_phase_summary(val_summary_path, val_agg)
         return post_sweep_config, train_agg, val_agg
 
     def tune(self) -> Path:
@@ -652,10 +573,6 @@ class PolicyTuner:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _mark_cached(self, phase_key: str) -> None:
-        """Record that a phase was satisfied from disk cache (no computation)."""
-        self._phase_cached_flags[phase_key] = True
-
     @contextmanager
     def _timed_phase(self, phase_key: str, phase_name: str):
         """Context manager that times a pipeline phase and appends a record."""
@@ -665,14 +582,12 @@ class PolicyTuner:
             yield
         finally:
             elapsed_s = time.perf_counter() - t0
-            was_cached = self._phase_cached_flags.get(phase_key, False)
             self._phase_timings.append(
                 PhaseTimingRecord(
                     phase_key=phase_key,
                     phase_name=phase_name,
                     start_wall_utc=start_wall,
                     elapsed_s=elapsed_s,
-                    was_cached=was_cached,
                 )
             )
 
@@ -697,7 +612,6 @@ class PolicyTuner:
             "phase_name",
             "start_wall_utc",
             "elapsed_s",
-            "was_cached",
         ]
         with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -711,7 +625,6 @@ class PolicyTuner:
                             r.start_wall_utc, tz=timezone.utc
                         ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         "elapsed_s": f"{r.elapsed_s:.3f}",
-                        "was_cached": r.was_cached,
                     }
                 )
             if self._phase_timings:
@@ -724,7 +637,6 @@ class PolicyTuner:
                             tz=timezone.utc,
                         ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         "elapsed_s": f"{total_s:.3f}",
-                        "was_cached": False,
                     }
                 )
         return csv_path
@@ -734,7 +646,6 @@ class PolicyTuner:
         total_s = sum(r.elapsed_s for r in self._phase_timings)
         table = Table(title="Tuning Pipeline — Timing Report", show_footer=True)
         table.add_column("Phase", footer="[bold]TOTAL[/]")
-        table.add_column("Status", footer="")
         table.add_column(
             "Duration",
             footer=f"[bold]{self._format_duration(total_s)}[/]",
@@ -744,17 +655,12 @@ class PolicyTuner:
         table.add_column("% of total", footer="[bold]100%[/]", justify="right")
 
         for r in self._phase_timings:
-            status = "[dim]CACHED[/]" if r.was_cached else "[green]COMPUTED[/]"
-            duration = (
-                "[dim]–[/]"
-                if r.was_cached
-                else self._format_duration(r.elapsed_s)
-            )
+            duration = self._format_duration(r.elapsed_s)
             wall_str = datetime.fromtimestamp(
                 r.start_wall_utc, tz=timezone.utc
             ).strftime("%H:%M:%S")
             pct = f"{r.elapsed_s / total_s * 100:.0f}%" if total_s > 0 else "–"
-            table.add_row(r.phase_name, status, duration, wall_str, pct)
+            table.add_row(r.phase_name, duration, wall_str, pct)
 
         console.print()
         console.rule("[bold cyan]Timing Report")
@@ -780,20 +686,9 @@ class PolicyTuner:
         rescale factor, and persists it to
         ``<run_dir>/02_workloads/target.parquet``.
 
-        Skips extraction (using the cached file) when the file already exists
-        and ``tuner_config.force`` is not set.
-
         Returns the path to the saved parquet file.
         """
         target_workload_path = self._run_dir / "02_workloads" / "target.parquet"
-        if target_workload_path.exists() and not self._cfgd(
-            "tuner_config.force", False
-        ):
-            console.print(
-                f"  Target workload already exists at {target_workload_path}; "
-                "loading from disk."
-            )
-            return target_workload_path
 
         schema_name = self._cfgd("basic_config.schema_name", None)
         full_workload_name = self._cfgd("workload_config.workload_name", None)
@@ -835,15 +730,13 @@ class PolicyTuner:
         train_dir = self._run_dir / "02_workloads" / "train"
         train_dir.mkdir(parents=True, exist_ok=True)
         dst = train_dir / f"t_0.parquet"
-        if not dst.exists() or self._cfgd("tuner_config.force", False):
-            shutil.copy2(target_path, dst)
+        shutil.copy2(target_path, dst)
         train_paths = [dst]
 
         val_dir = self._run_dir / "02_workloads" / "val"
         val_dir.mkdir(parents=True, exist_ok=True)
         dst = val_dir / f"v_0.parquet"
-        if not dst.exists() or self._cfgd("tuner_config.force", False):
-            shutil.copy2(target_path, dst)
+        shutil.copy2(target_path, dst)
         val_paths = [dst]
 
         console.print(
@@ -1066,8 +959,8 @@ class PolicyTuner:
 
 
 if __name__ == "__main__":
-    cfg, config_path = cfgu.load_config_from_cli(
-        "Run queries from a workload using a YAML config file.",
+    cfg, _, force = cfgu.load_config_from_cli(
+        "Run the policy tuner from a YAML config file.",
     )
-    pt = PolicyTuner(cfg)
+    pt = PolicyTuner(cfg, force=force)
     pt.tune()

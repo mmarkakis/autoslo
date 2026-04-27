@@ -51,11 +51,15 @@ def getd(
     return d
 
 
-def load_config_from_cli(description: str) -> tuple[dict, str]:
+def load_config_from_cli(description: str) -> tuple[dict, str, bool]:
     """Parse CLI args, load YAML config, apply ``--set`` overrides.
 
-    Returns ``(cfg, config_path)`` where *cfg* is the fully-resolved
-    config dict and *config_path* is the path to the YAML file.
+    Returns ``(cfg, config_path, force)`` where *cfg* is the fully-resolved
+    config dict, *config_path* is the path to the YAML file, and *force*
+    is the value of the ``--force`` flag (``False`` unless explicitly
+    passed).  Callers that don't care about ``--force`` may simply discard
+    it; users that pass ``--force`` to a command which ignores it will see
+    it parsed (and ignored) without error.
     """
 
     parser = argparse.ArgumentParser(description=description)
@@ -71,6 +75,14 @@ def load_config_from_cli(description: str) -> tuple[dict, str]:
         help=(
             "Override config values using dot-delimited keys, e.g. "
             "--set slo_config.slo_s=5.0 basic_config.schema_name=my_schema"
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Overwrite an existing run/output directory if present. "
+            "Commands that don't manage a run directory ignore this flag."
         ),
     )
     args = parser.parse_args()
@@ -93,4 +105,4 @@ def load_config_from_cli(description: str) -> tuple[dict, str]:
         overrides[key] = yaml.safe_load(val)
     cfg = copy_and_apply_overrides(cfg, overrides)
 
-    return cfg, args.config
+    return cfg, args.config, args.force
