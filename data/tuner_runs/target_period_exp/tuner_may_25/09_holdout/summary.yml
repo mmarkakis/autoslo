@@ -1,0 +1,42 @@
+initial_violation: 0.040421792618629174
+initial_cost: 14.278333333333336
+initial_violation_rate: 0.040421792618629174
+initial_violation_amount_s: 0.323182717617307
+initial_violation_relative_mean: 0.1253455288388591
+final_violation: 0.0421792618629174
+final_cost: 11.765
+final_violation_rate: 0.0421792618629174
+final_violation_amount_s: 0.3081017872726893
+final_violation_relative_mean: 0.13219718842226638
+slo_metric: binary
+static_baselines:
+- label: 16 RPU
+  violation: 0.19244288224956063
+  cost: 11.388333333333334
+  violation_rate: 0.19244288224956063
+  violation_amount_s: 3.269005381946634
+  violation_relative_mean: 0.6066714110433463
+- label: 16+16 RPU
+  violation: 0.12478031634446397
+  cost: 20.655
+  violation_rate: 0.12478031634446397
+  violation_amount_s: 1.1345305447464158
+  violation_relative_mean: 0.30717388250917976
+- label: 32 RPU
+  violation: 0.15992970123022848
+  cost: 21.546666666666667
+  violation_rate: 0.15992970123022848
+  violation_amount_s: 2.8603562652381584
+  violation_relative_mean: 0.8220139460070982
+- label: 32+32 RPU
+  violation: 0.10193321616871705
+  cost: 40.913333333333334
+  violation_rate: 0.10193321616871705
+  violation_amount_s: 1.146951101867752
+  violation_relative_mean: 0.39717108694137604
+- label: 64 RPU
+  violation: 0.11775043936731107
+  cost: 42.92
+  violation_rate: 0.11775043936731107
+  violation_amount_s: 1.519136018656788
+  violation_relative_mean: 0.40409126111213844

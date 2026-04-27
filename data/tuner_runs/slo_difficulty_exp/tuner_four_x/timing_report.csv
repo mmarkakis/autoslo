@@ -1,0 +1,10 @@
+phase_key,phase_name,start_wall_utc,elapsed_s,was_cached
+01_reservoir,Phase 1: Building reservoir,2026-04-22T07:52:10.463865Z,0.378,False
+02_workloads,Phase 2: Preparing workloads,2026-04-22T07:52:10.841910Z,6.640,False
+03_baseline,Phase 3: Baseline evaluation,2026-04-22T07:52:17.482138Z,15.325,False
+04_checkpoints,Phase 4: Checkpoint optimization,2026-04-22T07:52:32.807483Z,152.439,False
+05_autoscaling_param_sweep,Phase 5: Autoscaler param sweep,2026-04-22T07:55:05.247050Z,161.421,False
+06_routing_param_sweep,Phase 6: Routing param sweep,2026-04-22T07:57:46.668448Z,22.229,False
+07_final,Phase 7: Persist & compare final,2026-04-22T07:58:08.897275Z,0.039,False
+08_target,Phase 8: Target evaluation,2026-04-22T07:58:08.936097Z,18.243,False
+TOTAL,TOTAL,2026-04-22T07:52:10.463865Z,376.714,False
