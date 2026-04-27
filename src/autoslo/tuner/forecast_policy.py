@@ -183,6 +183,25 @@ class ForecastPolicy(ClassWithFactory):
         raise NotImplementedError
 
 
+class GroundTruthForecastPolicy(ForecastPolicy):
+    """
+    Base the forecast on the ground truth future observations. 
+    This is not a realistic policy but can be useful as a simple baseline.
+    """
+
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
+
+    def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
+        return self.reservoir.bin_df(target_date, hour)
+
+    def _n_samples(
+        self, target_date: date, hour: int, bin_df: pd.DataFrame
+    ) -> int:
+        return int(bin_df["count"].sum())
+
+
 class OneDayForecastPolicy(ForecastPolicy):
     """
     Base the forecast on yesterday only.

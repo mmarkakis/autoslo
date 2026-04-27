@@ -296,13 +296,13 @@ class StructuredConfig:
         cluster_cache_state_update_alpha: float = cfgu.getd(
             cfg, "routing_config.cluster_cache_state_update_alpha", 0.7
         )
-        cache_favorableness_weight: float = cfgu.getd(
-            cfg, "routing_config.cache_favorableness_weight", 0
+        cache_risk_cost_multiplier: float = cfgu.getd(
+            cfg, "routing_config.cache_risk_cost_multiplier", 0
         )
         query_router_config = QueryRouterConfig(
             routing_policy=QueryRouterPolicy(routing_policy_str),
             cluster_cache_state_update_alpha=cluster_cache_state_update_alpha,
-            cache_favorableness_weight=cache_favorableness_weight,
+            cache_risk_cost_multiplier=cache_risk_cost_multiplier,
             rel_time_s_to_forecasted_table_vecs=rel_time_s_to_forecasted_table_vecs,
         )
         router: QueryRouter = QueryRouter(

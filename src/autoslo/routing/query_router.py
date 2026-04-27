@@ -29,10 +29,29 @@ class QueryRouterPolicy(Enum):
 class QueryRouterConfig:
     routing_policy: QueryRouterPolicy
     cluster_cache_state_update_alpha: float
-    cache_favorableness_weight: float
     rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray]
-    cache_favorableness_percentile: float = 0.1
-    cache_favorableness_epsilon: float = 1e-6
+
+    cache_risk_cost_multiplier: float
+    # adj_cost = real_cost * (1 + multiplier * risk)
+    cache_risk_coverage: float = 0.9
+    cache_risk_epsilon: float = 1e-6
+
+    def __post_init__(self):
+        if not (0 <= self.cache_risk_cost_multiplier):
+            raise ValueError(
+                f"cache_risk_cost_multiplier must be non-negative, "
+                f"got {self.cache_risk_cost_multiplier}"
+            )
+        if not (0 <= self.cache_risk_coverage <= 1):
+            raise ValueError(
+                f"cache_risk_coverage must be in [0, 1], "
+                f"got {self.cache_risk_coverage}"
+            )
+        if not (0 < self.cache_risk_epsilon):
+            raise ValueError(
+                f"cache_risk_epsilon must be positive, "
+                f"got {self.cache_risk_epsilon}"
+            )
 
 
 class QueryRouter:
@@ -121,6 +140,7 @@ class QueryRouter:
         # cluster using updated predictions).
         all_after_viols_and_costs: dict[str, ViolationCost] = {}
         all_new_cache_states: dict[str, np.ndarray] = {}
+        all_cache_risks: dict[str, float] = {}
         for candidate_name, cluster in snapshot.items():
             after_pairs = self._collect_cluster_pairs(
                 queries=cluster.active_queries + [query],
@@ -151,28 +171,15 @@ class QueryRouter:
             after_violation = self._slo_objective.slo_metric.aggregate_batch(
                 all_after_pairs
             )
-            adjusted_violation = after_violation
-            additional_details: dict = {}
-            if self._routing_policy == QueryRouterPolicy.CACHE_AWARE:
-                cache_favorableness = self._score_cache_favorableness(
-                    caches_per_cluster=np.stack(after_cache_states, axis=0),
-                    forecasted_table_vecs=forecasted_table_vecs,
-                )
-                cache_risk = 1.0 - cache_favorableness
-                adjusted_violation = after_violation + (
-                    self._query_router_config.cache_favorableness_weight
-                    * cache_risk
-                )
-                additional_details["cache_favorableness"] = cache_favorableness
-                additional_details["cache_risk"] = cache_risk
-                additional_details["adjusted_slo_violation"] = (
-                    adjusted_violation
-                )
+            cache_risk = self._score_cache_risk(
+                caches_per_cluster=np.stack(after_cache_states, axis=0),
+                forecasted_table_vecs=forecasted_table_vecs,
+            )
             all_after_viols_and_costs[candidate_name] = ViolationCost(
-                adjusted_violation,
-                total_after_cost,
+                after_violation, total_after_cost
             )
             all_new_cache_states[candidate_name] = new_cache_state
+            all_cache_risks[candidate_name] = cache_risk
 
             latency_s = new_predicted_latencies[candidate_name][query.query_id]
             emit_structured(
@@ -185,15 +192,17 @@ class QueryRouter:
                         "latency_s": latency_s,
                         "slo_violation": after_violation,
                         "cost": total_after_cost,
-                    }
-                    | additional_details,
+                        "cache_risk": cache_risk,
+                    },
                     query_id=query.query_id,
                     query_text_id=query.query_text_id,
                 )
             )
 
         # Choose and return best.
-        selected_cluster_name = self.select_best(all_after_viols_and_costs)
+        selected_cluster_name = self.select_best(
+            all_after_viols_and_costs, all_cache_risks
+        )
         selected = all_after_viols_and_costs[selected_cluster_name]
         selected_latency = new_predicted_latencies[selected_cluster_name][
             query.query_id
@@ -208,6 +217,7 @@ class QueryRouter:
                     "latency_s": selected_latency,
                     "slo_violation": selected.violation,
                     "cost": selected.cost,
+                    "cache_risk": all_cache_risks[selected_cluster_name],
                 },
                 query_id=query.query_id,
                 query_text_id=query.query_text_id,
@@ -251,6 +261,7 @@ class QueryRouter:
     def select_best(
         self,
         viols_and_costs: dict[str, ViolationCost],
+        cache_risks: dict[str, float],
     ):
         cluster_names = sorted(viols_and_costs.keys())
 
@@ -264,8 +275,26 @@ class QueryRouter:
         if self._routing_policy == QueryRouterPolicy.UNIFORM_RANDOM:
             return random.choice(cluster_names)
 
-        # USE_ICONQ_MODEL or CACHE_AWARE (both rank by SloObjective over
-        # the (adjusted) violation + cost pairs).
+        if self._routing_policy == QueryRouterPolicy.CACHE_AWARE:
+            adjusted_tups: list[ViolationCost] = []
+            for cn in cluster_names:
+                violation = viols_and_costs[cn].violation
+                base_cost = viols_and_costs[cn].cost
+                added_cost = (
+                    base_cost
+                    * self._query_router_config.cache_risk_cost_multiplier
+                    * cache_risks[cn]
+                )
+                adjusted_tups.append(
+                    ViolationCost(
+                        violation=violation,
+                        cost=base_cost + added_cost,
+                    )
+                )
+            best_local_idx = self._slo_objective.idx_of_best(adjusted_tups)
+            return cluster_names[best_local_idx]
+
+        # Default: USE_ICONQ_MODEL.
         best_local_idx = self._slo_objective.idx_of_best(
             [viols_and_costs[cn] for cn in cluster_names]
         )
@@ -279,13 +308,13 @@ class QueryRouter:
         alpha = self._query_router_config.cluster_cache_state_update_alpha
         return alpha * current_state + (1 - alpha) * table_vector
 
-    def _score_cache_favorableness(
+    def _score_cache_risk(
         self,
         caches_per_cluster: np.ndarray,
         forecasted_table_vecs: np.ndarray,
     ) -> float:
         """
-        Compute the scalar cache favorableness score.
+        Compute the scalar cache risk score.
 
         Parameters
         ----------
@@ -301,7 +330,8 @@ class QueryRouter:
         Returns
         -------
         float
-            Non-negative scalar favorableness score.
+            Scalar risk score in the range [0, 1], where higher means more risk
+            of cache-unfavorableness.
         """
 
         # Normalize
@@ -311,7 +341,7 @@ class QueryRouter:
         forecasted_table_vecs_norms = np.linalg.norm(
             forecasted_table_vecs, axis=1, keepdims=True
         )
-        epsilon = self._query_router_config.cache_favorableness_epsilon
+        epsilon = self._query_router_config.cache_risk_epsilon
         caches_per_cluster_safe = caches_per_cluster / np.maximum(
             caches_per_cluster_norms, epsilon
         )
@@ -327,7 +357,10 @@ class QueryRouter:
         # For each query, find the maximum similarity across clusters (K,)
         max_similarities = np.max(cosine_similarities, axis=0)
 
-        # Return the chosen percentile of the max similarities across queries.
-        pct = self._query_router_config.cache_favorableness_percentile * 100
-        favorableness_score = np.percentile(max_similarities, pct)
-        return favorableness_score
+        # The risk score is the minimum max_similarity across the relevant
+        # queries. The relevant queries are determined by `cache_risk_coverage`.
+        # This is equivalent to finding the (100 - coverage)th percentile of the
+        # max similarities.
+        coverage_pct = (1 - self._query_router_config.cache_risk_coverage) * 100
+        risk_score = np.percentile(max_similarities, max(0, coverage_pct))
+        return risk_score
