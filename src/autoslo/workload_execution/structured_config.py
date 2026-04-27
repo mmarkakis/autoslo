@@ -273,7 +273,7 @@ class StructuredConfig:
             **cfgu.getd(cfg, "forecast_config", {}),
         )
         fixed_queries_per_hour = cfgu.getd(
-            cfg, "routing_config.fixed_queries_per_hour", required=True
+            cfg, "routing_config.fixed_queries_per_hour", 100
         )
         target_date = workload.abs_start_time_range()[0].date()
         forecasted_workload = forecast_policy.forecast(

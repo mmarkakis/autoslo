@@ -31,7 +31,7 @@ def main() -> None:
     spec_dir = spec_path.parent
     spec = load_yaml(spec_path)
 
-    configs_dir = spec_dir / spec["configs"]
+    configs_dir = spec_dir / "configs"
     if not configs_dir.exists():
         parser.error(f"Configs directory not found: {configs_dir}")
     trials = sorted(
@@ -45,7 +45,7 @@ def main() -> None:
     # Validate that all generated configs exist before starting any run.
     missing: list[str] = []
     for trial in trials:
-        cfg_path = configs_dir / f"tuner_{trial['id']}.yml"
+        cfg_path = configs_dir / f"tuner_{trial['trial_id']}.yml"
         if not cfg_path.exists():
             missing.append(str(cfg_path.relative_to(Path.cwd())))
 
@@ -65,7 +65,7 @@ def main() -> None:
 
     total = len(trials)
     for idx, trial in enumerate(trials, 1):
-        tid = trial["id"]
+        tid = trial["trial_id"]
         cfg_path = configs_dir / f"tuner_{tid}.yml"
         cmd = [
             sys.executable,

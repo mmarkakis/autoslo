@@ -102,7 +102,7 @@ class PolicyTuner:
         # Aggregation metric — shared by all phases.
         self._agg_metric: str = cfgu.getd(
             self._initial_config,
-            "sampling_config.aggregation_metric",
+            "tuner_config.sampling_config.aggregation_metric",
             required=True,
         )
 
@@ -924,7 +924,7 @@ class PolicyTuner:
             console=console,
             highlight_best=True,
         )
-        self._print_scatter(comparison_entries, self._slo_metric)
+        self._print_scatter(comparison_entries, self._slo_objective)
 
         # --- Write holdout summary --------------------------------------
         summary_dir = self._run_dir / "09_holdout"
@@ -953,20 +953,17 @@ class PolicyTuner:
     @staticmethod
     def _print_scatter(
         entries: list[tuple[str, AggregatedSimulationResults]],
-        slo_metric: str | SloMetric,
+        slo_objective: SloObjective,
     ) -> None:
         """Print a terminal scatter plot of violation vs cost."""
-        slo_metric_obj = (
-            SloMetric(slo_metric) if isinstance(slo_metric, str) else slo_metric
-        )
-        x_label = slo_metric_obj.to_plot_axis_label()
+        x_label = slo_objective.slo_metric.to_plot_axis_label()
 
         labels: list[str] = []
         xs: list[float] = []
         ys: list[float] = []
         for label, agg in entries:
             labels.append(label)
-            xs.append(agg.primary_violation(slo_metric))
+            xs.append(agg.primary_violation(slo_objective.slo_metric))
             ys.append(agg.cost)
 
         if len(xs) < 2:
@@ -982,7 +979,15 @@ class PolicyTuner:
         plt.xlabel(x_label)
         plt.ylabel("Cost ($)")
 
-        x_lo, x_hi = min(xs), max(xs)
+        # Add a vertical line at the SLO threshold and make sure it is included
+        # in the plot bounds with some padding.
+        threshold = slo_objective.slo_threshold
+        plt.vline(
+            threshold,
+            color="gray",
+        )
+
+        x_lo, x_hi = min(min(xs), threshold), max(max(xs), threshold)
         y_lo, y_hi = min(ys), max(ys)
         x_pad = max((x_hi - x_lo) * 0.15, x_hi * 0.05) or 0.01
         y_pad = max((y_hi - y_lo) * 0.15, y_hi * 0.05) or 0.01

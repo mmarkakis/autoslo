@@ -110,7 +110,7 @@ class ParamSweep:
 
         *sweep_config* format::
 
-            {"strategy": "random", "seed": 42, "budget": 20,
+            {"strategy": "random", "seed": 42, "budget": 20, "val_top_k": 5, 
              "params": {"param.name": [v1, v2], ...}}
 
         Both ``strategy`` (default ``"grid"``) and ``params`` (default

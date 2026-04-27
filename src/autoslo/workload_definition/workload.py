@@ -249,7 +249,10 @@ class Workload:
             The constant factor by which to multiply all relative start times.
         """
         if factor is not None:
+            start_at_zero = self._df["rel_start_time_s"].min() == 0
             self.set_rel_start_times_from_abs()
+            if start_at_zero:
+                self.set_rel_start_times_from_zero()
             self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
         self._queries_cache = None
 

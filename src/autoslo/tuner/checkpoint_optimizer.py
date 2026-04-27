@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections import defaultdict
+import math
 from pathlib import Path
 from typing import Any, Optional
 
@@ -356,7 +357,7 @@ class CheckpointOptimizer:
             "tuner_config.checkpoint_phase.min_delinquent_workload_fraction",
             0.5,
         )
-        min_delinquent_workloads = int(
+        min_delinquent_workloads = math.ceil(
             min_delinquent_workload_fraction * len(train_paths)
         )
 
