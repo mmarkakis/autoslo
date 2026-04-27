@@ -8,6 +8,11 @@ workload_config:
   abs_start_time_end: '2024-05-27T00:00:00'
   rescale_factor: 0.16666667
   closed_loop: false
+forecast_config:
+  history_abs_start_time_start: '2024-04-26T00:00:00'
+  history_abs_start_time_end: '2024-05-26T00:00:00'
+  forecast_policy: SameDayExponentialForecastPolicy
+  decay_factor: 0.5
 slo_config:
   slo_s: 30.0
   slo_metric: binary
@@ -24,7 +29,8 @@ managed_cluster_pool_config:
   initial_rpus:
   - 8
 routing_config:
-  routing_policy: use_iconq_model
+  routing_policy: cache_aware
+  cache_risk_cost_multiplier: 0.0
 autoscaling_config:
   allowed_rpu_sizes:
   - 4
@@ -35,7 +41,7 @@ autoscaling_config:
   idle_time_before_tear_down_s: 600.0
   observation_window_s: 120.0
   min_observations_to_act: 10
-  slo_tightening_factor: 0.6
+  slo_tightening_factor: 0.8
 output_config:
   experiment_name: target_period_exp
   overwrite_experiment: false
@@ -45,11 +51,7 @@ tuner_config:
   parallelism: auto
   holdout_evaluation: true
   seed: 42
-  forecast_config:
-    history_abs_start_time_start: '2024-04-26T00:00:00'
-    history_abs_start_time_end: '2024-05-26T00:00:00'
-    forecast_policy: SameDayExponentialForecastPolicy
-    decay_factor: 0.5
+  sampling_config:
     num_scenarios: 20
     train_fraction: 0.6
     aggregation_metric: mean
@@ -63,6 +65,7 @@ tuner_config:
     - - 32
   autoscaling_param_sweep:
     strategy: grid
+    val_top_k: 10
     params:
       autoscaling_config.min_cluster_lifetime_s:
       - 1200.0
@@ -80,7 +83,14 @@ tuner_config:
       - 0.6
       - 0.8
       - 1.0
-  routing_param_sweep: {}
+  routing_param_sweep:
+    strategy: grid
+    val_top_k: 10
+    params:
+      routing_config.cache_risk_cost_multiplier:
+      - 0.0
+      - 0.5
+      - 1.0
   static_baselines:
   - label: 16 RPU
     overrides:

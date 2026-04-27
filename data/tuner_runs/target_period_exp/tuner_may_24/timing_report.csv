@@ -1,10 +1,10 @@
 phase_key,phase_name,start_wall_utc,elapsed_s,was_cached
-01_reservoir,Phase 1: Building reservoir,2026-04-22T08:19:34.162089Z,0.395,False
-02_workloads,Phase 2: Preparing workloads,2026-04-22T08:19:34.557051Z,6.714,False
-03_baseline,Phase 3: Baseline evaluation,2026-04-22T08:19:41.271466Z,15.998,False
-04_checkpoints,Phase 4: Checkpoint optimization,2026-04-22T08:19:57.269093Z,82.721,False
-05_autoscaling_param_sweep,Phase 5: Autoscaler param sweep,2026-04-22T08:21:19.990165Z,191.552,False
-06_routing_param_sweep,Phase 6: Routing param sweep,2026-04-22T08:24:31.542419Z,24.136,False
-07_final,Phase 7: Persist & compare final,2026-04-22T08:24:55.678692Z,0.039,False
-08_target,Phase 8: Target evaluation,2026-04-22T08:24:55.717861Z,20.877,False
-TOTAL,TOTAL,2026-04-22T08:19:34.162089Z,342.432,False
+01_reservoir,Phase 1: Building reservoir,2026-04-27T18:06:06.571585Z,0.371,False
+02_workloads,Phase 2: Preparing workloads,2026-04-27T18:06:06.943041Z,6.410,False
+03_baseline,Phase 3: Baseline evaluation,2026-04-27T18:06:13.352915Z,20.910,False
+04_checkpoints,Phase 4: Checkpoint optimization,2026-04-27T18:06:34.263187Z,108.118,False
+05_autoscaling_param_sweep,Phase 5: Autoscaler param sweep,2026-04-27T18:08:22.381749Z,273.094,False
+06_routing_param_sweep,Phase 6: Routing param sweep,2026-04-27T18:12:55.475823Z,51.671,False
+07_final,Phase 7: Persist & compare final,2026-04-27T18:13:47.146745Z,0.035,False
+08_target,Phase 8: Target evaluation,2026-04-27T18:13:47.181542Z,26.246,False
+TOTAL,TOTAL,2026-04-27T18:06:06.571585Z,486.855,False

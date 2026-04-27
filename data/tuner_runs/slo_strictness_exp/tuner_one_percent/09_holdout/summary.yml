@@ -3,11 +3,11 @@ initial_cost: 16.602499999999996
 initial_violation_rate: 0.05962643678160919
 initial_violation_amount_s: 0.4551142438897691
 initial_violation_relative_mean: 0.15942977349429596
-final_violation: 0.032327586206896554
-final_cost: 15.782083333333336
-final_violation_rate: 0.032327586206896554
-final_violation_amount_s: 0.3734214772342096
-final_violation_relative_mean: 0.09097099777071752
+final_violation: 0.02586206896551724
+final_cost: 16.99208333333334
+final_violation_rate: 0.02586206896551724
+final_violation_amount_s: 0.15903156448188285
+final_violation_relative_mean: 0.07602196595385842
 slo_metric: binary
 static_baselines:
 - label: 16 RPU

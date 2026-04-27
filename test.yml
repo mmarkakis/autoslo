@@ -44,9 +44,9 @@ managed_cluster_pool_config:
 #     - 16
 
 routing_config:
-  routing_policy: use_iconq_model
+  routing_policy: cache_aware
   cluster_cache_state_update_alpha: 0.7
-  cache_favorableness_weight: 0.0
+  cache_risk_cost_multiplier: 0.0
   fixed_queries_per_hour: 100
 
 
