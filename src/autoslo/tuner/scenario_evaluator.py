@@ -57,12 +57,10 @@ def from_combination_idx(
 
 
 def _run_one_combination(
-    tuner_run_id: str,
-    phase_name: str,
     combination_out_dir: Path,
-    num_workloads: int,
     combination_idx: int,
     workload_path: Path,
+    workload_label: str,
     config: dict[str, Any],
     progress_dict: dict[int, tuple[int, int]],
 ) -> SimulationResult:
@@ -111,11 +109,8 @@ def _run_one_combination(
         )
 
     # Apply run-specific config overrides
-    config_idx, workload_idx = from_combination_idx(
-        combination_idx, num_workloads
-    )
     local_overrides = {
-        "basic_config.run_id": f"workload_{workload_idx}",
+        "basic_config.run_id": workload_label,
         "output_config.out_dir": str(combination_out_dir),
         "output_config.write_text_log": False,
         "output_config.experiment_name": None,
@@ -151,16 +146,23 @@ class ScenarioEvaluator:
 
     Parameters
     ----------
-    tuner_run_id :
-        Unique identifier for the parent tuner run (used to build per-
-        scenario ``simulator_run_id`` values).
+    caller_id :
+        Unique identifier for the calling pipeline (used to build per-
+        scenario ``simulator_run_id`` values). Originally the tuner run
+        ID; now also used by the standalone evaluator harness.
+    max_workers :
+        Optional explicit override for the parallel worker count. When
+        ``None``, the per-config ``tuner_config.parallelism`` setting is
+        consulted instead.
     """
 
     def __init__(
         self,
-        tuner_run_id: str,
+        caller_id: str,
+        max_workers: int | None = None,
     ) -> None:
-        self._tuner_run_id = tuner_run_id
+        self._caller_id = caller_id
+        self._max_workers = max_workers
 
     # ------------------------------------------------------------------
     # Public API
@@ -198,6 +200,8 @@ class ScenarioEvaluator:
         out_dir: Path,
         workload_paths: list[Path],
         configs: list[dict[str, Any]],
+        config_labels: list[str] | None = None,
+        workload_labels: list[str] | None = None,
     ) -> list[list[SimulationResult]]:
         """
         Evaluate the cross-product of *workload_paths* and *configs* in
@@ -227,6 +231,23 @@ class ScenarioEvaluator:
                 "Must provide at least one config config and one workload"
             )
 
+        if config_labels is None:
+            config_labels = [f"config_{i}" for i in range(len(configs))]
+        elif len(config_labels) != len(configs):
+            raise ValueError(
+                f"config_labels has length {len(config_labels)} but "
+                f"configs has length {len(configs)}."
+            )
+        if workload_labels is None:
+            workload_labels = [
+                f"workload_{i}" for i in range(len(workload_paths))
+            ]
+        elif len(workload_labels) != len(workload_paths):
+            raise ValueError(
+                f"workload_labels has length {len(workload_labels)} but "
+                f"workload_paths has length {len(workload_paths)}."
+            )
+
         # Set up parallel execution.
         max_workers = self._resolve_parallelism(configs[0])
         mgr = Manager()
@@ -238,14 +259,12 @@ class ScenarioEvaluator:
 
         work_units = [
             {
-                "tuner_run_id": self._tuner_run_id,
-                "phase_name": phase_name,
-                "combination_out_dir": out_dir / f"config_{config_idx}",
-                "num_workloads": num_workloads,
+                "combination_out_dir": out_dir / config_labels[config_idx],
                 "combination_idx": to_combination_idx(
                     config_idx, workload_idx, num_workloads=num_workloads
                 ),
                 "workload_path": workload_path,
+                "workload_label": workload_labels[workload_idx],
                 "config": config,
                 "progress_dict": progress_dict,
             }
@@ -358,11 +377,16 @@ class ScenarioEvaluator:
     # Internals
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _resolve_parallelism(config: dict[str, Any]) -> int:
+    def _resolve_parallelism(self, config: dict[str, Any]) -> int:
         """
         Determine the number of worker processes to use.
+
+        An explicit ``max_workers`` passed to the constructor wins; otherwise
+        the value comes from ``tuner_config.parallelism`` in the supplied
+        config (``"auto"`` resolves to :func:`deg_of_paralellism`).
         """
+        if self._max_workers is not None:
+            return self._max_workers
         p = cfgu.getd(config, "tuner_config.parallelism", "auto")
         if p == "auto":
             return max(1, deg_of_paralellism())
