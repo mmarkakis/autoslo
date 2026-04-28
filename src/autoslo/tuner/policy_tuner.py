@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import os
 import shutil
 import time
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.utils.config as cfgu
+import autoslo.utils.paths as pu
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
@@ -961,6 +963,21 @@ if __name__ == "__main__":
     cfg, args = cfgu.load_config_from_cli(
         "Run the policy tuner from a YAML config file.",
     )
+    possible_publication_path = os.path.join(
+        pu.get_data_path(), "configs", "tuned", args.publish_as
+    )
+    if args.publish_as is not None:
+        if os.path.exists(possible_publication_path) and not args.force:
+            console.print(
+                f"[red]Error: A tuned config with the name '{args.publish_as}' "
+                f"already exists at {possible_publication_path}. Use --force to "
+                f"overwrite.[/]"
+            )
+            exit(1)
     pt = PolicyTuner(cfg, force=args.force)
     final_config_path = pt.tune()
-    
+    if args.publish_as is not None:
+        shutil.copy2(final_config_path, possible_publication_path)
+        console.print(
+            f"Published tuned config to [bold]{possible_publication_path}[/]"
+        )
