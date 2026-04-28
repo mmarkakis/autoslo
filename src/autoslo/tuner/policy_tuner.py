@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import logging
 import os
 import shutil
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +13,6 @@ import pandas as pd
 import plotext as plt
 import yaml
 from rich.console import Console
-from rich.table import Table
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
@@ -27,6 +22,7 @@ from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
+from autoslo.tuner.policy_tuner_timer import PhaseTimingRecord, PolicyTunerTimer
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
@@ -34,22 +30,11 @@ from autoslo.tuner.tuner_utils import (
     SimulationResult,
 )
 from autoslo.utils.config import copy_and_apply_overrides
-from autoslo.utils.structured_events import wall_clock_utc
 from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
 console = Console()
-
-
-@dataclass
-class PhaseTimingRecord:
-    """Timing record for a single PolicyTuner pipeline phase."""
-
-    phase_key: str
-    phase_name: str
-    start_wall_utc: float  # epoch seconds from wall_clock_utc()
-    elapsed_s: float
 
 
 class PolicyTuner:
@@ -120,7 +105,8 @@ class PolicyTuner:
         )
 
         # Timing instrumentation.
-        self._phase_timings: list[PhaseTimingRecord] = []
+        self._timer = PolicyTunerTimer()
+        
 
     # ------------------------------------------------------------------
     # Public properties
@@ -438,21 +424,21 @@ class PolicyTuner:
         final_path = self._run_dir / "final_config.yml"
         try:
             ### Phase 1: Build reservoir
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "01_reservoir", "Phase 1: Building reservoir"
             ):
                 self._print_banner("Phase 1: Building reservoir")
                 self.build_reservoir()
 
             ### Phase 2: Preparing workloads
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "02_workloads", "Phase 2: Preparing workloads"
             ):
                 self._print_banner("Phase 2: Preparing workloads")
                 train_paths, val_paths = self.sample_workloads()
 
             ### Phase 3: Baseline evaluation
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "03_baseline", "Phase 3: Baseline evaluation"
             ):
                 self._print_banner("Phase 3: Baseline evaluation")
@@ -469,7 +455,7 @@ class PolicyTuner:
                 )
 
             ### Phase 4: Checkpoint optimization
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "04_checkpoints", "Phase 4: Checkpoint optimization"
             ):
                 self._print_banner("Phase 4: Checkpoint optimization")
@@ -494,7 +480,7 @@ class PolicyTuner:
                 )
 
             ### Phase 5: Autoscaler parameter sweep
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "05_autoscaling_param_sweep", "Phase 5: Autoscaler param sweep"
             ):
                 self._print_banner("Phase 5: Autoscaler parameter sweep")
@@ -507,7 +493,7 @@ class PolicyTuner:
                 )
 
             ### Phase 6: Routing parameter sweep
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "06_routing_param_sweep", "Phase 6: Routing param sweep"
             ):
                 self._print_banner("Phase 6: Routing parameter sweep")
@@ -522,7 +508,7 @@ class PolicyTuner:
                 )
 
             ### Phase 7: Persist final config and final comparison
-            with self._timed_phase(
+            with self._timer.timed_phase(
                 "07_final", "Phase 7: Persist & compare final"
             ):
                 self._print_banner(
@@ -566,106 +552,11 @@ class PolicyTuner:
 
             return final_path
         finally:
-            csv_path = self._write_timing_csv()
-            self._print_timing_report(csv_path)
+            self._timer.finalize(self._run_dir)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @contextmanager
-    def _timed_phase(self, phase_key: str, phase_name: str):
-        """Context manager that times a pipeline phase and appends a record."""
-        start_wall = wall_clock_utc()
-        t0 = time.perf_counter()
-        try:
-            yield
-        finally:
-            elapsed_s = time.perf_counter() - t0
-            self._phase_timings.append(
-                PhaseTimingRecord(
-                    phase_key=phase_key,
-                    phase_name=phase_name,
-                    start_wall_utc=start_wall,
-                    elapsed_s=elapsed_s,
-                )
-            )
-
-    @staticmethod
-    def _format_duration(elapsed_s: float) -> str:
-        """Format a duration in seconds as a human-readable string."""
-        total = int(elapsed_s)
-        hours, remainder = divmod(total, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours > 0:
-            return f"{hours}h {minutes}m {seconds}s"
-        if minutes > 0:
-            return f"{minutes}m {seconds}s"
-        return f"{elapsed_s:.1f}s"
-
-    def _write_timing_csv(self) -> Path:
-        """Write per-phase timing records to a CSV file; return the path."""
-        csv_path = self._run_dir / "timing_report.csv"
-        total_s = sum(r.elapsed_s for r in self._phase_timings)
-        fieldnames = [
-            "phase_key",
-            "phase_name",
-            "start_wall_utc",
-            "elapsed_s",
-        ]
-        with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            for r in self._phase_timings:
-                writer.writerow(
-                    {
-                        "phase_key": r.phase_key,
-                        "phase_name": r.phase_name,
-                        "start_wall_utc": datetime.fromtimestamp(
-                            r.start_wall_utc, tz=timezone.utc
-                        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                        "elapsed_s": f"{r.elapsed_s:.3f}",
-                    }
-                )
-            if self._phase_timings:
-                writer.writerow(
-                    {
-                        "phase_key": "TOTAL",
-                        "phase_name": "TOTAL",
-                        "start_wall_utc": datetime.fromtimestamp(
-                            self._phase_timings[0].start_wall_utc,
-                            tz=timezone.utc,
-                        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                        "elapsed_s": f"{total_s:.3f}",
-                    }
-                )
-        return csv_path
-
-    def _print_timing_report(self, csv_path: Path) -> None:
-        """Print a rich timing table to the console."""
-        total_s = sum(r.elapsed_s for r in self._phase_timings)
-        table = Table(title="Tuning Pipeline — Timing Report", show_footer=True)
-        table.add_column("Phase", footer="[bold]TOTAL[/]")
-        table.add_column(
-            "Duration",
-            footer=f"[bold]{self._format_duration(total_s)}[/]",
-            justify="right",
-        )
-        table.add_column("Wall start (UTC)", footer="", style="dim")
-        table.add_column("% of total", footer="[bold]100%[/]", justify="right")
-
-        for r in self._phase_timings:
-            duration = self._format_duration(r.elapsed_s)
-            wall_str = datetime.fromtimestamp(
-                r.start_wall_utc, tz=timezone.utc
-            ).strftime("%H:%M:%S")
-            pct = f"{r.elapsed_s / total_s * 100:.0f}%" if total_s > 0 else "–"
-            table.add_row(r.phase_name, duration, wall_str, pct)
-
-        console.print()
-        console.rule("[bold cyan]Timing Report")
-        console.print(table)
-        console.print(f"  Timing report saved to [bold]{csv_path}[/]")
 
     def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
         """Helper to get config values from the initial config."""
