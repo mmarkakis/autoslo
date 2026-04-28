@@ -6,6 +6,7 @@ import numpy as np
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
+from autoslo.config.autoscaler_config import AutoscalerConfig
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
 from autoslo.slo.slo_metric import LatencySlo
@@ -28,30 +29,29 @@ class Autoscaler:
         self,
         slo_resolver: SloResolver,
         slo_objective: SloObjective,
-        allowed_rpu_sizes: list[int],
         iconq_model: IconqModel,
         cluster_cache_state_dim: int,
         query_router_config: QueryRouterConfig,
-        min_cluster_lifetime_s: float = 1200.0,
-        idle_time_before_tear_down_s: float = 300.0,  # TODO: should clusters note start of idle period?
-        observation_window_s: float = 120.0,
-        min_observations_to_act: int = 5,
-        slo_tightening_factor: float = 1.0,
+        autoscaler_config: AutoscalerConfig,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
-        self._allowed_rpu_sizes = sorted(allowed_rpu_sizes)
+        self._allowed_rpu_sizes = sorted(autoscaler_config.allowed_rpu_sizes)
         self._iconq_model = iconq_model
         self._query_router_config = query_router_config
-        self._min_cluster_lifetime_s = min_cluster_lifetime_s
-        self._idle_time_before_tear_down_s = idle_time_before_tear_down_s
-        self._observation_window_s = observation_window_s
-        self._min_observations_to_act = min_observations_to_act
-        self._slo_tightening_factor = slo_tightening_factor
+        self._min_cluster_lifetime_s = autoscaler_config.min_cluster_lifetime_s
+        self._idle_time_before_tear_down_s = (
+            autoscaler_config.idle_time_before_tear_down_s
+        )
+        self._observation_window_s = autoscaler_config.observation_window_s
+        self._min_observations_to_act = (
+            autoscaler_config.min_observations_to_act
+        )
+        self._slo_tightening_factor = autoscaler_config.slo_tightening_factor
         self._cluster_cache_state_dim = cluster_cache_state_dim
         self._trigger_slo_resolver = (
-            slo_resolver.tightened(slo_tightening_factor)
-            if slo_tightening_factor != 1.0
+            slo_resolver.tightened(autoscaler_config.slo_tightening_factor)
+            if autoscaler_config.slo_tightening_factor != 1.0
             else slo_resolver
         )
 

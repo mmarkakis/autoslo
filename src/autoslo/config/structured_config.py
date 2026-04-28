@@ -12,12 +12,10 @@ from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
+from autoslo.config.autoscaler_config import AutoscalerConfig
+from autoslo.config.query_router_config import QueryRouterConfig
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import (
-    QueryRouter,
-    QueryRouterConfig,
-    QueryRouterPolicy,
-)
+from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -289,19 +287,8 @@ class StructuredConfig:
         )
 
         # ── QueryRouter ──────────────────────────────────────────────────────
-        routing_policy_str: str = cfgu.getd(
-            cfg, "routing_config.routing_policy", "use_iconq_model"
-        )
-        cluster_cache_state_update_alpha: float = cfgu.getd(
-            cfg, "routing_config.cluster_cache_state_update_alpha", 0.7
-        )
-        cache_risk_cost_multiplier: float = cfgu.getd(
-            cfg, "routing_config.cache_risk_cost_multiplier", 0
-        )
-        query_router_config = QueryRouterConfig(
-            routing_policy=QueryRouterPolicy(routing_policy_str),
-            cluster_cache_state_update_alpha=cluster_cache_state_update_alpha,
-            cache_risk_cost_multiplier=cache_risk_cost_multiplier,
+        query_router_config = QueryRouterConfig.from_config(
+            cfg,
             rel_time_s_to_forecasted_table_vecs=rel_time_s_to_forecasted_table_vecs,
         )
         router: QueryRouter = QueryRouter(
@@ -311,42 +298,14 @@ class StructuredConfig:
         )
 
         # ── Autoscaler ──────────────────────────────────────────────────────
+        autoscaler_config = AutoscalerConfig.from_config(cfg)
         autoscaler = Autoscaler(
             slo_resolver=slo_resolver,
             slo_objective=slo_objective,
             iconq_model=iconq_model,
             query_router_config=query_router_config,
+            autoscaler_config=autoscaler_config,
             cluster_cache_state_dim=cluster_cache_state_dim,
-            allowed_rpu_sizes=cfgu.getd(
-                cfg,
-                "autoscaling_config.allowed_rpu_sizes",
-                Cluster.ALL_ALLOWED_RPU_SIZES,
-            ),
-            min_cluster_lifetime_s=cfgu.getd(
-                cfg,
-                "autoscaling_config.min_cluster_lifetime_s",
-                1200.0,
-            ),
-            idle_time_before_tear_down_s=cfgu.getd(
-                cfg,
-                "autoscaling_config.idle_time_before_tear_down_s",
-                600.0,
-            ),
-            observation_window_s=cfgu.getd(
-                cfg,
-                "autoscaling_config.observation_window_s",
-                300.0,
-            ),
-            min_observations_to_act=cfgu.getd(
-                cfg,
-                "autoscaling_config.min_observations_to_act",
-                5,
-            ),
-            slo_tightening_factor=cfgu.getd(
-                cfg,
-                "autoscaling_config.slo_tightening_factor",
-                1.0,
-            ),
         )
 
         return StructuredConfig(
