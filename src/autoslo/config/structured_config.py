@@ -12,8 +12,18 @@ from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
-from autoslo.config.autoscaler_config import AutoscalerConfig
-from autoslo.config.query_router_config import QueryRouterConfig
+from autoslo.config.component_configs import (
+    AutoscalerConfig,
+    ForecastPolicyConfig,
+    ManagedClusterPoolConfig,
+    ProvisionerConfig,
+    QueryRouterConfig,
+    ReservoirConfig,
+    SloObjectiveConfig,
+    SloResolverConfig,
+    WorkloadConfig,
+    WorkloadRunnerConfig,
+)
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_metric import SloMetric
@@ -139,21 +149,10 @@ class StructuredConfig:
             workload.print_summary()
 
         # ── SLO ──────────────────────────────────────────────────────────
-        slo_s: float = cfgu.getd(cfg, "slo_config.slo_s", 10.0)
-        slo_metric = SloMetric(
-            cfgu.getd(cfg, "slo_config.slo_metric", "relative")
-        )
-        slo_threshold: float = float(
-            cfgu.getd(cfg, "slo_config.slo_threshold", 0.0)
-        )
-        slo_dict_filename: Optional[str] = cfgu.getd(
-            cfg, "slo_config.slo_dict_filename"
-        )
-        slo_resolver = SloResolver(slo_s, slo_dict_filename)
-        slo_objective = SloObjective(
-            slo_metric=slo_metric,
-            slo_threshold=slo_threshold,
-        )
+        slo_resolver_config = SloResolverConfig.from_config(cfg)
+        slo_objective_config = SloObjectiveConfig.from_config(cfg)
+        slo_resolver = SloResolver(slo_resolver_config)
+        slo_objective = SloObjective(slo_objective_config)
 
         # ── Runner config ──────────────────────────────────────────────────
         max_threads = cfgu.getd(cfg, "runner_config.max_threads", 10)

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
+from autoslo.config.component_configs import SloObjectiveConfig
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
 
 
@@ -32,31 +33,20 @@ class SloObjective:
 
     def __init__(
         self,
-        slo_metric: SloMetric | str,
-        slo_threshold: float,
+        slo_objective_config: SloObjectiveConfig,
     ):
         object.__setattr__(
             self,
             "slo_metric",
             (
-                slo_metric
-                if isinstance(slo_metric, SloMetric)
-                else SloMetric(slo_metric)
+                slo_objective_config.slo_metric
+                if isinstance(slo_objective_config.slo_metric, SloMetric)
+                else SloMetric(slo_objective_config.slo_metric)
             ),
         )
-        object.__setattr__(self, "slo_threshold", slo_threshold)
-
-    @classmethod
-    def from_config(cls, config: dict[str, Any]) -> SloObjective:
-        try:
-            slo_metric = SloMetric(config["slo_config"]["slo_metric"])
-            slo_threshold = config["slo_config"]["slo_threshold"]
-            return cls(slo_metric, slo_threshold)
-        except KeyError as e:
-            raise ValueError(
-                "Invalid SLO config: missing key "
-                f"{e.args[0]} in {config['slo_config']}"
-            ) from e
+        object.__setattr__(
+            self, "slo_threshold", slo_objective_config.slo_threshold
+        )
 
     def is_met(self, per_query_latency_slo: list[LatencySlo]) -> bool:
         """Return True if the given per-query (latency, SLO) pairs meet the

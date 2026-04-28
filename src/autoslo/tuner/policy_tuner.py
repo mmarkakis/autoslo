@@ -16,6 +16,10 @@ from rich.console import Console
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
+from autoslo.config.component_configs import (
+    SloObjectiveConfig,
+    SloResolverConfig,
+)
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
@@ -77,25 +81,16 @@ class PolicyTuner:
         self._evaluator = ScenarioEvaluator(caller_id=self._run_id)
 
         # SLO objective — drives metric routing and threshold-aware selection.
-        self._slo_metric = SloMetric(
-            cfgu.getd(self._initial_config, "slo_config.slo_metric", "binary")
+        slo_objective_config = SloObjectiveConfig.from_config(
+            self._initial_config
         )
-        self._slo_threshold = float(
-            cfgu.getd(self._initial_config, "slo_config.slo_threshold", 1.0)
-        )
-        self._slo_objective = SloObjective(
-            slo_metric=self._slo_metric,
-            slo_threshold=self._slo_threshold,
-        )
+        self._slo_objective = SloObjective(slo_objective_config)
 
         # SLO Resolver - shared by all phases for consistent SLO evaluation.
-        slo_s = float(self._cfgd("slo_config.slo_s", 30.0))
-        slo_dict_filename: str | None = self._cfgd(
-            "slo_config.slo_dict_filename", None
+        slo_resolver_config = SloResolverConfig.from_config(
+            self._initial_config
         )
-        self._slo_resolver = SloResolver(
-            default_slo_s=slo_s, slo_dict_filename=slo_dict_filename
-        )
+        self._slo_resolver = SloResolver(slo_resolver_config)
 
         # Aggregation metric — shared by all phases.
         self._agg_metric: str = cfgu.getd(
@@ -106,7 +101,6 @@ class PolicyTuner:
 
         # Timing instrumentation.
         self._timer = PolicyTunerTimer()
-        
 
     # ------------------------------------------------------------------
     # Public properties

@@ -13,8 +13,8 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from autoslo.config.component_configs import SloResolverConfig
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
-from autoslo.slo.slo_objective import ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ class SimulationResult:
         config: dict[str, Any] = {}
         with open(config_path) as f:
             config = yaml.safe_load(f)
-        slo_resolver = SloResolver.from_config(config)
+        slo_resolver = SloResolver(SloResolverConfig.from_config(config))
 
         # -- cost --
         total_cost = 0.0

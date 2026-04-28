@@ -21,6 +21,10 @@ import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
+from autoslo.config.component_configs import (
+    SloObjectiveConfig,
+    SloResolverConfig,
+)
 import autoslo.utils.config as cfgu
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
@@ -310,17 +314,12 @@ class CheckpointOptimizer:
         )
 
         # SLO Resolver
-        slo_s = self._cfgd("slo_config.slo_s", 30.0)
-        slo_dict_filename = self._cfgd("slo_config.slo_dict_filename", None)
-        self._slo_resolver = SloResolver(slo_s, slo_dict_filename)
+        slo_resolver_config = SloResolverConfig.from_config(config)
+        self._slo_resolver = SloResolver(slo_resolver_config)
 
         # SLO objective for threshold-aware candidate selection.
-        slo_metric = SloMetric(self._cfgd("slo_config.slo_metric", "binary"))
-        slo_threshold = self._cfgd("slo_config.slo_threshold", 1.0)
-        self._slo_objective = SloObjective(
-            slo_metric=slo_metric,
-            slo_threshold=float(slo_threshold),
-        )
+        slo_objective_config = SloObjectiveConfig.from_config(config)
+        self._slo_objective = SloObjective(slo_objective_config)
 
     def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
         """Helper to read from the config dict with dot-delimited keys."""

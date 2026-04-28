@@ -3,19 +3,6 @@ slo_resolver.py
 ---------------
 Resolves the effective SLO (in seconds) for a given query, supporting both a
 single global SLO and a per-template override dict.
-
-Usage
------
-    from autoslo.blueprint_selection.slo_resolver import SloResolver
-
-    # From a filename stored in config.yml / experiment_meta.json:
-    resolver = SloResolver(default_slo_s=10.0, slo_dict_filename="slo_dict.yml")
-
-    # From an already-loaded dict (e.g. inlined in config):
-    resolver = SloResolver.from_dict(default_slo_s=10.0, slo_dict={"001": 5.0, "002": 8.0})
-
-    # Resolve per query:
-    slo = resolver.resolve("3_7")   # returns override for template 3, or default
 """
 
 from __future__ import annotations
@@ -25,9 +12,8 @@ import os
 import yaml
 
 import autoslo.utils.paths as pu
+from autoslo.config.component_configs import SloResolverConfig
 from autoslo.workload_definition.query import QueryTextId
-
-import autoslo.utils.config as cfgu
 
 
 class SloResolver:
@@ -46,54 +32,19 @@ class SloResolver:
 
     def __init__(
         self,
-        default_slo_s: float,
-        slo_dict_filename: str | None = None,
+        config: SloResolverConfig,
     ) -> None:
-        self._default = default_slo_s
+        self._default = config.slo_s
         self._dict: dict[str, float] = {}
-        self._filename: str | None = slo_dict_filename
+        self._filename: str | None = config.slo_dict_filename
 
-        if slo_dict_filename:
-            path = os.path.join(pu.get_data_path(), "slos", slo_dict_filename)
+        if self._filename:
+            path = os.path.join(pu.get_data_path(), "slos", self._filename)
             with open(path) as f:
                 raw = yaml.safe_load(f) or {}
             self._dict = {
                 str(k).zfill(3): float(v) for k, v in raw["slo_dict"].items()
             }
-
-    # ------------------------------------------------------------------
-    # alternate constructors
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def from_dict(
-        cls,
-        default_slo_s: float,
-        slo_dict: dict[str, float],
-        slo_dict_filename: str | None = None,
-    ) -> "SloResolver":
-        """Construct directly from an already-loaded mapping (e.g. inlined in
-        a config or experiment_meta.json) without touching the filesystem."""
-        inst = cls.__new__(cls)
-        inst._default = default_slo_s
-        inst._dict = {str(k).zfill(3): float(v) for k, v in slo_dict.items()}
-        inst._filename = slo_dict_filename
-        return inst
-
-    @classmethod
-    def from_config(cls, config: dict) -> "SloResolver":
-        """Construct from a config dict (e.g. the one loaded from config.yml or
-        experiment_meta.json).  Looks for keys "default_slo_s" and
-        "slo_dict_filename" in the top-level dict and/or under "slo_config"."""
-        default_slo_s = config.get("default_slo_s") or cfgu.getd(
-            config, "slo_config.default_slo_s", 10.0
-        )
-        slo_dict_filename = config.get("slo_dict_filename") or cfgu.getd(
-            config, "slo_config.slo_dict_filename"
-        )
-        return cls(
-            default_slo_s=default_slo_s, slo_dict_filename=slo_dict_filename
-        )
 
     # ------------------------------------------------------------------
     # core API
@@ -169,10 +120,11 @@ class SloResolver:
         the autoscaler to trigger earlier.
         """
         if factor <= 0:
-            raise ValueError(f"Tightening factor must be positive, got {factor}")
-        return SloResolver.from_dict(
-            default_slo_s=self._default * factor,
-            slo_dict={k: v * factor for k, v in self._dict.items()},
-            slo_dict_filename=self._filename,
+            raise ValueError(
+                f"Tightening factor must be positive, got {factor}"
+            )
+        return SloResolver(
+            config=SloResolverConfig(
+                slo_s=self._default * factor, slo_dict_filename=self._filename
+            )
         )
-

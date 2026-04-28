@@ -17,11 +17,13 @@ forecast_config:
   forecast_policy: SameDayExponentialForecastPolicy
   decay_factor: 0.5
 
-slo_config:
+slo_resolver_config:
   slo_s: 30.0
+  slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
+
+slo_objective_config:
   slo_metric: binary
   slo_threshold: 0.05
-  slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
 
 runner_config:
   max_threads: 512

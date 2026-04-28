@@ -31,6 +31,7 @@ import yaml
 import pandas as pd
 
 from autoslo.clusters.cluster import Cluster
+from autoslo.config.component_configs import SloResolverConfig
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.utils.structured_events import EventType
 
@@ -67,7 +68,7 @@ def _load_slo_resolver(log_dir: Path) -> SloResolver:
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f) or {}
 
-    return SloResolver.from_config(cfg)
+    return SloResolver(SloResolverConfig.from_config(cfg))
 
 
 def _validate_rel_time(df: pd.DataFrame) -> None:
