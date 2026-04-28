@@ -16,6 +16,7 @@ from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
+from autoslo.config.structured_config import StructuredConfig
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.utils.billing import Billing
@@ -33,7 +34,6 @@ from autoslo.workload_execution.simulator_event import (
     SimulatorEvent,
     SimulatorEventType,
 )
-from autoslo.workload_execution.structured_config import StructuredConfig
 
 
 class WorkloadSimulator:
@@ -114,8 +114,8 @@ class WorkloadSimulator:
             action, self._current_sim_time_s
         )
         if cluster_name is None:
-            # Spin-up was denied by the budget; SPIN_UP_BLOCKED was already 
-            # emitted by the pool.  Disable future spin-up considerations in the 
+            # Spin-up was denied by the budget; SPIN_UP_BLOCKED was already
+            # emitted by the pool.  Disable future spin-up considerations in the
             # autoscaler.
             self._autoscaler.disable_spin_up()
             return
