@@ -35,59 +35,29 @@ from autoslo.utils.structured_events import wall_clock_utc
 from autoslo.workload_definition.workload import Workload
 
 
-def _make_out_dir(
-    run_id: str,
-    out_dir_override: str | None = None,
-    experiment_name: str | None = None,
-    overwrite_experiment: bool = False,
-    is_runner: bool = False,
-) -> str:
-    """
-    Determine the output directory for a run based on the given parameters.
-    """
-    default_out_dir_parent = "runs" if is_runner else "simulator_runs"
-
-    if out_dir_override is not None:
-        out_dir = os.path.join(str(out_dir_override), run_id)
-    elif experiment_name:
-        experiment_dir = os.path.join(
-            pu.get_data_path(), default_out_dir_parent, experiment_name
-        )
-        if os.path.exists(experiment_dir) and overwrite_experiment:
-            shutil.rmtree(experiment_dir)
-        out_dir = os.path.join(experiment_dir, run_id)
-    else:
-        out_dir = os.path.join(
-            pu.get_data_path(), default_out_dir_parent, run_id
-        )
-    os.makedirs(out_dir, exist_ok=True)
-    return out_dir
-
-
 @dataclass(frozen=True)
 class StructuredConfig:
-    query_text_registry: QueryTextRegistry
+    run_id: str
+    out_dir: str
+    write_text_log: bool
     iconq_model: IconqModel
-    closed_loop: bool
     workload: Workload
     slo_objective: SloObjective
     slo_resolver: SloResolver
-    thread_pool_executor: ThreadPoolExecutor
     pool: ManagedClusterPool
     capacity_checkpoints: list[CapacityCheckpoint]
     router: QueryRouter
     autoscaler: Autoscaler
-    out_dir: str
-    experiment_name: Optional[str]
-    write_text_log: bool
     structured_log_handler: StructuredLogHandler
+    workload_runner_config: WorkloadRunnerConfig
 
     @classmethod
     def build(
         cls,
         cfg: dict,
-        run_id: str,
-        workload: Optional[Workload] = None,
+        out_dir: Optional[str] = None,
+        write_text_log: bool = False,
+        workload_df: Optional[pd.DataFrame] = None,
         is_runner: bool = False,
     ) -> "StructuredConfig":
         """
@@ -98,24 +68,25 @@ class StructuredConfig:
         ----------
         cfg :
             The configuration dictionary, typically loaded from a YAML file.
-        run_id :
-            A unique identifier for this run, used for output organization.
-        workload :
-            An optional pre-constructed workload.  If not provided, it will be
-            constructed from the configuration.
         is_runner :
             Whether this is being built for a live runner (as opposed to a
             simulator).  This controls certain defaults and behaviors, such as
             the provisioner type and output directory structure.
         """
 
-        # ── basic ────────────────────────────────────────────────────────
-        schema_name: str = cfgu.getd(
-            cfg, "workload_config.schema_name", required=True
+        # ── Determine run_id and set up logging ──────────────────────────────
+        run_id = str(int(wall_clock_utc() * 1000))
+        default_parent = "runs" if is_runner else "simulation_runs"
+        out_dir = out_dir or os.path.join(
+            pu.get_data_path(), default_parent, run_id
         )
-        schema = Schema.load(schema_name)
+        write_text_log = write_text_log
+        structured_log_handler = setup_run_logging(
+            out_dir=out_dir,
+            write_text_log=write_text_log,
+        )
 
-        query_text_registry = QueryTextRegistry(schema_name)
+        # ── basic ────────────────────────────────────────────────────────
         iconq_model_id: str = cfgu.getd(
             cfg, "basic_config.iconq_model_id", required=True
         )
@@ -138,8 +109,7 @@ class StructuredConfig:
         slo_objective = SloObjective(slo_objective_config)
 
         # ── Runner config ──────────────────────────────────────────────────
-        max_threads = cfgu.getd(cfg, "runner_config.max_threads", 10)
-        thread_pool_executor = ThreadPoolExecutor(max_workers=max_threads)
+        workload_runner_config = WorkloadRunnerConfig.from_config(cfg)
 
         # ── Provisioner ─────────────────────────────────────────────
         cluster_cache_state_dim = iconq_model.iconq_query_featurizer.num_tables
@@ -150,32 +120,6 @@ class StructuredConfig:
             RedshiftServerlessProvisioner(provisioner_config)
             if is_runner
             else SimulatedProvisioner(provisioner_config)
-        )
-        # ── Output ───────────────────────────────────────────────────────────
-        experiment_name: Optional[str] = cfgu.getd(
-            cfg, "output_config.experiment_name"
-        )
-        overwrite_experiment: bool = cfgu.getd(
-            cfg, "output_config.overwrite_experiment", False
-        )
-        write_text_log: bool = cfgu.getd(
-            cfg, "output_config.write_text_log", False
-        )
-        if is_runner:
-            write_text_log = True
-        out_dir_override = cfgu.getd(cfg, "output_config.out_dir", None)
-        out_dir = _make_out_dir(
-            run_id=run_id,
-            out_dir_override=out_dir_override,
-            experiment_name=experiment_name,
-            overwrite_experiment=overwrite_experiment,
-            is_runner=is_runner,
-        )
-
-        # ── Logging (before pool so provisioner events are captured) ──────
-        structured_log_handler = setup_run_logging(
-            out_dir=out_dir,
-            write_text_log=write_text_log,
         )
 
         # ── Capacity Checkpoints ─────────────────────────────────────────────
@@ -244,19 +188,17 @@ class StructuredConfig:
         )
 
         return StructuredConfig(
-            query_text_registry=query_text_registry,
+            run_id=run_id,
+            out_dir=out_dir,
+            write_text_log=write_text_log,
             iconq_model=iconq_model,
-            closed_loop=closed_loop,
             workload=workload,
             slo_objective=slo_objective,
             slo_resolver=slo_resolver,
-            thread_pool_executor=thread_pool_executor,
             pool=pool,
             capacity_checkpoints=capacity_checkpoints,
             router=router,
             autoscaler=autoscaler,
-            out_dir=out_dir,
-            experiment_name=experiment_name,
-            write_text_log=write_text_log,
             structured_log_handler=structured_log_handler,
+            workload_runner_config=workload_runner_config,
         )

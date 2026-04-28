@@ -1,24 +1,18 @@
 import heapq
-import json
 import logging
 import os
-from datetime import datetime
 from typing import Callable, Optional
 
 import torch
-import yaml
-from filelock import FileLock
 from tqdm import tqdm
 
 import autoslo.utils.config as cfgu
-import autoslo.utils.paths as pu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.config.structured_config import StructuredConfig
 from autoslo.routing.wrapper import route_and_update_bookkeeping
-from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.paralellism import inner_level_num_cpus
@@ -54,26 +48,24 @@ class WorkloadSimulator:
         self,
         cfg: dict,
         workload: Optional[Workload] = None,
+        out_dir: Optional[str] = None,
+        write_text_log: bool = False,
     ):
         """
         Initialize the simulator with the given config.
         """
-
-        # ── Determine run_id ─────────────────────────────────────────
-        self._run_id: Optional[str] = cfgu.getd(
-            cfg, "basic_config.run_id"
-        ) or str(int(datetime.now().timestamp() * 1000))
-        self._cfg = cfgu.copy_and_apply_overrides(
-            cfg, {"basic_config.run_id": self._run_id}
-        )
-
-        # ── Build, parse and dump structured config ──────────────────────────────
+        # ── Build, parse and dump structured config ──────────────────────────
         structured_config = StructuredConfig.build(
-            self._cfg, self._run_id, workload=workload, is_runner=False
+            cfg=cfg,
+            out_dir=out_dir,
+            write_text_log=write_text_log,
+            is_runner=False,
+            workload_df=workload.df if workload else None,
         )
-
+        self._run_id = structured_config.run_id
+        self._out_dir = structured_config.out_dir
+        self._write_text_log = structured_config.write_text_log
         self._iconq_model = structured_config.iconq_model
-        self._closed_loop = structured_config.closed_loop
         self._workload = structured_config.workload
         self._slo_objective = structured_config.slo_objective
         self._slo_resolver = structured_config.slo_resolver
@@ -81,12 +73,9 @@ class WorkloadSimulator:
         self._capacity_checkpoints = structured_config.capacity_checkpoints
         self._router = structured_config.router
         self._autoscaler = structured_config.autoscaler
-        self._out_dir = structured_config.out_dir
-        self._experiment_name = structured_config.experiment_name
-        self._write_text_log = structured_config.write_text_log
         self._structured_handler = structured_config.structured_log_handler
 
-        dump_yaml(self._cfg, os.path.join(self._out_dir, "config.yml"))
+        dump_yaml(cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Activate initial clusters immediately (no spin-up delay) ──────
         pending_cluster_names = self._pool.clusters_in_state(
@@ -190,7 +179,6 @@ class WorkloadSimulator:
                     "workload_name": self._workload.workload_name,
                     "num_queries": self._total_queries,
                     "routing_policy": self._router.routing_policy.value,
-                    "closed_loop": self._closed_loop,
                 },
             )
         )
@@ -204,26 +192,15 @@ class WorkloadSimulator:
                     details={"checkpoint": checkpoint},
                 )
             )
-        # Add all the query arrival events to the heap, except in closed-loop
-        # mode where we only add the first one.
-        if self._closed_loop:
-            first_query = queries[0]
+        # Add all the query arrival events to the heap.
+        for i, query in enumerate(queries):
             self._pending_events.append(
                 SimulatorEvent(
-                    rel_time_s=first_query.rel_start_time_s,
+                    rel_time_s=query.rel_start_time_s,
                     event_type=SimulatorEventType.QUERY_ARRIVAL,
-                    details={"query": first_query, "index": 0},
+                    details={"query": query, "index": i},
                 )
             )
-        else:
-            for i, query in enumerate(queries):
-                self._pending_events.append(
-                    SimulatorEvent(
-                        rel_time_s=query.rel_start_time_s,
-                        event_type=SimulatorEventType.QUERY_ARRIVAL,
-                        details={"query": query, "index": i},
-                    )
-                )
 
         heapq.heapify(self._pending_events)
 
@@ -299,9 +276,6 @@ class WorkloadSimulator:
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         dump_yaml(seq_num_to_cluster_name, mapping_out_path)
-
-        if self._experiment_name:
-            self._write_experiment_meta()
 
     def _handle_query_arrival(
         self, event: SimulatorEvent, seq_num_to_cluster_name: dict[int, str]
@@ -420,29 +394,6 @@ class WorkloadSimulator:
             rel_time_s=self._current_sim_time_s,
         )
 
-        # If we are in closed-loop mode, schedule the next query arrival now that this one has completed.
-        self._completed_queries += 1
-        if (
-            self._completed_queries % self._PROGRESS_INTERVAL == 0
-            or self._completed_queries == self._total_queries
-        ):
-            progress_callback(self._completed_queries, self._total_queries)
-        if self._closed_loop and (
-            self._completed_queries < self._total_queries
-        ):
-            next_query = self._workload.queries()[self._completed_queries]
-            heapq.heappush(
-                self._pending_events,
-                SimulatorEvent(
-                    rel_time_s=next_query.rel_start_time_s,
-                    event_type=SimulatorEventType.QUERY_ARRIVAL,
-                    details={
-                        "query": next_query,
-                        "index": self._completed_queries,
-                    },
-                ),
-            )
-
     def _handle_capacity_checkpoint(self, event: SimulatorEvent) -> None:
         """
         Handle a capacity checkpoint event: check the current provisioned
@@ -526,112 +477,6 @@ class WorkloadSimulator:
 
         out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
         dump_yaml(d, out_path)
-
-    def _write_experiment_meta(self) -> None:
-        """
-        Append this run's summary stats to the shared experiment_meta.json,
-        creating it if it does not exist.  Uses a file lock for safety when
-        multiple simulator processes share the same experiment directory.
-        """
-        if not self._experiment_name:
-            return
-
-        experiment_dir = os.path.join(
-            pu.get_data_path(), "simulator_runs", self._experiment_name
-        )
-        meta_path = os.path.join(experiment_dir, "experiment_meta.json")
-        lock_path = meta_path + ".lock"
-
-        # Compute summary stats from the billing analysis file.
-        billing_path = os.path.join(
-            self._out_dir, "billing_interval_analysis.yml"
-        )
-        total_cost = 0.0
-        if os.path.exists(billing_path):
-            with open(billing_path) as f:
-                billing = yaml.safe_load(f) or {}
-            for cluster_data in billing.values():
-                total_cost += cluster_data.get("total_billed_cost", 0.0)
-
-        # Compute violation stats from the solve log.
-        violation_rate = 0.0
-        violation_amount_s = 0.0
-        violation_relative_mean = 0.0
-        num_queries = 0
-        log_path = os.path.join(self._out_dir, "structured_log.parquet")
-        if os.path.exists(log_path):
-            import pandas as _pd
-
-            log = _pd.read_parquet(log_path)
-            exec_starts = (
-                log[log["event_type"] == "query_execution_start"]
-                .set_index("query_id")["rel_time_s"]
-                .rename("exec_start_s")
-            )
-            exec_finishes = (
-                log[log["event_type"] == "query_execution_finish"]
-                .set_index("query_id")[["rel_time_s", "query_text_id"]]
-                .rename(columns={"rel_time_s": "exec_finish_s"})
-            )
-            completions = exec_finishes.join(exec_starts, how="inner")
-            completions["latency_s"] = (
-                completions["exec_finish_s"] - completions["exec_start_s"]
-            )
-            num_queries = len(completions)
-            if num_queries > 0 and self._slo_resolver.default_slo_s:
-                durations = completions["latency_s"]
-                # Compute per-row SLO using the resolver so that
-                # per-template overrides are reflected in violation stats.
-                per_row_slo = (
-                    completions["query_text_id"]
-                    .map(self._slo_resolver.resolve)
-                    .fillna(self._slo_resolver.default_slo_s)
-                )
-
-                lat_and_slos = [
-                    LatencySlo(lat, slo)
-                    for lat, slo in zip(durations, per_row_slo)
-                ]
-
-                violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)
-                violation_amount_s = SloMetric.ABSOLUTE_S.aggregate_batch(
-                    lat_and_slos
-                )
-                violation_relative_mean = SloMetric.RELATIVE.aggregate_batch(
-                    lat_and_slos
-                )
-
-        run_entry = {
-            "run_id": self._run_id,
-            "slo_s": self._slo_resolver.default_slo_s,
-            "slo_metric": self._slo_objective.slo_metric.value,
-            "slo_threshold": self._slo_objective.slo_threshold,
-            "slo_dict_filename": self._slo_resolver.slo_dict_filename,
-            "slo_dict": self._slo_resolver.slo_dict,
-            "violation_rate": round(violation_rate, 6),
-            "violation_amount_s": round(violation_amount_s, 4),
-            "violation_relative_mean": round(violation_relative_mean, 6),
-            "total_cost": round(total_cost, 4),
-            "num_queries": num_queries,
-            "completed_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        }
-
-        with FileLock(lock_path):
-            if os.path.exists(meta_path):
-                with open(meta_path) as f:
-                    meta = json.load(f)
-            else:
-                meta = {
-                    "experiment_name": self._experiment_name,
-                    "runs": [],
-                }
-            # Replace entry if run_id already present (idempotent re-runs)
-            meta["runs"] = [
-                r for r in meta["runs"] if r.get("run_id") != self._run_id
-            ]
-            meta["runs"].append(run_entry)
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=2)
 
 
 if __name__ == "__main__":

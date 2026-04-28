@@ -24,6 +24,8 @@ from autoslo.utils.structured_events import (
 )
 from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.workload_definition.query_text_registry import QueryTextRegistry
+from autoslo.workload_definition.schema import Schema
 
 
 class WorkloadRunner:
@@ -36,38 +38,44 @@ class WorkloadRunner:
     section.
     """
 
-    def __init__(self, cfg: dict):
+    def __init__(
+        self,
+        cfg: dict,
+        out_dir: Optional[str] = None,
+        write_text_log: bool = True,
+    ) -> None:
         """
         Initialize the runner with the given configuration.
         """
-
-        # ── Determine run_id ─────────────────────────────────────────
-        self._run_id = str(int(wall_clock_utc()))
-        self._cfg = cfgu.copy_and_apply_overrides(
-            cfg, {"basic_config.run_id": self._run_id}
-        )
-
-        # ── Build, parse and dump structured config ──────────────────────────────
+        # ── Build, parse and dump structured config ──────────────────────────
         structured_config = StructuredConfig.build(
-            self._cfg, self._run_id, is_runner=True
+            cfg=cfg,
+            out_dir=out_dir,
+            write_text_log=write_text_log,
+            is_runner=True,
         )
-
-        self._query_text_registry = structured_config.query_text_registry
+        self._run_id = structured_config.run_id
+        self._out_dir = structured_config.out_dir
+        self._write_text_log = structured_config.write_text_log
         self._iconq_model = structured_config.iconq_model
-        self._closed_loop = structured_config.closed_loop
         self._workload = structured_config.workload
         self._slo_objective = structured_config.slo_objective
         self._slo_resolver = structured_config.slo_resolver
-        self._executor = structured_config.thread_pool_executor
         self._pool = structured_config.pool
         self._capacity_checkpoints = structured_config.capacity_checkpoints
         self._router = structured_config.router
         self._autoscaler = structured_config.autoscaler
-        self._out_dir = structured_config.out_dir
-        self._write_text_log = structured_config.write_text_log
         self._structured_handler = structured_config.structured_log_handler
+        self._workload_runner_config = structured_config.workload_runner_config
 
-        dump_yaml(self._cfg, os.path.join(self._out_dir, "config.yml"))
+        self._closed_loop = self._workload_runner_config.closed_loop
+        schema_name = self._workload_runner_config.schema_name
+        self._query_text_registry = QueryTextRegistry(schema_name)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._workload_runner_config.max_threads
+        )
+
+        dump_yaml(cfg, os.path.join(self._out_dir, "config.yml"))
 
         # ── Instance Variables ───────────────────────────────────────────────
         self._routing_lock = threading.Lock()

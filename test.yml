@@ -5,17 +5,21 @@ basic_config:
   run_id: "tuner_prev_month"
 
 workload_config:
-  schema_name: ext_tpcds1000
   workload_name: redbench_provisioned_157_0
-  date: "2024-05-27"
+  start_date_inclusive: "2024-05-27"
+  end_date_inclusive: "2024-05-27"
   rescale_factor: 0.16666667
-  closed_loop: false
 
-forecast_config:
+reservoir_config:
+  workload_name: redbench_provisioned_157_0
   start_date_inclusive: "2024-04-27"
   end_date_inclusive: "2024-05-26"
-  forecast_policy: SameDayExponentialForecastPolicy
+  rescale_factor: 0.16666667
+
+forecast_policy_config:
+  forecast_policy_name: SameDayExponentialForecastPolicy
   decay_factor: 0.5
+  fixed_queries_per_hour: 100
 
 slo_resolver_config:
   slo_s: 30.0
@@ -25,9 +29,11 @@ slo_objective_config:
   slo_metric: binary
   slo_threshold: 0.05
 
-runner_config:
+workload_runner_config:
   max_threads: 512
-  
+  schema_name: ext_tpcds1000
+  closed_loop: false
+
 provisioner_config:
   relative_aws_config_path: data/__run_configs/aws.yml
   spin_up_delay_s: 300.0
@@ -50,7 +56,6 @@ routing_config:
   cache_risk_cost_multiplier: 0.0
   fixed_queries_per_hour: 100
 
-
 autoscaling_config:
   allowed_rpu_sizes:
     - 4
@@ -62,11 +67,6 @@ autoscaling_config:
   observation_window_s: 300.0
   min_observations_to_act: 5
   slo_tightening_factor: 0.8
-
-output_config:
-  experiment_name: TESTTEST
-  overwrite_experiment: true
-  write_text_log: false
 
 tuner_config:
   force: true
@@ -84,48 +84,48 @@ tuner_config:
     min_delinquent_workload_fraction: 0.5
     min_rel_improvement_for_acceptance: 0.01
     initial_rpu_candidates:
-      - [16]
-      - [8]
-      - [32]
+      - [ 16 ]
+      - [ 8 ]
+      - [ 32 ]
 
   autoscaling_param_sweep:
     strategy: grid
     params:
-      "autoscaling_config.min_cluster_lifetime_s": [1200.0, 3600.0]
-      "autoscaling_config.idle_time_before_tear_down_s": [300.0, 600.0]
-      "autoscaling_config.observation_window_s": [120.0, 300.0]
-      "autoscaling_config.min_observations_to_act": [5, 10]
-      "autoscaling_config.slo_tightening_factor": [0.6, 0.8, 1.0]
+      "autoscaling_config.min_cluster_lifetime_s": [ 1200.0, 3600.0 ]
+      "autoscaling_config.idle_time_before_tear_down_s": [ 300.0, 600.0 ]
+      "autoscaling_config.observation_window_s": [ 120.0, 300.0 ]
+      "autoscaling_config.min_observations_to_act": [ 5, 10 ]
+      "autoscaling_config.slo_tightening_factor": [ 0.6, 0.8, 1.0 ]
   routing_param_sweep: {}
 
   static_baselines:
     - label: "16 RPU"
       overrides:
-        managed_cluster_pool_config.initial_rpus: [16]
+        managed_cluster_pool_config.initial_rpus: [ 16 ]
         autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "16+16 RPU"
       overrides:
-        managed_cluster_pool_config.initial_rpus: [16, 16]
+        managed_cluster_pool_config.initial_rpus: [ 16, 16 ]
         autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "32 RPU"
       overrides:
-        managed_cluster_pool_config.initial_rpus: [32]
+        managed_cluster_pool_config.initial_rpus: [ 32 ]
         autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "32+32 RPU"
       overrides:
-        managed_cluster_pool_config.initial_rpus: [32, 32]
+        managed_cluster_pool_config.initial_rpus: [ 32, 32 ]
         autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
     - label: "64 RPU"
       overrides:
-        managed_cluster_pool_config.initial_rpus: [64]
+        managed_cluster_pool_config.initial_rpus: [ 64 ]
         autoscaling_config.allowed_rpu_sizes: []
         autoscaling_config.capacity_checkpoints: []
         routing_config.routing_policy: "round_robin"
