@@ -196,9 +196,7 @@ class PolicyTuner:
         train_dir = self._run_dir / "02_workloads" / "train"
         val_dir = self._run_dir / "02_workloads" / "val"
 
-        target_date = pd.Timestamp(
-            self._cfgd("workload_config.date")
-        ).date()
+        target_date = pd.Timestamp(self._cfgd("workload_config.date")).date()
 
         initial_seed = self._cfgd("tuner_config.seed", 42)
 
@@ -959,8 +957,10 @@ class PolicyTuner:
 
 
 if __name__ == "__main__":
-    cfg, _, force = cfgu.load_config_from_cli(
+
+    cfg, args = cfgu.load_config_from_cli(
         "Run the policy tuner from a YAML config file.",
     )
-    pt = PolicyTuner(cfg, force=force)
-    pt.tune()
+    pt = PolicyTuner(cfg, force=args.force)
+    final_config_path = pt.tune()
+    

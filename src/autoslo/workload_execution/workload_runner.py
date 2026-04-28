@@ -494,7 +494,7 @@ class WorkloadRunner:
 
 
 if __name__ == "__main__":
-    cfg, config_path, _ = cfgu.load_config_from_cli(
+    cfg, _ = cfgu.load_config_from_cli(
         "Run queries from a workload using a YAML config file.",
     )
     qr = WorkloadRunner(cfg)

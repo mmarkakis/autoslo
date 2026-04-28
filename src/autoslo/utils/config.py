@@ -51,15 +51,17 @@ def getd(
     return d
 
 
-def load_config_from_cli(description: str) -> tuple[dict, str, bool]:
+def load_config_from_cli(
+    description: str,
+) -> tuple[dict, argparse.Namespace]:
     """Parse CLI args, load YAML config, apply ``--set`` overrides.
 
-    Returns ``(cfg, config_path, force)`` where *cfg* is the fully-resolved
-    config dict, *config_path* is the path to the YAML file, and *force*
-    is the value of the ``--force`` flag (``False`` unless explicitly
-    passed).  Callers that don't care about ``--force`` may simply discard
-    it; users that pass ``--force`` to a command which ignores it will see
-    it parsed (and ignored) without error.
+    Returns ``(cfg, args)`` where *cfg* is the fully-resolved config dict
+    and *args* is the populated :class:`argparse.Namespace` (callers can
+    pull ``args.config``, ``args.force``, ``args.publish_as``, and
+    ``args.overwrite`` from it).  Commands that don't manage a run
+    directory or publish artifacts may simply discard the flags they
+    don't need; passing them is silently accepted but has no effect.
     """
 
     parser = argparse.ArgumentParser(description=description)
@@ -85,6 +87,25 @@ def load_config_from_cli(description: str) -> tuple[dict, str, bool]:
             "Commands that don't manage a run directory ignore this flag."
         ),
     )
+    parser.add_argument(
+        "--publish-as",
+        dest="publish_as",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Publish the resulting tuned config to the registry as "
+            "data/configs/tuned/<NAME>.yml on success. Commands that "
+            "don't produce a tuned config ignore this flag."
+        ),
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "When --publish-as is given, overwrite an existing registry "
+            "entry instead of erroring out."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -105,4 +126,4 @@ def load_config_from_cli(description: str) -> tuple[dict, str, bool]:
         overrides[key] = yaml.safe_load(val)
     cfg = copy_and_apply_overrides(cfg, overrides)
 
-    return cfg, args.config, args.force
+    return cfg, args

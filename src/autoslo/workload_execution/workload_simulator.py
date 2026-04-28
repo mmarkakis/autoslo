@@ -628,7 +628,7 @@ class WorkloadSimulator:
 
 
 if __name__ == "__main__":
-    cfg, _, _ = cfgu.load_config_from_cli(
+    cfg, _ = cfgu.load_config_from_cli(
         "Run the WorkloadSimulator from a YAML config file.",
     )
     ncpus = str(inner_level_num_cpus())
