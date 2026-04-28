@@ -46,7 +46,6 @@ class Workload:
     def __init__(
         self,
         workload_config: WorkloadConfig,
-        df: pd.DataFrame | None = None,
     ) -> None:
         """
         Parameters
@@ -54,22 +53,16 @@ class Workload:
         workload_config:
             The configuration for the workload.
 
-        df:
-            Optional DataFrame to use directly instead of loading from disk.
-            Must contain all columns listed in :data:`WORKLOAD_SCHEMA_COLUMNS`.
-            When *None* (default), the workload is loaded from the directory
-            specified by *workload_config*.
-
         Raises
         ------
         ValueError
-            If the DataFrame (loaded or supplied) is missing any of the
-            required columns from :data:`WORKLOAD_SCHEMA_COLUMNS`.
+            If the loaded DataFrame is missing any of the required columns from 
+            :data:`WORKLOAD_SCHEMA_COLUMNS`.
         ValueError
             If the DataFrame references multiple distinct schema names in the
             ``query_text_id`` column.
         FileNotFoundError
-            If *df* is *None* and no parquet file exists at the expected path.
+            If no parquet file exists at the expected path.
         """
         self._workload_config = workload_config
         self._queries_cache: list[Query] | None = None
@@ -80,19 +73,16 @@ class Workload:
         )
 
         # Find the dataframe.
-        if df is not None:
-            self._df = df.copy()
-        else:
-            path = os.path.join(
-                self._dir,
-                f"{workload_config.workload_name}.parquet",
+        path = os.path.join(
+            self._dir,
+            f"{workload_config.workload_name}.parquet",
+        )
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Workload file not found at {path}. "
+                "Ensure the file exists."
             )
-            if not os.path.exists(path):
-                raise FileNotFoundError(
-                    f"Workload file not found at {path}. "
-                    "Provide a DataFrame directly or ensure the file exists."
-                )
-            self._df = pd.read_parquet(path)
+        self._df = pd.read_parquet(path)
 
         # Validate the schema.
         for col in WORKLOAD_SCHEMA_COLUMNS:

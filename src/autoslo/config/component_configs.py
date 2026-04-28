@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Self
 
 import numpy as np
@@ -33,6 +34,12 @@ class _PartialConfig:
             cfg = cfg[sub_config_key]
         return cls(**cfg, **kwargs)
 
+    def to_dict(self) -> dict:
+        """
+        Convert the dataclass to a dictionary for dumping to YAML.
+        """
+        return self.__dict__
+
 
 @dataclass(frozen=True)
 class WorkloadConfig(_PartialConfig):
@@ -41,7 +48,7 @@ class WorkloadConfig(_PartialConfig):
     """
 
     workload_name: str
-    workload_dir: Optional[str] = None  # Defaults to data/workloads/
+    workload_dir: Optional[str | Path] = None  # Defaults to data/workloads/
     start_date_inclusive: Optional[str] = None  # YYYY-MM-DD
     end_date_inclusive: Optional[str] = None  # YYYY-MM-DD
     rescale_factor: float = 1.0
@@ -54,7 +61,7 @@ class ReservoirConfig(WorkloadConfig):
     for loading the reservoir. This is a subclass of WorkloadConfig since the
     reservoir is built from a workload.
     """
-    
+
     def as_workload_config(self) -> WorkloadConfig:
         """
         Return a WorkloadConfig with the same fields as this ReservoirConfig.
@@ -137,6 +144,7 @@ class SloObjectiveConfig(_PartialConfig):
     slo_metric: str | SloMetric
     slo_threshold: float
 
+
 @dataclass(frozen=True)
 class WorkloadRunnerConfig(_PartialConfig):
     """
@@ -147,6 +155,7 @@ class WorkloadRunnerConfig(_PartialConfig):
     max_threads: int
     closed_loop: bool
     schema_name: str
+
 
 @dataclass(frozen=True)
 class ProvisionerConfig(_PartialConfig):
@@ -159,6 +168,7 @@ class ProvisionerConfig(_PartialConfig):
     cluster_cache_state_dim: int
     spin_up_delay_s: float = 300.0
 
+
 @dataclass(frozen=True)
 class ManagedClusterPoolConfig(_PartialConfig):
     """
@@ -169,6 +179,7 @@ class ManagedClusterPoolConfig(_PartialConfig):
     num_reserved_clusters: int = 0
     max_clusters: int = 20
     maxconns: int = 1000
+
 
 @dataclass(frozen=True)
 class ForecastPolicyConfig(_PartialConfig):

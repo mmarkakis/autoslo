@@ -2,8 +2,6 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-import pandas as pd
-
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
 from autoslo.clusters.autoscaler import Autoscaler
@@ -57,7 +55,6 @@ class StructuredConfig:
         cfg: dict,
         out_dir: Optional[str] = None,
         write_text_log: bool = False,
-        workload_df: Optional[pd.DataFrame] = None,
         is_runner: bool = False,
     ) -> "StructuredConfig":
         """
@@ -94,7 +91,7 @@ class StructuredConfig:
 
         # ── workload ─────────────────────────────────────────────────────
         workload_config = WorkloadConfig.from_config(cfg)
-        workload = Workload(workload_config=workload_config, df=workload_df)
+        workload = Workload(workload_config=workload_config)
         workload.populate_featurizations_and_isolated_predictions(
             iconq_model=iconq_model,
             allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,

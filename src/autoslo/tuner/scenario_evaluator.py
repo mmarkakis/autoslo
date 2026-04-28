@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from autoslo.models.iconq_model import IconqModel
-from autoslo.clusters.cluster import Cluster
 import torch
 from rich.progress import (
     BarColumn,
@@ -25,6 +23,9 @@ from rich.progress import (
 )
 
 import autoslo.utils.config as cfgu
+from autoslo.clusters.cluster import Cluster
+from autoslo.config.component_configs import WorkloadConfig
+from autoslo.models.iconq_model import IconqModel
 from autoslo.tuner.tuner_utils import SimulationResult
 from autoslo.utils.paralellism import (
     _init_worker,
@@ -93,34 +94,20 @@ def _run_one_combination(
     # Runtime API — effective even if PyTorch was already imported.
     torch.set_num_threads(int(ncpus))
 
-    # Load the pre-sampled workload from disk.
-    workload_df = pd.read_parquet(workload_path)
-    workload_name = workload_path.stem
-    schema_name = cfgu.getd(config, "workload_config.schema_name", "default")
-    workload = Workload(workload_name, schema_name, df=workload_df)
-    rescale_factor = cfgu.getd(config, "workload_config.rescale_factor", None)
-    workload.prepare(rescale_factor=rescale_factor)
-    iconq_model_id = cfgu.getd(config, "models.iconq_model", None)
-    if iconq_model_id is not None:
-        iconq_model = IconqModel.load(iconq_model_id)
-        workload.populate_featurizations_and_isolated_predictions(
-            iconq_model=iconq_model,
-            allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,
-        )
+    # Overwrite the workload in the config with the one we want to run.
+    workload_config = WorkloadConfig(
+        workload_name=workload_label, workload_dir=workload_path.parent
+    )
+    config = cfgu.copy_and_apply_overrides(
+        config, {"workload_config": workload_config.to_dict()}
+    )
 
-    # Apply run-specific config overrides
-    local_overrides = {
-        "basic_config.run_id": workload_label,
-        "output_config.out_dir": str(combination_out_dir),
-        "output_config.write_text_log": False,
-        "output_config.experiment_name": None,
-    }
-    config = cfgu.copy_and_apply_overrides(config, local_overrides)
-
-    # Build the simulator with the workload injected at construction time
-    # so that all internal counters / tracking state are initialised
-    # with the correct workload from the start.
-    sim = WorkloadSimulator(config, workload=workload)
+    # Build the simulator.
+    sim = WorkloadSimulator(
+        config,
+        out_dir=combination_out_dir,
+        write_text_log=False,
+    )
 
     # Build a progress callback that writes into the shared dict.
     def _progress_cb(current: int, total: int) -> None:
@@ -391,5 +378,3 @@ class ScenarioEvaluator:
         if p == "auto":
             return max(1, deg_of_paralellism())
         return int(p)
-
- 

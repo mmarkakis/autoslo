@@ -1,6 +1,7 @@
 import heapq
 import logging
 import os
+from pathlib import Path
 from typing import Callable, Optional
 
 import torch
@@ -47,8 +48,7 @@ class WorkloadSimulator:
     def __init__(
         self,
         cfg: dict,
-        workload: Optional[Workload] = None,
-        out_dir: Optional[str] = None,
+        out_dir: Optional[str | Path] = None,
         write_text_log: bool = False,
     ):
         """
@@ -60,7 +60,6 @@ class WorkloadSimulator:
             out_dir=out_dir,
             write_text_log=write_text_log,
             is_runner=False,
-            workload_df=workload.df if workload else None,
         )
         self._run_id = structured_config.run_id
         self._out_dir = structured_config.out_dir
