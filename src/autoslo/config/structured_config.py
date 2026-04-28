@@ -159,30 +159,15 @@ class StructuredConfig:
         thread_pool_executor = ThreadPoolExecutor(max_workers=max_threads)
 
         # ── Provisioner ─────────────────────────────────────────────
-        absolute_aws_config_path = os.path.join(
-            pu.AUTOSLO_ROOT,
-            cfgu.getd(
-                cfg,
-                "provisioner_config.relative_aws_config_path",
-                "data/__run_configs/aws.yml",
-            ),
-        )
-        spin_up_delay_s = cfgu.getd(
-            cfg, "provisioner_config.spin_up_delay_s", 300.0
-        )
         cluster_cache_state_dim = iconq_model.iconq_query_featurizer.num_tables
-        provisioner = (
-            RedshiftServerlessProvisioner(
-                aws_config_path=absolute_aws_config_path,
-                cluster_cache_state_dim=cluster_cache_state_dim,
-            )
-            if is_runner
-            else SimulatedProvisioner(
-                spin_up_delay_s=spin_up_delay_s,
-                cluster_cache_state_dim=cluster_cache_state_dim,
-            )
+        provisioner_config = ProvisionerConfig.from_config(
+            cfg, cluster_cache_state_dim=cluster_cache_state_dim
         )
-
+        provisioner = (
+            RedshiftServerlessProvisioner(provisioner_config)
+            if is_runner
+            else SimulatedProvisioner(provisioner_config)
+        )
         # ── Output ───────────────────────────────────────────────────────────
         experiment_name: Optional[str] = cfgu.getd(
             cfg, "output_config.experiment_name"
@@ -220,43 +205,15 @@ class StructuredConfig:
         ]
 
         # ── Managed Cluster Pool ─────────────────────────────────────────────
-        initial_rpus = cfgu.getd(
-            cfg,
-            "managed_cluster_pool_config.initial_rpus",
-            [8],
-        )
-        max_clusters = cfgu.getd(
-            cfg, "managed_cluster_pool_config.max_clusters", 10
-        )
-        maxconns = cfgu.getd(
-            cfg,
-            "managed_cluster_pool_config.maxconns",
-            1000,
-        )
         num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
             capacity_checkpoints
         )
-        total_clusters_needed = len(initial_rpus) + num_reserved_clusters
-        if max_clusters < total_clusters_needed:
-            raise ValueError(
-                f"managed_cluster_pool_config.max_clusters={max_clusters} is "
-                f"too low: initial RPUs ({len(initial_rpus)}) + worst-case "
-                f"checkpoint reservation ({num_reserved_clusters}) "
-                f"requires at least "
-                f"{total_clusters_needed}."
-            )
-
+        managed_cluster_pool_config = ManagedClusterPoolConfig.from_config(
+            cfg, num_reserved_clusters=num_reserved_clusters
+        )
         pool: ManagedClusterPool = ManagedClusterPool(
             provisioner=provisioner,
-            initial_rpus=initial_rpus,
-            max_clusters=max_clusters,
-            num_reserved_clusters=num_reserved_clusters,
-            maxconns=maxconns,
-            search_path=schema.search_path,
-            collect_cluster_stats=True,
-            run_id=run_id,
-            out_dir=out_dir,
-            background_executor=thread_pool_executor if is_runner else None,
+            config=managed_cluster_pool_config,
         )
 
         # ── Forecasting ──────────────────────────────────────────────────────

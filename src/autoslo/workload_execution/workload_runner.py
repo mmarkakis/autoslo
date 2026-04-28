@@ -360,6 +360,16 @@ class WorkloadRunner:
 
         print(f"Run starting with ID {self._run_id}.")
 
+        # Spin up initial clusters.
+        schema = Schema.load(self._workload_runner_config.schema_name)
+        self._pool.add_details_and_spin_up_initial_clusters(
+            search_path=schema.search_path,
+            background_executor=self._executor,
+            run_id=self._run_id,
+            out_dir=self._out_dir,
+            write_text_log=self._write_text_log,
+        )
+
         # Add a 30-second buffer between the reference timestamp and the first
         # query's scheduled start time for setup.
         self._async_reference_ts = wall_clock_utc() + 30

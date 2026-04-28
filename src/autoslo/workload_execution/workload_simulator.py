@@ -154,6 +154,13 @@ class WorkloadSimulator:
         and minimizing SLO violations.
         """
 
+        print("Spinning up initial clusters...")
+        self._pool.add_details_and_spin_up_initial_clusters(
+            run_id=self._run_id,
+            out_dir=self._out_dir,
+            write_text_log=self._write_text_log,
+        )
+
         seq_num_to_cluster_name: dict[int, str] = {}
         queries = self._workload.queries()
 

@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from autoslo.clusters.cluster import Cluster
+from autoslo.config.component_configs import ProvisionerConfig
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 
@@ -23,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 class ClusterProvisioner(ABC):
     """Abstract interface for creating and destroying clusters."""
+
+    @abstractmethod
+    def __init__(self, config: ProvisionerConfig) -> None:
+        """Initialize the provisioner with the given configuration.
+
+        Parameters
+        ----------
+        config :
+            The provisioner configuration.
+        """
 
     @abstractmethod
     def spin_up(self, rpu: int, rel_time_s: float) -> Cluster:
@@ -77,16 +88,13 @@ class SimulatedProvisioner(ClusterProvisioner):
         simulator can proceed independently of wall clock time.
     """
 
-    def __init__(
-        self, cluster_cache_state_dim: int, spin_up_delay_s: float = 120.0
-    ) -> None:
-        self._spin_up_delay_s = spin_up_delay_s
-        self._cluster_cache_state_dim = cluster_cache_state_dim
+    def __init__(self, config: ProvisionerConfig) -> None:
+        self._config = config
 
     @property
     def spin_up_delay_s(self) -> float:
         """The configured spin-up delay (for the simulator to use)."""
-        return self._spin_up_delay_s
+        return self._config.spin_up_delay_s
 
     def spin_up(self, rpu: int, rel_time_s: float) -> Cluster:
         """Create a spec-only cluster instantly.
@@ -100,7 +108,7 @@ class SimulatedProvisioner(ClusterProvisioner):
             rpu=rpu,
             creation_time_s=rel_time_s,
             cache_state=np.zeros(
-                self._cluster_cache_state_dim, dtype=np.float32
+                self._config.cluster_cache_state_dim, dtype=np.float32
             ),
         )
         emit_structured(

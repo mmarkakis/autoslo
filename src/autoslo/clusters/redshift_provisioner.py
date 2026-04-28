@@ -20,15 +20,18 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import time
 
 import boto3  # type: ignore
 import numpy as np
 import yaml
 
+import autoslo.utils.paths as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
+from autoslo.config.component_configs import ProvisionerConfig
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import (
     BaseStructuredEvent,
@@ -68,16 +71,18 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
     Parameters
     ----------
-    aws_config_path:
-        Path to YAML file with AWS configuration
+    config :
+        The provisioner configuration.
     """
 
     MAX_NAMESPACES: int = 25
 
-    def __init__(
-        self, aws_config_path: str, cluster_cache_state_dim: int
-    ) -> None:
-        with open(aws_config_path) as f:
+    def __init__(self, config: ProvisionerConfig) -> None:
+        self._config = config
+        absolute_aws_config_path = os.path.join(
+            pu.AUTOSLO_ROOT, config.aws_config_path
+        )
+        with open(absolute_aws_config_path) as f:
             cfg = yaml.safe_load(f)
 
         if "aws_account_id" not in cfg:
@@ -110,7 +115,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         self._seq_counter = itertools.count()
         self._reference_time_s: float = 0.0
-        self._cluster_cache_state_dim = cluster_cache_state_dim
+        self._cluster_cache_state_dim = config.cluster_cache_state_dim
 
     @property
     def reference_time_s(self) -> float:

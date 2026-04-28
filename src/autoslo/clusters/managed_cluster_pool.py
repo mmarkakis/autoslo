@@ -32,6 +32,7 @@ from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
 from autoslo.clusters.spin_up_budget import SpinUpBudget
+from autoslo.config.component_configs import ManagedClusterPoolConfig
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
@@ -58,25 +59,14 @@ class ManagedClusterPool:
     def __init__(
         self,
         provisioner: ClusterProvisioner,
-        initial_rpus: list[int],
-        max_clusters: int = 10,
-        num_reserved_clusters: int = 0,
-        maxconns: int = 1000,
-        search_path: str = "public",
-        collect_cluster_stats: bool = False,
-        run_id: Optional[str] = None,
-        out_dir: Optional[str] = None,
-        write_text_log: bool = False,
-        background_executor: Optional[ThreadPoolExecutor] = None,
+        config: ManagedClusterPoolConfig,
+        
     ) -> None:
         self._provisioner = provisioner
-        self._initial_rpus = initial_rpus
-        self._max_clusters = max_clusters
-        self._num_reserved_clusters = num_reserved_clusters
-        self._maxconns = maxconns
-        self._search_path = search_path
-        self._collect_cluster_stats = collect_cluster_stats
-        self._background_executor = background_executor
+        self._initial_rpus = config.initial_rpus
+        self._max_clusters = config.max_clusters
+        self._num_reserved_clusters = config.num_reserved_clusters
+        self._maxconns = config.maxconns
 
         self._lock = threading.Lock()
         self._clusters: dict[str, Cluster] = {}
@@ -85,12 +75,37 @@ class ManagedClusterPool:
         self._background_futures: list[Future] = []
         self._bg_futures_lock = threading.Lock()
 
+      
+
+        self._budget = SpinUpBudget(max_clusters=config.max_clusters)
+        self._budget.reserve(config.num_reserved_clusters)
+
+        total_clusters_needed = (
+            len(config.initial_rpus) + config.num_reserved_clusters
+        )
+        if config.max_clusters < total_clusters_needed:
+            raise ValueError(
+                f"config.max_clusters={config.max_clusters} is "
+                f"too low: initial RPUs ({len(config.initial_rpus)}) + "
+                f"worst-case "
+                f"checkpoint reservation ({config.num_reserved_clusters}) "
+                f"requires at least "
+                f"{total_clusters_needed}."
+            )
+
+    def add_details_and_spin_up_initial_clusters(
+        self,
+        search_path: str = "public",
+        background_executor: Optional[ThreadPoolExecutor] = None,
+        run_id: Optional[str] = None,
+        out_dir: Optional[str] = None,
+        write_text_log: bool = False,
+    ) -> None:
+        self._search_path = search_path
+        self._background_executor = background_executor
         self._run_id: Optional[str] = run_id
         self._out_dir: Optional[str] = out_dir
         self._write_text_log = write_text_log
-
-        self._budget = SpinUpBudget(max_clusters=max_clusters)
-        self._budget.reserve(num_reserved_clusters)
 
         # Spin up initial clusters.
         rpus = self._initial_rpus
@@ -345,8 +360,7 @@ class ManagedClusterPool:
 
         # Stats collection (may sleep ~120 s in live mode).
         if (
-            self._collect_cluster_stats
-            and cluster.conn_info is not None
+            cluster.conn_info is not None
             and self._run_id is not None
             and self._out_dir is not None
         ):
