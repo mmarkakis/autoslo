@@ -1,5 +1,6 @@
 import logging
 import random
+from enum import Enum
 
 import numpy as np
 
@@ -18,6 +19,13 @@ from autoslo.utils.structured_events import EventType, QueryRelatedEvent
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
+
+
+class QueryRouterPolicy(Enum):
+    USE_ICONQ_MODEL = "use_iconq_model"
+    ROUND_ROBIN = "round_robin"
+    UNIFORM_RANDOM = "uniform_random"
+    CACHE_AWARE = "cache_aware"
 
 
 class QueryRouter:

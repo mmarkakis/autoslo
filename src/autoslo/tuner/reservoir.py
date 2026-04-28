@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Optional
 
 import pandas as pd
 from rich.console import Console
 
-import autoslo.utils.config as cfgu
+from autoslo.config.component_configs import ReservoirConfig
 from autoslo.workload_definition.workload import Workload
 
 console = Console()
@@ -28,17 +28,40 @@ class QueryReservoir:
 
     def __init__(
         self,
-        count_df: pd.DataFrame,
-        schema_name: str = "ext_tpcds1000",
+        reservoir_config: Optional[ReservoirConfig] = None,
+        count_df: Optional[pd.DataFrame] = None,
     ) -> None:
+        if (reservoir_config is None) == (count_df is None):
+            raise ValueError(
+                "Must specify exactly one of reservoir_config or count_df."
+            )
+        if reservoir_config is not None:
+            workload_config = reservoir_config.as_workload_config()
+            workload = Workload(workload_config)
 
-        # When loading, don't do anything else.
+            # Input parsing/validation.
+            if workload.df.empty:
+                raise ValueError("Cannot build reservoir from empty workload.")
+
+            # Set up bins.
+            # Key is (date, hour_of_day), Monday is 0
+            # Value is a dictionary from query_text_id to query count
+            df = workload.df.copy()
+            df["date"] = df["abs_start_time"].dt.date
+            df["hour"] = df["abs_start_time"].dt.hour
+            count_df = (
+                df.groupby(["date", "hour", "query_text_id"])
+                .size()
+                .reset_index(name="count")
+            )
+            console.print(
+                f"  Built reservoir based on workload "
+                f"{workload_config.workload_name} over the "
+                f"period {workload_config.start_date_inclusive} to "
+                f"{workload_config.end_date_inclusive}."
+            )
+        assert count_df is not None
         self._count_df = count_df
-        self._schema_name = schema_name
-
-    @property
-    def schema_name(self) -> str:
-        return self._schema_name
 
     @property
     def min_date(self) -> date:
@@ -67,46 +90,7 @@ class QueryReservoir:
                 f"Reservoir file not found at {count_df_path}"
             )
         count_df = pd.read_parquet(count_df_path)
-
         return cls(count_df=count_df)
-
-    @classmethod
-    def from_config(cls, cfg: dict[str, Any]) -> QueryReservoir:
-        schema_name = cfgu.getd(cfg, "workload_config.schema_name", required=True)
-        workload_name = cfgu.getd(
-            cfg, "workload_config.workload_name", required=True
-        )
-        workload = Workload(workload_name, schema_name)
-        start = cfgu.getd(
-            cfg, "forecast_config.start_date_inclusive", required=True
-        )
-        end = cfgu.getd(
-            cfg, "forecast_config.end_date_inclusive", required=True
-        )
-        workload.slice_by_abs_time(start=start, end=end)
-
-        # Input parsing/validation.
-        if workload.df.empty:
-            raise ValueError("Cannot build reservoir from empty DataFrame.")
-
-        # Set up bins.
-        # Key is (date, hour_of_day), Monday is 0
-        # Value is a dictionary from query_text_id to query count
-        df = workload.df.copy()
-        df["date"] = df["abs_start_time"].dt.date
-        df["hour"] = df["abs_start_time"].dt.hour
-        count_df = (
-            df.groupby(["date", "hour", "query_text_id"])
-            .size()
-            .reset_index(name="count")
-        )
-
-        console.print(
-            f"  Built reservoir based on workload {workload_name} over the "
-            f"period {start} to {end}."
-        )
-
-        return cls(count_df=count_df, schema_name=schema_name)
 
     def bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         if not (0 <= hour < 24):

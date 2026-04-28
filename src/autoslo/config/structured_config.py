@@ -1,8 +1,8 @@
 import os
-import shutil
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
+
+import pandas as pd
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
@@ -26,14 +26,12 @@ from autoslo.config.component_configs import (
 )
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
-from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.utils.logging import StructuredLogHandler, setup_run_logging
-from autoslo.workload_definition.query_text_registry import QueryTextRegistry
-from autoslo.workload_definition.schema import Schema
+from autoslo.utils.structured_events import wall_clock_utc
 from autoslo.workload_definition.workload import Workload
 
 
@@ -124,27 +122,12 @@ class StructuredConfig:
         iconq_model = IconqModel.load(iconq_model_id)
 
         # ── workload ─────────────────────────────────────────────────────
-        closed_loop: bool = bool(
-            cfgu.getd(cfg, "workload_config.closed_loop", False)
+        workload_config = WorkloadConfig.from_config(cfg)
+        workload = Workload(workload_config=workload_config, df=workload_df)
+        workload.populate_featurizations_and_isolated_predictions(
+            iconq_model=iconq_model,
+            allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,
         )
-        if workload is None:
-            workload_name = cfgu.getd(
-                cfg, "workload_config.workload_name", required=True
-            )
-            date_str = cfgu.getd(cfg, "workload_config.date")
-            rescale = cfgu.getd(cfg, "workload_config.rescale_factor", None)
-            workload = Workload(
-                workload_name=workload_name, schema_name=schema_name
-            )
-            workload.prepare(
-                abs_start=date_str,
-                abs_end=date_str,
-                rescale_factor=rescale,
-            )
-            workload.populate_featurizations_and_isolated_predictions(
-                iconq_model=iconq_model,
-                allowed_rpu_sizes=Cluster.ALL_ALLOWED_RPU_SIZES,
-            )
         if is_runner:
             workload.print_summary()
 
@@ -217,24 +200,20 @@ class StructuredConfig:
         )
 
         # ── Forecasting ──────────────────────────────────────────────────────
-        query_reservoir = QueryReservoir.from_config(cfg)
+        query_reservoir_config = ReservoirConfig.from_config(cfg)
+        query_reservoir = QueryReservoir(query_reservoir_config)
+        forecast_policy_config = ForecastPolicyConfig.from_config(cfg)
         forecast_policy = ForecastPolicy.from_name(
-            name=cfgu.getd(
-                cfg, "forecast_config.forecast_policy", "OneDayForecastPolicy"
-            ),
+            name=forecast_policy_config.forecast_policy_name,
             reservoir=query_reservoir,
-            **cfgu.getd(cfg, "forecast_config", {}),
-        )
-        fixed_queries_per_hour = cfgu.getd(
-            cfg, "routing_config.fixed_queries_per_hour", 100
+            forecast_policy_config=forecast_policy_config,
         )
         target_date = workload.abs_start_time_range()[0].date()
         forecasted_workload = forecast_policy.forecast(
-            target_date=target_date,
-            fixed_queries_per_hour=fixed_queries_per_hour,
+            target_date=target_date, use_fixed_queries_per_hour=True
         )
-        forecasted_workload = forecasted_workload.rescale_rel_start_times(
-            factor=workload.calculate_rescale_factor()
+        forecasted_workload = forecasted_workload.rescale_rel_times(
+            factor=workload.rescale_factor
         )
         rel_time_s_to_forecasted_table_vecs = (
             forecasted_workload.get_rel_time_s_to_table_vecs(

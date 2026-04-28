@@ -10,6 +10,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from autoslo.config.component_configs import (
+    ForecastPolicyConfig,
+    WorkloadConfig,
+)
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.utils.class_with_factory import ClassWithFactory
 from autoslo.workload_definition.workload import Workload
@@ -21,8 +25,7 @@ class ForecastPolicy(ClassWithFactory):
     def __init__(
         self,
         reservoir: QueryReservoir,
-        *args,
-        **kwargs,
+        forecast_policy_config: ForecastPolicyConfig,
     ) -> None:
         """
         Initialize the forecast policy.
@@ -34,14 +37,16 @@ class ForecastPolicy(ClassWithFactory):
         """
 
         self.reservoir = reservoir
-        self.schema_name = self.reservoir.schema_name
+        self.forecast_policy_config = forecast_policy_config
+
 
     def forecast(
         self,
         target_date: date,
         seed: int = 42,
         workload_name: str = "forecast",
-        fixed_queries_per_hour: Optional[int] = None,
+        use_fixed_queries_per_hour: bool = False,
+        out_dir: Optional[Path] = None,
     ) -> Workload:
         """Return a forcasted workload for the target interval.
 
@@ -64,8 +69,8 @@ class ForecastPolicy(ClassWithFactory):
                 continue
 
             n_samples = self._n_samples(target_date, i, bin_df)
-            if fixed_queries_per_hour is not None:
-                n_samples = fixed_queries_per_hour
+            if use_fixed_queries_per_hour:
+                n_samples = self.forecast_policy_config.fixed_queries_per_hour
             if n_samples == 0:
                 continue
 
@@ -107,7 +112,14 @@ class ForecastPolicy(ClassWithFactory):
         forecast_df = pd.DataFrame(
             rows, columns=Workload.WORKLOAD_SCHEMA_COLUMNS
         )
-        workload = Workload(workload_name, self.schema_name, forecast_df)
+        workload_config = WorkloadConfig(
+            workload_name=workload_name,
+            workload_dir=str(out_dir) if out_dir is not None else None,
+            start_date_inclusive=target_date.isoformat(),
+            end_date_inclusive=target_date.isoformat(),
+            rescale_factor=1.0,
+        )
+        workload = Workload(workload_config=workload_config, df=forecast_df)
         return workload
 
     def forecast_n_scenarios(
@@ -117,6 +129,7 @@ class ForecastPolicy(ClassWithFactory):
         initial_seed: int = 42,
         workload_name_prefix: str = "f",
         out_dir: Optional[Path] = None,
+        use_fixed_queries_per_hour: bool = False,
     ) -> tuple[list[Workload], list[Path]]:
         """
         Return a list of forecasted workloads for the target day. Optionally
@@ -156,7 +169,11 @@ class ForecastPolicy(ClassWithFactory):
             workload_name = f"{workload_name_prefix}_{i}"
             workload_seed = initial_seed + i
             workload = self.forecast(
-                target_date, seed=workload_seed, workload_name=workload_name
+                target_date,
+                seed=workload_seed,
+                workload_name=workload_name,
+                out_dir=out_dir,
+                use_fixed_queries_per_hour=use_fixed_queries_per_hour,
             )
             workloads.append(workload)
 
@@ -166,7 +183,7 @@ class ForecastPolicy(ClassWithFactory):
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = []
         for i, workload in enumerate(workloads):
-            path = workload.save(out_dir=out_dir, overwrite=True)
+            path = workload.save(overwrite=True)
             paths.append(path)
         return workloads, paths
 
@@ -185,7 +202,7 @@ class ForecastPolicy(ClassWithFactory):
 
 class GroundTruthForecastPolicy(ForecastPolicy):
     """
-    Base the forecast on the ground truth future observations. 
+    Base the forecast on the ground truth future observations.
     This is not a realistic policy but can be useful as a simple baseline.
     """
 
@@ -290,16 +307,6 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
               this case, forecast zero queries.
     """
 
-    def __init__(
-        self,
-        reservoir: QueryReservoir,
-        decay_factor: float = 0.5,
-        *args,
-        **kwargs,
-    ) -> None:
-        super().__init__(reservoir, *args, **kwargs)
-        self.decay_factor = decay_factor
-
     def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         weight = 1.0
         day = target_date - pd.Timedelta(days=7)
@@ -310,7 +317,7 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
                 bin_df = bin_df.copy()
                 bin_df["count"] *= weight  # apply the weight to the count
             weight *= (
-                self.decay_factor
+                self.forecast_policy_config.decay_factor
             )  # decay by the specified factor every week
             day -= pd.Timedelta(days=7)
             superbin_list.append(bin_df)
@@ -332,7 +339,7 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
 
     @property
     def name(self) -> str:
-        return f"{self.__class__.__name__}(decay_factor={self.decay_factor})"
+        return f"{self.__class__.__name__}(decay_factor={self.forecast_policy_config.decay_factor})"
 
     def _n_samples(
         self, target_date: date, hour: int, bin_df: pd.DataFrame
@@ -357,7 +364,7 @@ class SameDayExponentialForecastPolicy(ForecastPolicy):
             weighted_count_sum += weight * day_count
             total_weight += weight
             weight *= (
-                self.decay_factor
+                self.forecast_policy_config.decay_factor
             )  # decay by the specified factor every week
             day -= pd.Timedelta(days=7)
         if total_weight == 0:

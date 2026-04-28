@@ -26,7 +26,7 @@ from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.forecast_policy import ForecastPolicy
 from autoslo.tuner.param_sweep import ParamSweep
-from autoslo.tuner.policy_tuner_timer import PhaseTimingRecord, PolicyTunerTimer
+from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
@@ -126,14 +126,6 @@ class PolicyTuner:
         """
         Phase 1: Build or load the query reservoir.
         """
-        if (
-            self._cfgd("forecast_config.forecast_policy")
-            == "GroundTruthForecastPolicy"
-        ):
-            console.print("  Skipping reservoir build (ground truth mode).")
-            return
-
-        # Build reservoir from config.
         save_dir = self._run_dir / "01_reservoir"
         self._reservoir = QueryReservoir.from_config(self._initial_config)
         self._reservoir.save(save_dir)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -10,6 +9,7 @@ from rich import print
 from rich.table import Table
 
 import autoslo.utils.paths as pu
+from autoslo.config.component_configs import WorkloadConfig
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.iconq_model import IconqModel
 from autoslo.workload_definition.query import Query, QueryTextId
@@ -45,84 +45,114 @@ class Workload:
 
     def __init__(
         self,
-        workload_name: str,
-        schema_name: str,
+        workload_config: WorkloadConfig,
         df: pd.DataFrame | None = None,
     ) -> None:
         """
         Parameters
         ----------
-        workload_name:
-            The name of the workload.
-        schema_name:
-            The name of the schema.
+        workload_config:
+            The configuration for the workload.
+
         df:
             Optional DataFrame to use directly instead of loading from disk.
             Must contain all columns listed in :data:`WORKLOAD_SCHEMA_COLUMNS`.
-            When *None* (default), the workload is loaded from the standard
-            file path under the ``__workloads`` data directory.
+            When *None* (default), the workload is loaded from the directory
+            specified by *workload_config*.
 
         Raises
         ------
         ValueError
             If the DataFrame (loaded or supplied) is missing any of the
             required columns from :data:`WORKLOAD_SCHEMA_COLUMNS`.
+        ValueError
+            If the DataFrame references multiple distinct schema names in the
+            ``query_text_id`` column.
         FileNotFoundError
             If *df* is *None* and no parquet file exists at the expected path.
         """
-        self._workload_name = workload_name
-        self._schema_name = schema_name
+        self._workload_config = workload_config
+        self._queries_cache: list[Query] | None = None
+        self._rescale_factor = workload_config.rescale_factor
+        self._df: pd.DataFrame
+        self._dir = workload_config.workload_dir or (
+            Path(pu.get_data_path()) / "workloads"
+        )
 
+        # Find the dataframe.
         if df is not None:
             self._df = df.copy()
         else:
             path = os.path.join(
-                pu.get_data_path(),
-                "__workloads",
-                schema_name,
-                f"{workload_name}.parquet",
+                self._dir,
+                f"{workload_config.workload_name}.parquet",
             )
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"Workload file not found at {path}. "
+                    "Provide a DataFrame directly or ensure the file exists."
+                )
             self._df = pd.read_parquet(path)
 
+        # Validate the schema.
         for col in WORKLOAD_SCHEMA_COLUMNS:
             if col not in self._df.columns:
                 raise ValueError(
                     f"DataFrame is missing required column {col!r} from "
                     f"WORKLOAD_SCHEMA_COLUMNS."
                 )
+        unique_schema_names = (
+            self._df["query_text_id"]
+            .apply(lambda x: QueryTextId(x).schema_name)
+            .unique()
+        )
+        if len(unique_schema_names) != 1:
+            raise ValueError(
+                f"DataFrame has multiple schema names in query_text_id: "
+                f"{unique_schema_names}"
+            )
+        self._schema_name = unique_schema_names[0]
 
-        self.set_rel_start_times_from_abs()
+        # Slice.
+        tz = self._df["abs_start_time"].dt.tz
+        mask = pd.Series(True, index=self._df.index)
+        if workload_config.start_date_inclusive is not None:
+            parsed_start = (
+                pd.Timestamp(workload_config.start_date_inclusive)
+                .normalize()
+                .tz_localize(tz)
+            )
+            mask &= self._df["abs_start_time"] >= parsed_start
+        if workload_config.end_date_inclusive is not None:
+            parsed_end = pd.Timestamp(
+                workload_config.end_date_inclusive
+            ).normalize().tz_localize(tz) + pd.Timedelta(days=1)
+            mask &= self._df["abs_start_time"] < parsed_end
+        self._df = self._df[mask].reset_index(drop=True)
 
-        self._queries_cache: list[Query] | None = None
+        # Apply timing transformations.
+        self.rescale_rel_times(workload_config.rescale_factor)
 
     # ------------------------------------------------------------------
     # Core interface
     # ------------------------------------------------------------------
 
-    def rename_workload(self, new_name: str) -> Workload:
-        """Rename the workload by changing the ``workload_name`` column."""
-        self._workload_name = new_name
-        if "workload_name" in self._df.columns:
-            self._df["workload_name"] = new_name
-        self._queries_cache = None
-        return self
-
     @property
     def workload_name(self) -> str:
         """The workload identifier, taken from the ``workload_name`` column."""
-        return self._workload_name
+        return self._workload_config.workload_name
 
     @property
-    def schema_name(self) -> str:
-        """The schema identifier, taken from the ``schema_name`` column."""
-        return self._schema_name
+    def rescale_factor(self) -> float:
+        """The factor by which the workload's relative start times have been
+        scaled, taken from the workload config."""
+        return self._rescale_factor
 
     @property
     def df(self) -> pd.DataFrame:
         """
         The underlying :class:`~pandas.DataFrame`.
         """
-
         return self._df
 
     @property
@@ -161,6 +191,19 @@ class Workload:
             )
         self._queries_cache = result
         return result
+
+    def rescale_rel_times(self, factor: float) -> Workload:
+        """
+        Rescale the relative start times of the workload by the given factor.
+        """
+        min_timestamp = self._df["abs_start_time"].min().timestamp()
+        self._df["rel_start_time_s"] = self._df["abs_start_time"].apply(
+            lambda t: t.timestamp() - min_timestamp
+        )
+        self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
+        self._rescale_factor = factor
+        self._queries_cache = None
+        return self
 
     def populate_featurizations_and_isolated_predictions(
         self, iconq_model: IconqModel, allowed_rpu_sizes: list[int]
@@ -201,180 +244,15 @@ class Workload:
             lambda qtid: isolated_predictions_cache[qtid]
         )
 
-    # ------------------------------------------------------------------
-    # Start time manipulation
-    # ------------------------------------------------------------------
-
-    def set_rel_start_times_from_abs(self) -> None:
+    def save(self, overwrite: bool = False) -> Path:
         """
-        Create a column of relative start times (``rel_start_time_s``) derived
-        from absolute start times (``abs_start_time``) using epoch timestamps.
-
-        This is a mutating operation that adds or overwrites the
-        ``rel_start_time_s`` column in the backing DataFrame.
-
-        """
-        self._df["rel_start_time_s"] = self._df["abs_start_time"].apply(
-            lambda t: t.timestamp()
-        )
-        self._queries_cache = None
-
-    def set_rel_start_times_from_zero(self) -> Workload:
-        """
-        Create a column of relative start times (``rel_start_time_s``) derived
-        from absolute start times (``abs_start_time``) by rebasing to zero.
-
-        This is a mutating operation that adds or overwrites the
-        ``rel_start_time_s`` column in the backing DataFrame.
-        """
-        min_timestamp = self._df["abs_start_time"].min().timestamp()
-        self._df["rel_start_time_s"] = self._df["abs_start_time"].apply(
-            lambda t: t.timestamp() - min_timestamp
-        )
-        self._queries_cache = None
-        return self
-
-    def rescale_rel_start_times(self, factor: Optional[float]) -> Workload:
-        """
-        Rescale the relative start times (``rel_start_time_s``) by a constant
-        factor.
-
-        This is a mutating operation that modifies the existing
-        ``rel_start_time_s`` column in the backing DataFrame.  Absolute start
-        times are left unchanged.
+        Persist the workload DataFrame to
+        <workload_config.workload_name>.parquet under the directory specified
+        when generating the workload (defaulting to the standard path under the
+        ``workloads`` data directory if not specified).
 
         Parameters
         ----------
-        factor:
-            The constant factor by which to multiply all relative start times.
-        """
-        if factor is not None:
-            start_at_zero = self._df["rel_start_time_s"].min() == 0
-            self.set_rel_start_times_from_abs()
-            if start_at_zero:
-                self.set_rel_start_times_from_zero()
-            self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
-        self._queries_cache = None
-
-        return self
-
-    def calculate_rescale_factor(self) -> float:
-        """
-        Back-calculate the rescale factor between absolute and relative start
-        times.
-        """
-        range_abs = (
-            self._df["abs_start_time"].max().timestamp()
-            - self._df["abs_start_time"].min().timestamp()
-        )
-        range_rel = (
-            self._df["rel_start_time_s"].max()
-            - self._df["rel_start_time_s"].min()
-        )
-        if range_rel == 0:
-            return 1.0
-        return range_rel / range_abs
-
-    def prepare(
-        self,
-        abs_start: str | None = None,
-        abs_end: str | None = None,
-        rescale_factor: Optional[float] = None,
-    ) -> Workload:
-        """Slice, rebase, and optionally rescale workload timing.
-
-        This is a convenience wrapper around:
-        - :meth:`slice_by_abs_time`
-        - :meth:`set_rel_start_times_from_zero`
-        - :meth:`rescale_rel_start_times`
-
-        The operation is mutating and returns ``self``.
-        """
-        self.slice_by_abs_time(start=abs_start, end=abs_end)
-        self.set_rel_start_times_from_zero()
-        self.rescale_rel_start_times(factor=rescale_factor)
-        return self
-
-    def slice_by_abs_time(
-        self,
-        start: str | None = None,
-        end: str | None = None,
-    ) -> Workload:
-        """
-        Filter the workload to only include queries whose ``abs_start_time``
-        falls within [*start*, *end*] (both bounds inclusive and optional).
-
-        Timestamps are parsed with :func:`pandas.Timestamp` and compared
-        against the ``abs_start_time`` column.  If the column is
-        timezone-aware and the supplied string has no timezone, UTC is
-        assumed.  The DataFrame index is reset after filtering.
-
-        Date-only strings (``"YYYY-MM-DD"``) are interpreted as inclusive
-        day boundaries: a *start* of ``"D"`` becomes the midnight that
-        begins day *D*, while an *end* of ``"D"`` becomes the midnight that
-        begins day *D + 1* (so the bound covers all of *D*).
-
-        This is a mutating operation; ``rel_start_time_s`` values are *not*
-        updated — call :meth:`set_rel_start_times_from_zero` afterwards if
-        you want them rebased to the new first query.
-
-        Parameters
-        ----------
-        start:
-            ISO 8601 timestamp or ``YYYY-MM-DD`` date for the lower bound
-            (inclusive).  ``None`` means no lower bound.
-        end:
-            ISO 8601 timestamp or ``YYYY-MM-DD`` date for the upper bound
-            (inclusive).  ``None`` means no upper bound.
-        """
-        tz = self._df["abs_start_time"].dt.tz
-
-        def _is_date_only(s: str) -> bool:
-            return (
-                len(s) == 10
-                and s[4] == "-"
-                and s[7] == "-"
-                and s[:4].isdigit()
-                and s[5:7].isdigit()
-                and s[8:10].isdigit()
-            )
-
-        def _parse(ts_str: str, *, is_end_bound: bool) -> pd.Timestamp:
-            ts = pd.Timestamp(ts_str)
-            if isinstance(ts_str, str) and _is_date_only(ts_str) and is_end_bound:
-                ts = ts + pd.Timedelta(days=1)
-            if tz is not None and ts.tzinfo is None:
-                ts = ts.tz_localize(tz)
-            elif tz is None and ts.tzinfo is not None:
-                ts = ts.tz_localize(None)
-            return ts
-
-        mask = pd.Series(True, index=self._df.index)
-        if start is not None:
-            mask &= self._df["abs_start_time"] >= _parse(start, is_end_bound=False)
-        if end is not None:
-            mask &= self._df["abs_start_time"] <= _parse(end, is_end_bound=True)
-
-        self._df = self._df[mask].reset_index(drop=True)
-        self._queries_cache = None
-
-        return self
-
-    def save(
-        self, out_dir: Optional[Path] = None, overwrite: bool = False
-    ) -> Path:
-        """Persist the workload DataFrame to the standard file path.
-
-        If no path is given, the file is written to
-        ``<data_root>/__workloads/<schema_name>/<workload_name>.parquet``.
-        Parent directories are created automatically.
-
-        Parameters
-        ----------
-        out_dir:
-            Optional directory to write the workload file to.
-            If *None* (default), the file is written to the standard path
-            under the ``__workloads`` directory.
         overwrite:
             If *False* (default) and the file already exists, raises
             :class:`FileExistsError`.  Set to *True* to overwrite.
@@ -390,11 +268,9 @@ class Workload:
             If a file already exists at the target path and *overwrite* is
             *False*.
         """
-        if out_dir is None:
-            out_dir = (
-                Path(pu.get_data_path()) / "__workloads" / self._schema_name
-            )
-        path = out_dir / f"{self._workload_name}.parquet"
+        path = (
+            Path(self._dir) / f"{self._workload_config.workload_name}.parquet"
+        )
         if path.exists() and not overwrite:
             raise FileExistsError(
                 f"Workload file already exists at {path}. "
@@ -406,44 +282,43 @@ class Workload:
 
     def print_summary(self) -> None:
         """Print a summary of the workload using rich."""
-        self.print_summary_from_df(self._df)
-
-    @staticmethod
-    def print_summary_from_df(workload_df):
-        """Print a summary of the workload DataFrame using rich."""
         stats_table = Table(title="Workload Summary")
 
         stats_table.add_column("Stat", style="cyan", no_wrap=True)
         stats_table.add_column("Value", style="magenta")
-        stats_table.add_row("Total Queries", str(len(workload_df)))
+        stats_table.add_row(
+            "Workload Name", self._workload_config.workload_name
+        )
+        stats_table.add_row("Schema Name", self._schema_name)
+        stats_table.add_row(
+            "Start Date (inclusive)",
+            str(self._df["abs_start_time"].min().date()),
+        )
+        stats_table.add_row(
+            "End Date (inclusive)", str(self._df["abs_start_time"].max().date())
+        )
+        stats_table.add_row(
+            "Rescale Factor", str(self._workload_config.rescale_factor)
+        )
+        stats_table.add_row("", "")
+        stats_table.add_row("Total Queries", str(len(self._df)))
         num_unique_templates = (
-            workload_df["query_text_id"]
+            self._df["query_text_id"]
             .apply(lambda x: QueryTextId(x).template_id)
             .nunique()
         )
         stats_table.add_row("Unique Query Templates", str(num_unique_templates))
         stats_table.add_row(
             "Unique Template+Query Index",
-            str(workload_df["query_text_id"].nunique()),
+            str(self._df["query_text_id"].nunique()),
         )
         stats_table.add_row(
-            "Absolute Time Range",
-            f"{workload_df['abs_start_time'].min()} to {workload_df['abs_start_time'].max()}",
+            "Rescaled Duration (seconds)",
+            str(self._df["rel_start_time_s"].max()),
         )
         stats_table.add_row(
-            "Relative Time Range (seconds)",
-            f"{workload_df['rel_start_time_s'].min()} to {workload_df['rel_start_time_s'].max()}",
-        )
-        stats_table.add_row(
-            "Mean Inter-Arrival Time (seconds)",
-            str(workload_df["abs_start_time"].diff().dt.total_seconds().mean()),
-        )
-        num_unique_days_with_queries = (
-            workload_df["abs_start_time"].dt.normalize().nunique()
-        )
-        stats_table.add_row(
-            "Mean Queries per Day",
-            str(len(workload_df) / num_unique_days_with_queries),
+            "Rescaled Mean Inter-Arrival Time (seconds)",
+            str(self._df["rel_start_time_s"].diff().mean()),
         )
         print(stats_table)
 
