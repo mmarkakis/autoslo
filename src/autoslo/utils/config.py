@@ -74,7 +74,7 @@ def load_config_from_cli(description: str) -> tuple[dict, str, bool]:
         metavar="KEY=VALUE",
         help=(
             "Override config values using dot-delimited keys, e.g. "
-            "--set slo_config.slo_s=5.0 basic_config.schema_name=my_schema"
+            "--set slo_config.slo_s=5.0 workload_config.schema_name=my_schema"
         ),
     )
     parser.add_argument(

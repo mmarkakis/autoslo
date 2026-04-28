@@ -98,7 +98,7 @@ def _run_one_combination(
     # Load the pre-sampled workload from disk.
     workload_df = pd.read_parquet(workload_path)
     workload_name = workload_path.stem
-    schema_name = cfgu.getd(config, "basic_config.schema_name", "default")
+    schema_name = cfgu.getd(config, "workload_config.schema_name", "default")
     workload = Workload(workload_name, schema_name, df=workload_df)
     rescale_factor = cfgu.getd(config, "workload_config.rescale_factor", None)
     workload.prepare(rescale_factor=rescale_factor)

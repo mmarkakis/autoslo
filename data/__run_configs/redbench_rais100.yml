@@ -1,6 +1,5 @@
 ### Basic Configuration
 basic_config:
-  schema_name: ext_tpcds1000
   experiment_name: test_experiment
   overwrite_experiment: true
   simulator_run_id: test_run
@@ -8,6 +7,7 @@ basic_config:
 
 ### Workload Configuration
 workload_config:
+  schema_name: ext_tpcds1000
   workload_name: redbench_provisioned_157_0
   date: "2024-05-27"
   rescale_factor: 0.16666667

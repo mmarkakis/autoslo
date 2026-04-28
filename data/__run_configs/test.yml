@@ -1,6 +1,5 @@
 ### Basic Configuration
 basic_config:
-  schema_name: ext_tpcds1000
   experiment_name: test_experiment
   overwrite_experiment: true
   simulator_run_id: test_run
@@ -8,6 +7,7 @@ basic_config:
 
 ### Workload Configuration
 workload_config:
+  schema_name: ext_tpcds1000
   workload_name: test_workload
   # Optionally restrict to a time slice of the workload:
   # abs_start_time_start: "2024-01-01T00:00:00"

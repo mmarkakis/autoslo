@@ -72,7 +72,7 @@ class QueryReservoir:
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> QueryReservoir:
-        schema_name = cfgu.getd(cfg, "basic_config.schema_name", required=True)
+        schema_name = cfgu.getd(cfg, "workload_config.schema_name", required=True)
         workload_name = cfgu.getd(
             cfg, "workload_config.workload_name", required=True
         )

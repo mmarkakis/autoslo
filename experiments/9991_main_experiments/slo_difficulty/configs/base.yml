@@ -1,11 +1,11 @@
 # SLO strictness experiment: different SLO thresholds
 
 basic_config:
-  schema_name: ext_tpcds1000
   iconq_model_id: "1771539369"
   run_id: "tuner_prev_day"
 
 workload_config:
+  schema_name: ext_tpcds1000
   workload_name: redbench_provisioned_157_0
   date: "2024-05-27"
   rescale_factor: 0.16666667

@@ -3,11 +3,11 @@
 # serving as an upper-bound benchmark against the forecasted-history scenarios.
 
 basic_config:
-  schema_name: ext_tpcds1000
   iconq_model_id: "1771539369"
   run_id: "tuner_ground_truth"
 
 workload_config:
+  schema_name: ext_tpcds1000
   workload_name: redbench_provisioned_157_0
   date: "2024-05-27"
   rescale_factor: 0.16666667

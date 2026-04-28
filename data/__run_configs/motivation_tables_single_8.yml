@@ -1,6 +1,5 @@
 ### Basic Configuration
 basic_config:
-  schema_name: ext_tpcds1000
   experiment_name: motivation_tables
   overwrite_experiment: true
   simulator_run_id: single_32
@@ -8,6 +7,7 @@ basic_config:
 
 ### Workload Configuration
 workload_config:
+  schema_name: ext_tpcds1000
   workload_name: motivation_workload_tables
   closed_loop: true
 

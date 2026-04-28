@@ -105,7 +105,7 @@ class StructuredConfig:
 
         # ── basic ────────────────────────────────────────────────────────
         schema_name: str = cfgu.getd(
-            cfg, "basic_config.schema_name", required=True
+            cfg, "workload_config.schema_name", required=True
         )
         schema = Schema.load(schema_name)
 
