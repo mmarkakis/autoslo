@@ -27,7 +27,14 @@ def _quote_ambiguous_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
     return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
 
+def _posix_path_as_str(dumper: yaml.SafeDumper, data: Path) -> yaml.ScalarNode:
+    return dumper.represent_scalar(
+        "tag:yaml.org,2002:str", data.as_posix(), style="'"
+    )
+
+
 _QuotingSafeDumper.add_representer(str, _quote_ambiguous_str)
+_QuotingSafeDumper.add_multi_representer(Path, _posix_path_as_str)
 
 
 def dump_yaml(
