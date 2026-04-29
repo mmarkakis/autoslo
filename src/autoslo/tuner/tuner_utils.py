@@ -70,7 +70,7 @@ class AggregatedSimulationResults:
     def print_comparison(
         *entries: tuple[str, AggregatedSimulationResults],
         console: Console,
-        agg_metric: str = "p90",
+        agg_method: str = "p90",
         slo_metric: str | SloMetric = "binary",
         highlight_best: bool = True,
     ) -> None:
@@ -81,7 +81,7 @@ class AggregatedSimulationResults:
         *entries :
             ``(label, agg)`` pairs.  Each gets one row.  Use labels like
             ``"Initial (train)"`` / ``"Initial (val)"`` to distinguish splits.
-        agg_metric :
+        agg_method :
             Aggregation metric shown in the title.
         slo_metric :
             The SLO metric that was actually optimised (``"binary"``,
@@ -102,7 +102,7 @@ class AggregatedSimulationResults:
         cost_col = 3  # always
 
         table = Table(
-            title=f"Comparison  [dim](agg: {agg_metric})[/dim]",
+            title=f"Comparison  [dim](agg: {agg_method})[/dim]",
             show_lines=True,
         )
         table.add_column("Config", justify="left")

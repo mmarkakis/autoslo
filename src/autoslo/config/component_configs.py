@@ -200,3 +200,15 @@ class OutputConfig(_PartialConfig):
 
     out_dir: str
     overwrite: bool = False
+
+
+@dataclass(frozen=True)
+class SamplingConfig(_PartialConfig):
+    """
+    Configuration for sampling, including the random seed and sampling method.
+    """
+
+    num_scenarios: int
+    seed: int = 42
+    train_fraction: float = 0.6
+    aggregation_method: str = "mean"

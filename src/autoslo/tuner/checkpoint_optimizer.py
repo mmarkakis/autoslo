@@ -297,12 +297,12 @@ class CheckpointOptimizer:
         evaluator: ScenarioEvaluator,
         config: dict[str, Any],
         run_dir: Path,
-        agg_metric: str,
+        agg_method: str,
     ) -> None:
         self._evaluator = evaluator
         self._config = config
         self._run_dir = run_dir
-        self._agg_metric = agg_metric
+        self._agg_method = agg_method
 
         self._allowed_rpu_sizes = self._cfgd(
             "autoscaling_config.allowed_rpu_sizes",
@@ -393,7 +393,7 @@ class CheckpointOptimizer:
                 )
                 train_results = nested_train_results[0]
                 agg_train_results = SimulationResult.aggregate(
-                    train_results, self._agg_metric
+                    train_results, self._agg_method
                 )
                 current_train_agg = agg_train_results
 
@@ -469,7 +469,7 @@ class CheckpointOptimizer:
                 checkpoint = checkpoints[i]
                 trial_results = all_trial_results[i]
                 agg = SimulationResult.aggregate(
-                    trial_results, self._agg_metric
+                    trial_results, self._agg_method
                 )
                 cands.append((checkpoint, agg))
 
@@ -487,7 +487,7 @@ class CheckpointOptimizer:
             AggregatedSimulationResults.print_comparison(
                 ("Current config", agg_train_results),
                 ("Best candidate", cands[best_idx][1]),
-                agg_metric=self._agg_metric,
+                agg_method=self._agg_method,
                 slo_metric=sm,
                 console=console,
             )

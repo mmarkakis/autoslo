@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -56,7 +57,7 @@ class Workload:
         Raises
         ------
         ValueError
-            If the loaded DataFrame is missing any of the required columns from 
+            If the loaded DataFrame is missing any of the required columns from
             :data:`WORKLOAD_SCHEMA_COLUMNS`.
         ValueError
             If the DataFrame references multiple distinct schema names in the
@@ -66,21 +67,18 @@ class Workload:
         """
         self._workload_config = workload_config
         self._queries_cache: list[Query] | None = None
-        self._rescale_factor = workload_config.rescale_factor
-        self._df: pd.DataFrame
-        self._dir = workload_config.workload_dir or (
-            Path(pu.get_data_path()) / "workloads"
-        )
 
         # Find the dataframe.
+        in_dir = workload_config.workload_dir or (
+            Path(pu.get_data_path()) / "workloads"
+        )
         path = os.path.join(
-            self._dir,
+            in_dir,
             f"{workload_config.workload_name}.parquet",
         )
         if not os.path.exists(path):
             raise FileNotFoundError(
-                f"Workload file not found at {path}. "
-                "Ensure the file exists."
+                f"Workload file not found at {path}. " "Ensure the file exists."
             )
         self._df = pd.read_parquet(path)
 
@@ -106,22 +104,23 @@ class Workload:
         # Slice.
         tz = self._df["abs_start_time"].dt.tz
         mask = pd.Series(True, index=self._df.index)
-        if workload_config.start_date_inclusive is not None:
+        if self._workload_config.start_date_inclusive is not None:
             parsed_start = (
-                pd.Timestamp(workload_config.start_date_inclusive)
+                pd.Timestamp(self._workload_config.start_date_inclusive)
                 .normalize()
                 .tz_localize(tz)
             )
             mask &= self._df["abs_start_time"] >= parsed_start
-        if workload_config.end_date_inclusive is not None:
+        if self._workload_config.end_date_inclusive is not None:
             parsed_end = pd.Timestamp(
-                workload_config.end_date_inclusive
+                self._workload_config.end_date_inclusive
             ).normalize().tz_localize(tz) + pd.Timedelta(days=1)
             mask &= self._df["abs_start_time"] < parsed_end
         self._df = self._df[mask].reset_index(drop=True)
 
         # Apply timing transformations.
-        self.rescale_rel_times(workload_config.rescale_factor)
+        self.rescale_rel_times(self._workload_config.rescale_factor)
+
 
     # ------------------------------------------------------------------
     # Core interface
@@ -129,14 +128,24 @@ class Workload:
 
     @property
     def workload_name(self) -> str:
-        """The workload identifier, taken from the ``workload_name`` column."""
+        """The workload identifier."""
         return self._workload_config.workload_name
 
     @property
     def rescale_factor(self) -> float:
         """The factor by which the workload's relative start times have been
         scaled, taken from the workload config."""
-        return self._rescale_factor
+        abs_range_s = (
+            self._df["abs_start_time"].max().timestamp()
+            - self._df["abs_start_time"].min().timestamp()
+        )
+        rel_range_s = (
+            self._df["rel_start_time_s"].max()
+            - self._df["rel_start_time_s"].min()
+        )
+        if abs_range_s == 0:
+            return 1.0
+        return rel_range_s / abs_range_s
 
     @property
     def df(self) -> pd.DataFrame:
@@ -191,7 +200,6 @@ class Workload:
             lambda t: t.timestamp() - min_timestamp
         )
         self._df["rel_start_time_s"] = self._df["rel_start_time_s"] * factor
-        self._rescale_factor = factor
         self._queries_cache = None
         return self
 
@@ -234,7 +242,12 @@ class Workload:
             lambda qtid: isolated_predictions_cache[qtid]
         )
 
-    def save(self, overwrite: bool = False) -> Path:
+    def save(
+        self,
+        out_dir: Optional[str | Path] = None,
+        out_workload_name: Optional[str] = None,
+        overwrite: bool = False,
+    ) -> Path:
         """
         Persist the workload DataFrame to
         <workload_config.workload_name>.parquet under the directory specified
@@ -243,6 +256,12 @@ class Workload:
 
         Parameters
         ----------
+        out_dir:
+            The directory to save the workload file. If not specified, defaults
+            to the standard path under the ``workloads`` data directory.
+        out_workload_name:
+            The name of the workload file. If not specified, defaults to
+            <workload_config.workload_name>.parquet.
         overwrite:
             If *False* (default) and the file already exists, raises
             :class:`FileExistsError`.  Set to *True* to overwrite.
@@ -258,9 +277,11 @@ class Workload:
             If a file already exists at the target path and *overwrite* is
             *False*.
         """
-        path = (
-            Path(self._dir) / f"{self._workload_config.workload_name}.parquet"
+        out_dir = out_dir or os.path.join(pu.get_data_path(), "workloads")
+        out_workload_name = (
+            out_workload_name or self._workload_config.workload_name
         )
+        path = Path(out_dir) / f"{out_workload_name}.parquet"
         if path.exists() and not overwrite:
             raise FileExistsError(
                 f"Workload file already exists at {path}. "
@@ -287,9 +308,7 @@ class Workload:
         stats_table.add_row(
             "End Date (inclusive)", str(self._df["abs_start_time"].max().date())
         )
-        stats_table.add_row(
-            "Rescale Factor", str(self._workload_config.rescale_factor)
-        )
+        stats_table.add_row("Rescale Factor", str(self.rescale_factor))
         stats_table.add_row("", "")
         stats_table.add_row("Total Queries", str(len(self._df)))
         num_unique_templates = (

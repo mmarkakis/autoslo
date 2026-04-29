@@ -148,6 +148,12 @@ class WorkloadSimulator:
             out_dir=self._out_dir,
             write_text_log=self._write_text_log,
         )
+        pending_cluster_names = self._pool.clusters_in_state(
+            ClusterState.PENDING
+        )
+        for name in pending_cluster_names:
+            self._pool.on_cluster_ready(name, 0.0)
+
 
         seq_num_to_cluster_name: dict[int, str] = {}
         queries = self._workload.queries()
@@ -178,6 +184,7 @@ class WorkloadSimulator:
                     "workload_name": self._workload.workload_name,
                     "num_queries": self._total_queries,
                     "routing_policy": self._router.routing_policy.value,
+                    "closed_loop": False
                 },
             )
         )
@@ -392,6 +399,13 @@ class WorkloadSimulator:
             cluster_name=cluster_name,
             rel_time_s=self._current_sim_time_s,
         )
+
+        self._completed_queries += 1
+        if (
+            self._completed_queries % self._PROGRESS_INTERVAL == 0
+            or self._completed_queries == self._total_queries
+        ):
+            progress_callback(self._completed_queries, self._total_queries)
 
     def _handle_capacity_checkpoint(self, event: SimulatorEvent) -> None:
         """

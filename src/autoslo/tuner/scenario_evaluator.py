@@ -61,7 +61,6 @@ def _run_one_combination(
     combination_out_dir: Path,
     combination_idx: int,
     workload_path: Path,
-    workload_label: str,
     config: dict[str, Any],
     progress_dict: dict[int, tuple[int, int]],
 ) -> SimulationResult:
@@ -95,17 +94,22 @@ def _run_one_combination(
     torch.set_num_threads(int(ncpus))
 
     # Overwrite the workload in the config with the one we want to run.
-    workload_config = WorkloadConfig(
-        workload_name=workload_label, workload_dir=workload_path.parent
+    existing_workload_config = WorkloadConfig.from_config(config)
+    new_workload_config = WorkloadConfig(
+        workload_name=workload_path.stem,
+        workload_dir=workload_path.parent,
+        start_date_inclusive=existing_workload_config.start_date_inclusive,
+        end_date_inclusive=existing_workload_config.end_date_inclusive,
+        rescale_factor=existing_workload_config.rescale_factor,
     )
     config = cfgu.copy_and_apply_overrides(
-        config, {"workload_config": workload_config.to_dict()}
+        config, {"workload_config": new_workload_config.to_dict()}
     )
 
     # Build the simulator.
     sim = WorkloadSimulator(
         config,
-        out_dir=combination_out_dir,
+        out_dir=combination_out_dir / f"{new_workload_config.workload_name}",
         write_text_log=False,
     )
 
@@ -180,8 +184,6 @@ class ScenarioEvaluator:
         out_dir: Path,
         workload_paths: list[Path],
         configs: list[dict[str, Any]],
-        config_labels: list[str] | None = None,
-        workload_labels: list[str] | None = None,
     ) -> list[list[SimulationResult]]:
         """
         Evaluate the cross-product of *workload_paths* and *configs* in
@@ -211,25 +213,9 @@ class ScenarioEvaluator:
                 "Must provide at least one config config and one workload"
             )
 
-        if config_labels is None:
-            config_labels = [f"config_{i}" for i in range(len(configs))]
-        elif len(config_labels) != len(configs):
-            raise ValueError(
-                f"config_labels has length {len(config_labels)} but "
-                f"configs has length {len(configs)}."
-            )
-        if workload_labels is None:
-            workload_labels = [
-                f"workload_{i}" for i in range(len(workload_paths))
-            ]
-        elif len(workload_labels) != len(workload_paths):
-            raise ValueError(
-                f"workload_labels has length {len(workload_labels)} but "
-                f"workload_paths has length {len(workload_paths)}."
-            )
+        config_labels = [f"config_{i}" for i in range(len(configs))]
 
         # Set up parallel execution.
-        max_workers = self._resolve_parallelism(configs[0])
         mgr = Manager()
         progress_dict = mgr.dict()
         ctx = get_context("spawn")
@@ -244,7 +230,6 @@ class ScenarioEvaluator:
                     config_idx, workload_idx, num_workloads=num_workloads
                 ),
                 "workload_path": workload_path,
-                "workload_label": workload_labels[workload_idx],
                 "config": config,
                 "progress_dict": progress_dict,
             }
@@ -259,7 +244,7 @@ class ScenarioEvaluator:
 
         # Execute in parallel.
         with ProcessPoolExecutor(
-            max_workers=max_workers,
+            max_workers=self._max_workers,
             mp_context=ctx,
             initializer=_init_worker,
             initargs=(inner_level_num_cpus(),),

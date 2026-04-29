@@ -85,14 +85,14 @@ class ParamSweep:
         run_dir: Path,
         phase_name: str,
         slo_objective: SloObjective,
-        agg_metric: str,
+        agg_method: str,
     ) -> None:
         self._evaluator = evaluator
         self._config = initial_config
         self._run_dir = run_dir
         self._phase_name = phase_name
         self._slo_objective = slo_objective
-        self._agg_metric = agg_metric
+        self._agg_method = agg_method
 
     # ------------------------------------------------------------------
     # Public API
@@ -190,7 +190,7 @@ class ParamSweep:
         )
         for i, idx in enumerate(top_k_indices):
             val_results = all_val_results[i]
-            val_agg = SimulationResult.aggregate(val_results, self._agg_metric)
+            val_agg = SimulationResult.aggregate(val_results, self._agg_method)
             val_primary = val_agg.primary_violation(
                 self._slo_objective.slo_metric
             )
@@ -235,7 +235,7 @@ class ParamSweep:
         grid_results: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates):
             train_agg = SimulationResult.aggregate(
-                all_train_results[idx], self._agg_metric
+                all_train_results[idx], self._agg_method
             )
             train_primary = train_agg.primary_violation(
                 self._slo_objective.slo_metric

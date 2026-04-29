@@ -35,9 +35,9 @@ class QueryReservoir:
             raise ValueError(
                 "Must specify exactly one of reservoir_config or count_df."
             )
+
         if reservoir_config is not None:
-            workload_config = reservoir_config.as_workload_config()
-            workload = Workload(workload_config)
+            workload = Workload(workload_config=reservoir_config)
 
             # Input parsing/validation.
             if workload.df.empty:
@@ -56,9 +56,9 @@ class QueryReservoir:
             )
             console.print(
                 f"  Built reservoir based on workload "
-                f"{workload_config.workload_name} over the "
-                f"period {workload_config.start_date_inclusive} to "
-                f"{workload_config.end_date_inclusive}."
+                f"{reservoir_config.workload_name} over the period "
+                f"{reservoir_config.start_date_inclusive} to "
+                f"{reservoir_config.end_date_inclusive}."
             )
         assert count_df is not None
         self._count_df = count_df
