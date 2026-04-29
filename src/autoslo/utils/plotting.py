@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import matplotlib.pyplot as plt
+import plotext
+
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
+from autoslo.tuner.tuner_utils import AggregatedSimulationResults
 from autoslo.utils.colors import Palette
 
 
@@ -36,6 +39,8 @@ FORMATTING = {
     "32+32 RPU": ("32+32 RPU", Palette.dark_orange, "D"),
     "64 RPU": ("64 RPU", Palette.dark_red, "s"),
 }
+
+CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
 
 
 def plot_legend_to(path: str | Path):
@@ -216,3 +221,73 @@ def cost_vs_compliance_scatter(
     ax.set_xlim(left, right)
     fig.tight_layout()
     return fig, ax, (left, right), (bottom, top)
+
+
+def cli_cost_vs_compliance_scatter(
+    entries: list[tuple[str, AggregatedSimulationResults]],
+    slo_objective: SloObjective,
+) -> None:
+    """Print a terminal scatter plot of violation vs cost."""
+    x_label = slo_objective.slo_metric.to_plot_axis_label()
+
+    labels: list[str] = []
+    xs: list[float] = []
+    ys: list[float] = []
+    for label, agg in entries:
+        labels.append(label)
+        xs.append(agg.primary_violation(slo_objective.slo_metric))
+        ys.append(agg.cost)
+
+    if len(xs) < 2:
+        return
+
+    markers = CLI_SCATTER_MARKERS
+
+    plotext.clear_figure()
+    plotext.plot_size(60, 20)
+    for i in range(len(xs)):
+        mk = markers[i % len(markers)]
+        plotext.scatter([xs[i]], [ys[i]], marker=mk)
+    plotext.xlabel(x_label)
+    plotext.ylabel("Cost ($)")
+
+    # Add a vertical line at the SLO threshold and make sure it is included
+    # in the plot bounds with some padding.
+    threshold = slo_objective.slo_threshold
+    plotext.vline(
+        threshold,
+        color="gray",
+    )
+
+    x_lo, x_hi = min(min(xs), threshold), max(max(xs), threshold)
+    y_lo, y_hi = min(ys), max(ys)
+    x_pad = max((x_hi - x_lo) * 0.15, x_hi * 0.05) or 0.01
+    y_pad = max((y_hi - y_lo) * 0.15, y_hi * 0.05) or 0.01
+    plotext.xlim(x_lo - x_pad, x_hi + x_pad)
+    plotext.ylim(y_lo - y_pad, y_hi + y_pad)
+
+    plotext.title("Violation vs. Cost")
+    plotext.theme("clear")
+
+    # Build the plot as a string and append a legend to the right.
+    plot_str = plotext.build()
+    plot_lines = plot_str.split("\n")
+
+    legend_lines: list[str] = [""]  # blank line at top
+    for i, lbl in enumerate(labels):
+        mk = markers[i % len(markers)]
+        legend_lines.append(f"  {mk} {lbl}")
+    legend_lines.append("")
+
+    # Vertically centre the legend against the plot.
+    total_plot = len(plot_lines)
+    total_legend = len(legend_lines)
+    offset = max(0, (total_plot - total_legend) // 2)
+
+    out_lines: list[str] = []
+    for row, pline in enumerate(plot_lines):
+        li = row - offset
+        suffix = legend_lines[li] if 0 <= li < total_legend else ""
+        out_lines.append(pline + suffix)
+
+    print("\n".join(out_lines))
