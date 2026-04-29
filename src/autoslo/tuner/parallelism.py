@@ -47,6 +47,7 @@ class ParallelismConfig:
 # Backward-compatible free functions
 # ---------------------------------------------------------------------------
 
+
 def num_cpus() -> int:
     """Returns the number of CPUs available (delegates to
     :meth:`ParallelismConfig.num_cpus`)."""

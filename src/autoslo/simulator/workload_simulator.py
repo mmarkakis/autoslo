@@ -5,27 +5,24 @@ import os
 from pathlib import Path
 from typing import Callable, Optional
 
-import torch
 from tqdm import tqdm
 
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
+from autoslo.clusters.billing import Billing, BillingInterval
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.config.structured_config import StructuredConfig
-from autoslo.output.logging import emit_structured
-from autoslo.output.structured_events import (
+from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
 )
-from autoslo.output.yaml_helpers import dump_yaml, load_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
-from autoslo.utils.billing import Billing
-from autoslo.utils.parallelism import inner_level_num_cpus
-from autoslo.workload_definition.query import Query
 
 
 class WorkloadSimulator:
@@ -460,9 +457,8 @@ class WorkloadSimulator:
                 continue
             billed_intervals = Billing.billed_intervals(
                 [
-                    Query.query_interval(
-                        q.rel_start_time_s,
-                        latency_s,
+                    BillingInterval(
+                        q.rel_start_time_s, q.rel_start_time_s + latency_s
                     )
                     for latency_s, q in completed_queries
                 ],
@@ -500,12 +496,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     cfg = load_yaml(args.config)
-
-    ncpus = str(inner_level_num_cpus())
-    os.environ["OMP_NUM_THREADS"] = ncpus
-    os.environ["MKL_NUM_THREADS"] = ncpus
-    os.environ["OPENBLAS_NUM_THREADS"] = ncpus
-    torch.set_num_threads(int(ncpus))
 
     sim = WorkloadSimulator(cfg)
     sim.run()

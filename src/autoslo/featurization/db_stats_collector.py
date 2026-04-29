@@ -11,7 +11,7 @@ import psycopg2 as pg2
 import yaml
 from tqdm.auto import tqdm
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 

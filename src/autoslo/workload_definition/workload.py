@@ -9,7 +9,7 @@ import pandas as pd
 from rich import print
 from rich.table import Table
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.iconq_model import IconqModel

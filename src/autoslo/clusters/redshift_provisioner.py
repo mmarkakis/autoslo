@@ -27,13 +27,13 @@ import boto3  # type: ignore
 import numpy as np
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.config.component_configs import ProvisionerConfig
-from autoslo.output.logging import emit_structured
-from autoslo.output.structured_events import (
+from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     wall_clock_utc,

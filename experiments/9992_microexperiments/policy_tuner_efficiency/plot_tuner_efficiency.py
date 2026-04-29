@@ -7,8 +7,8 @@ import seaborn as sns
 import yaml
 from matplotlib.patches import Rectangle
 
-import autoslo.utils.paths as pu
-from autoslo.utils.colors import Palette
+import autoslo.filesystem.path_utils as pu
+from autoslo.visualizations.colors import Palette
 
 # Read in the names of the experiments to plot from the config.
 exp_dir = os.path.dirname(os.path.abspath(__file__))

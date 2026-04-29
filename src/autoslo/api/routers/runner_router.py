@@ -30,7 +30,7 @@ import pandas as pd
 import yaml
 from fastapi import APIRouter, HTTPException
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.workload_execution.trace import Trace
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ def _compute_run_summary(run_id: str, trace: Trace) -> RunSummary:
                 from intervaltree import Interval
 
                 df = trace._dfs["sys_query_history"][cluster_name]
-                from autoslo.utils.billing import Billing
+                from autoslo.clusters.billing import Billing
 
                 intervals = [
                     Interval(begin=s.timestamp(), end=e.timestamp())
@@ -341,7 +341,7 @@ def get_runner_timeline(
                 rpu = _rpu_for_runner_cluster(cluster_name)
                 from autoslo.clusters.cluster import Cluster
                 from intervaltree import Interval
-                from autoslo.utils.billing import Billing
+                from autoslo.clusters.billing import Billing
 
                 df = trace._dfs["sys_query_history"][cluster_name]
                 query_intervals = [

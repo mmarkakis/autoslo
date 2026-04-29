@@ -39,7 +39,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src")
+)
 
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.models.iconq_model import IconqModel
@@ -47,10 +49,9 @@ from autoslo.routing.query_router import QueryRouter, QueryRouterPolicy
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.colors import Palette
+from autoslo.visualizations.colors import Palette
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
-
 
 # ── defaults ─────────────────────────────────────────────────
 DEFAULT_MODEL_ID = "1771539369"
@@ -68,7 +69,12 @@ RESULTS_DIR = SCRIPT_DIR / "results"
 
 _TIMING_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "timing",
-    [Palette.white, Palette.light_yellow, Palette.dark_orange, Palette.dark_red],
+    [
+        Palette.white,
+        Palette.light_yellow,
+        Palette.dark_orange,
+        Palette.dark_red,
+    ],
 )
 
 
@@ -86,9 +92,7 @@ def _prepare_queries(
     the same pre-population path used by the runner / simulator /
     policy tuner.
     """
-    workload = Workload(
-        workload_name=workload_name, schema_name=schema_name
-    )
+    workload = Workload(workload_name=workload_name, schema_name=schema_name)
     workload.populate_featurizations_and_isolated_predictions(
         iconq_model=model, allowed_rpu_sizes=rpu_sizes
     )
@@ -164,9 +168,7 @@ def run_benchmark(
     print(f"  -> prepared {len(pool)} queries")
 
     resolver = SloResolver.from_dict(default_slo_s=slo_s, slo_dict={})
-    objective = SloObjective(
-        slo_metric=SloMetric.RELATIVE, slo_threshold=0.0
-    )
+    objective = SloObjective(slo_metric=SloMetric.RELATIVE, slo_threshold=0.0)
 
     rows: list[dict] = []
     grid = list(itertools.product(C_VALUES, AC_VALUES))
@@ -248,18 +250,29 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
             if np.isnan(mean_val):
                 continue
             text_color = Palette.white if mean_val > midpoint else Palette.black
-            range_color = Palette.light_gray if mean_val > midpoint else Palette.gray
+            range_color = (
+                Palette.light_gray if mean_val > midpoint else Palette.gray
+            )
             lo = pivot_min.values[i, j]
             hi = pivot_max.values[i, j]
             ax.text(
-                j, i + 0.15, f"{mean_val:.3f}",
-                ha="center", va="center",
-                color=text_color, fontsize=8, fontweight="bold",
+                j,
+                i + 0.15,
+                f"{mean_val:.3f}",
+                ha="center",
+                va="center",
+                color=text_color,
+                fontsize=8,
+                fontweight="bold",
             )
             ax.text(
-                j, i - 0.18, f"{lo:.3f} \u2026 {hi:.3f}",
-                ha="center", va="center",
-                color=range_color, fontsize=6,
+                j,
+                i - 0.18,
+                f"{lo:.3f} \u2026 {hi:.3f}",
+                ha="center",
+                va="center",
+                color=range_color,
+                fontsize=6,
             )
 
     cbar = fig.colorbar(im, ax=ax, label="seconds")
@@ -293,7 +306,9 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
         color = palette_cycle[idx % len(palette_cycle)]
         grp = grp.sort_values("Ac")
         ax.plot(grp["Ac"], grp["median"], "o-", color=color, label=f"C={c_val}")
-        ax.fill_between(grp["Ac"], grp["q25"], grp["q75"], color=color, alpha=0.15)
+        ax.fill_between(
+            grp["Ac"], grp["q25"], grp["q75"], color=color, alpha=0.15
+        )
     ax.set_xlabel("Queries per Cluster (Ac)", color=Palette.black)
     ax.set_ylabel("Time (s)", color=Palette.black)
     ax.set_title(
@@ -327,12 +342,22 @@ def main() -> None:
     parser.add_argument("--rpu", type=int, default=DEFAULT_RPU)
     parser.add_argument("--reps", type=int, default=DEFAULT_REPS)
     parser.add_argument("--slo-s", type=float, default=DEFAULT_SLO_S)
-    parser.add_argument("--tag", default=None,
-                        help="Output subdirectory name (default: timestamp).")
-    parser.add_argument("--load", default=None, metavar="CSV",
-                        help="Load existing CSV instead of re-running.")
-    parser.add_argument("--plot-only", action="store_true",
-                        help="Only regenerate plots from --load CSV.")
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="Output subdirectory name (default: timestamp).",
+    )
+    parser.add_argument(
+        "--load",
+        default=None,
+        metavar="CSV",
+        help="Load existing CSV instead of re-running.",
+    )
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Only regenerate plots from --load CSV.",
+    )
     args = parser.parse_args()
 
     tag = args.tag or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

@@ -2,7 +2,7 @@ import argparse
 import os
 from datetime import datetime
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.simulator.workload_simulator import (
     WorkloadSimulator,
 )

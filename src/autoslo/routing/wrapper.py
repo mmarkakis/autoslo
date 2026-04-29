@@ -6,9 +6,9 @@ from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.cluster import ClusterView
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
+from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
 from autoslo.models.iconq_model import IconqModel
-from autoslo.output.logging import emit_structured
-from autoslo.output.structured_events import EventType, QueryRelatedEvent
 from autoslo.routing.query_router import QueryRouter
 from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
 from autoslo.workload_definition.query import Query

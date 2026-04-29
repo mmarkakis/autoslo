@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Optional
 import numpy as np
 
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
-from autoslo.utils.billing import Billing, BillingInterval
+from autoslo.clusters.billing import Billing, BillingInterval
 from autoslo.workload_definition.query import Query
 
 _VALID_CLUSTER_STATE_TRANSITIONS = {

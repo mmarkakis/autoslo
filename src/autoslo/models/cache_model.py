@@ -6,7 +6,7 @@ from typing import Optional
 import numpy as np
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace

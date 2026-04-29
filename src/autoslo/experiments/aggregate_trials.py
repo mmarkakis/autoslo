@@ -19,11 +19,11 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-import autoslo.utils.paths as pu
-from autoslo.output.yaml_helpers import load_yaml
+import autoslo.filesystem.path_utils as pu
+from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
-from autoslo.utils.plotting import (
+from autoslo.visualizations.scatter_plots import (
     ScatterPoint,
     cost_vs_compliance_scatter,
     plot_legend_to,

@@ -31,7 +31,7 @@ import yaml
 
 from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import SloResolverConfig
-from autoslo.output.structured_events import EventType
+from autoslo.filesystem.structured_events import EventType
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------

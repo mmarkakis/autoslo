@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml
 
 
 def test_zero_padded_keys_are_quoted(tmp_path: Path):

@@ -29,7 +29,7 @@ import os
 import pickle
 from typing import Any, Optional
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.workload_definition.query import QueryTextId
 
 _REGISTRY_SUBDIR = "__query_plans"

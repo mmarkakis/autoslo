@@ -7,15 +7,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from torch.utils.data import Subset
-from tqdm.auto import tqdm
 
-import autoslo.utils.paths as pu
-from autoslo.models.query_timeline import QueryTimeline
+import autoslo.filesystem.path_utils as pu
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.utils.colors import Palette
-from autoslo.workload_execution.trace import Trace
+from autoslo.visualizations.colors import Palette
 
 
 def plot_true_predicted(

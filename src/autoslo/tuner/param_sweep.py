@@ -22,7 +22,7 @@ from rich.table import Table
 
 import autoslo.config.utils as cfgu
 from autoslo.config.component_configs import WorkloadConfig
-from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )

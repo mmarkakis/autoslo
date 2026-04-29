@@ -25,7 +25,7 @@ import autoslo.config.utils as cfgu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.simulator.workload_simulator import WorkloadSimulator
-from autoslo.utils.parallelism import (
+from autoslo.tuner.parallelism import (
     _init_worker,
     deg_of_parallelism,
     inner_level_num_cpus,

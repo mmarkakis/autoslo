@@ -2,8 +2,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TypeAlias
 
-from autoslo.utils.billing import BillingInterval
-
 QueryFeaturization: TypeAlias = list[float]
 
 
@@ -89,11 +87,3 @@ class Query:
                 "rel_start_time_s",
                 self.abs_start_time.timestamp(),
             )
-
-    @staticmethod
-    def query_interval(
-        rel_start_time_s: float, latency_s: float
-    ) -> BillingInterval:
-        """Build an execution interval for a query."""
-
-        return BillingInterval(rel_start_time_s, rel_start_time_s + latency_s)

@@ -12,7 +12,7 @@ from typing import Any, Optional
 from rich.console import Console
 
 import autoslo.config.utils as cfgu
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import (
     ForecasterConfig,
     ReservoirConfig,
@@ -23,8 +23,8 @@ from autoslo.config.component_configs import (
 )
 from autoslo.config.utils import copy_and_apply_overrides
 from autoslo.forecasting.forecaster import Forecaster
-from autoslo.output.structured_events import wall_clock_utc
-from autoslo.output.yaml_helpers import dump_yaml, load_yaml
+from autoslo.filesystem.structured_events import wall_clock_utc
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )

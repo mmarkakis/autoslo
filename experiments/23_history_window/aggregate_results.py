@@ -206,7 +206,9 @@ def _collect_scenario_data(scenario_dir: Path, scenario: str) -> dict[str, Any]:
 
     # --- Baseline train/val summaries (Phase 3) ---------------------------
     for split in ("train", "val"):
-        summary = _load_yaml(scenario_dir / "03_baseline" / f"{split}_summary.yml")
+        summary = _load_yaml(
+            scenario_dir / "03_baseline" / f"{split}_summary.yml"
+        )
         if summary:
             for suffix in _VIOLATION_SUFFIXES:
                 row[f"baseline_{split}_{suffix}"] = summary.get(suffix)
@@ -442,8 +444,8 @@ def _generate_scatter_plots(
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        from autoslo.utils.colors import Palette
-        from autoslo.utils.plotting import (
+        from autoslo.visualizations.colors import Palette
+        from autoslo.visualizations.scatter_plots import (
             ScatterPoint,
             cost_vs_compliance_scatter,
         )

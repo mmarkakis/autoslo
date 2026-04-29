@@ -29,7 +29,7 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
-from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )

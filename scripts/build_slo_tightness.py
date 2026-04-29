@@ -26,9 +26,8 @@ import os
 
 import yaml
 
-import autoslo.utils.paths as pu
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.models.stage_model import StageModel
+from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import QueryTextId
 
 
@@ -53,7 +52,7 @@ def _compute_tightness(
         slo_s = slo_resolver.resolve(qtid)
 
         if slo_s <= 0:
-            tightness = float('inf')
+            tightness = float("inf")
         else:
             tightness = iso_pred_s / slo_s
 

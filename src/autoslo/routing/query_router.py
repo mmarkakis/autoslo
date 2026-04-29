@@ -5,10 +5,10 @@ import numpy as np
 
 from autoslo.clusters.cluster import ClusterView
 from autoslo.config.component_configs import QueryRouterConfig
+from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.output.logging import emit_structured
-from autoslo.output.structured_events import EventType, QueryRelatedEvent
 from autoslo.routing.query_router_policy import QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost

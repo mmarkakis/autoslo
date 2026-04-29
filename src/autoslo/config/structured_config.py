@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import autoslo.config.utils as cfgu
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
@@ -22,10 +22,10 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
     WorkloadRunnerConfig,
 )
+from autoslo.filesystem.logging import StructuredLogHandler, setup_run_logging
+from autoslo.filesystem.structured_events import wall_clock_utc
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.models.iconq_model import IconqModel
-from autoslo.output.logging import StructuredLogHandler, setup_run_logging
-from autoslo.output.structured_events import wall_clock_utc
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver

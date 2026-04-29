@@ -9,7 +9,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import ForecasterConfig, WorkloadConfig
 from autoslo.forecasting.forecast_policy import ForecastPolicy
 from autoslo.tuner.reservoir import QueryReservoir

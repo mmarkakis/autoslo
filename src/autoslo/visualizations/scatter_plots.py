@@ -1,5 +1,3 @@
-"""Reusable paper-quality plotting helpers."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,14 +6,15 @@ from typing import Optional, Sequence
 
 import matplotlib.pyplot as plt
 import plotext
-
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from autoslo.simulator.aggregated_simulation_results import (
+    AggregatedSimulationResults,
+)
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
-from autoslo.tuner.tuner_utils import AggregatedSimulationResults
-from autoslo.utils.colors import Palette
+from autoslo.visualizations.colors import Palette
 
 
 @dataclass

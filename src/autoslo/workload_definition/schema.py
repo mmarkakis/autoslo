@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 
 
 @dataclass

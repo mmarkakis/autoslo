@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-import autoslo.utils.paths as pu
-from autoslo.output.yaml_helpers import dump
+import autoslo.filesystem.path_utils as pu
+from autoslo.filesystem.yaml_helpers import dump
 from autoslo.workload_execution.trace import Trace
 
 _DEFAULT_DATA_SUBDIR = "slos"

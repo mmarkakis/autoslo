@@ -21,7 +21,6 @@ from typing import Any
 
 from autoslo.workload_definition.query import QueryTextId
 
-
 # ---------------------------------------------------------------------------
 # Timestamp utility
 # ---------------------------------------------------------------------------

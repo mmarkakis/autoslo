@@ -35,7 +35,7 @@ from typing import Any
 
 import pandas as pd
 
-from autoslo.output.structured_events import BaseStructuredEvent
+from autoslo.filesystem.structured_events import BaseStructuredEvent
 
 # ---------------------------------------------------------------------------
 # Required keys every record must carry

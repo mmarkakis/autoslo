@@ -33,8 +33,8 @@ from autoslo.clusters.redshift_run_stats_collector import (
 )
 from autoslo.clusters.spin_up_budget import SpinUpBudget
 from autoslo.config.component_configs import ManagedClusterPoolConfig
-from autoslo.output.logging import emit_structured
-from autoslo.output.structured_events import BaseStructuredEvent, EventType
+from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 

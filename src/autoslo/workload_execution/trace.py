@@ -9,8 +9,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
 
-import autoslo.utils.parallelism as plu
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
+import autoslo.tuner.parallelism as plu
 from autoslo.clusters.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
 from autoslo.slo.slo_metric import SloMetric

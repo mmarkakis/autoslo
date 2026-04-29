@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import rich
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 
 from autoslo.workload_definition.query import QueryTextId
 

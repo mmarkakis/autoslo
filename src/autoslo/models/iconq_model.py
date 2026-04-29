@@ -15,7 +15,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )

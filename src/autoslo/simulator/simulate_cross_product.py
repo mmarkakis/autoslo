@@ -7,9 +7,9 @@ from pathlib import Path
 
 from rich.console import Console
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
-from autoslo.output.yaml_helpers import load_yaml
+from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 
 logger = logging.getLogger(__name__)

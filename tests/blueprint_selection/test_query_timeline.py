@@ -4,15 +4,13 @@ from typing import cast
 import pytest
 from intervaltree import Interval  # type: ignore[import]
 
-import autoslo.utils.paths as pu
-from autoslo.models.query_timeline import QueryTimeline
-from autoslo.clusters.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
+from autoslo.models.query_timeline import QueryTimeline
 from autoslo.models.stage_model import StageModel
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
@@ -37,19 +35,24 @@ class DummyTrace:
     def __init__(self, specs: list[tuple[str, float, float]]) -> None:
         self.run_id = "dummy-run"
         self.query_ids = [query_id for query_id, _, _ in specs]
-        self._query_text_ids = {query_id: _DUMMY_QTID for query_id, _, _ in specs}
+        self._query_text_ids = {
+            query_id: _DUMMY_QTID for query_id, _, _ in specs
+        }
         self._arrival = {
             query_id: dt_after(start) for query_id, start, _ in specs
         }
         self._completion = {
             query_id: dt_after(end) for query_id, _, end in specs
         }
-        self._seq_nums = {query_id: idx for idx, (query_id, _, _) in enumerate(specs)}
+        self._seq_nums = {
+            query_id: idx for idx, (query_id, _, _) in enumerate(specs)
+        }
         self._was_aborted = {query_id: False for query_id, _, _ in specs}
 
     @property
     def query_text_ids(self):
         import pandas as pd
+
         return pd.Series(self._query_text_ids)
 
     @property
@@ -72,7 +75,9 @@ class DummyTrace:
 class DummyIconqQueryFeaturizer:
     """Lightweight IconqQueryFeaturizer stub."""
 
-    def featurize_from_query_text_id(self, query_text_id: QueryTextId) -> list[float]:
+    def featurize_from_query_text_id(
+        self, query_text_id: QueryTextId
+    ) -> list[float]:
         return [0.0, 1.5, 2.5]
 
 
@@ -82,10 +87,7 @@ class DummyStageModel:
     def predict_from_query_text_id(
         self, query_text_ids: dict[str, QueryTextId], cluster_rpu: int
     ) -> dict[str, ModelPrediction]:
-        return {
-            qid: ModelPrediction(mean_s=[5.0])
-            for qid in query_text_ids
-        }
+        return {qid: ModelPrediction(mean_s=[5.0]) for qid in query_text_ids}
 
 
 class DummyIconqInteractionFeaturizer:

@@ -6,8 +6,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-import autoslo.utils.paths as pu
-from autoslo.workload_definition.query import QueryTextId
+import autoslo.filesystem.path_utils as pu
 
 
 def _template_id(temp_and_q_idx: str) -> int:

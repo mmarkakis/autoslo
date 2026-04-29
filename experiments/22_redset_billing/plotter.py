@@ -5,10 +5,9 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-import autoslo.utils.paths as pu
-from autoslo.utils.billing import Billing
-from autoslo.utils.colors import Palette
-from autoslo.utils.parallelism import deg_of_parallelism, inner_level_num_cpus
+import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.billing import Billing
+from autoslo.visualizations.colors import Palette
 
 DATASETS = [
     {
@@ -346,7 +345,7 @@ def plot2(info):
     ax.set_ylabel(
         "Redset Serverless Cluster Fraction", fontsize=info["fontsize"]
     )
-    ax.legend(fontsize=info["fontsize"], loc='lower right')
+    ax.legend(fontsize=info["fontsize"], loc="lower right")
     ax.set_xscale("log")
     ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
     plt.grid(True, which="both", linestyle="--", linewidth=0.5)

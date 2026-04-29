@@ -12,7 +12,7 @@ from typing import Optional
 import boto3
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 
 # ============================================================================
 # Configuration Constants

@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
 from matplotlib.patches import Rectangle
 
+from autoslo.clusters.billing import Billing
 from autoslo.clusters.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.utils.billing import Billing
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_execution.trace import Trace
 
@@ -120,9 +120,7 @@ class QueryTimeline:
                                 self._stage_model.predict_from_query_text_id(
                                     {query_id: query_text_id},
                                     cluster_rpu=rpu,
-                                )[
-                                    query_id
-                                ].overall_mean_s()
+                                )[query_id].overall_mean_s()
                             )
                         )
                         for rpu in Cluster.ALL_ALLOWED_RPU_SIZES
@@ -534,9 +532,13 @@ class QueryTimeline:
                     for neighbor_iv in neighbor_ivs
                 ]
 
-                cluster_to_base_to_neighbors[cluster_name_local][base_query] = neighbors
+                cluster_to_base_to_neighbors[cluster_name_local][
+                    base_query
+                ] = neighbors
                 targets[base_query.query_id] = base_iv.end - base_iv.begin
-                is_lower_bound[base_query.query_id] = base_iv.data.get("was_aborted", False)
+                is_lower_bound[base_query.query_id] = base_iv.data.get(
+                    "was_aborted", False
+                )
 
         return ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=self._iconq_interaction_featurizer,

@@ -43,7 +43,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src")
+)
 
 from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
@@ -52,10 +54,9 @@ from autoslo.routing.query_router import QueryRouterPolicy
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.colors import Palette
+from autoslo.visualizations.colors import Palette
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
-
 
 # ── defaults ─────────────────────────────────────────────────
 DEFAULT_MODEL_ID = "1771539369"
@@ -77,7 +78,12 @@ RESULTS_DIR = SCRIPT_DIR / "results"
 
 _TIMING_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "timing",
-    [Palette.white, Palette.light_yellow, Palette.dark_orange, Palette.dark_red],
+    [
+        Palette.white,
+        Palette.light_yellow,
+        Palette.dark_orange,
+        Palette.dark_red,
+    ],
 )
 
 
@@ -96,9 +102,7 @@ def _prepare_queries(
     necessary because the autoscaler may route them to a hypothetical
     cluster of any candidate size during counterfactual replay.
     """
-    workload = Workload(
-        workload_name=workload_name, schema_name=schema_name
-    )
+    workload = Workload(workload_name=workload_name, schema_name=schema_name)
     workload.populate_featurizations_and_isolated_predictions(
         iconq_model=model, allowed_rpu_sizes=rpu_sizes
     )
@@ -183,9 +187,7 @@ def run_benchmark(
     snapshot = _build_snapshot(active_qs, n_clusters, rpu)
 
     resolver = SloResolver.from_dict(default_slo_s=slo_s, slo_dict={})
-    objective = SloObjective(
-        slo_metric=SloMetric.RELATIVE, slo_threshold=0.0
-    )
+    objective = SloObjective(slo_metric=SloMetric.RELATIVE, slo_threshold=0.0)
 
     rows: list[dict] = []
     grid = list(itertools.product(R_VALUES, W_VALUES))
@@ -284,18 +286,29 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
             if np.isnan(mean_val):
                 continue
             text_color = Palette.white if mean_val > midpoint else Palette.black
-            range_color = Palette.light_gray if mean_val > midpoint else Palette.gray
+            range_color = (
+                Palette.light_gray if mean_val > midpoint else Palette.gray
+            )
             lo = pivot_min.values[i, j]
             hi = pivot_max.values[i, j]
             ax.text(
-                j, i + 0.15, f"{mean_val:.3f}",
-                ha="center", va="center",
-                color=text_color, fontsize=8, fontweight="bold",
+                j,
+                i + 0.15,
+                f"{mean_val:.3f}",
+                ha="center",
+                va="center",
+                color=text_color,
+                fontsize=8,
+                fontweight="bold",
             )
             ax.text(
-                j, i - 0.18, f"{lo:.3f} \u2026 {hi:.3f}",
-                ha="center", va="center",
-                color=range_color, fontsize=6,
+                j,
+                i - 0.18,
+                f"{lo:.3f} \u2026 {hi:.3f}",
+                ha="center",
+                va="center",
+                color=range_color,
+                fontsize=6,
             )
     cbar = fig.colorbar(im, ax=ax, label="seconds")
     cbar.ax.yaxis.label.set_color(Palette.black)
@@ -328,7 +341,9 @@ def make_plots(df: pd.DataFrame, out_dir: Path) -> None:
         color = palette_cycle[idx % len(palette_cycle)]
         grp = grp.sort_values("W")
         ax.plot(grp["W"], grp["median"], "o-", color=color, label=f"R={r_val}")
-        ax.fill_between(grp["W"], grp["q25"], grp["q75"], color=color, alpha=0.15)
+        ax.fill_between(
+            grp["W"], grp["q25"], grp["q75"], color=color, alpha=0.15
+        )
     ax.set_xlabel("Window Length (W)", color=Palette.black)
     ax.set_ylabel("Time (s)", color=Palette.black)
     ax.set_title(

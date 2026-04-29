@@ -8,7 +8,7 @@ import pytest
 
 import autoslo.models.stage_model as stage_module
 import autoslo.models.xgboost_model as xgb_module
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.models.stage_model import StageModel
 

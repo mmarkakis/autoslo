@@ -52,7 +52,7 @@ class Palette:
             "light_purple": Palette.light_purple,
             "dark_purple": Palette.dark_purple,
         }
-    
+
     @staticmethod
     def as_list() -> list[str]:
         return [

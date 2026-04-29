@@ -27,7 +27,7 @@ sys.path.append(str(src))  # allow importing from src
 
 # Generate CSS from autoslo.utils.colors.Palette
 try:
-    from autoslo.utils.colors import Palette as _CLPalette
+    from autoslo.visualizations.colors import Palette as _CLPalette
 
     pal = _CLPalette()
     sem = pal.semantic_colors()

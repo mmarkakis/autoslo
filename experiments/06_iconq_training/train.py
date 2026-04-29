@@ -4,7 +4,7 @@ from datetime import datetime
 
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.cache_model import CacheModel
 from autoslo.models.iconq_model import (

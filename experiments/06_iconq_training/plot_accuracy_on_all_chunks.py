@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm.auto import tqdm
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.models.query_timeline import QueryTimeline
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction

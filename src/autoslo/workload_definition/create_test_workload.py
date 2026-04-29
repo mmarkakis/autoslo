@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 import pandas as pd
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 
 from autoslo.workload_definition.workload import Workload
 

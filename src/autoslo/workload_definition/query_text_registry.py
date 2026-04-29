@@ -31,7 +31,7 @@ from typing import Optional
 
 import pandas as pd
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 
 from autoslo.workload_definition.query import QueryTextId
 

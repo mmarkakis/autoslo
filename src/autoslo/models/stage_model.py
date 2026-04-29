@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.models.cache_model import CacheModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.models.xgboost_model import XGBoostModel

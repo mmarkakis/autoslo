@@ -4,7 +4,7 @@ from autoslo.blueprint_selection.selector import BlueprintSelector
 
 from tqdm.auto import tqdm
 import yaml
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 import os
 from datetime import datetime
 

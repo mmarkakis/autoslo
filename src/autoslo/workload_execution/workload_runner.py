@@ -14,14 +14,14 @@ from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.config.structured_config import StructuredConfig
-from autoslo.output.logging import emit_structured
-from autoslo.output.structured_events import (
+from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
     wall_clock_utc,
 )
-from autoslo.output.yaml_helpers import dump_yaml, load_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry

@@ -4,7 +4,7 @@ from datetime import datetime
 
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.workload_definition.query import SloMetric
 from autoslo.simulator.workload_simulator import (
     WorkloadSimulator,

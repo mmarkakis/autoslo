@@ -6,7 +6,7 @@ import pandas as pd
 import psycopg2 as pg2
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 

@@ -3,7 +3,7 @@ from autoslo.workload_execution.selector_based_runner import run_using_selector
 import os
 import yaml
 import asyncio
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 
 from datetime import datetime
 

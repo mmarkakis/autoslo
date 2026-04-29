@@ -32,7 +32,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.slo.slo_metric import SloMetric
 

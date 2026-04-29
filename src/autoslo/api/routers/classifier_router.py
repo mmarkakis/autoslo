@@ -18,7 +18,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.forecasting.arrival_classifier import ArrivalClassifier
 from autoslo.workload_definition.query import Query, QueryTextId
 

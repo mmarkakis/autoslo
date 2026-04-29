@@ -11,7 +11,7 @@ import os
 
 import yaml
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import SloResolverConfig
 from autoslo.workload_definition.query import QueryTextId
 

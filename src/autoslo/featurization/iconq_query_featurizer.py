@@ -13,7 +13,7 @@ import pandas as pd
 import yaml
 from tqdm.auto import tqdm
 
-import autoslo.utils.paths as pu
+import autoslo.filesystem.path_utils as pu
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_execution.trace import Trace
 
