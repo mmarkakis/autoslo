@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from scipy import stats
 
-from autoslo.tuner.forecast_policy import (
+from autoslo.tuner.forecaster import (
     OneDayForecastPolicy,
     SameDayExponentialForecastPolicy,
     SameDayOnceForecastPolicy,

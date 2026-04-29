@@ -4,7 +4,6 @@ from typing import Optional, Self
 
 import numpy as np
 
-from autoslo.routing.query_router import QueryRouterPolicy
 from autoslo.slo.slo_metric import SloMetric
 
 
@@ -44,7 +43,7 @@ class _PartialConfig:
 @dataclass(frozen=True)
 class WorkloadConfig(_PartialConfig):
     """
-    Configuration for a workload, including the name and schema.
+    Configuration for a workload, including the name and parent directory.
     """
 
     workload_name: str
@@ -61,18 +60,6 @@ class ReservoirConfig(WorkloadConfig):
     for loading the reservoir. This is a subclass of WorkloadConfig since the
     reservoir is built from a workload.
     """
-
-    def as_workload_config(self) -> WorkloadConfig:
-        """
-        Return a WorkloadConfig with the same fields as this ReservoirConfig.
-        """
-        return WorkloadConfig(
-            workload_name=self.workload_name,
-            workload_dir=self.workload_dir,
-            start_date_inclusive=self.start_date_inclusive,
-            end_date_inclusive=self.end_date_inclusive,
-            rescale_factor=self.rescale_factor,
-        )
 
 
 @dataclass(frozen=True)
@@ -98,7 +85,7 @@ class QueryRouterConfig(_PartialConfig):
 
     rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray]
 
-    routing_policy: QueryRouterPolicy = QueryRouterPolicy.USE_ICONQ_MODEL
+    routing_policy_name: str = "use_iconq_model"
     cluster_cache_state_update_alpha: float = 0.7
 
     cache_risk_cost_multiplier: float = 0.0
@@ -182,15 +169,26 @@ class ManagedClusterPoolConfig(_PartialConfig):
 
 
 @dataclass(frozen=True)
-class ForecastPolicyConfig(_PartialConfig):
+class ForecasterConfig(_PartialConfig):
     """
-    Configuration for the forecast policy, including the reservoir config and
-    forecast horizon.
+    Configuration for the forecaster.
     """
 
     forecast_policy_name: str
     decay_factor: float = 0.5
     fixed_queries_per_hour: int = 100
+
+    def __post_init__(self):
+        if self.decay_factor < 0 or self.decay_factor > 1:
+            raise ValueError(
+                f"decay_factor must be in [0, 1], got {self.decay_factor}"
+            )
+
+        if self.fixed_queries_per_hour <= 0:
+            raise ValueError(
+                f"fixed_queries_per_hour must be positive, got "
+                f"{self.fixed_queries_per_hour}"
+            )
 
 
 @dataclass(frozen=True)

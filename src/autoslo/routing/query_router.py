@@ -1,16 +1,13 @@
 import logging
 import random
-from enum import Enum
 
 import numpy as np
 
 from autoslo.clusters.cluster import ClusterView
-from autoslo.config.query_router_config import (
-    QueryRouterConfig,
-    QueryRouterPolicy,
-)
+from autoslo.config.component_configs import QueryRouterConfig
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.routing.query_router_policy import QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
@@ -19,13 +16,6 @@ from autoslo.utils.structured_events import EventType, QueryRelatedEvent
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
-
-
-class QueryRouterPolicy(Enum):
-    USE_ICONQ_MODEL = "use_iconq_model"
-    ROUND_ROBIN = "round_robin"
-    UNIFORM_RANDOM = "uniform_random"
-    CACHE_AWARE = "cache_aware"
 
 
 class QueryRouter:
@@ -37,7 +27,9 @@ class QueryRouter:
     ):
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
-        self._routing_policy = query_router_config.routing_policy
+        self._routing_policy = QueryRouterPolicy(
+            query_router_config.routing_policy_name
+        )
         self._round_robin_idx = 0
         self._query_router_config = query_router_config
         self._sorted_forecast_times = sorted(

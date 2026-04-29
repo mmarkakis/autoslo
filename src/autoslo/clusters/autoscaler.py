@@ -6,7 +6,7 @@ import numpy as np
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
-from autoslo.config.autoscaler_config import AutoscalerConfig
+from autoslo.config.component_configs import AutoscalerConfig
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
 from autoslo.slo.slo_metric import LatencySlo

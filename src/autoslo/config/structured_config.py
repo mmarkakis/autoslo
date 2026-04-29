@@ -12,7 +12,7 @@ from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.config.component_configs import (
     AutoscalerConfig,
-    ForecastPolicyConfig,
+    ForecasterConfig,
     ManagedClusterPoolConfig,
     ProvisionerConfig,
     QueryRouterConfig,
@@ -26,7 +26,7 @@ from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.tuner.forecast_policy import ForecastPolicy
+from autoslo.tuner.forecaster import Forecaster
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.utils.logging import StructuredLogHandler, setup_run_logging
 from autoslo.utils.structured_events import wall_clock_utc
@@ -141,20 +141,22 @@ class StructuredConfig:
         )
 
         # ── Forecasting ──────────────────────────────────────────────────────
-        query_reservoir_config = ReservoirConfig.from_config(cfg)
-        query_reservoir = QueryReservoir(query_reservoir_config)
-        forecast_policy_config = ForecastPolicyConfig.from_config(cfg)
-        forecast_policy = ForecastPolicy.from_name(
-            name=forecast_policy_config.forecast_policy_name,
+        reservoir_config = ReservoirConfig.from_config(cfg)
+        query_reservoir = QueryReservoir(reservoir_config=reservoir_config)
+        forecaster_config = ForecasterConfig.from_config(cfg)
+        forecaster = Forecaster(
             reservoir=query_reservoir,
-            forecast_policy_config=forecast_policy_config,
+            forecaster_config=forecaster_config,
         )
         target_date = workload.abs_start_time_range()[0].date()
-        forecasted_workload = forecast_policy.forecast(
-            target_date=target_date, use_fixed_queries_per_hour=True
+        forecasted_workload, _ = forecaster.forecast(
+            target_date=target_date,
+            use_fixed_queries_per_hour=True,
+            out_dir=out_dir,
+            workload_name="forecasted_workload",
         )
         forecasted_workload = forecasted_workload.rescale_rel_times(
-            factor=workload.rescale_factor
+            workload_config.rescale_factor
         )
         rel_time_s_to_forecasted_table_vecs = (
             forecasted_workload.get_rel_time_s_to_table_vecs(
