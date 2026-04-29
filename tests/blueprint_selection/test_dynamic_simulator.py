@@ -10,19 +10,14 @@ dependencies (IconqModel, Workload) are mocked.
 
 from __future__ import annotations
 
-
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from autoslo.clusters.cluster import Cluster
-from autoslo.workload_execution.workload_simulator import (
-    WorkloadSimulator,
-)
-
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
+from autoslo.clusters.cluster import Cluster
+from autoslo.simulator.workload_simulator import WorkloadSimulator
 from autoslo.workload_definition.query import Query, QueryTextId
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -337,7 +332,9 @@ class TestAdvanceSimulatedTime:
         )
         cn = list(sim._active_queries_per_cluster.keys())[0]
         q = _q("q1", start=0.0)
-        sim._predicted_latencies[q.query_id] = 500.0  # stays active the whole time
+        sim._predicted_latencies[q.query_id] = (
+            500.0  # stays active the whole time
+        )
         sim._active_queries_per_cluster[cn].append(q)
         sim._neighbors_per_active_query["q1"] = []
 

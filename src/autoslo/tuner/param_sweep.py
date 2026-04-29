@@ -22,12 +22,11 @@ from rich.table import Table
 
 import autoslo.utils.config as cfgu
 from autoslo.config.component_configs import WorkloadConfig
+from autoslo.simulator.aggregated_simulation_results import (
+    AggregatedSimulationResults,
+)
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.tuner_utils import (
-    AggregatedSimulationResults,
-    SimulationResult,
-)
 from autoslo.utils.yaml_helpers import dump_yaml
 
 logger = logging.getLogger(__name__)
@@ -191,7 +190,9 @@ class ParamSweep:
         )
         for i, idx in enumerate(top_k_indices):
             val_results = all_val_results[i]
-            val_agg = SimulationResult.aggregate(val_results, self._agg_method)
+            val_agg = AggregatedSimulationResults.aggregate_from(
+                val_results, self._agg_method
+            )
             val_primary = val_agg.primary_violation(
                 self._slo_objective.slo_metric
             )
@@ -235,7 +236,7 @@ class ParamSweep:
         )
         grid_results: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates):
-            train_agg = SimulationResult.aggregate(
+            train_agg = AggregatedSimulationResults.aggregate_from(
                 all_train_results[idx], self._agg_method
             )
             train_primary = train_agg.primary_violation(

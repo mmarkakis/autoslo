@@ -52,7 +52,7 @@ import yaml
 
 import autoslo.utils.paths as pu
 from autoslo.workload_definition.query import SloMetric
-from autoslo.workload_execution.workload_simulator import (
+from autoslo.simulator.workload_simulator import (
     WorkloadSimulator,
 )
 from autoslo.capacity.policy_tuner import (
@@ -128,8 +128,13 @@ def _extract_run_stats(
             # violating queries.  Zero when no violations.
             if violations_mask.any():
                 relative_violation = float(
-                    ((durations[violations_mask] - per_row_slo[violations_mask])
-                     / per_row_slo[violations_mask]).mean()
+                    (
+                        (
+                            durations[violations_mask]
+                            - per_row_slo[violations_mask]
+                        )
+                        / per_row_slo[violations_mask]
+                    ).mean()
                 )
 
     return {

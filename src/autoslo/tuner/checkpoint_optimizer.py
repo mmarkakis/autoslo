@@ -29,14 +29,14 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
+from autoslo.simulator.aggregated_simulation_results import (
+    AggregatedSimulationResults,
+)
+from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.tuner_utils import (
-    AggregatedSimulationResults,
-    SimulationResult,
-)
 from autoslo.utils.yaml_helpers import dump_yaml
 
 logger = logging.getLogger(__name__)
@@ -393,7 +393,7 @@ class CheckpointOptimizer:
                     )
                 )
                 train_results = nested_train_results[0]
-                agg_train_results = SimulationResult.aggregate(
+                agg_train_results = AggregatedSimulationResults.aggregate_from(
                     train_results, self._agg_method
                 )
                 current_train_agg = agg_train_results
@@ -469,7 +469,7 @@ class CheckpointOptimizer:
             for i in range(len(checkpoints)):
                 checkpoint = checkpoints[i]
                 trial_results = all_trial_results[i]
-                agg = SimulationResult.aggregate(
+                agg = AggregatedSimulationResults.aggregate_from(
                     trial_results, self._agg_method
                 )
                 cands.append((checkpoint, agg))

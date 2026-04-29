@@ -24,11 +24,11 @@ from autoslo.utils.structured_events import (
 )
 from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.query import Query
-from autoslo.workload_definition.workload import Workload
-from autoslo.workload_execution.simulator_event import (
+from autoslo.simulator.simulator_event import (
     SimulatorEvent,
     SimulatorEventType,
 )
+from autoslo.simulator.simulation_result import SimulationResult
 
 
 class WorkloadSimulator:
@@ -136,7 +136,7 @@ class WorkloadSimulator:
     def run(
         self,
         progress_callback: "Optional[Callable[[int, int], None]]" = None,
-    ) -> None:
+    ) -> SimulationResult:
         """
         First pass: route queries as they come in, preferring active endpoints
         and minimizing SLO violations.
@@ -153,7 +153,6 @@ class WorkloadSimulator:
         )
         for name in pending_cluster_names:
             self._pool.on_cluster_ready(name, 0.0)
-
 
         seq_num_to_cluster_name: dict[int, str] = {}
         queries = self._workload.queries()
@@ -184,7 +183,7 @@ class WorkloadSimulator:
                     "workload_name": self._workload.workload_name,
                     "num_queries": self._total_queries,
                     "routing_policy": self._router.routing_policy.value,
-                    "closed_loop": False
+                    "closed_loop": False,
                 },
             )
         )
@@ -282,6 +281,8 @@ class WorkloadSimulator:
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         dump_yaml(seq_num_to_cluster_name, mapping_out_path)
+
+        return SimulationResult.load(self._out_dir)
 
     def _handle_query_arrival(
         self, event: SimulatorEvent, seq_num_to_cluster_name: dict[int, str]

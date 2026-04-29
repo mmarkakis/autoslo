@@ -23,13 +23,13 @@ from rich.progress import (
 
 import autoslo.utils.config as cfgu
 from autoslo.config.component_configs import WorkloadConfig
-from autoslo.tuner.tuner_utils import SimulationResult
+from autoslo.simulator.simulation_result import SimulationResult
+from autoslo.simulator.workload_simulator import WorkloadSimulator
 from autoslo.utils.parallelism import (
     _init_worker,
     deg_of_parallelism,
     inner_level_num_cpus,
 )
-from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +99,8 @@ def _run_one_combination(
         progress_dict[combination_idx] = (current, total)
 
     sim = WorkloadSimulator(config, out_dir=sim_out_dir, write_text_log=False)
-    sim.run(progress_callback=_progress_cb)
-
-    # Extract metrics from the output files.
-    return SimulationResult.load(sim.out_dir)
+    result = sim.run(progress_callback=_progress_cb)
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from autoslo.routing.query_router import QueryRouter
 from autoslo.utils.logging import emit_structured
 from autoslo.utils.structured_events import EventType, QueryRelatedEvent
 from autoslo.workload_definition.query import Query
-from autoslo.workload_execution.simulator_event import (
+from autoslo.simulator.simulator_event import (
     SimulatorEvent,
     SimulatorEventType,
 )

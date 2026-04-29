@@ -6,7 +6,7 @@ import yaml
 
 import autoslo.utils.paths as pu
 from autoslo.workload_definition.query import SloMetric
-from autoslo.workload_execution.workload_simulator import (
+from autoslo.simulator.workload_simulator import (
     WorkloadSimulator,
 )
 from autoslo.clusters.blueprint import Blueprint

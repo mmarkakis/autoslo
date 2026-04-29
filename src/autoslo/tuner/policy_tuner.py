@@ -20,6 +20,9 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
+from autoslo.simulator.aggregated_simulation_results import (
+    AggregatedSimulationResults,
+)
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
@@ -28,10 +31,6 @@ from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.tuner.tuner_utils import (
-    AggregatedSimulationResults,
-    SimulationResult,
-)
 from autoslo.utils.config import copy_and_apply_overrides
 from autoslo.utils.structured_events import wall_clock_utc
 from autoslo.utils.yaml_helpers import dump_yaml
@@ -238,8 +237,12 @@ class PolicyTuner:
         train_results = all_results[:n_train]
         val_results = all_results[n_train:]
 
-        train_agg = SimulationResult.aggregate(train_results, self._agg_method)
-        val_agg = SimulationResult.aggregate(val_results, self._agg_method)
+        train_agg = AggregatedSimulationResults.aggregate_from(
+            train_results, self._agg_method
+        )
+        val_agg = AggregatedSimulationResults.aggregate_from(
+            val_results, self._agg_method
+        )
 
         # Persist summaries.
         summary_dir.mkdir(parents=True, exist_ok=True)
@@ -320,7 +323,9 @@ class PolicyTuner:
                 out_dir=val_out,
             )
             val_results = nested[0]
-            val_agg = SimulationResult.aggregate(val_results, self._agg_method)
+            val_agg = AggregatedSimulationResults.aggregate_from(
+                val_results, self._agg_method
+            )
 
             candidate_configs.append(post_ckpt_config)
             candidate_train_aggs.append(train_agg)
