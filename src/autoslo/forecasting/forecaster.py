@@ -11,7 +11,7 @@ import pandas as pd
 
 import autoslo.utils.paths as pu
 from autoslo.config.component_configs import ForecasterConfig, WorkloadConfig
-from autoslo.tuner.forecast_policy import ForecastPolicy
+from autoslo.forecasting.forecast_policy import ForecastPolicy
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.workload_definition.workload import Workload
 
@@ -70,6 +70,7 @@ class Forecaster:
 
         if isinstance(target_date, str):
             target_date = pd.Timestamp(target_date).date()
+        assert isinstance(target_date, date)
 
         rows = []
         query_idx = 0

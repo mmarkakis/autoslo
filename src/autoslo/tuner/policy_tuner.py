@@ -20,13 +20,13 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
+from autoslo.forecasting.forecaster import Forecaster
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
-from autoslo.tuner.forecaster import Forecaster
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.reservoir import QueryReservoir
