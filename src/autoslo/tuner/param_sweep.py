@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.utils.config as cfgu
+from autoslo.config.component_configs import WorkloadConfig
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.tuner_utils import (
@@ -100,8 +101,8 @@ class ParamSweep:
 
     def sweep(
         self,
-        train_paths: list[Path],
-        val_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
+        val_workload_configs: list[WorkloadConfig],
         sweep_config: dict[str, Any],
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
@@ -110,7 +111,7 @@ class ParamSweep:
 
         *sweep_config* format::
 
-            {"strategy": "random", "seed": 42, "budget": 20, "val_top_k": 5, 
+            {"strategy": "random", "seed": 42, "budget": 20, "val_top_k": 5,
              "params": {"param.name": [v1, v2], ...}}
 
         Both ``strategy`` (default ``"grid"``) and ``params`` (default
@@ -119,10 +120,10 @@ class ParamSweep:
 
         Parameters
         ----------
-        train_paths :
-            Parquet workload paths for training scenarios.
-        val_paths :
-            Parquet workload paths for validation scenarios.
+        train_workload_configs :
+            Workload configurations for training scenarios.
+        val_workload_configs :
+            Workload configurations for validation scenarios.
         sweep_config :
             Sweep configuration (see above).
 
@@ -149,15 +150,15 @@ class ParamSweep:
         # ── Generate & evaluate candidates (strategy-specific) ─────
         if strategy == "grid":
             candidates, grid_results = self._sweep_grid(
-                train_paths, param_ranges, phase_dir
+                train_workload_configs, param_ranges, phase_dir
             )
         elif strategy == "random":
             candidates, grid_results = self._sweep_random(
-                train_paths, param_ranges, options, phase_dir
+                train_workload_configs, param_ranges, options, phase_dir
             )
         elif strategy == "coordinate_descent":
             candidates, grid_results = self._sweep_coordinate_descent(
-                train_paths, param_ranges, options, phase_dir
+                train_workload_configs, param_ranges, options, phase_dir
             )
         else:
             raise ValueError(f"Unknown sweep strategy: {strategy!r}")
@@ -182,8 +183,8 @@ class ParamSweep:
         console.print(f"\n[bold cyan]Validation sweep:[/]")
         val_overrides = [candidates[idx] for idx in top_k_indices]
         all_val_results = self._evaluator.evaluate_batch_from_overrides(
-            phase_name=self._phase_name,
-            workload_paths=val_paths,
+            progress_bar_label=self._phase_name,
+            workload_configs=val_workload_configs,
             base_config=self._config,
             all_config_overrides=val_overrides,
             out_dir=phase_dir / "val",
@@ -220,14 +221,14 @@ class ParamSweep:
 
     def _evaluate_candidates(
         self,
-        train_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
         candidates: list[dict[str, Any]],
         out_dir: Path,
     ) -> list[dict[str, Any]]:
         """Evaluate *candidates* on training scenarios and return result dicts."""
         all_train_results = self._evaluator.evaluate_batch_from_overrides(
-            phase_name=self._phase_name,
-            workload_paths=train_paths,
+            progress_bar_label=self._phase_name,
+            workload_configs=train_workload_configs,
             base_config=self._config,
             all_config_overrides=candidates,
             out_dir=out_dir,
@@ -257,22 +258,22 @@ class ParamSweep:
 
     def _sweep_grid(
         self,
-        train_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
         param_ranges: dict[str, list],
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Exhaustive grid search (original strategy)."""
         grid = build_grid(param_ranges)
-        self._print_preflight(param_ranges, grid, len(train_paths))
+        self._print_preflight(param_ranges, grid, len(train_workload_configs))
         console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results = self._evaluate_candidates(
-            train_paths, grid, phase_dir / "train"
+            train_workload_configs, grid, phase_dir / "train"
         )
         return grid, grid_results
 
     def _sweep_random(
         self,
-        train_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
         param_ranges: dict[str, list],
         options: dict[str, Any],
         phase_dir: Path,
@@ -291,18 +292,18 @@ class ParamSweep:
         self._print_preflight(
             param_ranges,
             grid,
-            len(train_paths),
+            len(train_workload_configs),
             strategy_label=f"Random (budget={budget}, seed={seed})",
         )
         console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results = self._evaluate_candidates(
-            train_paths, grid, phase_dir / "train"
+            train_workload_configs, grid, phase_dir / "train"
         )
         return grid, grid_results
 
     def _sweep_coordinate_descent(
         self,
-        train_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
         param_ranges: dict[str, list],
         options: dict[str, Any],
         phase_dir: Path,
@@ -332,8 +333,8 @@ class ParamSweep:
             f"max_cycles={max_cycles}  |  "
             f"params={len(param_ranges)}  |  "
             f"total values={total_values}  |  "
-            f"training scenarios={len(train_paths)}  |  "
-            f"max evals={max_cycles * total_values * len(train_paths)}"
+            f"training scenarios={len(train_workload_configs)}  |  "
+            f"max evals={max_cycles * total_values * len(train_workload_configs)}"
         )
         console.print(f"  Starting point: {current_best}")
 
@@ -365,7 +366,7 @@ class ParamSweep:
                         / param_name.replace(".", "_")
                     )
                     batch_results = self._evaluate_candidates(
-                        train_paths, new_candidates, out_dir
+                        train_workload_configs, new_candidates, out_dir
                     )
                     for j, c in enumerate(new_candidates):
                         idx = len(all_candidates)
@@ -422,7 +423,7 @@ class ParamSweep:
         """
         Pick the best validated candidate.
 
-       """
+        """
         candidates = [
             ViolationCost(
                 grid_results[i]["val_primary_violation_agg"],

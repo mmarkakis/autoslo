@@ -47,7 +47,7 @@ class Forecaster:
         workload_name: str = "forecast",
         rescale_factor: float = 1.0,
         use_fixed_queries_per_hour: bool = False,
-    ) -> tuple[Workload, Path]:
+    ) -> WorkloadConfig:
         """
         Return a forecasted workload for the target interval. The forecasted
         workload is also written out to the specified directory.
@@ -143,7 +143,7 @@ class Forecaster:
         workload.save(
             out_dir=out_dir, overwrite=True
         )  # Save again after rescale.
-        return workload, out_path
+        return workload_config
 
     def forecast_n_scenarios(
         self,
@@ -154,7 +154,7 @@ class Forecaster:
         out_dir: Optional[Path] = None,
         use_fixed_queries_per_hour: bool = False,
         rescale_factor: float = 1.0,
-    ) -> tuple[list[Workload], list[Path]]:
+    ) -> list[WorkloadConfig]:
         """
         Return a list of forecasted workloads for the target day. Optionally
         also persist them.
@@ -181,19 +181,15 @@ class Forecaster:
 
         Returns
         -------
-        workloads :
-            The list of forecasted workloads.
-        paths :
-            If *out_dir* is provided, the list of paths to which the forecasted
-            workloads were persisted. Otherwise, an empty list.
+        workload_configs :
+            The list of forecasted workload configurations.
         """
 
-        workloads: list[Workload] = []
-        paths: list[Path] = []
+        workload_configs: list[WorkloadConfig] = []
         for i in range(n_scenarios):
             workload_name = f"{workload_name_prefix}_{i}"
             workload_seed = initial_seed + i
-            workload, path = self.forecast(
+            workload_config = self.forecast(
                 target_date,
                 seed=workload_seed,
                 workload_name=workload_name,
@@ -201,10 +197,9 @@ class Forecaster:
                 use_fixed_queries_per_hour=use_fixed_queries_per_hour,
                 rescale_factor=rescale_factor,
             )
-            workloads.append(workload)
-            paths.append(path)
+            workload_configs.append(workload_config)
 
-        return workloads, paths
+        return workload_configs
 
     def _build_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         """

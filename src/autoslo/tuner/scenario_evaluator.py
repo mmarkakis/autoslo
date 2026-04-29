@@ -11,7 +11,6 @@ from multiprocessing import Manager, get_context
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import torch
 from rich.progress import (
     BarColumn,
@@ -23,16 +22,13 @@ from rich.progress import (
 )
 
 import autoslo.utils.config as cfgu
-from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import WorkloadConfig
-from autoslo.models.iconq_model import IconqModel
 from autoslo.tuner.tuner_utils import SimulationResult
 from autoslo.utils.parallelism import (
     _init_worker,
     deg_of_parallelism,
     inner_level_num_cpus,
 )
-from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
 logger = logging.getLogger(__name__)
@@ -58,11 +54,11 @@ def from_combination_idx(
 
 
 def _run_one_combination(
-    combination_out_dir: Path,
+    sim_out_dir: Path,
     combination_idx: int,
-    workload_path: Path,
+    workload_config: WorkloadConfig,
     config: dict[str, Any],
-    progress_dict: dict[int, tuple[int, int]],
+    progress_dict,
 ) -> SimulationResult:
     """Execute a single simulation inside a worker process.
 
@@ -94,34 +90,16 @@ def _run_one_combination(
     torch.set_num_threads(int(ncpus))
 
     # Overwrite the workload in the config with the one we want to run.
-    existing_workload_config = WorkloadConfig.from_config(config)
-    new_workload_config = WorkloadConfig(
-        workload_name=workload_path.stem,
-        workload_dir=workload_path.parent,
-        start_date_inclusive=existing_workload_config.start_date_inclusive,
-        end_date_inclusive=existing_workload_config.end_date_inclusive,
-        rescale_factor=existing_workload_config.rescale_factor,
-    )
     config = cfgu.copy_and_apply_overrides(
-        config, {"workload_config": new_workload_config.to_dict()}
+        config, {"workload_config": workload_config.to_dict()}
     )
 
-    # Build the simulator.
-    sim = WorkloadSimulator(
-        config,
-        out_dir=combination_out_dir / f"{new_workload_config.workload_name}",
-        write_text_log=False,
-    )
-
-    # Build a progress callback that writes into the shared dict.
+    # Build and run the simulator.
     def _progress_cb(current: int, total: int) -> None:
-        if progress_dict is not None:
-            progress_dict[combination_idx] = (current, total)
+        progress_dict[combination_idx] = (current, total)
 
-    # Run the simulation.
-    sim.run(
-        progress_callback=_progress_cb if progress_dict is not None else None,
-    )
+    sim = WorkloadSimulator(config, out_dir=sim_out_dir, write_text_log=False)
+    sim.run(progress_callback=_progress_cb)
 
     # Extract metrics from the output files.
     return SimulationResult.load(sim.out_dir)
@@ -154,11 +132,13 @@ class ScenarioEvaluator:
 
     def evaluate_batch_from_overrides(
         self,
-        phase_name: str,
+        progress_bar_label: str,
         out_dir: Path,
-        workload_paths: list[Path],
+        workload_configs: list[WorkloadConfig],
         base_config: dict[str, Any],
         all_config_overrides: list[dict[str, Any]],
+        config_labels: list[str] | None = None,
+        nest_outputs_by_config: bool = True,
     ) -> list[list[SimulationResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
@@ -172,32 +152,36 @@ class ScenarioEvaluator:
             for config_overrides in all_config_overrides
         ]
         return self.evaluate_batch_from_configs(
-            phase_name=phase_name,
+            progress_bar_label=progress_bar_label,
             out_dir=out_dir,
-            workload_paths=workload_paths,
+            workload_configs=workload_configs,
             configs=configs,
+            config_labels=config_labels,
+            nest_outputs_by_config=nest_outputs_by_config,
         )
 
     def evaluate_batch_from_configs(
         self,
-        phase_name: str,
-        out_dir: Path,
-        workload_paths: list[Path],
+        progress_bar_label: str,
+        out_dir: str | Path,
+        workload_configs: list[WorkloadConfig],
         configs: list[dict[str, Any]],
+        config_labels: list[str] | None = None,
+        nest_outputs_by_config: bool = True,
     ) -> list[list[SimulationResult]]:
         """
-        Evaluate the cross-product of *workload_paths* and *configs* in
+        Evaluate the cross-product of *workload_configs* and *configs* in
         parallel, with unified progress tracking and result collection.
 
         Parameters
         ----------
-        phase_name :
+        progress_bar_label :
             Label for the tuning phase.
         out_dir :
             Directory under which per-scenario subdirectories will be created
             to hold simulation outputs.
-        workload_paths :
-            Paths to workload parquet files (shared across all specs).
+        workload_configs :
+            List of workload configurations (shared across all specs).
         configs :
             List of full config dicts for every scenario.
 
@@ -205,42 +189,28 @@ class ScenarioEvaluator:
         -------
         A nested list where ``results[config_idx][workload_idx]`` is the
         :class:`SimulationResult` for that combination.  The outer list
-        is ordered by *configs* and the inner list by *workload_paths*.
+        is ordered by *configs* and the inner list by *workload_configs*.
         """
 
-        if len(configs) == 0 or len(workload_paths) == 0:
+        if len(configs) == 0 or len(workload_configs) == 0:
             raise ValueError(
                 "Must provide at least one config config and one workload"
             )
 
-        config_labels = [f"config_{i}" for i in range(len(configs))]
+        if config_labels is not None and len(config_labels) != len(configs):
+            raise ValueError(
+                "Length of config_labels must match length of configs"
+            )
+        if config_labels is None:
+            config_labels = [f"config_{i}" for i in range(len(configs))]
 
         # Set up parallel execution.
         mgr = Manager()
         progress_dict = mgr.dict()
         ctx = get_context("spawn")
-
-        # Get the work units.
-        num_workloads = len(workload_paths)
-
-        work_units = [
-            {
-                "combination_out_dir": out_dir / config_labels[config_idx],
-                "combination_idx": to_combination_idx(
-                    config_idx, workload_idx, num_workloads=num_workloads
-                ),
-                "workload_path": workload_path,
-                "config": config,
-                "progress_dict": progress_dict,
-            }
-            for (workload_idx, workload_path), (
-                config_idx,
-                config,
-            ) in itertools.product(
-                enumerate(workload_paths), enumerate(configs)
-            )
-        ]
+        num_workloads = len(workload_configs)
         results: dict[int, dict[int, SimulationResult]] = {}
+        out_dir = Path(out_dir)
 
         # Execute in parallel.
         with ProcessPoolExecutor(
@@ -250,9 +220,29 @@ class ScenarioEvaluator:
             initargs=(inner_level_num_cpus(),),
         ) as pool:
             futures: dict[Any, int] = {}
-            for wu in work_units:
-                f = pool.submit(_run_one_combination, **wu)
-                futures[f] = wu["combination_idx"]
+            for workload_idx, config_idx in itertools.product(
+                range(len(workload_configs)), range(len(configs))
+            ):
+                combination_idx = to_combination_idx(
+                    config_idx, workload_idx, num_workloads=num_workloads
+                )
+                config_label = config_labels[config_idx]
+                workload_config = workload_configs[workload_idx]
+                if nest_outputs_by_config:
+                    sim_out_dir = out_dir / config_label / workload_config.id()
+                else:
+                    sim_out_dir = (
+                        out_dir / f"{config_label}#{workload_config.id()}"
+                    )
+                f = pool.submit(
+                    _run_one_combination,
+                    sim_out_dir,
+                    combination_idx,
+                    workload_config,
+                    configs[config_idx],
+                    progress_dict,
+                )
+                futures[f] = combination_idx
 
             # Add a timer column with projected remaining time.
             with Progress(
@@ -265,7 +255,7 @@ class ScenarioEvaluator:
                 refresh_per_second=1,
             ) as progress:
                 main_task = progress.add_task(
-                    f"[cyan]{phase_name}", total=len(futures)
+                    f"[cyan]{progress_bar_label}", total=len(futures)
                 )
                 per_config_tasks = {
                     config_idx: progress.add_task(

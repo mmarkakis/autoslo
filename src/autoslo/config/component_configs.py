@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional, Self
 
@@ -37,7 +37,7 @@ class _PartialConfig:
         """
         Convert the dataclass to a dictionary for dumping to YAML.
         """
-        return self.__dict__
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,20 @@ class WorkloadConfig(_PartialConfig):
     start_date_inclusive: Optional[str] = None  # YYYY-MM-DD
     end_date_inclusive: Optional[str] = None  # YYYY-MM-DD
     rescale_factor: float = 1.0
+
+    def id(self) -> str:
+        """
+        Get a unique ID for this workload config, based on the workload name and
+        date range.
+        """
+        return "__".join(
+            [
+                self.workload_name,
+                self.start_date_inclusive or "start",
+                self.end_date_inclusive or "end",
+                f"rf{self.rescale_factor:.3f}",
+            ]
+        )
 
 
 @dataclass(frozen=True)

@@ -5,31 +5,21 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-import pandas as pd
-import plotext as plt
-import yaml
 from rich.console import Console
 
 import autoslo.utils.config as cfgu
 import autoslo.utils.paths as pu
 from autoslo.config.component_configs import (
-    AutoscalerConfig,
     ForecasterConfig,
-    ManagedClusterPoolConfig,
-    ProvisionerConfig,
-    QueryRouterConfig,
     ReservoirConfig,
     SamplingConfig,
     SloObjectiveConfig,
     SloResolverConfig,
     WorkloadConfig,
-    WorkloadRunnerConfig,
 )
-from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
@@ -125,11 +115,11 @@ class PolicyTuner:
 
     def sample_workloads(
         self, reservoir: QueryReservoir
-    ) -> tuple[list[Path], list[Path]]:
+    ) -> tuple[list[WorkloadConfig], list[WorkloadConfig]]:
         """
         Phase 2: Sample train/val workloads from the reservoir.
 
-        Returns the lists of train and val workload paths.
+        Returns the lists of train and val workload configurations.
         """
 
         # Set up forecast policy for sampling.
@@ -149,12 +139,27 @@ class PolicyTuner:
             workload.save(out_dir=train_dir, out_workload_name="t_0")
             workload.save(out_dir=val_dir, out_workload_name="v_0")
 
+            train_workload_config = WorkloadConfig(
+                workload_name="t_0",
+                workload_dir=train_dir,
+                start_date_inclusive=workload_config.start_date_inclusive,
+                end_date_inclusive=workload_config.end_date_inclusive,
+                rescale_factor=workload_config.rescale_factor,
+            )
+            val_workload_config = WorkloadConfig(
+                workload_name="v_0",
+                workload_dir=val_dir,
+                start_date_inclusive=workload_config.start_date_inclusive,
+                end_date_inclusive=workload_config.end_date_inclusive,
+                rescale_factor=workload_config.rescale_factor,
+            )
+
             console.print(
                 f"  Ground truth mode: copied target workload into "
                 f"1 train + 1 val scenario "
                 f"under {self._out_dir / '02_workloads'}."
             )
-            return [train_dir / "t_0.parquet"], [val_dir / "v_0.parquet"]
+            return [train_workload_config], [val_workload_config]
 
         # Sample.
         num_scenarios = self._sampling_config.num_scenarios
@@ -165,7 +170,7 @@ class PolicyTuner:
         rescale_factor = workload_config.rescale_factor
         assert target_date is not None
 
-        _, train_paths = forecaster.forecast_n_scenarios(
+        train_workload_configs = forecaster.forecast_n_scenarios(
             target_date=target_date,
             n_scenarios=n_train,
             initial_seed=self._sampling_config.seed,
@@ -173,7 +178,7 @@ class PolicyTuner:
             out_dir=train_dir,
             rescale_factor=rescale_factor,
         )
-        _, val_paths = forecaster.forecast_n_scenarios(
+        val_workload_configs = forecaster.forecast_n_scenarios(
             target_date=target_date,
             n_scenarios=n_val,
             initial_seed=self._sampling_config.seed + n_train,
@@ -186,22 +191,22 @@ class PolicyTuner:
             f"to {self._out_dir / '02_workloads'}"
         )
 
-        if not train_paths:
+        if not train_workload_configs:
             raise ValueError(
-                f"train_paths is empty: num_scenarios={num_scenarios}, "
+                f"train_workload_configs is empty: num_scenarios={num_scenarios}, "
                 f"train_fraction={train_fraction} produced n_train=0."
             )
-        if not val_paths:
+        if not val_workload_configs:
             raise ValueError(
-                f"val_paths is empty: num_scenarios={num_scenarios}, "
+                f"val_workload_configs is empty: num_scenarios={num_scenarios}, "
                 f"train_fraction={train_fraction} produced n_val=0."
             )
-        return train_paths, val_paths
+        return train_workload_configs, val_workload_configs
 
     def evaluate_baseline(
         self,
-        train_paths: list[Path],
-        val_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
+        val_workload_configs: list[WorkloadConfig],
     ) -> tuple[AggregatedSimulationResults, AggregatedSimulationResults]:
         """Phase 3: Evaluate the initial config as a baseline.
 
@@ -217,15 +222,15 @@ class PolicyTuner:
         # Run train + val workloads in a single parallel batch so the
         # process pool stays fully utilised instead of idling between
         # the two sequential calls.
-        n_train = len(train_paths)
-        all_paths = train_paths + val_paths
+        n_train = len(train_workload_configs)
+        all_workload_configs = train_workload_configs + val_workload_configs
         console.print(
             f"Evaluating baseline on {n_train} train + "
-            f"{len(val_paths)} val scenarios..."
+            f"{len(val_workload_configs)} val scenarios..."
         )
         all_results_nested = self._evaluator.evaluate_batch_from_configs(
-            phase_name="baseline",
-            workload_paths=all_paths,
+            progress_bar_label="baseline",
+            workload_configs=all_workload_configs,
             configs=[self._initial_config],
             out_dir=summary_dir / "results",
         )
@@ -244,7 +249,9 @@ class PolicyTuner:
         return train_agg, val_agg
 
     def find_checkpoints(
-        self, train_paths: list[Path], val_paths: list[Path]
+        self,
+        train_workload_configs: list[WorkloadConfig],
+        val_workload_configs: list[WorkloadConfig],
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
     ]:
@@ -300,15 +307,15 @@ class PolicyTuner:
                 agg_method=self._agg_method,
             )
             post_ckpt_config, train_agg = optimizer.optimize(
-                train_paths=train_paths,
+                train_workload_configs=train_workload_configs,
             )
             dump_yaml(train_agg, train_summary_path)
 
             # Evaluate on validation data.
             val_out = candidate_dir / "final" / "val"
             nested = self._evaluator.evaluate_batch_from_configs(
-                phase_name=f"{tag}_ckpt_val",
-                workload_paths=val_paths,
+                progress_bar_label=f"{tag}_ckpt_val",
+                workload_configs=val_workload_configs,
                 configs=[post_ckpt_config],
                 out_dir=val_out,
             )
@@ -362,8 +369,8 @@ class PolicyTuner:
 
     def param_sweep(
         self,
-        train_paths: list[Path],
-        val_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
+        val_workload_configs: list[WorkloadConfig],
         initial_config: dict[str, Any],
         phase_name: str,
         config_key: str | None = None,
@@ -388,8 +395,8 @@ class PolicyTuner:
             agg_method=self._agg_method,
         )
         post_sweep_config, train_agg, val_agg = sweeper.sweep(
-            train_paths=train_paths,
-            val_paths=val_paths,
+            train_workload_configs=train_workload_configs,
+            val_workload_configs=val_workload_configs,
             sweep_config=cfgu.getd(
                 self._initial_config, f"tuner_config.{config_key}", {}
             ),
@@ -417,7 +424,9 @@ class PolicyTuner:
                 "02_workloads", "Phase 2: Preparing workloads"
             ):
                 self._print_banner("Phase 2: Preparing workloads")
-                train_paths, val_paths = self.sample_workloads(reservoir)
+                train_workload_configs, val_workload_configs = (
+                    self.sample_workloads(reservoir)
+                )
 
             ### Phase 3: Baseline evaluation
             with self._timer.timed_phase(
@@ -425,7 +434,7 @@ class PolicyTuner:
             ):
                 self._print_banner("Phase 3: Baseline evaluation")
                 baseline_train, baseline_val = self.evaluate_baseline(
-                    train_paths, val_paths
+                    train_workload_configs, val_workload_configs
                 )
                 AggregatedSimulationResults.print_comparison(
                     ("Baseline (train)", baseline_train),
@@ -445,7 +454,9 @@ class PolicyTuner:
                     post_checkpoints_config,
                     post_checkpoints_train,
                     post_checkpoints_val,
-                ) = self.find_checkpoints(train_paths, val_paths)
+                ) = self.find_checkpoints(
+                    train_workload_configs, val_workload_configs
+                )
                 AggregatedSimulationResults.print_comparison(
                     ("Baseline (train)", baseline_train),
                     ("Post-checkpoints (train)", post_checkpoints_train),
@@ -467,8 +478,8 @@ class PolicyTuner:
             ):
                 self._print_banner("Phase 5: Autoscaler parameter sweep")
                 post_first_sweep_config, _, _ = self.param_sweep(
-                    train_paths=train_paths,
-                    val_paths=val_paths,
+                    train_workload_configs=train_workload_configs,
+                    val_workload_configs=val_workload_configs,
                     initial_config=post_checkpoints_config,
                     phase_name="05_autoscaling_param_sweep",
                     config_key="autoscaling_param_sweep",
@@ -481,8 +492,8 @@ class PolicyTuner:
                 self._print_banner("Phase 6: Routing parameter sweep")
                 post_second_sweep_config, tuned_train, tuned_val = (
                     self.param_sweep(
-                        train_paths=train_paths,
-                        val_paths=val_paths,
+                        train_workload_configs=train_workload_configs,
+                        val_workload_configs=val_workload_configs,
                         initial_config=post_first_sweep_config,
                         phase_name="06_routing_param_sweep",
                         config_key="routing_param_sweep",

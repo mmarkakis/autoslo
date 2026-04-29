@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import copy
 import logging
-from collections import defaultdict
 import math
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,14 +21,15 @@ import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
-from autoslo.config.component_configs import (
-    SloObjectiveConfig,
-    SloResolverConfig,
-)
 import autoslo.utils.config as cfgu
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
-from autoslo.slo.slo_metric import LatencySlo, SloMetric
+from autoslo.config.component_configs import (
+    SloObjectiveConfig,
+    SloResolverConfig,
+    WorkloadConfig,
+)
+from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
@@ -331,7 +332,7 @@ class CheckpointOptimizer:
 
     def optimize(
         self,
-        train_paths: list[Path],
+        train_workload_configs: list[WorkloadConfig],
     ) -> tuple[dict[str, Any], AggregatedSimulationResults]:
         """Run the greedy checkpoint placement loop.
 
@@ -340,8 +341,8 @@ class CheckpointOptimizer:
 
         Parameters
         ----------
-        train_paths :
-            Parquet workload paths for training scenarios.
+        train_workload_configs :
+            List of WorkloadConfig objects for training scenarios.
 
         Returns
         -------
@@ -357,7 +358,7 @@ class CheckpointOptimizer:
             0.5,
         )
         min_delinquent_workloads = math.ceil(
-            min_delinquent_workload_fraction * len(train_paths)
+            min_delinquent_workload_fraction * len(train_workload_configs)
         )
 
         ckpt_dir = self._run_dir / "checkpoints"
@@ -385,8 +386,8 @@ class CheckpointOptimizer:
             else:
                 nested_train_results = (
                     self._evaluator.evaluate_batch_from_configs(
-                        phase_name=f"round_{round_idx:03d}_baseline",
-                        workload_paths=train_paths,
+                        progress_bar_label=f"round_{round_idx:03d}_baseline",
+                        workload_configs=train_workload_configs,
                         configs=[current_config],
                         out_dir=round_dir / "baseline",
                     )
@@ -460,8 +461,8 @@ class CheckpointOptimizer:
                 )
                 all_configs.append(trial_config)
             all_trial_results = self._evaluator.evaluate_batch_from_configs(
-                phase_name=f"round_{round_idx:03d}_candidates",
-                workload_paths=train_paths,
+                progress_bar_label=f"round_{round_idx:03d}_candidates",
+                workload_configs=train_workload_configs,
                 configs=all_configs,
                 out_dir=round_dir / "train",
             )
