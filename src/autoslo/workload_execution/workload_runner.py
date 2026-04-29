@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import concurrent.futures
 import logging
@@ -8,7 +9,6 @@ from typing import Optional
 
 from tqdm.auto import tqdm
 
-import autoslo.utils.config as cfgu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
@@ -21,7 +21,7 @@ from autoslo.output.structured_events import (
     QueryRelatedEvent,
     wall_clock_utc,
 )
-from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.output.yaml_helpers import dump_yaml, load_yaml
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
@@ -512,8 +512,15 @@ class WorkloadRunner:
 
 
 if __name__ == "__main__":
-    cfg, _ = cfgu.load_config_from_cli(
-        "Run queries from a workload using a YAML config file.",
+
+    description = "Run queries from a workload using a YAML config file."
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "config_path",
+        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
     )
+    args = parser.parse_args()
+    cfg = load_yaml(args.config_path)
+
     qr = WorkloadRunner(cfg)
     asyncio.run(qr.run())

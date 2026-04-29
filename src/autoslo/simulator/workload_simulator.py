@@ -1,3 +1,4 @@
+import argparse
 import heapq
 import logging
 import os
@@ -7,7 +8,6 @@ from typing import Callable, Optional
 import torch
 from tqdm import tqdm
 
-import autoslo.utils.config as cfgu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
@@ -19,7 +19,7 @@ from autoslo.output.structured_events import (
     EventType,
     QueryRelatedEvent,
 )
-from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.output.yaml_helpers import dump_yaml, load_yaml
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
@@ -491,13 +491,21 @@ class WorkloadSimulator:
 
 
 if __name__ == "__main__":
-    cfg, _ = cfgu.load_config_from_cli(
-        "Run the WorkloadSimulator from a YAML config file.",
+
+    description = "Run the WorkloadSimulator from a YAML config file."
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "config",
+        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
     )
+    args = parser.parse_args()
+    cfg = load_yaml(args.config)
+
     ncpus = str(inner_level_num_cpus())
     os.environ["OMP_NUM_THREADS"] = ncpus
     os.environ["MKL_NUM_THREADS"] = ncpus
     os.environ["OPENBLAS_NUM_THREADS"] = ncpus
     torch.set_num_threads(int(ncpus))
+
     sim = WorkloadSimulator(cfg)
     sim.run()

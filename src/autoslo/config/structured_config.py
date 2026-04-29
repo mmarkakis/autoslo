@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-import autoslo.utils.config as cfgu
+import autoslo.config.utils as cfgu
 import autoslo.utils.paths as pu
 from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint

@@ -21,7 +21,7 @@ import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
-import autoslo.utils.config as cfgu
+import autoslo.config.utils as cfgu
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import (

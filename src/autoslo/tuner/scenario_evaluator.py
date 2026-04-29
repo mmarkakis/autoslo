@@ -21,7 +21,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-import autoslo.utils.config as cfgu
+import autoslo.config.utils as cfgu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.simulator.workload_simulator import WorkloadSimulator

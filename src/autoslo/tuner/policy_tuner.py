@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import shutil
@@ -10,7 +11,7 @@ from typing import Any, Optional
 
 from rich.console import Console
 
-import autoslo.utils.config as cfgu
+import autoslo.config.utils as cfgu
 import autoslo.utils.paths as pu
 from autoslo.config.component_configs import (
     ForecasterConfig,
@@ -20,9 +21,10 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
+from autoslo.config.utils import copy_and_apply_overrides
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.output.structured_events import wall_clock_utc
-from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.output.yaml_helpers import dump_yaml, load_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )
@@ -33,7 +35,6 @@ from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.utils.config import copy_and_apply_overrides
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -550,9 +551,41 @@ class PolicyTuner:
 
 if __name__ == "__main__":
 
-    cfg, args = cfgu.load_config_from_cli(
-        "Run the policy tuner from a YAML config file.",
+    description = "Run the policy tuner from a YAML config file."
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "config",
+        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Overwrite an existing run/output directory if present. "
+            "Commands that don't manage a run directory ignore this flag."
+        ),
+    )
+    parser.add_argument(
+        "--publish-as",
+        dest="publish_as",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Publish the resulting tuned config to the registry as "
+            "data/configs/tuned/<NAME>.yml on success. Commands that "
+            "don't produce a tuned config ignore this flag."
+        ),
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "When --publish-as is given, overwrite an existing registry "
+            "entry instead of erroring out."
+        ),
+    )
+    args = parser.parse_args()
+    cfg = load_yaml(args.config)
 
     if args.publish_as is not None:
         publication_path = os.path.join(
@@ -565,8 +598,10 @@ if __name__ == "__main__":
                 f"overwrite.[/]"
             )
             exit(1)
+
     pt = PolicyTuner(cfg, force=args.force)
     final_config_path = pt.tune()
+
     if args.publish_as is not None:
         publication_path = os.path.join(
             pu.get_data_path(), "configs", "tuned", args.publish_as
