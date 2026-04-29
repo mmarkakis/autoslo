@@ -9,6 +9,7 @@ leading-zero integers as octal.
 from __future__ import annotations
 
 import re
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -33,8 +34,17 @@ def _posix_path_as_str(dumper: yaml.SafeDumper, data: Path) -> yaml.ScalarNode:
     )
 
 
+def _dataclass_using_asdict(
+    dumper: yaml.SafeDumper, data: Any
+) -> yaml.MappingNode:
+    if is_dataclass(data) and not isinstance(data, type):
+        return dumper.represent_dict(asdict(data))
+    return dumper.represent_data(data)
+
+
 _QuotingSafeDumper.add_representer(str, _quote_ambiguous_str)
 _QuotingSafeDumper.add_multi_representer(Path, _posix_path_as_str)
+_QuotingSafeDumper.add_multi_representer(object, _dataclass_using_asdict)
 
 
 def dump_yaml(

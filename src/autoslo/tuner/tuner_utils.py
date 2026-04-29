@@ -35,7 +35,7 @@ class AggregatedSimulationResults:
     violation_amount_s: float
     violation_relative_mean: float
     cost: float
-    scenario_results: tuple[SimulationResult, ...] = ()
+    scenario_results: list[SimulationResult] 
 
     def primary_violation(self, slo_metric: str | SloMetric) -> float:
         """Extract the primary violation value for the given SLO metric."""
@@ -175,7 +175,7 @@ class AggregatedSimulationResults:
         console.print(table)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SimulationResult:
     """Metrics from a single simulation."""
 
@@ -310,9 +310,9 @@ class SimulationResult:
                 violation_amount_s=0.0,
                 violation_relative_mean=0.0,
                 cost=0.0,
+                scenario_results=[],
             )
 
-        scenario_results = tuple(results)
         rates = [r.violation_rate for r in results]
         amounts = [r.violation_amount_s for r in results]
         relatives = [r.violation_relative_mean for r in results]
@@ -324,7 +324,7 @@ class SimulationResult:
                 violation_amount_s=statistics.mean(amounts),
                 violation_relative_mean=statistics.mean(relatives),
                 cost=statistics.mean(costs),
-                scenario_results=scenario_results,
+                scenario_results=results,
             )
         if metric == "max":
             return AggregatedSimulationResults(
@@ -332,7 +332,7 @@ class SimulationResult:
                 violation_amount_s=max(amounts),
                 violation_relative_mean=max(relatives),
                 cost=max(costs),
-                scenario_results=scenario_results,
+                scenario_results=results,
             )
 
         # pNN quantile
@@ -343,8 +343,7 @@ class SimulationResult:
                 violation_amount_s=float(np.quantile(amounts, q)),
                 violation_relative_mean=float(np.quantile(relatives, q)),
                 cost=float(np.quantile(costs, q)),
-                scenario_results=scenario_results,
+                scenario_results=results,
             )
 
         raise ValueError(f"Unknown aggregation metric: {metric!r}")
-

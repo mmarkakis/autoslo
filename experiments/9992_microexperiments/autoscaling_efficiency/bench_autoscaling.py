@@ -14,7 +14,7 @@ Fixed:
   - 10 repetitions per grid point
   - Routing policy = USE_ICONQ_MODEL
   - Queries sourced from a standard workload parquet under
-    ``data/__workloads/<schema_name>/<workload_name>.parquet`` (same
+    ``data/workloads/<schema_name>/<workload_name>.parquet`` (same
     pre-population path used by the runner / simulator / policy tuner)
 
 The benchmark seeds the autoscaler's internal window state directly so that a
@@ -90,7 +90,7 @@ def _prepare_queries(
     n_queries: int,
 ) -> list[Query]:
     """Build :class:`Query` objects from a standard
-    ``__workloads/<schema>/<name>.parquet`` file via
+    ``workloads/<schema>/<name>.parquet`` file via
     :meth:`Workload.populate_featurizations_and_isolated_predictions` so
     each query carries stage predictions for every RPU in ``rpu_sizes`` —
     necessary because the autoscaler may route them to a hypothetical

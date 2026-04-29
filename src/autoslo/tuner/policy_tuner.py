@@ -238,8 +238,8 @@ class PolicyTuner:
 
         # Persist summaries.
         summary_dir.mkdir(parents=True, exist_ok=True)
-        self._write_phase_summary(train_summary_path, train_agg)
-        self._write_phase_summary(val_summary_path, val_agg)
+        dump_yaml(train_agg, train_summary_path)
+        dump_yaml(val_agg, val_summary_path)
 
         return train_agg, val_agg
 
@@ -261,10 +261,13 @@ class PolicyTuner:
         ckpt_root = self._out_dir / "04_checkpoints"
 
         # Determine candidates.
-        default_rpus = self._cfgd(
-            "managed_cluster_pool_config.initial_rpus", [8]
+        default_rpus = cfgu.getd(
+            self._initial_config,
+            "managed_cluster_pool_config.initial_rpus",
+            [8],
         )
-        candidates: list[list[int]] = self._cfgd(
+        candidates: list[list[int]] = cfgu.getd(
+            self._initial_config,
             "tuner_config.checkpoint_phase.initial_rpu_candidates",
             [default_rpus],
         )
@@ -299,7 +302,7 @@ class PolicyTuner:
             post_ckpt_config, train_agg = optimizer.optimize(
                 train_paths=train_paths,
             )
-            self._write_phase_summary(train_summary_path, train_agg)
+            dump_yaml(train_agg, train_summary_path)
 
             # Evaluate on validation data.
             val_out = candidate_dir / "final" / "val"
@@ -352,12 +355,8 @@ class PolicyTuner:
         # Persist best results.
         best_config_path = ckpt_root / "best_config.yml"
         dump_yaml(best_config, best_config_path)
-        self._write_phase_summary(
-            ckpt_root / "best_train_summary.yml", best_train_agg
-        )
-        self._write_phase_summary(
-            ckpt_root / "best_val_summary.yml", best_val_agg
-        )
+        dump_yaml(best_train_agg, ckpt_root / "best_train_summary.yml")
+        dump_yaml(best_val_agg, ckpt_root / "best_val_summary.yml")
 
         return best_config, best_train_agg, best_val_agg
 
@@ -391,10 +390,12 @@ class PolicyTuner:
         post_sweep_config, train_agg, val_agg = sweeper.sweep(
             train_paths=train_paths,
             val_paths=val_paths,
-            sweep_config=self._cfgd(f"tuner_config.{config_key}", {}),
+            sweep_config=cfgu.getd(
+                self._initial_config, f"tuner_config.{config_key}", {}
+            ),
         )
-        self._write_phase_summary(train_summary_path, train_agg)
-        self._write_phase_summary(val_summary_path, val_agg)
+        dump_yaml(train_agg, train_summary_path)
+        dump_yaml(val_agg, val_summary_path)
         return post_sweep_config, train_agg, val_agg
 
     def tune(self) -> Path:
@@ -502,12 +503,8 @@ class PolicyTuner:
                 )
                 summary_dir = self._out_dir / "07_final"
                 summary_dir.mkdir(parents=True, exist_ok=True)
-                self._write_phase_summary(
-                    summary_dir / "train_summary.yml", tuned_train
-                )
-                self._write_phase_summary(
-                    summary_dir / "val_summary.yml", tuned_val
-                )
+                dump_yaml(tuned_train, summary_dir / "train_summary.yml")
+                dump_yaml(tuned_val, summary_dir / "val_summary.yml")
                 AggregatedSimulationResults.print_comparison(
                     ("Initial (train)", baseline_train),
                     ("Final (train)", tuned_train),
@@ -534,14 +531,6 @@ class PolicyTuner:
             return final_path
         finally:
             self._timer.finalize(self._out_dir)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
-        """Helper to get config values from the initial config."""
-        return cfgu.getd(self._initial_config, dot_delimited_key, default)
 
     @staticmethod
     def _print_banner(message: str) -> None:
@@ -780,54 +769,6 @@ class PolicyTuner:
             out_lines.append(pline + suffix)
 
         print("\n".join(out_lines))
-
-    @staticmethod
-    def _write_phase_summary(
-        path: Path, agg: AggregatedSimulationResults
-    ) -> None:
-        """Persist an AggregatedSimulationResults as YAML."""
-        summary: dict[str, Any] = {
-            "violation_rate": agg.violation_rate,
-            "violation_amount_s": agg.violation_amount_s,
-            "violation_relative_mean": agg.violation_relative_mean,
-            "cost": agg.cost,
-            "scenarios": [
-                {
-                    "simulation_dir": str(r.simulation_dir),
-                    "violation_rate": r.violation_rate,
-                    "violation_amount_s": r.violation_amount_s,
-                    "violation_relative_mean": r.violation_relative_mean,
-                    "total_cost": r.total_cost,
-                    "num_queries": r.num_queries,
-                }
-                for r in agg.scenario_results
-            ],
-        }
-        dump_yaml(summary, path)
-
-    @staticmethod
-    def _parse_phase_summary(path: Path) -> AggregatedSimulationResults:
-        """Parse an AggregatedSimulationResults from YAML."""
-        with open(path) as f:
-            summary = yaml.safe_load(f) or {}
-        scenario_results = tuple(
-            SimulationResult(
-                simulation_dir=Path(r["simulation_dir"]),
-                violation_rate=r["violation_rate"],
-                violation_amount_s=r["violation_amount_s"],
-                violation_relative_mean=r["violation_relative_mean"],
-                total_cost=r["total_cost"],
-                num_queries=r["num_queries"],
-            )
-            for r in summary.get("scenarios", [])
-        )
-        return AggregatedSimulationResults(
-            violation_rate=summary.get("violation_rate", 0.0),
-            violation_amount_s=summary.get("violation_amount_s", 0.0),
-            violation_relative_mean=summary.get("violation_relative_mean", 0.0),
-            cost=summary.get("cost", 0.0),
-            scenario_results=scenario_results,
-        )
 
 
 if __name__ == "__main__":

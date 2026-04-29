@@ -14,7 +14,7 @@ Fixed:
     other ``QueryRouterPolicy`` values share the same heavy prediction
     code path and only differ in the cheap ``select_best`` step)
   - Queries sourced from a standard workload parquet under
-    ``data/__workloads/<schema_name>/<workload_name>.parquet`` (same
+    ``data/workloads/<schema_name>/<workload_name>.parquet`` (same
     pre-population path used by the runner / simulator / policy tuner)
 
 Outputs:
@@ -81,7 +81,7 @@ def _prepare_queries(
     n_queries: int,
 ) -> list[Query]:
     """Build a pool of fully-featurised :class:`Query` objects from a
-    standard ``__workloads/<schema>/<name>.parquet`` file via
+    standard ``workloads/<schema>/<name>.parquet`` file via
     :meth:`Workload.populate_featurizations_and_isolated_predictions` —
     the same pre-population path used by the runner / simulator /
     policy tuner.
