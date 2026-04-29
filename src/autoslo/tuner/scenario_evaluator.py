@@ -27,9 +27,9 @@ from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.models.iconq_model import IconqModel
 from autoslo.tuner.tuner_utils import SimulationResult
-from autoslo.utils.paralellism import (
+from autoslo.utils.parallelism import (
     _init_worker,
-    deg_of_paralellism,
+    deg_of_parallelism,
     inner_level_num_cpus,
 )
 from autoslo.workload_definition.workload import Workload
@@ -133,23 +133,16 @@ class ScenarioEvaluator:
 
     Parameters
     ----------
-    caller_id :
-        Unique identifier for the calling pipeline (used to build per-
-        scenario ``simulator_run_id`` values). Originally the tuner run
-        ID; now also used by the standalone evaluator harness.
     max_workers :
         Optional explicit override for the parallel worker count. When
-        ``None``, the per-config ``tuner_config.parallelism`` setting is
-        consulted instead.
+        ``None``, defaults to `deg_of_parallelism()`.
     """
 
     def __init__(
         self,
-        caller_id: str,
         max_workers: int | None = None,
     ) -> None:
-        self._caller_id = caller_id
-        self._max_workers = max_workers
+        self._max_workers = max_workers or max(1, deg_of_parallelism())
 
     # ------------------------------------------------------------------
     # Public API
@@ -359,22 +352,3 @@ class ScenarioEvaluator:
             [results[ci][wi] for wi in range(num_workloads)]
             for ci in range(len(configs))
         ]
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
-    def _resolve_parallelism(self, config: dict[str, Any]) -> int:
-        """
-        Determine the number of worker processes to use.
-
-        An explicit ``max_workers`` passed to the constructor wins; otherwise
-        the value comes from ``tuner_config.parallelism`` in the supplied
-        config (``"auto"`` resolves to :func:`deg_of_paralellism`).
-        """
-        if self._max_workers is not None:
-            return self._max_workers
-        p = cfgu.getd(config, "tuner_config.parallelism", "auto")
-        if p == "auto":
-            return max(1, deg_of_paralellism())
-        return int(p)

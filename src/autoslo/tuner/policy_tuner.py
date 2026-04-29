@@ -78,7 +78,7 @@ class PolicyTuner:
         dump_yaml(self._initial_config, initial_config_path)
 
         # Scenario evaluator — shared by all tuning phases.
-        self._evaluator = ScenarioEvaluator(caller_id=self._run_id)
+        self._evaluator = ScenarioEvaluator()
 
         # SLO objective — drives metric routing and threshold-aware selection.
         slo_objective_config = SloObjectiveConfig.from_config(

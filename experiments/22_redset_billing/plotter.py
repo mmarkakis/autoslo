@@ -8,7 +8,7 @@ from tqdm.auto import tqdm
 import autoslo.utils.paths as pu
 from autoslo.utils.billing import Billing
 from autoslo.utils.colors import Palette
-from autoslo.utils.paralellism import deg_of_paralellism, inner_level_num_cpus
+from autoslo.utils.parallelism import deg_of_parallelism, inner_level_num_cpus
 
 DATASETS = [
     {

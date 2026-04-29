@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
 
-import autoslo.utils.paralellism as plu
+import autoslo.utils.parallelism as plu
 import autoslo.utils.paths as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary

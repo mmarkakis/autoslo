@@ -16,7 +16,7 @@ from autoslo.config.structured_config import StructuredConfig
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.utils.billing import Billing
 from autoslo.utils.logging import emit_structured
-from autoslo.utils.paralellism import inner_level_num_cpus
+from autoslo.utils.parallelism import inner_level_num_cpus
 from autoslo.utils.structured_events import (
     BaseStructuredEvent,
     EventType,

@@ -59,7 +59,7 @@ def inner_level_num_cpus() -> int:
     return ParallelismConfig.inner_cpus()
 
 
-def deg_of_paralellism() -> int:
+def deg_of_parallelism() -> int:
     """Returns worker-process count (delegates to
     :meth:`ParallelismConfig.deg_of_parallelism`)."""
     return ParallelismConfig.deg_of_parallelism()
