@@ -7,14 +7,11 @@ from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.cluster import ClusterView
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.models.iconq_model import IconqModel
+from autoslo.output.logging import emit_structured
+from autoslo.output.structured_events import EventType, QueryRelatedEvent
 from autoslo.routing.query_router import QueryRouter
-from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import EventType, QueryRelatedEvent
+from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
 from autoslo.workload_definition.query import Query
-from autoslo.simulator.simulator_event import (
-    SimulatorEvent,
-    SimulatorEventType,
-)
 
 logger = logging.getLogger(__name__)
 

@@ -9,8 +9,8 @@ from rich.console import Console
 
 import autoslo.utils.paths as pu
 from autoslo.config.component_configs import WorkloadConfig
+from autoslo.output.yaml_helpers import load_yaml
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.utils.yaml_helpers import load_yaml
 
 logger = logging.getLogger(__name__)
 console = Console()

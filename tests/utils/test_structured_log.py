@@ -7,7 +7,7 @@ import os
 
 import pandas as pd
 
-from autoslo.utils.logging import (
+from autoslo.output.logging import (
     LOGGER_NAME,
     REQUIRED_KEYS,
     REQUIRED_KEYS_LIST,
@@ -15,13 +15,12 @@ from autoslo.utils.logging import (
     emit_structured,
     setup_structured_logging,
 )
-from autoslo.utils.structured_events import (
+from autoslo.output.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
     wall_clock_utc,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -88,12 +87,14 @@ class TestEmitStructuredValidation:
 
     def test_all_event_types_have_event_type(self):
         """Every EventType member should produce a valid event."""
-        from autoslo.utils.structured_events import REQUIRED_DETAILS
+        from autoslo.output.structured_events import REQUIRED_DETAILS
 
         for et in EventType:
             details = {k: None for k in REQUIRED_DETAILS.get(et, [])}
             ev = BaseStructuredEvent(
-                rel_time_s=0.0, event_type=et, source="test",
+                rel_time_s=0.0,
+                event_type=et,
+                source="test",
                 details=details,
             )
             assert ev.event_type == et

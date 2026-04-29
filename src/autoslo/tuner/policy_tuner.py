@@ -21,6 +21,8 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
 )
 from autoslo.forecasting.forecaster import Forecaster
+from autoslo.output.structured_events import wall_clock_utc
+from autoslo.output.yaml_helpers import dump_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )
@@ -32,8 +34,6 @@ from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.utils.config import copy_and_apply_overrides
-from autoslo.utils.structured_events import wall_clock_utc
-from autoslo.utils.yaml_helpers import dump_yaml
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)

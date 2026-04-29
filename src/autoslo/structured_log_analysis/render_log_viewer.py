@@ -26,15 +26,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 import pandas as pd
+import yaml
 
 from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import SloResolverConfig
+from autoslo.output.structured_events import EventType
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.structured_events import EventType
-
 
 # ---------------------------------------------------------------------------
 # Log parsing helpers
@@ -124,9 +122,13 @@ def _parse_log(
     events = df.sort_values("rel_time_s")
 
     # --- Event type value sets (strings) for filtering ---
-    query_lifecycle_values = {e.value for e in EventType.query_lifecycle_types()}
+    query_lifecycle_values = {
+        e.value for e in EventType.query_lifecycle_types()
+    }
     routing_values = {e.value for e in EventType.routing_types()}
-    cluster_lifecycle_values = {e.value for e in EventType.cluster_lifecycle_types()}
+    cluster_lifecycle_values = {
+        e.value for e in EventType.cluster_lifecycle_types()
+    }
     autoscaler_values = {e.value for e in EventType.autoscaler_types()}
 
     # --- Build per-query event timeline ---
@@ -138,13 +140,15 @@ def _parse_log(
         et = row["event_type"]
         if et not in query_lifecycle_values and et not in routing_values:
             continue
-        query_events[qid].append({
-            "rel_time_s": float(row["rel_time_s"]),
-            "event_type": et,
-            "cluster_name": row.get("cluster_name", ""),
-            "query_text_id": str(row.get("query_text_id", "")),
-            "details": _parse_details(row.get("details", "")),
-        })
+        query_events[qid].append(
+            {
+                "rel_time_s": float(row["rel_time_s"]),
+                "event_type": et,
+                "cluster_name": row.get("cluster_name", ""),
+                "query_text_id": str(row.get("query_text_id", "")),
+                "details": _parse_details(row.get("details", "")),
+            }
+        )
 
     # --- Reconstruct queries ---
     queries = []
@@ -169,7 +173,9 @@ def _parse_log(
         exec_start_s = exec_start_evts[0]["rel_time_s"]
 
         # Execution finish (required)
-        exec_finish_evts = by_type.get(EventType.QUERY_EXECUTION_FINISH.value, [])
+        exec_finish_evts = by_type.get(
+            EventType.QUERY_EXECUTION_FINISH.value, []
+        )
         if not exec_finish_evts:
             raise ValueError(
                 f"Query {qid!r} is missing a QUERY_EXECUTION_FINISH event. "
@@ -213,25 +219,31 @@ def _parse_log(
         end_s = completion_s if completion_s is not None else exec_finish_s
 
         completed = completion_s is not None
-        violates_slo = (latency_s > slo_s) if (completed and success is not False) else False
+        violates_slo = (
+            (latency_s > slo_s)
+            if (completed and success is not False)
+            else False
+        )
 
-        queries.append({
-            "query_id": qid,
-            "query_text_id": query_text_id,
-            "cluster_name": cluster_name,
-            "rpu": rpu,
-            "arrival_s": arrival_s,
-            "exec_start_s": exec_start_s,
-            "exec_finish_s": exec_finish_s,
-            "completion_s": completion_s,
-            "start_s": arrival_s,
-            "end_s": end_s,
-            "latency_s": latency_s,
-            "slo_s": slo_s,
-            "success": success,
-            "violates_slo": violates_slo,
-            "state": "completed" if completed else "running",
-        })
+        queries.append(
+            {
+                "query_id": qid,
+                "query_text_id": query_text_id,
+                "cluster_name": cluster_name,
+                "rpu": rpu,
+                "arrival_s": arrival_s,
+                "exec_start_s": exec_start_s,
+                "exec_finish_s": exec_finish_s,
+                "completion_s": completion_s,
+                "start_s": arrival_s,
+                "end_s": end_s,
+                "latency_s": latency_s,
+                "slo_s": slo_s,
+                "success": success,
+                "violates_slo": violates_slo,
+                "state": "completed" if completed else "running",
+            }
+        )
 
     # --- Cluster lifecycle events ---
     cluster_events_list = []
@@ -239,13 +251,15 @@ def _parse_log(
     for _, row in events[cl_mask].iterrows():
         cname = row.get("cluster_name", "")
         details = _parse_details(row.get("details", ""))
-        cluster_events_list.append({
-            "rel_time_s": float(row["rel_time_s"]),
-            "event_type": row["event_type"],
-            "cluster_name": cname,
-            "rpu": _safe_rpu(cname),
-            "reason": details.get("reason", ""),
-        })
+        cluster_events_list.append(
+            {
+                "rel_time_s": float(row["rel_time_s"]),
+                "event_type": row["event_type"],
+                "cluster_name": cname,
+                "rpu": _safe_rpu(cname),
+                "reason": details.get("reason", ""),
+            }
+        )
 
     # --- Autoscaler events ---
     autoscaler_events = []
@@ -253,15 +267,17 @@ def _parse_log(
     for _, row in events[as_mask].iterrows():
         details = _parse_details(row.get("details", ""))
         cname = row.get("cluster_name", "")
-        autoscaler_events.append({
-            "rel_time_s": float(row["rel_time_s"]),
-            "event_type": row["event_type"],
-            "cluster_name": cname,
-            "rpu": _safe_rpu(cname),
-            "slo_violation": details.get("slo_violation"),
-            "cost": details.get("cost"),
-            "slo_threshold": details.get("slo_threshold"),
-        })
+        autoscaler_events.append(
+            {
+                "rel_time_s": float(row["rel_time_s"]),
+                "event_type": row["event_type"],
+                "cluster_name": cname,
+                "rpu": _safe_rpu(cname),
+                "slo_violation": details.get("slo_violation"),
+                "cost": details.get("cost"),
+                "slo_threshold": details.get("slo_threshold"),
+            }
+        )
 
     # --- Routing score events (grouped by query_id) ---
     routing_scores: dict[str, list[dict]] = defaultdict(list)
@@ -269,27 +285,31 @@ def _parse_log(
     for _, row in events[rs_mask].iterrows():
         qid = row.get("query_id", "")
         details = _parse_details(row.get("details", ""))
-        routing_scores[qid].append({
-            "rel_time_s": float(row["rel_time_s"]),
-            "cluster_name": row.get("cluster_name", ""),
-            "rpu": _safe_rpu(row.get("cluster_name", "")),
-            "latency_s": details.get("latency_s"),
-            "slo_violation": details.get("slo_violation"),
-            "cost": details.get("cost"),
-        })
+        routing_scores[qid].append(
+            {
+                "rel_time_s": float(row["rel_time_s"]),
+                "cluster_name": row.get("cluster_name", ""),
+                "rpu": _safe_rpu(row.get("cluster_name", "")),
+                "latency_s": details.get("latency_s"),
+                "slo_violation": details.get("slo_violation"),
+                "cost": details.get("cost"),
+            }
+        )
 
     # --- Latency update events ---
     latency_update_events = []
     lu_mask = events["event_type"] == EventType.LATENCY_UPDATE.value
     for _, row in events[lu_mask].iterrows():
         details = _parse_details(row.get("details", ""))
-        latency_update_events.append({
-            "rel_time_s": float(row["rel_time_s"]),
-            "query_id": row.get("query_id", ""),
-            "cluster_name": row.get("cluster_name", ""),
-            "old_latency_s": details.get("old_latency_s"),
-            "latency_s": details.get("latency_s"),
-        })
+        latency_update_events.append(
+            {
+                "rel_time_s": float(row["rel_time_s"]),
+                "query_id": row.get("query_id", ""),
+                "cluster_name": row.get("cluster_name", ""),
+                "old_latency_s": details.get("old_latency_s"),
+                "latency_s": details.get("latency_s"),
+            }
+        )
 
     # --- Run metadata ---
     run_meta: dict[str, Any] = {}
@@ -307,17 +327,24 @@ def _parse_log(
     run_finish_events = []
     rf_rows = events[events["event_type"] == EventType.RUN_FINISH.value]
     for _, row in rf_rows.iterrows():
-        run_finish_events.append({
-            "rel_time_s": float(row["rel_time_s"]),
-            "event_type": EventType.RUN_FINISH.value,
-        })
+        run_finish_events.append(
+            {
+                "rel_time_s": float(row["rel_time_s"]),
+                "event_type": EventType.RUN_FINISH.value,
+            }
+        )
 
     # --- Arrival times for scrubber ---
-    arrivals = events[events["event_type"] == EventType.ARRIVAL.value].sort_values("rel_time_s")
+    arrivals = events[
+        events["event_type"] == EventType.ARRIVAL.value
+    ].sort_values("rel_time_s")
     arrival_times = [float(t) for t in arrivals["rel_time_s"]]
 
     # --- Time range ---
-    time_range = [float(events["rel_time_s"].min()), float(events["rel_time_s"].max())]
+    time_range = [
+        float(events["rel_time_s"].min()),
+        float(events["rel_time_s"].max()),
+    ]
 
     return {
         "kind": log_kind,
@@ -1347,6 +1374,7 @@ def generate_html(data: dict) -> str:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Render a structured log as an interactive HTML timeline viewer.",
@@ -1357,7 +1385,8 @@ def main() -> None:
         help="Path to structured_log.parquet",
     )
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=str,
         default=None,
         help="Output HTML path (default: same directory as log file)",
@@ -1371,8 +1400,10 @@ def main() -> None:
 
     # Load SLO config from the same directory
     slo_resolver = _load_slo_resolver(log_path.parent)
-    print(f"SLO config: default={slo_resolver.default_slo_s}s"
-          f"{', per-template overrides loaded' if slo_resolver.has_overrides() else ''}")
+    print(
+        f"SLO config: default={slo_resolver.default_slo_s}s"
+        f"{', per-template overrides loaded' if slo_resolver.has_overrides() else ''}"
+    )
 
     print(f"Reading {log_path} ...")
     df = pd.read_parquet(log_path)
@@ -1385,7 +1416,9 @@ def main() -> None:
 
     data = _parse_log(df, slo_resolver, kind)
 
-    print(f"  {len(data['queries'])} queries across {len(set(q['cluster_name'] for q in data['queries']))} clusters")
+    print(
+        f"  {len(data['queries'])} queries across {len(set(q['cluster_name'] for q in data['queries']))} clusters"
+    )
 
     html_content = generate_html(data)
 

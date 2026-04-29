@@ -7,12 +7,12 @@ from autoslo.clusters.cluster import ClusterView
 from autoslo.config.component_configs import QueryRouterConfig
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.output.logging import emit_structured
+from autoslo.output.structured_events import EventType, QueryRelatedEvent
 from autoslo.routing.query_router_policy import QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import EventType, QueryRelatedEvent
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)

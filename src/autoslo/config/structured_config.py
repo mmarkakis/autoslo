@@ -24,12 +24,12 @@ from autoslo.config.component_configs import (
 )
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.models.iconq_model import IconqModel
+from autoslo.output.logging import StructuredLogHandler, setup_run_logging
+from autoslo.output.structured_events import wall_clock_utc
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.reservoir import QueryReservoir
-from autoslo.utils.logging import StructuredLogHandler, setup_run_logging
-from autoslo.utils.structured_events import wall_clock_utc
 from autoslo.workload_definition.workload import Workload
 
 

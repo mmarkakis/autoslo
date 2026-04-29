@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from autoslo.utils.structured_events import wall_clock_utc
+from autoslo.output.structured_events import wall_clock_utc
 
 console = Console()
 

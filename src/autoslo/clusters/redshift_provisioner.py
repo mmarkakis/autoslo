@@ -32,8 +32,8 @@ from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.config.component_configs import ProvisionerConfig
-from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import (
+from autoslo.output.logging import emit_structured
+from autoslo.output.structured_events import (
     BaseStructuredEvent,
     EventType,
     wall_clock_utc,

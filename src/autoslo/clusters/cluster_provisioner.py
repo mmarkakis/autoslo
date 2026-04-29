@@ -16,8 +16,8 @@ import numpy as np
 
 from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import ProvisionerConfig
-from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import BaseStructuredEvent, EventType
+from autoslo.output.logging import emit_structured
+from autoslo.output.structured_events import BaseStructuredEvent, EventType
 
 logger = logging.getLogger(__name__)
 

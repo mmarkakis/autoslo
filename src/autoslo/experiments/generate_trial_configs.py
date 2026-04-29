@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from autoslo.output.yaml_helpers import dump_yaml, load_yaml
 from autoslo.utils.config import copy_and_apply_overrides
-from autoslo.utils.yaml_helpers import dump_yaml, load_yaml
 
 
 def generate(spec_path: Path) -> list[Path]:

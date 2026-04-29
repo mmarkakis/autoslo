@@ -8,12 +8,12 @@ from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.config.component_configs import AutoscalerConfig
 from autoslo.models.iconq_model import IconqModel
+from autoslo.output.logging import emit_structured
+from autoslo.output.structured_events import BaseStructuredEvent, EventType
 from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.utils.logging import emit_structured
-from autoslo.utils.structured_events import BaseStructuredEvent, EventType
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)

@@ -22,12 +22,12 @@ from rich.table import Table
 
 import autoslo.utils.config as cfgu
 from autoslo.config.component_configs import WorkloadConfig
+from autoslo.output.yaml_helpers import dump_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
-from autoslo.utils.yaml_helpers import dump_yaml
 
 logger = logging.getLogger(__name__)
 console = Console()

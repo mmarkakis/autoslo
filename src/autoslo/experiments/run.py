@@ -13,8 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from autoslo.utils.yaml_helpers import load_yaml
 from autoslo.experiments.aggregate_trials import plot_experiment
+from autoslo.output.yaml_helpers import load_yaml
 
 
 def main() -> None:

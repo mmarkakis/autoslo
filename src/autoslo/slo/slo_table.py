@@ -14,7 +14,7 @@ import pandas as pd
 import yaml
 
 import autoslo.utils.paths as pu
-from autoslo.utils.yaml_helpers import dump
+from autoslo.output.yaml_helpers import dump
 from autoslo.workload_execution.trace import Trace
 
 _DEFAULT_DATA_SUBDIR = "slos"

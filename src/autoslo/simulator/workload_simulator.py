@@ -13,22 +13,19 @@ from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.config.structured_config import StructuredConfig
-from autoslo.routing.wrapper import route_and_update_bookkeeping
-from autoslo.utils.billing import Billing
-from autoslo.utils.logging import emit_structured
-from autoslo.utils.parallelism import inner_level_num_cpus
-from autoslo.utils.structured_events import (
+from autoslo.output.logging import emit_structured
+from autoslo.output.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
 )
-from autoslo.utils.yaml_helpers import dump_yaml
-from autoslo.workload_definition.query import Query
-from autoslo.simulator.simulator_event import (
-    SimulatorEvent,
-    SimulatorEventType,
-)
+from autoslo.output.yaml_helpers import dump_yaml
+from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.simulator.simulation_result import SimulationResult
+from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
+from autoslo.utils.billing import Billing
+from autoslo.utils.parallelism import inner_level_num_cpus
+from autoslo.workload_definition.query import Query
 
 
 class WorkloadSimulator:

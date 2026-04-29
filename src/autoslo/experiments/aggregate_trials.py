@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.utils.paths as pu
+from autoslo.output.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.utils.plotting import (
@@ -27,7 +28,6 @@ from autoslo.utils.plotting import (
     cost_vs_compliance_scatter,
     plot_legend_to,
 )
-from autoslo.utils.yaml_helpers import load_yaml
 
 
 def consolidate_summaries(
