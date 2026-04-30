@@ -44,36 +44,79 @@ class PolicyTuner:
 
     def __init__(
         self,
-        initial_execution_config: dict[str, Any],
-        tuner_config: dict[str, Any],
-        run_id: Optional[str] = None,
+        initial_execution_config_path: str,
+        tuner_config_path: str,
         force: bool = False,
     ) -> None:
-        self._initial_execution_config = initial_execution_config
-        self._tuner_config = tuner_config
-        self._force = force
 
-        # ── Determine run_id and set up logging ──────────────────────────────
-        run_id = run_id or str(int(wall_clock_utc() * 1000))
+        # Load the execution config. If the path is not absolute, assume it is
+        # relative to data/execution_configs.
+        if not os.path.isabs(initial_execution_config_path):
+            initial_execution_config_path = os.path.join(
+                pu.get_data_path(),
+                "execution_configs",
+                initial_execution_config_path,
+            )
+        self._initial_execution_config = load_yaml(
+            initial_execution_config_path
+        )
+
+        # Load the tuner config. If the path is not absolute, assume it is relative
+        # to data/tuner_configs.
+        if not os.path.isabs(tuner_config_path):
+            tuner_config_path = os.path.join(
+                pu.get_data_path(), "tuner_configs", tuner_config_path
+            )
+        self._tuner_config = load_yaml(tuner_config_path)
+
+        # Construct a run_id from the execution config and tuner config stems.
+        run_id = "#".join(
+            [
+                Path(initial_execution_config_path).stem,
+                Path(tuner_config_path).stem,
+            ]
+        )
+
+        # Check that the tuning output path and/or the publication path don't
+        # already exist, unless --force is passed. In the later case, wipe them.
         self._out_dir = Path(
             os.path.join(pu.get_data_path(), "tuner_runs", run_id)
         )
-        os.makedirs(self._out_dir, exist_ok=True)
-
-        # The run dir must not already contain results from a previous run.
-        # ``--force`` opts in to wiping it and starting from scratch.
-        if self._out_dir.exists() and any(self._out_dir.iterdir()):
-            if not self._force:
-                raise SystemExit(
-                    f"Tuner run dir {self._out_dir} already exists and is "
-                    f"non-empty. Pass --force to overwrite it."
+        if self._out_dir.exists():
+            if force:
+                shutil.rmtree(self._out_dir)
+            else:
+                console.print(
+                    f"[red]Error: Tuner output path {self._out_dir  } already exists. "
+                    f"Pass --force to overwrite.[/]"
                 )
-            shutil.rmtree(self._out_dir)
+                exit(1)
+        else:
+            os.makedirs(self._out_dir, exist_ok=True)
+        self._publication_path = os.path.join(
+            pu.get_data_path(), "execution_configs", "tuned", run_id + ".yml"
+        )
+        if os.path.exists(self._publication_path):
+            if force:
+                os.remove(self._publication_path)
+            else:
+                console.print(
+                    f"[red]Error: Publication path {self._publication_path} "
+                    f"already exists. Pass --force to overwrite.[/]"
+                )
+                exit(1)
+        else:
+            os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
 
-        # Persist config for reproducibility.
-        self._out_dir.mkdir(parents=True, exist_ok=True)
-        initial_config_path = self._out_dir / "initial_config.yml"
-        dump_yaml(self._initial_execution_config, initial_config_path)
+        # Persist configs for reproducibility.
+        initial_execution_config_out_path = (
+            self._out_dir / "initial_execution_config.yml"
+        )
+        shutil.copy2(
+            initial_execution_config_path, initial_execution_config_out_path
+        )
+        tuner_config_out_path = self._out_dir / "tuner_config.yml"
+        shutil.copy2(tuner_config_path, tuner_config_out_path)
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator()
@@ -390,12 +433,12 @@ class PolicyTuner:
         dump_yaml(val_agg, val_summary_path)
         return post_sweep_config, train_agg, val_agg
 
-    def tune(self) -> Path:
+    def tune(self) -> None:
         """Execute the full tuning pipeline end-to-end.
 
         Returns the path to the final optimised config file.
         """
-        final_path = self._out_dir / "final_config.yml"
+        final_path = self._out_dir / "final_execution_config.yml"
         try:
             ### Phase 2: Preparing workloads
             with self._timer.timed_phase(
@@ -474,7 +517,7 @@ class PolicyTuner:
                         val_workload_configs=val_workload_configs,
                         initial_config=post_first_sweep_config,
                         phase_name="06_routing_param_sweep",
-                        config_key="routing_param_sweep",
+                        config_key="query_routing_param_sweep",
                     )
                 )
 
@@ -509,7 +552,10 @@ class PolicyTuner:
                     slo_metric=self._slo_objective.slo_metric,
                 )
 
-            return final_path
+            shutil.copy2(final_path, self._publication_path)
+            console.print(
+                f"Published tuned config to [bold]{self._publication_path}[/]"
+            )
         finally:
             self._timer.finalize(self._out_dir)
 
@@ -526,11 +572,11 @@ if __name__ == "__main__":
     description = "Run the policy tuner from a YAML config file."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "initial_execution_config",
+        "initial_execution_config_path",
         help="Path to the YAML execution config file.",
     )
     parser.add_argument(
-        "tuner_config",
+        "tuner_config_path",
         help="Path to the YAML tuner config file.",
     )
     parser.add_argument(
@@ -541,47 +587,11 @@ if __name__ == "__main__":
             "Commands that don't manage a run directory ignore this flag."
         ),
     )
-    parser.add_argument(
-        "--publish-as",
-        dest="publish_as",
-        default=None,
-        metavar="NAME",
-        help=(
-            "Publish the resulting tuned config to the registry as "
-            "data/configs/tuned/<NAME>.yml on success. Commands that "
-            "don't produce a tuned config ignore this flag."
-        ),
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help=(
-            "When --publish-as is given, overwrite an existing registry "
-            "entry instead of erroring out."
-        ),
-    )
     args = parser.parse_args()
-    initial_exec_cfg = load_yaml(args.initial_execution_config)
-    tuner_cfg = load_yaml(args.tuner_config)
 
-    if args.publish_as is not None:
-        publication_path = os.path.join(
-            pu.get_data_path(), "configs", "tuned", args.publish_as
-        )
-        if os.path.exists(publication_path) and not args.force:
-            console.print(
-                f"[red]Error: A tuned config with the name '{args.publish_as}' "
-                f"already exists at {publication_path}. Use --force to "
-                f"overwrite.[/]"
-            )
-            exit(1)
-
-    pt = PolicyTuner(initial_exec_cfg, tuner_cfg, force=args.force)
-    final_execution_config_path = pt.tune()
-
-    if args.publish_as is not None:
-        publication_path = os.path.join(
-            pu.get_data_path(), "configs", "tuned", args.publish_as
-        )
-        shutil.copy2(final_execution_config_path, publication_path)
-        console.print(f"Published tuned config to [bold]{publication_path}[/]")
+    pt = PolicyTuner(
+        initial_execution_config_path=args.initial_execution_config_path,
+        tuner_config_path=args.tuner_config_path,
+        force=args.force,
+    )
+    pt.tune()

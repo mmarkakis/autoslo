@@ -44,12 +44,9 @@ docs/*.md
 data/tuner_runs/*
 !data/tuner_runs/*/
 data/tuner_runs/*/*
-!data/tuner_runs/*/*/
-data/tuner_runs/*/*/*
-!data/tuner_runs/*/*/initial_config.yml
-!data/tuner_runs/*/*/final_config.yml
-!data/tuner_runs/*/*/timing_report.csv
-!data/tuner_runs/*/*/09_holdout
+!data/tuner_runs/*/initial_execution_config.yml
+!data/tuner_runs/*/final_execution_config.yml
+!data/tuner_runs/*/timing_report.csv
 
 data/simulator_runs/TESTTEST/
 

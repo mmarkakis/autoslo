@@ -431,7 +431,7 @@ class Autoscaler:
                 queries=cluster.active_queries,
                 predicted_latencies=cluster.predicted_latencies,
             )
-            cluster_cost = cluster.cost_until(rel_time_s)
+            cluster_cost = cluster.cost_until_drained(rel_time_s)
             lat_and_slos.extend(active_pairs)
             total_cost += cluster_cost
 

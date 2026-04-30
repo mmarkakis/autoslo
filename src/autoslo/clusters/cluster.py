@@ -8,8 +8,8 @@ from typing import Any, ClassVar, Optional
 
 import numpy as np
 
-from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.billing import Billing, BillingInterval
+from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_definition.query import Query
 
 _VALID_CLUSTER_STATE_TRANSITIONS = {
@@ -36,6 +36,47 @@ class ClusterState(Enum):
         return (old_state == new_state) or (
             new_state.value in _VALID_CLUSTER_STATE_TRANSITIONS[old_state.value]
         )
+
+
+def cluster_cost_until_drained(
+    active_queries: list[Query],
+    predicted_latencies: dict[str, float],
+    past_billing_intervals: list[BillingInterval],
+    billing_window_start_s: Optional[float],
+    cost_per_second: float,
+    current_rel_time_s: float,
+    additional_queries_and_latencies: Optional[
+        list[tuple[Query, float]]
+    ] = None,
+) -> float:
+    """
+    Cost billed from the start of this query's lifetime until all
+    currently-active queries, as well as any additional queries, have
+    drained.
+    """
+    queries = list(active_queries)
+    predicted_latencies = dict(predicted_latencies)
+    if additional_queries_and_latencies is not None:
+        for query, latency in additional_queries_and_latencies:
+            queries.append(query)
+            predicted_latencies[query.query_id] = latency
+
+    end_s = current_rel_time_s
+    if queries:
+        end_s = max(
+            q.rel_start_time_s + predicted_latencies[q.query_id] for q in queries
+        )
+        end_s = max(end_s, current_rel_time_s)
+    
+    billed_intervals_until_end = list(past_billing_intervals)
+    if (billing_window_start_s is not None) and (
+        current_rel_time_s > billing_window_start_s
+    ):
+        billed_intervals_until_end.append(
+            BillingInterval(billing_window_start_s, end_s)
+        )
+    billed_seconds_until_end = Billing.billed_s(billed_intervals_until_end)
+    return cost_per_second * billed_seconds_until_end
 
 
 @dataclass(eq=False)
@@ -72,7 +113,7 @@ class Cluster:
     #
     state: ClusterState = ClusterState.PENDING
     billing_window_start_s: Optional[float] = field(default=None, repr=False)
-    past_billing_intervals: list[tuple[float, float]] = field(
+    past_billing_intervals: list[BillingInterval] = field(
         default_factory=list, repr=False
     )
 
@@ -93,7 +134,7 @@ class Cluster:
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
         state: ClusterState = ClusterState.PENDING,
         billing_window_start_s: Optional[float] = None,
-        past_billing_intervals: Optional[list[tuple[float, float]]] = None,
+        past_billing_intervals: Optional[list[BillingInterval]] = None,
         most_recent_query_completion_rel_time_s: Optional[float] = None,
     ) -> None:
         """Create a fresh cluster with no active queries.
@@ -152,36 +193,27 @@ class Cluster:
         c.predicted_latencies = dict(self.predicted_latencies)
         return c
 
-    @staticmethod
-    def _billed_seconds_from_raw_intervals(
-        intervals: list[tuple[float, float]],
+    def cost_until_drained(
+        self,
+        current_rel_time_s: float,
+        additional_queries_and_latencies: Optional[
+            list[tuple[Query, float]]
+        ] = None,
     ) -> float:
-        if len(intervals) == 0:
-            return 0.0
-        query_intervals = [
-            BillingInterval(start_s, end_s)
-            for start_s, end_s in intervals
-            if end_s > start_s
-        ]
-        return Billing.billed_s(query_intervals)
-
-    def billing_intervals_until(
-        self, rel_time_s: float
-    ) -> list[tuple[float, float]]:
-        intervals = list(self.past_billing_intervals)
-        if (self.billing_window_start_s is not None) and (
-            rel_time_s > self.billing_window_start_s
-        ):
-            intervals.append((self.billing_window_start_s, rel_time_s))
-        return intervals
-
-    def billed_seconds_until(self, rel_time_s: float) -> float:
-        return Cluster._billed_seconds_from_raw_intervals(
-            self.billing_intervals_until(rel_time_s)
+        """
+        Cost billed from the start of this query's lifetime until all
+        currently-active queries, as well as any additional queries, have
+        drained.
+        """
+        return cluster_cost_until_drained(
+            active_queries=self.active_queries,
+            predicted_latencies=self.predicted_latencies,
+            past_billing_intervals=self.past_billing_intervals,
+            billing_window_start_s=self.billing_window_start_s,
+            cost_per_second=self.cost_per_second,
+            current_rel_time_s=current_rel_time_s,
+            additional_queries_and_latencies=additional_queries_and_latencies,
         )
-
-    def cost_until(self, rel_time_s: float) -> float:
-        return self.cost_per_second * self.billed_seconds_until(rel_time_s)
 
     # --- Derived properties ----------------------------------------------
 
@@ -277,7 +309,7 @@ class Cluster:
             self.billing_window_start_s is not None
         ):
             self.past_billing_intervals.append(
-                (self.billing_window_start_s, rel_time_s)
+                BillingInterval(self.billing_window_start_s, rel_time_s)
             )
             self.billing_window_start_s = None
 
@@ -408,39 +440,26 @@ class ClusterView:
     def cost_per_second(self) -> float:
         return Cluster.cost_per_second_for_rpu(self.rpu, self.cost_per_rpu_hour)
 
-    def billing_intervals_until(
-        self, rel_time_s: float
-    ) -> list[tuple[float, float]]:
-        intervals = list(self.past_billing_intervals)
-        if (self.billing_window_start_s is not None) and (
-            rel_time_s > self.billing_window_start_s
-        ):
-            intervals.append((self.billing_window_start_s, rel_time_s))
-        return intervals
-
-    def billed_seconds_until(self, rel_time_s: float) -> float:
-        return Cluster._billed_seconds_from_raw_intervals(
-            self.billing_intervals_until(rel_time_s)
-        )
-
-    def cost_until(self, rel_time_s: float) -> float:
-        return self.cost_per_second * self.billed_seconds_until(rel_time_s)
-
-    def cost_with_query_start_until(
-        self, query_start_s: float, rel_time_s: float
+    def cost_until_drained(
+        self,
+        current_rel_time_s: float,
+        additional_queries_and_latencies: Optional[
+            list[tuple[Query, float]]
+        ] = None,
     ) -> float:
-        """Cost until *rel_time_s* if a query starts at *query_start_s*."""
-        effective_window_start = (
-            self.billing_window_start_s
-            if self.billing_window_start_s is not None
-            else query_start_s
-        )
-        intervals = list(self.past_billing_intervals)
-        if rel_time_s > effective_window_start:
-            intervals.append((effective_window_start, rel_time_s))
-        return (
-            self.cost_per_second
-            * Cluster._billed_seconds_from_raw_intervals(intervals)
+        """
+        Cost billed from the start of this query's lifetime until all
+        currently-active queries, as well as any additional queries, have
+        drained.
+        """
+        return cluster_cost_until_drained(
+            active_queries=self.active_queries,
+            predicted_latencies=self.predicted_latencies,
+            past_billing_intervals=self.past_billing_intervals,
+            billing_window_start_s=self.billing_window_start_s,
+            cost_per_second=self.cost_per_second,
+            current_rel_time_s=current_rel_time_s,
+            additional_queries_and_latencies=additional_queries_and_latencies,
         )
 
     def hypothetical_neighbors_with(

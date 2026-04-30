@@ -121,7 +121,7 @@ class QueryRouter:
                 queries=cluster.active_queries,
                 predicted_latencies=cluster.predicted_latencies,
             )
-            cost = cluster.cost_until(rel_time_s)
+            cost = cluster.cost_until_drained(rel_time_s)
             before_pairs[cluster_name] = pairs
             before_costs[cluster_name] = cost
             before_cache_states[cluster_name] = cluster.cache_state
@@ -171,9 +171,14 @@ class QueryRouter:
                 queries=cluster.active_queries + [query],
                 predicted_latencies=new_predicted_latencies[candidate_name],
             )
-            after_cost = cluster.cost_with_query_start_until(
-                query_start_s=query.rel_start_time_s,
-                rel_time_s=rel_time_s,
+            after_cost = cluster.cost_until_drained(
+                current_rel_time_s=rel_time_s,
+                additional_queries_and_latencies=[
+                    (
+                        query,
+                        new_predicted_latencies[candidate_name][query.query_id],
+                    )
+                ],
             )
 
             # Build pair and cluster state list: updated for candidate,
