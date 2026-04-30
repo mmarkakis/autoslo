@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class ForecastPolicy(Enum):
+    NONE = "none"
     GROUND_TRUTH = "ground_truth"  # For convenience; implemented higher up.
     ONE_DAY = "one_day"
     SEVEN_DAYS_FLAT = "seven_days_flat"

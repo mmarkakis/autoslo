@@ -29,9 +29,9 @@ class _PartialConfig:
             "_"
         )  # e.g. "autoscaler_config"
 
-        if sub_config_key in cfg:
-            cfg = cfg[sub_config_key]
-        return cls(**cfg, **kwargs)
+        if sub_config_key not in cfg:
+            raise ValueError(f"{sub_config_key} not found in config.")
+        return cls(**cfg[sub_config_key], **kwargs)
 
     def to_dict(self) -> dict:
         """
@@ -75,6 +75,16 @@ class ReservoirConfig(WorkloadConfig):
     reservoir is built from a workload.
     """
 
+    @classmethod
+    def maybe_from_config(cls, cfg: dict) -> Optional[Self]:
+        """
+        Allow None output instead of erroring out.
+        """
+        try:
+            return super().from_config(cfg)
+        except ValueError:
+            return None
+
 
 @dataclass(frozen=True)
 class AutoscalerConfig(_PartialConfig):
@@ -97,9 +107,8 @@ class QueryRouterConfig(_PartialConfig):
     Configuration for the QueryRouter.
     """
 
-    rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray]
-
     routing_policy_name: str = "use_iconq_model"
+    iconq_model_id: str = "1771539369"
     cluster_cache_state_update_alpha: float = 0.7
 
     cache_risk_cost_multiplier: float = 0.0

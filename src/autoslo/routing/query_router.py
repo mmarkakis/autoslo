@@ -24,16 +24,22 @@ class QueryRouter:
         slo_resolver: SloResolver,
         slo_objective: SloObjective,
         query_router_config: QueryRouterConfig,
+        iconq_model: IconqModel,
+        rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray],
     ):
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
         self._routing_policy = QueryRouterPolicy(
             query_router_config.routing_policy_name
         )
+        self._iconq_model = iconq_model
         self._round_robin_idx = 0
         self._query_router_config = query_router_config
+        self._rel_time_s_to_forecasted_table_vecs = (
+            rel_time_s_to_forecasted_table_vecs
+        )
         self._sorted_forecast_times = sorted(
-            self._query_router_config.rel_time_s_to_forecasted_table_vecs.keys()
+            self._rel_time_s_to_forecasted_table_vecs.keys()
         )
         self._idx_into_forecast_sequence = 0
 
@@ -45,7 +51,6 @@ class QueryRouter:
         self,
         query: Query,
         snapshot: dict[str, ClusterView],
-        iconq_model: IconqModel,
         rel_time_s: float,
     ) -> tuple[str, dict[str, float], np.ndarray]:
 
@@ -71,10 +76,10 @@ class QueryRouter:
 
         # Perform the prediction and constraint to non-decreasing latency.
         dataset = ConcurrentQueryDataset.build_from_query_groups(
-            iconq_interaction_featurizer=iconq_model.iconq_interaction_featurizer,
+            iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
             cluster_to_base_to_neighbors=cluster_name_to_queries_to_neighbors,
         )
-        all_predictions = iconq_model.predict_from_dataset(dataset)
+        all_predictions = self._iconq_model.predict_from_dataset(dataset)
         new_predicted_latencies: dict[str, dict[str, float]] = {}
         for cluster_name in all_predictions.keys():
             new_predicted_latencies[cluster_name] = {}
@@ -95,11 +100,9 @@ class QueryRouter:
             <= rel_time_s
         ):
             self._idx_into_forecast_sequence += 1
-        forecasted_table_vecs = (
-            self._query_router_config.rel_time_s_to_forecasted_table_vecs[
-                self._sorted_forecast_times[self._idx_into_forecast_sequence]
-            ]
-        )
+        forecasted_table_vecs = self._rel_time_s_to_forecasted_table_vecs[
+            self._sorted_forecast_times[self._idx_into_forecast_sequence]
+        ]
 
         # For each candidate cluster, compute the global after-state
         # (aggregating raw pairs across ALL clusters, with the candidate
@@ -123,7 +126,7 @@ class QueryRouter:
             total_after_cost = after_cost
             new_cache_state = self._updated_cluster_state(
                 current_state=before_cache_states[candidate_name],
-                table_vector=iconq_model.iconq_query_featurizer.table_vector_for(
+                table_vector=self._iconq_model.iconq_query_featurizer.table_vector_for(
                     query.query_text_id
                 ),
             )

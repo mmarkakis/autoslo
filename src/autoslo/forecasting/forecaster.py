@@ -10,7 +10,11 @@ import numpy as np
 import pandas as pd
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.config.component_configs import ForecasterConfig, WorkloadConfig
+from autoslo.config.component_configs import (
+    ForecasterConfig,
+    ReservoirConfig,
+    WorkloadConfig,
+)
 from autoslo.forecasting.forecast_policy import ForecastPolicy
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.workload_definition.workload import Workload
@@ -21,23 +25,28 @@ class Forecaster:
 
     def __init__(
         self,
-        reservoir: QueryReservoir,
         forecaster_config: ForecasterConfig,
+        reservoir_config: Optional[ReservoirConfig],
     ) -> None:
         """
         Initialize the forecaster.
 
         Parameters
         ----------
-        reservoir :
-            Historical query reservoir to draw observations from.
+        reservoir_config :
+            Configuration for the historical query reservoir to draw observations from.
         """
 
-        self.reservoir = reservoir
         self.forecaster_config = forecaster_config
         self.forecast_policy = ForecastPolicy(
             forecaster_config.forecast_policy_name
         )
+        if self.forecast_policy != ForecastPolicy.NONE:
+            if reservoir_config is None:
+                raise ValueError(
+                    "reservoir_config must be provided for forecast policies other than 'none'"
+                )
+            self.reservoir = QueryReservoir(reservoir_config)
 
     def forecast(
         self,
@@ -67,6 +76,10 @@ class Forecaster:
             If true, ignore the historical counts and use a fixed number of
             queries per hour as specified in the forecaster config.
         """
+        if self.forecast_policy == ForecastPolicy.NONE:
+            raise ValueError(
+                "Cannot call forecast when forecast policy is 'none'"
+            )
 
         if isinstance(target_date, str):
             target_date = pd.Timestamp(target_date).date()
@@ -185,6 +198,10 @@ class Forecaster:
         workload_configs :
             The list of forecasted workload configurations.
         """
+        if self.forecast_policy == ForecastPolicy.NONE:
+            raise ValueError(
+                "Cannot call forecast_n_scenarios when forecast policy is 'none'"
+            )
 
         workload_configs: list[WorkloadConfig] = []
         for i in range(n_scenarios):

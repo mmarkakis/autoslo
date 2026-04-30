@@ -509,7 +509,7 @@ class Trace:
             if os.path.exists(config_path):
                 with open(config_path) as f:
                     cfg = yaml.safe_load(f) or {}
-                schema_name = cfg.get("basic_config", {}).get("schema_name", "")
+                schema_name = cfg.get("basic_config", {}).get("schema_name", "") #FIXME
             else:
                 schema_name = ""
 

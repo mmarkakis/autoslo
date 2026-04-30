@@ -29,6 +29,13 @@ class CapacityCheckpoint:
     rel_time_s: float
     min_rpus: tuple[int, ...]
 
+    @staticmethod
+    def from_config(cfg: dict) -> list["CapacityCheckpoint"]:
+        return [
+            CapacityCheckpoint(**cp)
+            for cp in cfg.get("capacity_checkpoints", [])
+        ]
+
     def spin_ups_needed(
         self, current_counts_per_rpu: Counter[int]
     ) -> list[SpinUpAction]:

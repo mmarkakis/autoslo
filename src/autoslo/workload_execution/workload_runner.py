@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 from functools import partial
+from pathlib import Path
 from typing import Optional
 
 from tqdm.auto import tqdm
@@ -41,13 +42,14 @@ class WorkloadRunner:
     def __init__(
         self,
         cfg: dict,
-        out_dir: Optional[str] = None,
+        out_dir: Optional[str | Path] = None,
         write_text_log: bool = True,
     ) -> None:
         """
         Initialize the runner with the given configuration.
         """
         # ── Build, parse and dump structured config ──────────────────────────
+        self._write_text_log = write_text_log
         structured_config = StructuredConfig.build(
             cfg=cfg,
             out_dir=out_dir,
@@ -56,11 +58,7 @@ class WorkloadRunner:
         )
         self._run_id = structured_config.run_id
         self._out_dir = structured_config.out_dir
-        self._write_text_log = structured_config.write_text_log
-        self._iconq_model = structured_config.iconq_model
         self._workload = structured_config.workload
-        self._slo_objective = structured_config.slo_objective
-        self._slo_resolver = structured_config.slo_resolver
         self._pool = structured_config.pool
         self._capacity_checkpoints = structured_config.capacity_checkpoints
         self._router = structured_config.router
@@ -175,7 +173,6 @@ class WorkloadRunner:
                 pool=self._pool,
                 router=self._router,
                 query=query,
-                iconq_model=self._iconq_model,
                 autoscaler=self._autoscaler,
                 on_spin_up=self._on_live_spin_up,
                 write_text_log=self._write_text_log,

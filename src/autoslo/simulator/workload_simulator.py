@@ -49,6 +49,7 @@ class WorkloadSimulator:
         Initialize the simulator with the given config.
         """
         # ── Build, parse and dump structured config ──────────────────────────
+        self._write_text_log = write_text_log
         structured_config = StructuredConfig.build(
             cfg=cfg,
             out_dir=out_dir,
@@ -57,11 +58,7 @@ class WorkloadSimulator:
         )
         self._run_id = structured_config.run_id
         self._out_dir = structured_config.out_dir
-        self._write_text_log = structured_config.write_text_log
-        self._iconq_model = structured_config.iconq_model
         self._workload = structured_config.workload
-        self._slo_objective = structured_config.slo_objective
-        self._slo_resolver = structured_config.slo_resolver
         self._pool = structured_config.pool
         self._capacity_checkpoints = structured_config.capacity_checkpoints
         self._router = structured_config.router
@@ -80,11 +77,6 @@ class WorkloadSimulator:
         # ── Instance Variables ───────────────────────────────────────────────
         self._pending_events: list[SimulatorEvent] = []
         self._current_sim_time_s = 0.0
-
-    @property
-    def out_dir(self) -> str:
-        """Path to the output directory for the current run."""
-        return self._out_dir
 
     # ------------------------------------------------------------------
     # Dynamic provisioning helpers
@@ -153,8 +145,7 @@ class WorkloadSimulator:
 
         print(
             f"Simulating routing of {len(queries)} queries from workload "
-            f"{self._workload.workload_name} using  IconqModel "
-            f"{self._iconq_model.id})..."
+            f"{self._workload.workload_name} ..."
         )
         print(
             f"The first and last relative query start times are "
@@ -304,7 +295,6 @@ class WorkloadSimulator:
             pool=self._pool,
             router=self._router,
             query=query,
-            iconq_model=self._iconq_model,
             autoscaler=self._autoscaler,
             on_spin_up=self._on_sim_spin_up,
             write_text_log=self._write_text_log,

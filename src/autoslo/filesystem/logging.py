@@ -32,6 +32,7 @@ import logging
 import os
 import threading
 from typing import Any
+from pathlib import Path
 
 import pandas as pd
 
@@ -99,7 +100,7 @@ class StructuredLogHandler(logging.Handler):
 
     def __init__(
         self,
-        out_dir: str,
+        out_dir: str | Path,
         flush_threshold: int = 10_000,
         filename: str = "structured_log.parquet",
     ) -> None:
@@ -116,11 +117,11 @@ class StructuredLogHandler(logging.Handler):
     # -- properties --------------------------------------------------------
 
     @property
-    def out_dir(self) -> str:
+    def out_dir(self) -> str | Path:
         return self._out_dir
 
     @out_dir.setter
-    def out_dir(self, value: str) -> None:
+    def out_dir(self, value: str | Path) -> None:
         self._out_dir = value
 
     @property
@@ -235,7 +236,7 @@ class StructuredLogHandler(logging.Handler):
 
 
 def setup_structured_logging(
-    out_dir: str,
+    out_dir: str | Path,
     flush_threshold: int = 10_000,
     filename: str = "structured_log.parquet",
 ) -> StructuredLogHandler:
@@ -272,7 +273,7 @@ def setup_structured_logging(
     return handler
 
 def setup_run_logging(
-    out_dir: str,
+    out_dir: str | Path,
     write_text_log: bool,
 ) -> StructuredLogHandler:
     """Configure file-based text logging and structured logging for a run.

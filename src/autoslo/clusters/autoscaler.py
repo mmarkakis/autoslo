@@ -7,9 +7,9 @@ import numpy as np
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.config.component_configs import AutoscalerConfig
-from autoslo.models.iconq_model import IconqModel
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
@@ -33,12 +33,16 @@ class Autoscaler:
         cluster_cache_state_dim: int,
         query_router_config: QueryRouterConfig,
         autoscaler_config: AutoscalerConfig,
+        rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray],
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
         self._allowed_rpu_sizes = sorted(autoscaler_config.allowed_rpu_sizes)
         self._iconq_model = iconq_model
         self._query_router_config = query_router_config
+        self._rel_time_s_to_forecasted_table_vecs = (
+            rel_time_s_to_forecasted_table_vecs
+        )
         self._min_cluster_lifetime_s = autoscaler_config.min_cluster_lifetime_s
         self._idle_time_before_tear_down_s = (
             autoscaler_config.idle_time_before_tear_down_s
@@ -379,6 +383,8 @@ class Autoscaler:
             slo_resolver=self._slo_resolver,
             slo_objective=self._slo_objective,
             query_router_config=self._query_router_config,
+            iconq_model=self._iconq_model,
+            rel_time_s_to_forecasted_table_vecs=self._rel_time_s_to_forecasted_table_vecs,
         )
 
         # Sequential replay.
@@ -409,7 +415,6 @@ class Autoscaler:
             ) = router.route_query(
                 query=query,
                 snapshot=snapshot_for_routing,
-                iconq_model=self._iconq_model,
                 rel_time_s=time_s,
             )
             local_cluster_pool[selected_cluster_name].add_query(

@@ -22,9 +22,9 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
 )
 from autoslo.config.utils import copy_and_apply_overrides
-from autoslo.forecasting.forecaster import Forecaster
 from autoslo.filesystem.structured_events import wall_clock_utc
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
+from autoslo.forecasting.forecaster import Forecaster
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
 )
@@ -33,7 +33,6 @@ from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
-from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.workload_definition.workload import Workload
 
@@ -101,20 +100,8 @@ class PolicyTuner:
     # Pipeline steps
     # ------------------------------------------------------------------
 
-    def build_reservoir(self) -> QueryReservoir:
-        """
-        Phase 1: Build or load the query reservoir.
-        """
-        save_dir = self._out_dir / "01_reservoir"
-        reservoir_config = ReservoirConfig.from_config(self._initial_config)
-        reservoir = QueryReservoir(reservoir_config=reservoir_config)
-        reservoir.save(save_dir)
-        console.print(f"  Saved reservoir to {save_dir}.")
-
-        return reservoir
-
     def sample_workloads(
-        self, reservoir: QueryReservoir
+        self,
     ) -> tuple[list[WorkloadConfig], list[WorkloadConfig]]:
         """
         Phase 2: Sample train/val workloads from the reservoir.
@@ -123,8 +110,12 @@ class PolicyTuner:
         """
 
         # Set up forecast policy for sampling.
+        reservoir_config = ReservoirConfig.from_config(self._initial_config)
         forecaster_config = ForecasterConfig.from_config(self._initial_config)
-        forecaster = Forecaster(reservoir, forecaster_config)
+        forecaster = Forecaster(
+            reservoir_config=reservoir_config,
+            forecaster_config=forecaster_config,
+        )
 
         train_dir = self._out_dir / "02_workloads" / "train"
         val_dir = self._out_dir / "02_workloads" / "val"
@@ -418,20 +409,13 @@ class PolicyTuner:
         """
         final_path = self._out_dir / "final_config.yml"
         try:
-            ### Phase 1: Build reservoir
-            with self._timer.timed_phase(
-                "01_reservoir", "Phase 1: Building reservoir"
-            ):
-                self._print_banner("Phase 1: Building reservoir")
-                reservoir = self.build_reservoir()
-
             ### Phase 2: Preparing workloads
             with self._timer.timed_phase(
                 "02_workloads", "Phase 2: Preparing workloads"
             ):
                 self._print_banner("Phase 2: Preparing workloads")
                 train_workload_configs, val_workload_configs = (
-                    self.sample_workloads(reservoir)
+                    self.sample_workloads()
                 )
 
             ### Phase 3: Baseline evaluation

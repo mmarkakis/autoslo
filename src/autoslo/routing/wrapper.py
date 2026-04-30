@@ -8,7 +8,6 @@ from autoslo.clusters.cluster import ClusterView
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
-from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
 from autoslo.workload_definition.query import Query
@@ -22,7 +21,6 @@ def route_and_update_bookkeeping(
     pool: ManagedClusterPool,
     router: QueryRouter,
     query: Query,
-    iconq_model: IconqModel,
     autoscaler: Autoscaler,
     on_spin_up: Callable[[SpinUpAction], None],
     write_text_log: bool = False,
@@ -40,7 +38,6 @@ def route_and_update_bookkeeping(
     ) = router.route_query(
         query=query,
         snapshot=snapshot,
-        iconq_model=iconq_model,
         rel_time_s=route_start_rel_s,
     )
     self_latency_s = new_predicted_latencies_on_selected[query.query_id]
