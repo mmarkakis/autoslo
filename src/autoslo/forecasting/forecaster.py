@@ -12,7 +12,6 @@ import pandas as pd
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import (
     ForecasterConfig,
-    ReservoirConfig,
     WorkloadConfig,
 )
 from autoslo.forecasting.forecast_policy import ForecastPolicy
@@ -26,15 +25,15 @@ class Forecaster:
     def __init__(
         self,
         forecaster_config: ForecasterConfig,
-        reservoir_config: Optional[ReservoirConfig],
     ) -> None:
         """
         Initialize the forecaster.
 
         Parameters
         ----------
-        reservoir_config :
-            Configuration for the historical query reservoir to draw observations from.
+        forecaster_config :
+            Configuration for the forecaster, including the forecast policy and
+            any nested configurations such as the query reservoir.
         """
 
         self.forecaster_config = forecaster_config
@@ -42,6 +41,7 @@ class Forecaster:
             forecaster_config.forecast_policy_name
         )
         if self.forecast_policy != ForecastPolicy.NONE:
+            reservoir_config = forecaster_config.reservoir_config
             if reservoir_config is None:
                 raise ValueError(
                     "reservoir_config must be provided for forecast policies other than 'none'"

@@ -1,10 +1,28 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional, Self
-
-import numpy as np
+from typing import Any, Optional, Self
 
 from autoslo.slo.slo_metric import SloMetric
+
+# An "execution config" is the YAML config file that a user provides to run
+# the workload runner or workload simulator. It contains:
+# - workload_config
+# - slo_resolver_config
+# - slo_objective_config
+# - provisioner_config
+# - [workload_runner_config]
+# - managed_cluster_pool_config
+# - capacity_checkpoints
+# - query_router_config
+# - autoscaler_config
+
+
+# A "tuner config" is the YAML config file that a user provides to run the
+# policy tuner, alongisde an initial execution config. It contains:
+# - sampling_config
+# - checkpoint_optimizer_config
+# - [autoscaling_param_sweep.param_sweep_config]
+# - [query_routing_param_sweep.param_sweep_config]
 
 
 @dataclass(frozen=True)
@@ -31,7 +49,10 @@ class _PartialConfig:
 
         if sub_config_key not in cfg:
             raise ValueError(f"{sub_config_key} not found in config.")
-        return cls(**cfg[sub_config_key], **kwargs)
+
+        # Treat kwargs as overrides that take precedence over the config file.
+        d = {**cfg[sub_config_key], **kwargs}
+        return cls(**d)
 
     def to_dict(self) -> dict:
         """
@@ -75,15 +96,68 @@ class ReservoirConfig(WorkloadConfig):
     reservoir is built from a workload.
     """
 
+
+@dataclass(frozen=True)
+class ForecasterConfig(_PartialConfig):
+    """
+    Configuration for the forecaster.
+    """
+
+    forecast_policy_name: str
+    decay_factor: float = 0.5
+    fixed_queries_per_hour: int = 100
+    reservoir_config: Optional[ReservoirConfig] = None
+
     @classmethod
-    def maybe_from_config(cls, cfg: dict) -> Optional[Self]:
+    def from_config(cls, cfg: dict, **kwargs) -> Self:
         """
-        Allow None output instead of erroring out.
+        Override to also parse the nested reservoir_config if present.
         """
         try:
-            return super().from_config(cfg)
+            reservoir_config = ReservoirConfig.from_config(
+                cfg["forecaster_config"]
+            )
         except ValueError:
-            return None
+            reservoir_config = None
+        return super().from_config(cfg, reservoir_config=reservoir_config)
+
+    def __post_init__(self):
+        if self.decay_factor < 0 or self.decay_factor > 1:
+            raise ValueError(
+                f"decay_factor must be in [0, 1], got {self.decay_factor}"
+            )
+
+        if self.fixed_queries_per_hour <= 0:
+            raise ValueError(
+                f"fixed_queries_per_hour must be positive, got "
+                f"{self.fixed_queries_per_hour}"
+            )
+
+
+@dataclass(frozen=True)
+class SamplingConfig(_PartialConfig):
+    """
+    Configuration for sampling, including the random seed and sampling method.
+    """
+
+    num_scenarios: int
+    seed: int = 42
+    train_fraction: float = 0.6
+    aggregation_method: str = "mean"
+    forecaster_config: Optional[ForecasterConfig] = None
+
+    @classmethod
+    def from_config(cls, cfg: dict, **kwargs) -> Self:
+        """
+        Override to also parse the nested forecaster_config if present.
+        """
+        try:
+            forecaster_config = ForecasterConfig.from_config(
+                cfg["sampling_config"]
+            )
+        except ValueError:
+            forecaster_config = None
+        return super().from_config(cfg, forecaster_config=forecaster_config)
 
 
 @dataclass(frozen=True)
@@ -115,6 +189,24 @@ class QueryRouterConfig(_PartialConfig):
     # adj_cost = real_cost * (1 + multiplier * risk)
     cache_risk_coverage: float = 0.9
     cache_risk_epsilon: float = 1e-6
+    cache_risk_rescale_factor: float = 1.0
+
+    forecaster_config: Optional[ForecasterConfig] = None
+
+    
+    @classmethod
+    def from_config(cls, cfg: dict, **kwargs) -> Self:
+        """
+        Override to also parse the nested forecaster_config if present.
+        """
+        try:
+            forecaster_config = ForecasterConfig.from_config(
+                cfg["query_router_config"]
+            )
+        except ValueError:
+            forecaster_config = None
+        return super().from_config(cfg, forecaster_config=forecaster_config)
+
 
     def __post_init__(self):
         if not (0 <= self.cache_risk_cost_multiplier):
@@ -162,9 +254,9 @@ class WorkloadRunnerConfig(_PartialConfig):
     run in closed loop.
     """
 
-    max_threads: int
-    closed_loop: bool
-    schema_name: str
+    max_threads: int = 512
+    closed_loop: bool = False
+    schema_name: str = "ext_tpcds1000"
 
 
 @dataclass(frozen=True)
@@ -192,46 +284,37 @@ class ManagedClusterPoolConfig(_PartialConfig):
 
 
 @dataclass(frozen=True)
-class ForecasterConfig(_PartialConfig):
+class CheckpointOptimizerConfig(_PartialConfig):
     """
-    Configuration for the forecaster.
+    Configuration for the checkpoint optimizer, including the criteria
+    for accepting checkpoints and the initial RPU candidates.
     """
 
-    forecast_policy_name: str
-    decay_factor: float = 0.5
-    fixed_queries_per_hour: int = 100
-
-    def __post_init__(self):
-        if self.decay_factor < 0 or self.decay_factor > 1:
-            raise ValueError(
-                f"decay_factor must be in [0, 1], got {self.decay_factor}"
-            )
-
-        if self.fixed_queries_per_hour <= 0:
-            raise ValueError(
-                f"fixed_queries_per_hour must be positive, got "
-                f"{self.fixed_queries_per_hour}"
-            )
+    max_checkpoints: int = 5
+    min_delinquent_workload_fraction: float = 0.5
+    min_rel_improvement_for_acceptance: float = 0.01
+    lead_time_s: float = 360.0
+    initial_rpu_candidates: list[list[int]] = field(
+        default_factory=lambda: [[16], [8], [32]]
+    )
+    allowed_rpu_sizes: list[int] = field(default_factory=lambda: [4, 8, 16, 32])
 
 
 @dataclass(frozen=True)
-class OutputConfig(_PartialConfig):
+class ParamSweepConfig(_PartialConfig):
     """
-    Configuration for output, including the output directory and whether to
-    overwrite existing files.
-    """
-
-    out_dir: str
-    overwrite: bool = False
-
-
-@dataclass(frozen=True)
-class SamplingConfig(_PartialConfig):
-    """
-    Configuration for sampling, including the random seed and sampling method.
+    Configuration for a parameter sweep, including the target component and
+    the parameters to sweep.
     """
 
-    num_scenarios: int
+    strategy: str
+    params: dict[str, list[Any]]
+    val_top_k: int = 10
+
+    # For random strategy
+    budget: int = 20
     seed: int = 42
-    train_fraction: float = 0.6
-    aggregation_method: str = "mean"
+
+    # For coordinate descent strategy
+    max_cycles: int = 3
+    starting_point: Optional[dict[str, Any]] = None

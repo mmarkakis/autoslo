@@ -12,7 +12,7 @@ from autoslo.clusters.billing import Billing, BillingInterval
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
-from autoslo.config.structured_config import StructuredConfig
+from autoslo.config.execution_config import ExecutionConfig
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
@@ -50,20 +50,20 @@ class WorkloadSimulator:
         """
         # ── Build, parse and dump structured config ──────────────────────────
         self._write_text_log = write_text_log
-        structured_config = StructuredConfig.build(
+        execution_config = ExecutionConfig.build(
             cfg=cfg,
             out_dir=out_dir,
             write_text_log=write_text_log,
             is_runner=False,
         )
-        self._run_id = structured_config.run_id
-        self._out_dir = structured_config.out_dir
-        self._workload = structured_config.workload
-        self._pool = structured_config.pool
-        self._capacity_checkpoints = structured_config.capacity_checkpoints
-        self._router = structured_config.router
-        self._autoscaler = structured_config.autoscaler
-        self._structured_handler = structured_config.structured_log_handler
+        self._run_id = execution_config.run_id
+        self._out_dir = execution_config.out_dir
+        self._workload = execution_config.workload
+        self._pool = execution_config.pool
+        self._capacity_checkpoints = execution_config.capacity_checkpoints
+        self._router = execution_config.router
+        self._autoscaler = execution_config.autoscaler
+        self._structured_handler = execution_config.structured_log_handler
 
         dump_yaml(cfg, os.path.join(self._out_dir, "config.yml"))
 
@@ -478,14 +478,14 @@ class WorkloadSimulator:
 
 if __name__ == "__main__":
 
-    description = "Run the WorkloadSimulator from a YAML config file."
+    description = "Run the WorkloadSimulator from a YAML execution config file."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "config",
-        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
+        "execution_config",
+        help="Path to the YAML execution config file.",
     )
     args = parser.parse_args()
-    cfg = load_yaml(args.config)
+    cfg = load_yaml(args.execution_config)
 
     sim = WorkloadSimulator(cfg)
     sim.run()

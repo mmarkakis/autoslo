@@ -1,5 +1,6 @@
 import logging
 import threading
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -33,16 +34,14 @@ class Autoscaler:
         cluster_cache_state_dim: int,
         query_router_config: QueryRouterConfig,
         autoscaler_config: AutoscalerConfig,
-        rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray],
+        out_dir: str | Path,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
         self._allowed_rpu_sizes = sorted(autoscaler_config.allowed_rpu_sizes)
         self._iconq_model = iconq_model
         self._query_router_config = query_router_config
-        self._rel_time_s_to_forecasted_table_vecs = (
-            rel_time_s_to_forecasted_table_vecs
-        )
+        self._out_dir = out_dir
         self._min_cluster_lifetime_s = autoscaler_config.min_cluster_lifetime_s
         self._idle_time_before_tear_down_s = (
             autoscaler_config.idle_time_before_tear_down_s
@@ -384,7 +383,7 @@ class Autoscaler:
             slo_objective=self._slo_objective,
             query_router_config=self._query_router_config,
             iconq_model=self._iconq_model,
-            rel_time_s_to_forecasted_table_vecs=self._rel_time_s_to_forecasted_table_vecs,
+            out_dir=self._out_dir,
         )
 
         # Sequential replay.

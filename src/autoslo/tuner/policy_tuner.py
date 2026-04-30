@@ -11,11 +11,10 @@ from typing import Any, Optional
 
 from rich.console import Console
 
-import autoslo.config.utils as cfgu
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import (
-    ForecasterConfig,
-    ReservoirConfig,
+    CheckpointOptimizerConfig,
+    ParamSweepConfig,
     SamplingConfig,
     SloObjectiveConfig,
     SloResolverConfig,
@@ -45,11 +44,13 @@ class PolicyTuner:
 
     def __init__(
         self,
-        initial_config: dict,
+        initial_execution_config: dict[str, Any],
+        tuner_config: dict[str, Any],
         run_id: Optional[str] = None,
         force: bool = False,
     ) -> None:
-        self._initial_config = initial_config
+        self._initial_execution_config = initial_execution_config
+        self._tuner_config = tuner_config
         self._force = force
 
         # ── Determine run_id and set up logging ──────────────────────────────
@@ -72,25 +73,25 @@ class PolicyTuner:
         # Persist config for reproducibility.
         self._out_dir.mkdir(parents=True, exist_ok=True)
         initial_config_path = self._out_dir / "initial_config.yml"
-        dump_yaml(self._initial_config, initial_config_path)
+        dump_yaml(self._initial_execution_config, initial_config_path)
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator()
 
         # SLO objective — drives metric routing and threshold-aware selection.
         slo_objective_config = SloObjectiveConfig.from_config(
-            self._initial_config
+            self._initial_execution_config
         )
         self._slo_objective = SloObjective(slo_objective_config)
 
         # SLO Resolver - shared by all phases for consistent SLO evaluation.
         slo_resolver_config = SloResolverConfig.from_config(
-            self._initial_config
+            self._initial_execution_config
         )
         self._slo_resolver = SloResolver(slo_resolver_config)
 
         # Aggregation metric — shared by all phases.
-        self._sampling_config = SamplingConfig.from_config(self._initial_config)
+        self._sampling_config = SamplingConfig.from_config(self._tuner_config)
         self._agg_method = self._sampling_config.aggregation_method
 
         # Timing instrumentation.
@@ -108,15 +109,6 @@ class PolicyTuner:
 
         Returns the lists of train and val workload configurations.
         """
-
-        # Set up forecast policy for sampling.
-        reservoir_config = ReservoirConfig.from_config(self._initial_config)
-        forecaster_config = ForecasterConfig.from_config(self._initial_config)
-        forecaster = Forecaster(
-            reservoir_config=reservoir_config,
-            forecaster_config=forecaster_config,
-        )
-
         train_dir = self._out_dir / "02_workloads" / "train"
         val_dir = self._out_dir / "02_workloads" / "val"
         os.makedirs(train_dir, exist_ok=True)
@@ -124,8 +116,10 @@ class PolicyTuner:
 
         # Ground-truth mode: use the real target-day workload as both
         # train and val rather than sampling from the reservoir.
-        workload_config = WorkloadConfig.from_config(self._initial_config)
-        if forecaster_config.forecast_policy_name == "ground_truth":
+        workload_config = WorkloadConfig.from_config(
+            self._initial_execution_config
+        )
+        if self._sampling_config.forecaster_config is None:
             workload = Workload(workload_config=workload_config)
             workload.save(out_dir=train_dir, out_workload_name="t_0")
             workload.save(out_dir=val_dir, out_workload_name="v_0")
@@ -153,6 +147,7 @@ class PolicyTuner:
             return [train_workload_config], [val_workload_config]
 
         # Sample.
+        forecaster = Forecaster(self._sampling_config.forecaster_config)
         num_scenarios = self._sampling_config.num_scenarios
         train_fraction = self._sampling_config.train_fraction
         n_train = int(num_scenarios * train_fraction)
@@ -222,7 +217,7 @@ class PolicyTuner:
         all_results_nested = self._evaluator.evaluate_batch_from_configs(
             progress_bar_label="baseline",
             workload_configs=all_workload_configs,
-            configs=[self._initial_config],
+            configs=[self._initial_execution_config],
             out_dir=summary_dir / "results",
         )
         all_results = all_results_nested[0]
@@ -263,16 +258,10 @@ class PolicyTuner:
         ckpt_root = self._out_dir / "04_checkpoints"
 
         # Determine candidates.
-        default_rpus = cfgu.getd(
-            self._initial_config,
-            "managed_cluster_pool_config.initial_rpus",
-            [8],
+        checkpoint_optimizer_config = CheckpointOptimizerConfig.from_config(
+            self._tuner_config
         )
-        candidates: list[list[int]] = cfgu.getd(
-            self._initial_config,
-            "tuner_config.checkpoint_phase.initial_rpu_candidates",
-            [default_rpus],
-        )
+        candidates = checkpoint_optimizer_config.initial_rpu_candidates
 
         # Run checkpoint optimization for each candidate.
         candidate_configs: list[dict[str, Any]] = []
@@ -285,7 +274,7 @@ class PolicyTuner:
 
             # Stamp this candidate's initial_rpus into the config.
             candidate_config = copy_and_apply_overrides(
-                self._initial_config,
+                self._initial_execution_config,
                 {"managed_cluster_pool_config.initial_rpus": rpus},
             )
 
@@ -298,6 +287,7 @@ class PolicyTuner:
             optimizer = CheckpointOptimizer(
                 evaluator=self._evaluator,
                 config=candidate_config,
+                checkpoint_optimizer_config=checkpoint_optimizer_config,
                 run_dir=candidate_dir,
                 agg_method=self._agg_method,
             )
@@ -370,15 +360,13 @@ class PolicyTuner:
         val_workload_configs: list[WorkloadConfig],
         initial_config: dict[str, Any],
         phase_name: str,
-        config_key: str | None = None,
+        config_key: str,
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
     ]:
         """
         Phases 5 & 6: Autoscaler and routing parameter sweeps.
         """
-        if config_key is None:
-            config_key = phase_name
         phase_dir = self._out_dir / phase_name
         train_summary_path = phase_dir / "best_train_summary.yml"
         val_summary_path = phase_dir / "best_val_summary.yml"
@@ -394,8 +382,8 @@ class PolicyTuner:
         post_sweep_config, train_agg, val_agg = sweeper.sweep(
             train_workload_configs=train_workload_configs,
             val_workload_configs=val_workload_configs,
-            sweep_config=cfgu.getd(
-                self._initial_config, f"tuner_config.{config_key}", {}
+            param_sweep_config=ParamSweepConfig.from_config(
+                self._tuner_config[config_key]
             ),
         )
         dump_yaml(train_agg, train_summary_path)
@@ -538,8 +526,12 @@ if __name__ == "__main__":
     description = "Run the policy tuner from a YAML config file."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "config",
-        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
+        "initial_execution_config",
+        help="Path to the YAML execution config file.",
+    )
+    parser.add_argument(
+        "tuner_config",
+        help="Path to the YAML tuner config file.",
     )
     parser.add_argument(
         "--force",
@@ -569,7 +561,8 @@ if __name__ == "__main__":
         ),
     )
     args = parser.parse_args()
-    cfg = load_yaml(args.config)
+    initial_exec_cfg = load_yaml(args.initial_execution_config)
+    tuner_cfg = load_yaml(args.tuner_config)
 
     if args.publish_as is not None:
         publication_path = os.path.join(
@@ -583,12 +576,12 @@ if __name__ == "__main__":
             )
             exit(1)
 
-    pt = PolicyTuner(cfg, force=args.force)
-    final_config_path = pt.tune()
+    pt = PolicyTuner(initial_exec_cfg, tuner_cfg, force=args.force)
+    final_execution_config_path = pt.tune()
 
     if args.publish_as is not None:
         publication_path = os.path.join(
             pu.get_data_path(), "configs", "tuned", args.publish_as
         )
-        shutil.copy2(final_config_path, publication_path)
+        shutil.copy2(final_execution_config_path, publication_path)
         console.print(f"Published tuned config to [bold]{publication_path}[/]")

@@ -1,3 +1,4 @@
+import pandas as pd
 import logging
 import random
 
@@ -7,6 +8,7 @@ from autoslo.clusters.cluster import ClusterView
 from autoslo.config.component_configs import QueryRouterConfig
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
+from autoslo.forecasting.forecaster import Forecaster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.routing.query_router_policy import QueryRouterPolicy
@@ -14,6 +16,9 @@ from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import Query
+from pathlib import Path
+
+from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,7 @@ class QueryRouter:
         slo_objective: SloObjective,
         query_router_config: QueryRouterConfig,
         iconq_model: IconqModel,
-        rel_time_s_to_forecasted_table_vecs: dict[float, np.ndarray],
+        out_dir: str | Path,
     ):
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
@@ -36,12 +41,63 @@ class QueryRouter:
         self._round_robin_idx = 0
         self._query_router_config = query_router_config
         self._rel_time_s_to_forecasted_table_vecs = (
-            rel_time_s_to_forecasted_table_vecs
+            self._read_or_derive_rel_time_s_to_forecasted_table_vecs(out_dir)
         )
         self._sorted_forecast_times = sorted(
             self._rel_time_s_to_forecasted_table_vecs.keys()
         )
         self._idx_into_forecast_sequence = 0
+
+    def _read_or_derive_rel_time_s_to_forecasted_table_vecs(
+        self, out_dir: str | Path
+    ) -> dict[float, np.ndarray]:
+
+        out_path = Path(out_dir) / "rel_time_s_to_forecasted_table_vecs.npz"
+        if self._routing_policy != QueryRouterPolicy.CACHE_AWARE:
+            return {}
+        elif out_path.exists():
+            loaded = np.load(out_path, allow_pickle=True)
+            return {float(k): v for k, v in loaded.items()}
+        else:
+            forecaster_config = self._query_router_config.forecaster_config
+            if (forecaster_config is None) or (
+                forecaster_config.reservoir_config is None
+            ):
+                raise ValueError(
+                    "forecaster_config and reservoir_config must be provided "
+                    "for CACHE_AWARE routing policy"
+                )
+            reservoir_config = forecaster_config.reservoir_config
+
+            target_date = (
+                pd.Timestamp(reservoir_config.end_date_inclusive)
+                + pd.Timedelta(days=1)
+            ).date()
+            forecaster = Forecaster(forecaster_config=forecaster_config)
+            forecasted_workload_config = forecaster.forecast(
+                target_date=target_date,
+                use_fixed_queries_per_hour=True,
+                out_dir=out_dir,
+                workload_name="forecasted_workload",
+            )
+            forecasted_workload = Workload(
+                workload_config=forecasted_workload_config
+            )
+            forecasted_workload = forecasted_workload.rescale_rel_times(
+                self._query_router_config.cache_risk_rescale_factor
+            )
+            rel_time_s_to_forecasted_table_vecs = forecasted_workload.get_rel_time_s_to_table_vecs(
+                iconq_query_featurizer=self._iconq_model.iconq_query_featurizer
+            )
+
+            np.savez(
+                out_path,
+                **{
+                    str(rel_time_s): vec
+                    for rel_time_s, vec in rel_time_s_to_forecasted_table_vecs.items()
+                },
+            )  # type: ignore[arg-type]
+            return rel_time_s_to_forecasted_table_vecs
 
     @property
     def routing_policy(self) -> QueryRouterPolicy:

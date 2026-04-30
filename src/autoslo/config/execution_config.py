@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import autoslo.config.utils as cfgu
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.autoscaler import Autoscaler
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
@@ -13,11 +12,9 @@ from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.config.component_configs import (
     AutoscalerConfig,
-    ForecasterConfig,
     ManagedClusterPoolConfig,
     ProvisionerConfig,
     QueryRouterConfig,
-    ReservoirConfig,
     SloObjectiveConfig,
     SloResolverConfig,
     WorkloadConfig,
@@ -25,7 +22,6 @@ from autoslo.config.component_configs import (
 )
 from autoslo.filesystem.logging import StructuredLogHandler, setup_run_logging
 from autoslo.filesystem.structured_events import wall_clock_utc
-from autoslo.forecasting.forecaster import Forecaster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective
@@ -34,7 +30,7 @@ from autoslo.workload_definition.workload import Workload
 
 
 @dataclass(frozen=True)
-class StructuredConfig:
+class ExecutionConfig:
     run_id: str
     out_dir: str | Path
     workload: Workload
@@ -52,9 +48,9 @@ class StructuredConfig:
         out_dir: Optional[str | Path] = None,
         write_text_log: bool = False,
         is_runner: bool = False,
-    ) -> "StructuredConfig":
+    ) -> "ExecutionConfig":
         """
-        Build a ``StructuredConfig`` from the given configuration dictionary and
+        Build a ``ExecutionConfig`` from the given configuration dictionary and
         other parameters.
 
         Parameters
@@ -80,14 +76,18 @@ class StructuredConfig:
 
         # Parse direct configs.
         workload_config = WorkloadConfig.from_config(cfg)
+        query_router_config = QueryRouterConfig.from_config(
+            cfg, cache_risk_rescale_factor=workload_config.rescale_factor
+        )
         slo_resolver_config = SloResolverConfig.from_config(cfg)
         slo_objective_config = SloObjectiveConfig.from_config(cfg)
-        workload_runner_config = WorkloadRunnerConfig.from_config(cfg)
-        query_router_config = QueryRouterConfig.from_config(cfg)
-        forecaster_config = ForecasterConfig.from_config(cfg)
         autoscaler_config = AutoscalerConfig.from_config(cfg)
         capacity_checkpoints = CapacityCheckpoint.from_config(cfg)
-        reservoir_config = ReservoirConfig.maybe_from_config(cfg)
+        if is_runner:
+            workload_runner_config = WorkloadRunnerConfig.from_config(cfg)
+        else:
+            # Not needed for the simulator, so use defaults to let it be absent.
+            workload_runner_config = WorkloadRunnerConfig()
 
         # Necessary compute
         iconq_model = IconqModel.load(query_router_config.iconq_model_id)
@@ -123,37 +123,12 @@ class StructuredConfig:
             provisioner=provisioner,
             config=managed_cluster_pool_config,
         )
-        forecaster = Forecaster(
-            reservoir_config=reservoir_config,
-            forecaster_config=forecaster_config,
-        )
-        if forecaster_config.forecast_policy_name != "none":
-            target_date = workload.abs_start_time_range()[0].date()
-            forecasted_workload_config = forecaster.forecast(
-                target_date=target_date,
-                use_fixed_queries_per_hour=True,
-                out_dir=out_dir,
-                workload_name="forecasted_workload",
-            )
-            forecasted_workload = Workload(
-                workload_config=forecasted_workload_config
-            )
-            forecasted_workload = forecasted_workload.rescale_rel_times(
-                workload_config.rescale_factor
-            )
-            rel_time_s_to_forecasted_table_vecs = (
-                forecasted_workload.get_rel_time_s_to_table_vecs(
-                    iconq_query_featurizer=iconq_model.iconq_query_featurizer
-                )
-            )
-        else:
-            rel_time_s_to_forecasted_table_vecs = {}
         router = QueryRouter(
             slo_resolver=slo_resolver,
             slo_objective=slo_objective,
             query_router_config=query_router_config,
             iconq_model=iconq_model,
-            rel_time_s_to_forecasted_table_vecs=rel_time_s_to_forecasted_table_vecs,
+            out_dir=out_dir,
         )
         autoscaler = Autoscaler(
             slo_resolver=slo_resolver,
@@ -162,10 +137,10 @@ class StructuredConfig:
             query_router_config=query_router_config,
             autoscaler_config=autoscaler_config,
             cluster_cache_state_dim=cluster_cache_state_dim,
-            rel_time_s_to_forecasted_table_vecs=rel_time_s_to_forecasted_table_vecs,
+            out_dir=out_dir,
         )
 
-        return StructuredConfig(
+        return ExecutionConfig(
             run_id=run_id,
             out_dir=out_dir,
             workload=workload,

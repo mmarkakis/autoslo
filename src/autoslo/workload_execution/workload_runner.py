@@ -14,7 +14,7 @@ from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
-from autoslo.config.structured_config import StructuredConfig
+from autoslo.config.execution_config import ExecutionConfig
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
@@ -50,21 +50,21 @@ class WorkloadRunner:
         """
         # ── Build, parse and dump structured config ──────────────────────────
         self._write_text_log = write_text_log
-        structured_config = StructuredConfig.build(
+        execution_config = ExecutionConfig.build(
             cfg=cfg,
             out_dir=out_dir,
             write_text_log=write_text_log,
             is_runner=True,
         )
-        self._run_id = structured_config.run_id
-        self._out_dir = structured_config.out_dir
-        self._workload = structured_config.workload
-        self._pool = structured_config.pool
-        self._capacity_checkpoints = structured_config.capacity_checkpoints
-        self._router = structured_config.router
-        self._autoscaler = structured_config.autoscaler
-        self._structured_handler = structured_config.structured_log_handler
-        self._workload_runner_config = structured_config.workload_runner_config
+        self._run_id = execution_config.run_id
+        self._out_dir = execution_config.out_dir
+        self._workload = execution_config.workload
+        self._pool = execution_config.pool
+        self._capacity_checkpoints = execution_config.capacity_checkpoints
+        self._router = execution_config.router
+        self._autoscaler = execution_config.autoscaler
+        self._structured_handler = execution_config.structured_log_handler
+        self._workload_runner_config = execution_config.workload_runner_config
 
         self._closed_loop = self._workload_runner_config.closed_loop
         schema_name = self._workload_runner_config.schema_name
@@ -510,14 +510,14 @@ class WorkloadRunner:
 
 if __name__ == "__main__":
 
-    description = "Run queries from a workload using a YAML config file."
+    description = "Run the WorkloadRunner using a YAML execution config file."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "config_path",
-        help="Path to the YAML config file (e.g. data/__run_configs/test.yml).",
+        "execution_config",
+        help="Path to the YAML execution config file.",
     )
     args = parser.parse_args()
-    cfg = load_yaml(args.config_path)
+    cfg = load_yaml(args.execution_config)
 
     qr = WorkloadRunner(cfg)
     asyncio.run(qr.run())

@@ -21,7 +21,7 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.config.utils as cfgu
-from autoslo.config.component_configs import WorkloadConfig
+from autoslo.config.component_configs import ParamSweepConfig, WorkloadConfig
 from autoslo.filesystem.yaml_helpers import dump_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
@@ -102,20 +102,12 @@ class ParamSweep:
         self,
         train_workload_configs: list[WorkloadConfig],
         val_workload_configs: list[WorkloadConfig],
-        sweep_config: dict[str, Any],
+        param_sweep_config: ParamSweepConfig,
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
     ]:
         """Run a parameter sweep and return the best config with its metrics.
 
-        *sweep_config* format::
-
-            {"strategy": "random", "seed": 42, "budget": 20, "val_top_k": 5,
-             "params": {"param.name": [v1, v2], ...}}
-
-        Both ``strategy`` (default ``"grid"``) and ``params`` (default
-        ``{}``) are optional.  Supported strategies: ``"grid"``,
-        ``"random"``, ``"coordinate_descent"``.
 
         Parameters
         ----------
@@ -123,25 +115,19 @@ class ParamSweep:
             Workload configurations for training scenarios.
         val_workload_configs :
             Workload configurations for validation scenarios.
-        sweep_config :
-            Sweep configuration (see above).
+        param_sweep_config :
+            Sweep configuration.
 
         Returns
         -------
         The full config dict with the best parameter values applied.
         """
-        strategy = sweep_config.get("strategy", "grid")
-        param_ranges = sweep_config.get("params", {})
-        options = {
-            k: v
-            for k, v in sweep_config.items()
-            if k not in ("strategy", "params")
-        }
+        strategy = param_sweep_config.strategy
         phase_dir = self._run_dir / self._phase_name
 
         # Empty params → nothing to sweep; fall back to grid (evaluates
         # the base config once).
-        if not param_ranges:
+        if not param_sweep_config.params:
             strategy = "grid"
 
         dump_yaml(self._config, phase_dir / "initial_config.yml")
@@ -149,21 +135,21 @@ class ParamSweep:
         # ── Generate & evaluate candidates (strategy-specific) ─────
         if strategy == "grid":
             candidates, grid_results = self._sweep_grid(
-                train_workload_configs, param_ranges, phase_dir
+                train_workload_configs, param_sweep_config, phase_dir
             )
         elif strategy == "random":
             candidates, grid_results = self._sweep_random(
-                train_workload_configs, param_ranges, options, phase_dir
+                train_workload_configs, param_sweep_config, phase_dir
             )
         elif strategy == "coordinate_descent":
             candidates, grid_results = self._sweep_coordinate_descent(
-                train_workload_configs, param_ranges, options, phase_dir
+                train_workload_configs, param_sweep_config, phase_dir
             )
         else:
             raise ValueError(f"Unknown sweep strategy: {strategy!r}")
 
         # ── Rank training candidates and select top-k for validation ─
-        val_top_k: int = sweep_config.get("val_top_k", 5)
+        val_top_k: int = param_sweep_config.val_top_k
         points = [
             ViolationCost(r["train_violation_agg"], r["train_cost_agg"])
             for r in grid_results
@@ -260,12 +246,14 @@ class ParamSweep:
     def _sweep_grid(
         self,
         train_workload_configs: list[WorkloadConfig],
-        param_ranges: dict[str, list],
+        param_sweep_config: ParamSweepConfig,
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Exhaustive grid search (original strategy)."""
-        grid = build_grid(param_ranges)
-        self._print_preflight(param_ranges, grid, len(train_workload_configs))
+        grid = build_grid(param_sweep_config.params)
+        self._print_preflight(
+            param_sweep_config, grid, len(train_workload_configs)
+        )
         console.print(f"\n[bold cyan]Training sweep:[/]")
         grid_results = self._evaluate_candidates(
             train_workload_configs, grid, phase_dir / "train"
@@ -275,14 +263,13 @@ class ParamSweep:
     def _sweep_random(
         self,
         train_workload_configs: list[WorkloadConfig],
-        param_ranges: dict[str, list],
-        options: dict[str, Any],
+        param_sweep_config: ParamSweepConfig,
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Random search: sample *budget* configs from the grid."""
-        full_grid = build_grid(param_ranges)
-        budget = options.get("budget", len(full_grid))
-        seed = options.get("seed", 42)
+        full_grid = build_grid(param_sweep_config.params)
+        budget = param_sweep_config.budget
+        seed = param_sweep_config.seed
 
         if budget >= len(full_grid):
             grid = full_grid
@@ -291,7 +278,7 @@ class ParamSweep:
             grid = rng.sample(full_grid, budget)
 
         self._print_preflight(
-            param_ranges,
+            param_sweep_config,
             grid,
             len(train_workload_configs),
             strategy_label=f"Random (budget={budget}, seed={seed})",
@@ -305,19 +292,18 @@ class ParamSweep:
     def _sweep_coordinate_descent(
         self,
         train_workload_configs: list[WorkloadConfig],
-        param_ranges: dict[str, list],
-        options: dict[str, Any],
+        param_sweep_config: ParamSweepConfig,
         phase_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Coordinate descent: optimise one parameter at a time."""
-        max_cycles = options.get("max_cycles", 3)
-        starting_point = options.get("starting_point", None)
+        max_cycles = param_sweep_config.max_cycles
+        starting_point = param_sweep_config.starting_point
 
         # Default starting point: middle value for each parameter.
         if starting_point is None:
             starting_point = {
                 name: values[len(values) // 2]
-                for name, values in param_ranges.items()
+                for name, values in param_sweep_config.params.items()
             }
 
         current_best = dict(starting_point)
@@ -328,11 +314,11 @@ class ParamSweep:
         def _config_key(cfg: dict[str, Any]) -> frozenset:
             return frozenset(sorted(cfg.items()))
 
-        total_values = sum(len(v) for v in param_ranges.values())
+        total_values = sum(len(v) for v in param_sweep_config.params.values())
         console.print(
             f"\n[bold cyan]Coordinate descent[/]  "
             f"max_cycles={max_cycles}  |  "
-            f"params={len(param_ranges)}  |  "
+            f"params={len(param_sweep_config.params)}  |  "
             f"total values={total_values}  |  "
             f"training scenarios={len(train_workload_configs)}  |  "
             f"max evals={max_cycles * total_values * len(train_workload_configs)}"
@@ -343,7 +329,7 @@ class ParamSweep:
             console.print(f"\n  [bold cyan]Cycle {cycle + 1}/{max_cycles}:[/]")
             changed = False
 
-            for param_name, param_values in param_ranges.items():
+            for param_name, param_values in param_sweep_config.params.items():
                 # Candidate configs: vary only this param.
                 candidates_for_param = []
                 for val in param_values:
@@ -441,7 +427,7 @@ class ParamSweep:
 
     def _print_preflight(
         self,
-        param_ranges: dict[str, list],
+        param_sweep_config: ParamSweepConfig,
         grid: list[dict[str, Any]],
         n_train: int,
         strategy_label: str = "Grid",
@@ -452,7 +438,7 @@ class ParamSweep:
         table.add_column("Parameter", justify="left")
         table.add_column("Values", justify="left")
         table.add_column("Count", justify="right")
-        for name, values in param_ranges.items():
+        for name, values in param_sweep_config.params.items():
             table.add_row(name, str(values), str(len(values)))
         console.print(table)
 

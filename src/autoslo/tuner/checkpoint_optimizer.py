@@ -23,8 +23,8 @@ from rich.table import Table
 
 import autoslo.config.utils as cfgu
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
-from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import (
+    CheckpointOptimizerConfig,
     SloObjectiveConfig,
     SloResolverConfig,
     WorkloadConfig,
@@ -90,7 +90,7 @@ def find_next_checkpoint_time(
     slo_resolver: SloResolver,
     slo_objective: SloObjective,
     min_delinquent_workloads: int,
-    spin_up_delay_s: float,
+    lead_time_s: float,
 ) -> Optional[float]:
     """
     Find the next time at which to insert a capacity checkpoint, or None
@@ -107,7 +107,7 @@ def find_next_checkpoint_time(
     3. Find the earliest interval where the number of delinquent workloads
         exceeds *min_delinquent_workloads*. If no such interval exists,
         return None.
-    4. Return the start time of that interval minus *spin_up_delay_s*.
+    4. Return the start time of that interval minus *lead_time_s*.
 
     """
     completion_structured_logs = []
@@ -164,7 +164,7 @@ def find_next_checkpoint_time(
         slo_resolver=slo_resolver,
         slo_objective=slo_objective,
         min_delinquent_workloads=min_delinquent_workloads,
-        spin_up_delay_s=spin_up_delay_s,
+        lead_time_s=lead_time_s,
     )
 
 
@@ -173,7 +173,7 @@ def find_next_checkpoint_time_df(
     slo_resolver: SloResolver,
     slo_objective: SloObjective,
     min_delinquent_workloads: int,
-    spin_up_delay_s: float,
+    lead_time_s: float,
 ) -> Optional[float]:
     """
     Internal helper for find_next_checkpoint_time that takes pre-loaded
@@ -257,7 +257,7 @@ def find_next_checkpoint_time_df(
             continue
 
         if num_delinquent_workloads >= min_delinquent_workloads:
-            spinup_time = this_event_time - spin_up_delay_s
+            spinup_time = this_event_time - lead_time_s
             console.print(
                 f"[green]Found violating interval: "
                 f"{this_event_time:.2f}s to {next_event_time:.2f}s  "
@@ -296,6 +296,7 @@ class CheckpointOptimizer:
     def __init__(
         self,
         evaluator: ScenarioEvaluator,
+        checkpoint_optimizer_config: CheckpointOptimizerConfig,
         config: dict[str, Any],
         run_dir: Path,
         agg_method: str,
@@ -304,15 +305,8 @@ class CheckpointOptimizer:
         self._config = config
         self._run_dir = run_dir
         self._agg_method = agg_method
-
-        self._allowed_rpu_sizes = self._cfgd(
-            "autoscaling_config.allowed_rpu_sizes",
-            Cluster.ALL_ALLOWED_RPU_SIZES,
-        )
-        self._spin_up_delay_s = self._cfgd(
-            "provisioner_config.spin_up_delay_s",
-            Cluster.DEFAULT_SPIN_UP_DELAY_S,
-        )
+        self._checkpoint_optimizer_config = checkpoint_optimizer_config
+        self._lead_time_s = checkpoint_optimizer_config.lead_time_s
 
         # SLO Resolver
         slo_resolver_config = SloResolverConfig.from_config(config)
@@ -321,10 +315,6 @@ class CheckpointOptimizer:
         # SLO objective for threshold-aware candidate selection.
         slo_objective_config = SloObjectiveConfig.from_config(config)
         self._slo_objective = SloObjective(slo_objective_config)
-
-    def _cfgd(self, dot_delimited_key: str, default: Any = None) -> Any:
-        """Helper to read from the config dict with dot-delimited keys."""
-        return cfgu.getd(self._config, dot_delimited_key, default)
 
     # ------------------------------------------------------------------
     # Public API
@@ -350,12 +340,9 @@ class CheckpointOptimizer:
         config dict with the best checkpoint schedule applied and
         *train_agg* is the aggregated training results for that config.
         """
-        max_checkpoints = self._cfgd(
-            "tuner_config.checkpoint_phase.max_checkpoints", 5
-        )
-        min_delinquent_workload_fraction = self._cfgd(
-            "tuner_config.checkpoint_phase.min_delinquent_workload_fraction",
-            0.5,
+        max_checkpoints = self._checkpoint_optimizer_config.max_checkpoints
+        min_delinquent_workload_fraction = (
+            self._checkpoint_optimizer_config.min_delinquent_workload_fraction
         )
         min_delinquent_workloads = math.ceil(
             min_delinquent_workload_fraction * len(train_workload_configs)
@@ -404,7 +391,7 @@ class CheckpointOptimizer:
                 slo_resolver=self._slo_resolver,
                 slo_objective=self._slo_objective,
                 min_delinquent_workloads=min_delinquent_workloads,
-                spin_up_delay_s=self._spin_up_delay_s,
+                lead_time_s=self._lead_time_s,
             )
 
             if next_checkpoint_time is None:
@@ -450,7 +437,7 @@ class CheckpointOptimizer:
                 )
                 break
 
-            for rpu in self._allowed_rpu_sizes:
+            for rpu in self._checkpoint_optimizer_config.allowed_rpu_sizes:
                 checkpoint = CapacityCheckpoint(
                     rel_time_s=max(0.0, next_checkpoint_time),
                     min_rpus=tuple(sorted(initial_rpus + [rpu])),
@@ -510,9 +497,8 @@ class CheckpointOptimizer:
                 else 0
             )
 
-            min_rel_improvement_for_acceptance = self._cfgd(
-                "tuner_config.checkpoint_phase.min_rel_improvement_for_acceptance",
-                0.01,
+            min_rel_improvement_for_acceptance = (
+                self._checkpoint_optimizer_config.min_rel_improvement_for_acceptance
             )
             # To proceed,must either improve the SLO metric by at least epsilon,
             # or improve the SLO by a positive amount and also improve cost by
