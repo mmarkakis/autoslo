@@ -1,0 +1,42 @@
+sampling_config:
+  num_scenarios: 20
+  seed: 42
+  train_fraction: 0.6
+  aggregation_method: mean
+  forecaster_config:
+    forecast_policy_name: same_day_exponential
+    decay_factor: 0.5
+    fixed_queries_per_hour: 100
+    reservoir_config:
+      workload_name: redbench_provisioned_157_0
+      start_date_inclusive: "2024-04-27"
+      end_date_inclusive: "2024-05-26"
+      rescale_factor: 0.16666667
+
+checkpoint_optimizer_config:
+  max_checkpoints: 5
+  min_delinquent_workload_fraction: 0.5
+  min_rel_improvement_for_acceptance: 0.01
+  lead_time_s: 360.0  
+  allowed_rpu_sizes: [ 4, 8, 16, 32 ]
+  initial_rpu_candidates:
+    - [ 16 ]
+    - [ 8 ]
+    - [ 32 ]
+
+autoscaling_param_sweep:
+  param_sweep_config:
+    strategy: grid
+    params:
+      "autoscaler_config.min_cluster_lifetime_s": [ 1200.0, 3600.0 ]
+      "autoscaler_config.idle_time_before_tear_down_s": [ 300.0, 600.0 ]
+      "autoscaler_config.observation_window_s": [ 120.0, 300.0 ]
+      "autoscaler_config.min_observations_to_act": [ 5, 10 ]
+      "autoscaler_config.slo_tightening_factor": [ 0.6, 0.8, 1.0 ]
+    
+query_routing_param_sweep:
+  param_sweep_config:
+    strategy: grid
+    val_top_k: 10
+    params:
+      "query_router_config.cache_risk_cost_multiplier": [ 0.0, 0.5, 1.0 ]

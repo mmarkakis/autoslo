@@ -4,9 +4,6 @@ workload_config:
   end_date_inclusive: "2024-05-27"
   rescale_factor: 0.16666667
 
-forecaster_config:
-  forecast_policy_name: none
-
 slo_resolver_config:
   slo_s: 30.0
   slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
