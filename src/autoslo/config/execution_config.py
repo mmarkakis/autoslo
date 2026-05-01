@@ -65,7 +65,7 @@ class ExecutionConfig:
 
         # ── Determine run_id and set up logging ──────────────────────────────
         run_id = str(int(wall_clock_utc() * 1000))
-        default_parent = "runs" if is_runner else "simulation_runs"
+        default_parent = "runs" if is_runner else "simulator_runs"
         out_dir = out_dir or os.path.join(
             pu.get_data_path(), default_parent, run_id
         )
@@ -76,9 +76,7 @@ class ExecutionConfig:
 
         # Parse direct configs.
         workload_config = WorkloadConfig.from_config(cfg)
-        query_router_config = QueryRouterConfig.from_config(
-            cfg, cache_risk_rescale_factor=workload_config.rescale_factor
-        )
+        query_router_config = QueryRouterConfig.from_config(cfg)
         slo_resolver_config = SloResolverConfig.from_config(cfg)
         slo_objective_config = SloObjectiveConfig.from_config(cfg)
         autoscaler_config = AutoscalerConfig.from_config(cfg)

@@ -189,7 +189,6 @@ class QueryRouterConfig(_PartialConfig):
     # adj_cost = real_cost * (1 + multiplier * risk)
     cache_risk_coverage: float = 0.9
     cache_risk_epsilon: float = 1e-6
-    cache_risk_rescale_factor: float = 1.0
 
     forecaster_config: Optional[ForecasterConfig] = None
 
@@ -203,7 +202,7 @@ class QueryRouterConfig(_PartialConfig):
             forecaster_config = ForecasterConfig.from_config(
                 cfg["query_router_config"]
             )
-        except ValueError:
+        except (KeyError, ValueError):
             forecaster_config = None
         return super().from_config(cfg, forecaster_config=forecaster_config)
 
@@ -306,9 +305,8 @@ class ParamSweepConfig(_PartialConfig):
     Configuration for a parameter sweep, including the target component and
     the parameters to sweep.
     """
-
-    strategy: str
     params: dict[str, list[Any]]
+    strategy: str = "grid"
     val_top_k: int = 10
 
     # For random strategy

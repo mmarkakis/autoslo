@@ -1,6 +1,7 @@
 import logging
 import random
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -83,7 +84,7 @@ class QueryRouter:
                 workload_config=forecasted_workload_config
             )
             forecasted_workload = forecasted_workload.rescale_rel_times(
-                self._query_router_config.cache_risk_rescale_factor
+                reservoir_config.rescale_factor
             )
             rel_time_s_to_forecasted_table_vecs = forecasted_workload.get_rel_time_s_to_table_vecs(
                 iconq_query_featurizer=self._iconq_model.iconq_query_featurizer
@@ -173,17 +174,21 @@ class QueryRouter:
                     ),
                 )
         # Retrieve the appropriate forecasted query vecs for this time.
-        while (
-            self._idx_into_forecast_sequence
-            < (len(self._sorted_forecast_times) - 1)
-        ) and (
-            self._sorted_forecast_times[self._idx_into_forecast_sequence + 1]
-            <= rel_time_s
-        ):
-            self._idx_into_forecast_sequence += 1
-        forecasted_table_vecs = self._rel_time_s_to_forecasted_table_vecs[
-            self._sorted_forecast_times[self._idx_into_forecast_sequence]
-        ]
+        forecasted_table_vecs: Optional[np.ndarray] = None
+        if self._routing_policy == QueryRouterPolicy.CACHE_AWARE:
+            while (
+                self._idx_into_forecast_sequence
+                < (len(self._sorted_forecast_times) - 1)
+            ) and (
+                self._sorted_forecast_times[
+                    self._idx_into_forecast_sequence + 1
+                ]
+                <= rel_time_s
+            ):
+                self._idx_into_forecast_sequence += 1
+            forecasted_table_vecs = self._rel_time_s_to_forecasted_table_vecs[
+                self._sorted_forecast_times[self._idx_into_forecast_sequence]
+            ]
 
         # For each candidate cluster, compute the global after-state
         # (aggregating raw pairs across ALL clusters, with the candidate
@@ -268,7 +273,9 @@ class QueryRouter:
         selected_latency = (
             query.stage_predictions_per_rpu[snapshot[selected_cluster_name].rpu]
             if use_stage
-            else iconq_predicted_latencies[selected_cluster_name][query.query_id]
+            else iconq_predicted_latencies[selected_cluster_name][
+                query.query_id
+            ]
         )
         emit_structured(
             QueryRelatedEvent(
@@ -376,7 +383,7 @@ class QueryRouter:
     def _score_cache_risk(
         self,
         caches_per_cluster: np.ndarray,
-        forecasted_table_vecs: np.ndarray,
+        forecasted_table_vecs: Optional[np.ndarray] = None,
     ) -> float:
         """
         Compute the scalar cache risk score.
@@ -398,6 +405,9 @@ class QueryRouter:
             Scalar risk score in the range [0, 1], where higher means more risk
             of cache-unfavorableness.
         """
+        # If no forecast is loaded, eeffectively ignore this term.
+        if forecasted_table_vecs is None:
+            return 0.0
 
         # Normalize
         caches_per_cluster_norms = np.linalg.norm(

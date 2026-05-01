@@ -24,7 +24,7 @@ import json
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import yaml
@@ -54,13 +54,14 @@ def _detect_log_kind(df: pd.DataFrame) -> str:
 
 def _load_slo_resolver(log_dir: Path) -> SloResolver:
     """Read the config file next to the log and build a SloResolver."""
-    for name in ("config.yml", "runner_config.yml"):
+    for name in ("config.yml", "runner_config.yml", "execution_config.yml"):
         cfg_path = log_dir / name
         if cfg_path.exists():
             break
     else:
         raise FileNotFoundError(
-            f"No config.yml or runner_config.yml found in {log_dir}"
+            f"No config.yml, runner_config.yml, or execution_config.yml found "
+            f"in {log_dir}"
         )
 
     with open(cfg_path) as f:
@@ -1375,25 +1376,8 @@ def generate_html(data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Render a structured log as an interactive HTML timeline viewer.",
-    )
-    parser.add_argument(
-        "log_path",
-        type=str,
-        help="Path to structured_log.parquet",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=str,
-        default=None,
-        help="Output HTML path (default: same directory as log file)",
-    )
-    args = parser.parse_args()
-
-    log_path = Path(args.log_path).resolve()
+def render_log_viewer(log_path, output: Optional[str] = None) -> None:
+    log_path = Path(log_path).resolve()
     if not log_path.exists():
         print(f"Error: {log_path} not found", file=sys.stderr)
         sys.exit(1)
@@ -1422,8 +1406,8 @@ def main() -> None:
 
     html_content = generate_html(data)
 
-    if args.output:
-        out_path = Path(args.output).resolve()
+    if output:
+        out_path = Path(output).resolve()
     else:
         out_path = log_path.parent / "log_viewer.html"
 
@@ -1433,4 +1417,20 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Render a structured log as an interactive HTML timeline viewer.",
+    )
+    parser.add_argument(
+        "log_path",
+        type=str,
+        help="Path to structured_log.parquet",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Output HTML path (default: same directory as log file)",
+    )
+    args = parser.parse_args()
+    render_log_viewer(args.log_path, args.output)
