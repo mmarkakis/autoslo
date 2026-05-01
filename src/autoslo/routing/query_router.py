@@ -1,10 +1,11 @@
-import pandas as pd
 import logging
 import random
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
-from autoslo.clusters.cluster import ClusterView
+from autoslo.clusters.cluster import ClusterView, cluster_cost_until_drained
 from autoslo.config.component_configs import QueryRouterConfig
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
@@ -16,8 +17,6 @@ from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import Query
-from pathlib import Path
-
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -110,6 +109,21 @@ class QueryRouter:
         rel_time_s: float,
     ) -> tuple[str, dict[str, float], np.ndarray]:
 
+        use_stage = self._routing_policy == QueryRouterPolicy.USE_STAGE_MODEL
+
+        # Under USE_STAGE_MODEL, look up each query's pre-computed stage-model
+        # prediction for the cluster's RPU. These are used purely for
+        # routing-time scoring (SLO pairs and cost drain times). The iconq
+        # forward pass below still runs and its predictions are still what we
+        # return downstream, so cluster state stays accurate.
+        stage_latencies: dict[str, dict[str, float]] = {}
+        if use_stage:
+            for cluster_name, cluster in snapshot.items():
+                stage_latencies[cluster_name] = {
+                    q.query_id: q.stage_predictions_per_rpu[cluster.rpu]
+                    for q in cluster.active_queries
+                }
+
         # Collect before-state raw pairs and cost per cluster, and build the
         # hypothetical neighbor map for each cluster as if *query* were added.
         before_pairs: dict[str, list[LatencySlo]] = {}
@@ -117,11 +131,23 @@ class QueryRouter:
         before_cache_states: dict[str, np.ndarray] = {}
         cluster_name_to_queries_to_neighbors = {}
         for cluster_name, cluster in snapshot.items():
+            before_latencies = (
+                stage_latencies[cluster_name]
+                if use_stage
+                else cluster.predicted_latencies
+            )
             pairs = self._collect_cluster_pairs(
                 queries=cluster.active_queries,
-                predicted_latencies=cluster.predicted_latencies,
+                predicted_latencies=before_latencies,
             )
-            cost = cluster.cost_until_drained(rel_time_s)
+            cost = cluster_cost_until_drained(
+                queries=cluster.active_queries,
+                predicted_latencies=before_latencies,
+                past_billing_intervals=cluster.past_billing_intervals,
+                billing_window_start_s=cluster.billing_window_start_s,
+                cost_per_second=cluster.cost_per_second,
+                current_rel_time_s=rel_time_s,
+            )
             before_pairs[cluster_name] = pairs
             before_costs[cluster_name] = cost
             before_cache_states[cluster_name] = cluster.cache_state
@@ -135,18 +161,17 @@ class QueryRouter:
             iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
             cluster_to_base_to_neighbors=cluster_name_to_queries_to_neighbors,
         )
-        all_predictions = self._iconq_model.predict_from_dataset(dataset)
-        new_predicted_latencies: dict[str, dict[str, float]] = {}
-        for cluster_name in all_predictions.keys():
-            new_predicted_latencies[cluster_name] = {}
-            for query_id, pred in all_predictions[cluster_name].items():
-                new_predicted_latencies[cluster_name][query_id] = max(
+        iconq_predictions = self._iconq_model.predict_from_dataset(dataset)
+        iconq_predicted_latencies: dict[str, dict[str, float]] = {}
+        for cluster_name in iconq_predictions.keys():
+            iconq_predicted_latencies[cluster_name] = {}
+            for query_id, pred in iconq_predictions[cluster_name].items():
+                iconq_predicted_latencies[cluster_name][query_id] = max(
                     pred.overall_mean_s(),
                     snapshot[cluster_name].predicted_latencies.get(
                         query_id, 0.0
                     ),
                 )
-
         # Retrieve the appropriate forecasted query vecs for this time.
         while (
             self._idx_into_forecast_sequence
@@ -167,18 +192,24 @@ class QueryRouter:
         all_new_cache_states: dict[str, np.ndarray] = {}
         all_cache_risks: dict[str, float] = {}
         for candidate_name, cluster in snapshot.items():
-            after_pairs = self._collect_cluster_pairs(
-                queries=cluster.active_queries + [query],
-                predicted_latencies=new_predicted_latencies[candidate_name],
+            after_latencies = (
+                stage_latencies[candidate_name]
+                | {query.query_id: query.stage_predictions_per_rpu[cluster.rpu]}
+                if use_stage
+                else iconq_predicted_latencies[candidate_name]
             )
-            after_cost = cluster.cost_until_drained(
+            after_queries = cluster.active_queries + [query]
+            after_pairs = self._collect_cluster_pairs(
+                queries=after_queries,
+                predicted_latencies=after_latencies,
+            )
+            after_cost = cluster_cost_until_drained(
+                queries=after_queries,
+                predicted_latencies=after_latencies,
+                past_billing_intervals=cluster.past_billing_intervals,
+                billing_window_start_s=cluster.billing_window_start_s,
+                cost_per_second=cluster.cost_per_second,
                 current_rel_time_s=rel_time_s,
-                additional_queries_and_latencies=[
-                    (
-                        query,
-                        new_predicted_latencies[candidate_name][query.query_id],
-                    )
-                ],
             )
 
             # Build pair and cluster state list: updated for candidate,
@@ -211,7 +242,7 @@ class QueryRouter:
             all_new_cache_states[candidate_name] = new_cache_state
             all_cache_risks[candidate_name] = cache_risk
 
-            latency_s = new_predicted_latencies[candidate_name][query.query_id]
+            latency_s = after_latencies[query.query_id]
             emit_structured(
                 QueryRelatedEvent(
                     rel_time_s=rel_time_s,
@@ -219,7 +250,7 @@ class QueryRouter:
                     source="QueryRouter",
                     cluster_name=candidate_name,
                     details={
-                        "latency_s": latency_s,
+                        "latency_s_for_routing": latency_s,
                         "slo_violation": after_violation,
                         "cost": total_after_cost,
                         "cache_risk": cache_risk,
@@ -234,9 +265,11 @@ class QueryRouter:
             all_after_viols_and_costs, all_cache_risks
         )
         selected = all_after_viols_and_costs[selected_cluster_name]
-        selected_latency = new_predicted_latencies[selected_cluster_name][
-            query.query_id
-        ]
+        selected_latency = (
+            query.stage_predictions_per_rpu[snapshot[selected_cluster_name].rpu]
+            if use_stage
+            else iconq_predicted_latencies[selected_cluster_name][query.query_id]
+        )
         emit_structured(
             QueryRelatedEvent(
                 rel_time_s=rel_time_s,
@@ -244,7 +277,7 @@ class QueryRouter:
                 source="QueryRouter",
                 cluster_name=selected_cluster_name,
                 details={
-                    "latency_s": selected_latency,
+                    "latency_s_for_routing": selected_latency,
                     "slo_violation": selected.violation,
                     "cost": selected.cost,
                     "cache_risk": all_cache_risks[selected_cluster_name],
@@ -256,7 +289,7 @@ class QueryRouter:
 
         return (
             selected_cluster_name,
-            new_predicted_latencies[selected_cluster_name],
+            iconq_predicted_latencies[selected_cluster_name],
             all_new_cache_states[selected_cluster_name],
         )
 
@@ -324,7 +357,9 @@ class QueryRouter:
             best_local_idx = self._slo_objective.idx_of_best(adjusted_tups)
             return cluster_names[best_local_idx]
 
-        # Default: USE_ICONQ_MODEL.
+        # Default: USE_ICONQ_MODEL or USE_STAGE_MODEL. Both score using the
+        # raw (violation, cost) tuples; they differ only in which model
+        # supplies the latencies populating those tuples upstream.
         best_local_idx = self._slo_objective.idx_of_best(
             [viols_and_costs[cn] for cn in cluster_names]
         )

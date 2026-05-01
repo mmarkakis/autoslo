@@ -6,7 +6,12 @@ from typing import Optional
 import numpy as np
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
-from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
+from autoslo.clusters.cluster import (
+    Cluster,
+    ClusterState,
+    ClusterView,
+    cluster_cost_until_drained,
+)
 from autoslo.config.component_configs import AutoscalerConfig
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
@@ -431,7 +436,15 @@ class Autoscaler:
                 queries=cluster.active_queries,
                 predicted_latencies=cluster.predicted_latencies,
             )
-            cluster_cost = cluster.cost_until_drained(rel_time_s)
+            cluster_cost = cluster_cost_until_drained(
+                queries=cluster.active_queries,
+                predicted_latencies=cluster.predicted_latencies,
+                past_billing_intervals=cluster.past_billing_intervals,
+                billing_window_start_s=cluster.billing_window_start_s,
+                cost_per_second=cluster.cost_per_second,
+                current_rel_time_s=rel_time_s,
+            )
+
             lat_and_slos.extend(active_pairs)
             total_cost += cluster_cost
 

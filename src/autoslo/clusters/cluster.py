@@ -39,35 +39,26 @@ class ClusterState(Enum):
 
 
 def cluster_cost_until_drained(
-    active_queries: list[Query],
+    queries: list[Query],
     predicted_latencies: dict[str, float],
     past_billing_intervals: list[BillingInterval],
     billing_window_start_s: Optional[float],
     cost_per_second: float,
     current_rel_time_s: float,
-    additional_queries_and_latencies: Optional[
-        list[tuple[Query, float]]
-    ] = None,
 ) -> float:
     """
     Cost billed from the start of this query's lifetime until all
     currently-active queries, as well as any additional queries, have
     drained.
     """
-    queries = list(active_queries)
-    predicted_latencies = dict(predicted_latencies)
-    if additional_queries_and_latencies is not None:
-        for query, latency in additional_queries_and_latencies:
-            queries.append(query)
-            predicted_latencies[query.query_id] = latency
-
     end_s = current_rel_time_s
     if queries:
         end_s = max(
-            q.rel_start_time_s + predicted_latencies[q.query_id] for q in queries
+            q.rel_start_time_s + predicted_latencies[q.query_id]
+            for q in queries
         )
         end_s = max(end_s, current_rel_time_s)
-    
+
     billed_intervals_until_end = list(past_billing_intervals)
     if (billing_window_start_s is not None) and (
         current_rel_time_s > billing_window_start_s
@@ -193,27 +184,7 @@ class Cluster:
         c.predicted_latencies = dict(self.predicted_latencies)
         return c
 
-    def cost_until_drained(
-        self,
-        current_rel_time_s: float,
-        additional_queries_and_latencies: Optional[
-            list[tuple[Query, float]]
-        ] = None,
-    ) -> float:
-        """
-        Cost billed from the start of this query's lifetime until all
-        currently-active queries, as well as any additional queries, have
-        drained.
-        """
-        return cluster_cost_until_drained(
-            active_queries=self.active_queries,
-            predicted_latencies=self.predicted_latencies,
-            past_billing_intervals=self.past_billing_intervals,
-            billing_window_start_s=self.billing_window_start_s,
-            cost_per_second=self.cost_per_second,
-            current_rel_time_s=current_rel_time_s,
-            additional_queries_and_latencies=additional_queries_and_latencies,
-        )
+
 
     # --- Derived properties ----------------------------------------------
 
@@ -440,27 +411,7 @@ class ClusterView:
     def cost_per_second(self) -> float:
         return Cluster.cost_per_second_for_rpu(self.rpu, self.cost_per_rpu_hour)
 
-    def cost_until_drained(
-        self,
-        current_rel_time_s: float,
-        additional_queries_and_latencies: Optional[
-            list[tuple[Query, float]]
-        ] = None,
-    ) -> float:
-        """
-        Cost billed from the start of this query's lifetime until all
-        currently-active queries, as well as any additional queries, have
-        drained.
-        """
-        return cluster_cost_until_drained(
-            active_queries=self.active_queries,
-            predicted_latencies=self.predicted_latencies,
-            past_billing_intervals=self.past_billing_intervals,
-            billing_window_start_s=self.billing_window_start_s,
-            cost_per_second=self.cost_per_second,
-            current_rel_time_s=current_rel_time_s,
-            additional_queries_and_latencies=additional_queries_and_latencies,
-        )
+
 
     def hypothetical_neighbors_with(
         self, query: "Query"
