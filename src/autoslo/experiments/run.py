@@ -1,9 +1,9 @@
 """
 Run the PolicyTuner sequentially for every trial in an experiment spec.
 
-Reads ``trial_spec.yml``, infers the path of each generated config
-(``configs/tuner_{id}.yml``), and invokes ``policy_tuner.py`` for each
-trial in ascending ``sort_order``.
+Reads ``trial_spec.yml`` and invokes ``policy_tuner.py`` for each trial,
+passing the execution config, tuner config, and ``--param KEY=VALUE`` flags
+derived from the trial's ``params`` dict.
 """
 
 from __future__ import annotations
@@ -21,19 +21,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run PolicyTuner for each trial defined in a trial spec."
     )
-    parser.add_argument("spec", help="Path to trial_spec.yml")
+    parser.add_argument(
+        "spec",
+        help="Path to trial_spec.yml, or to the experiment directory containing it.",
+    )
     args = parser.parse_args()
 
-    spec_path = Path(args.spec).resolve()
+    given = Path(args.spec).resolve()
+    if given.is_dir():
+        spec_path = given / "trial_spec.yml"
+    else:
+        spec_path = given
     if not spec_path.exists():
         parser.error(f"Spec file not found: {spec_path}")
 
-    spec_dir = spec_path.parent
+    spec_dir = spec_path.parent  # used by plot_experiment
     spec = load_yaml(spec_path)
 
-    configs_dir = spec_dir / "configs"
-    if not configs_dir.exists():
-        parser.error(f"Configs directory not found: {configs_dir}")
+    default_exec_cfg: str = spec.get("exec_config", "")
+    default_tuner_cfg: str = spec.get("tuner_config", "")
+
     trials = sorted(
         spec.get("trials", []), key=lambda t: t.get("sort_order", 0)
     )
@@ -42,36 +49,22 @@ def main() -> None:
         print("[run_trials] WARNING: no trials found in spec; nothing to run.")
         return
 
-    # Validate that all generated configs exist before starting any run.
-    missing: list[str] = []
-    for trial in trials:
-        cfg_path = configs_dir / f"tuner_{trial['trial_id']}.yml"
-        if not cfg_path.exists():
-            missing.append(str(cfg_path.relative_to(Path.cwd())))
-
-    if missing:
-        print(
-            "[run_trials] ERROR: the following generated config files are missing:",
-            file=sys.stderr,
-        )
-        for m in missing:
-            print(f"  {m}", file=sys.stderr)
-        print(
-            "\nRun generate_trials.py first:\n"
-            f"  python src/autoslo/experiments/generate_trials.py {args.spec}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     total = len(trials)
     for idx, trial in enumerate(trials, 1):
         tid = trial["trial_id"]
-        cfg_path = configs_dir / f"tuner_{tid}.yml"
+        exec_cfg = trial.get("exec_config", default_exec_cfg)
+        tuner_cfg = trial.get("tuner_config", default_tuner_cfg)
+        params: dict[str, str] = dict(trial.get("params") or {})
+
         cmd = [
             sys.executable,
             "src/autoslo/tuner/policy_tuner.py",
-            str(cfg_path),
+            exec_cfg,
+            tuner_cfg,
+            "--force",
         ]
+        for key, val in sorted(params.items()):
+            cmd += ["--param", f"{key}={val}"]
         print(
             f"\n[run_trials] ({idx}/{total}) trial '{tid}' — "
             f"{' '.join(cmd)}"

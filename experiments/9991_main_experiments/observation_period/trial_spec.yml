@@ -1,31 +1,39 @@
 experiment_name: observation_period_exp
 experiment_name_human: "Optimizing on Different History Lengths"
 plot_on_one_panel: true
+exec_config: "handmade/base_iconq.yml"
+tuner_config: "sampled.yml"
+
 trials:
   - trial_id: ground_truth
     trial_id_human: "Target day (oracle)"
     formatting_id_of_final_point: ground_truth
-    overrides:
-      forecast_config.forecast_policy: GroundTruthForecastPolicy
-      forecast_config.start_date_inclusive: "2024-05-27"
-      forecast_config.end_date_inclusive: "2024-05-27"
+    tuner_config: "groundtruth.yml"
+    params:
+      TARGET_DATE: "2024-05-27"
+      PAST_PERIOD_START_DATE: "2024-05-27"
+      PAST_PERIOD_END_DATE: "2024-05-27"
 
   - trial_id: prev_day
     trial_id_human: "Previous 1 day"
     formatting_id_of_final_point: prev_day
+    params:
+      TARGET_DATE: "2024-05-27"
+      PAST_PERIOD_START_DATE: "2024-05-26"
+      PAST_PERIOD_END_DATE: "2024-05-26"
 
   - trial_id: prev_week
     trial_id_human: "Previous 1 week"
     formatting_id_of_final_point: prev_week
-    overrides:
-      forecast_config.start_date_inclusive: "2024-05-20"
-      forecast_config.end_date_inclusive: "2024-05-26"
+    params:
+      TARGET_DATE: "2024-05-27"
+      PAST_PERIOD_START_DATE: "2024-05-20"
+      PAST_PERIOD_END_DATE: "2024-05-26"
 
   - trial_id: prev_month
     trial_id_human: "Previous 1 month"
     formatting_id_of_final_point: prev_month
-    overrides:
-      forecast_config.start_date_inclusive: "2024-04-27"
-      forecast_config.end_date_inclusive: "2024-05-26"
-
- 
+    params:
+      TARGET_DATE: "2024-05-27"
+      PAST_PERIOD_START_DATE: "2024-04-27"
+      PAST_PERIOD_END_DATE: "2024-05-26"

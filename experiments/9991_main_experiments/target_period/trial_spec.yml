@@ -1,36 +1,38 @@
 experiment_name: target_period_exp
 experiment_name_human: "Simulation Results with Different Target Days"
 plot_on_one_panel: false
+exec_config: "handmade/base_iconq.yml"
+tuner_config: "sampled.yml"
+
 trials:
   - trial_id: may_24
     trial_id_human: "May 24"
     formatting_id_of_final_point: prev_month
-    overrides:
-      workload_config.date: "2024-05-24"
-      forecast_config.start_date_inclusive: "2024-04-24"
-      forecast_config.end_date_inclusive: "2024-05-23"
+    params:
+      TARGET_DATE: "2024-05-24"
+      PAST_PERIOD_START_DATE: "2024-04-24"
+      PAST_PERIOD_END_DATE: "2024-05-23"
 
   - trial_id: may_25
     trial_id_human: "May 25"
     formatting_id_of_final_point: prev_month
-    overrides:
-      workload_config.date: "2024-05-25"
-      forecast_config.start_date_inclusive: "2024-04-25"
-      forecast_config.end_date_inclusive: "2024-05-24"
+    params:
+      TARGET_DATE: "2024-05-25"
+      PAST_PERIOD_START_DATE: "2024-04-25"
+      PAST_PERIOD_END_DATE: "2024-05-24"
 
   - trial_id: may_26
     trial_id_human: "May 26"
     formatting_id_of_final_point: prev_month
-    overrides:
-      workload_config.date: "2024-05-26"
-      forecast_config.start_date_inclusive: "2024-04-26"
-      forecast_config.end_date_inclusive: "2024-05-25"
+    params:
+      TARGET_DATE: "2024-05-26"
+      PAST_PERIOD_START_DATE: "2024-04-26"
+      PAST_PERIOD_END_DATE: "2024-05-25"
 
   - trial_id: may_27
     trial_id_human: "May 27"
     formatting_id_of_final_point: prev_month
-    overrides:
-      workload_config.date: "2024-05-27"
-      forecast_config.start_date_inclusive: "2024-04-27"
-      forecast_config.end_date_inclusive: "2024-05-26"
- 
+    params:
+      TARGET_DATE: "2024-05-27"
+      PAST_PERIOD_START_DATE: "2024-04-27"
+      PAST_PERIOD_END_DATE: "2024-05-26"

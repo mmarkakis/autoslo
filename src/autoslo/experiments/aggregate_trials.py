@@ -20,7 +20,9 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.filesystem.yaml_helpers import load_yaml
+from autoslo.config.component_configs import SloObjectiveConfig
+from autoslo.config.utils import make_run_id
+from autoslo.filesystem.yaml_helpers import load_yaml_with_params
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.visualizations.scatter_plots import (
@@ -43,16 +45,26 @@ def consolidate_summaries(
     with open(experiment_definition_dir / "trial_spec.yml") as f:
         trial_spec = yaml.safe_load(f)
     experiment_name = trial_spec["experiment_name"]
-    experiment_dir = os.path.join(
-        pu.AUTOSLO_ROOT, "data", "tuner_runs", experiment_name
-    )
+    default_exec_cfg: str = trial_spec.get("exec_config", "")
+    default_tuner_cfg: str = trial_spec.get("tuner_config", "")
 
     rows = []
     # Iterate over subdirectories and read their summary.yml files.
     for trial in trial_spec["trials"]:
         trial_id = trial["trial_id"]
+        exec_cfg = trial.get("exec_config", default_exec_cfg)
+        tuner_cfg = trial.get("tuner_config", default_tuner_cfg)
+        params: dict[str, str] = dict(trial.get("params") or {})
+        exec_stem = Path(exec_cfg).stem
+        tuner_stem = Path(tuner_cfg).stem
+        run_id = make_run_id([exec_stem, tuner_stem], params)
         summary_path = os.path.join(
-            experiment_dir, f"tuner_{trial_id}", "09_holdout", "summary.yml"
+            pu.AUTOSLO_ROOT,
+            "data",
+            "tuner_runs",
+            run_id,
+            "09_holdout",
+            "summary.yml",
         )
         if not os.path.exists(summary_path):
             raise FileNotFoundError(
@@ -107,17 +119,23 @@ def plot_experiment(
     experiment_name_human = trial_spec["experiment_name_human"]
     plot_on_one_panel = trial_spec.get("plot_on_one_panel", False)
 
+    default_exec_cfg: str = trial_spec.get("exec_config", "")
+
     # Collect the trial-wise slo_objectives and plotting info.
     slo_objectives: dict[str, SloObjective] = {}
     formatting_ids_of_final_points: dict[str, str] = {}
     trial_ids_human: dict[str, str] = {}
     for trial in trial_spec["trials"]:
         trial_id = trial["trial_id"]
-        trial_config_path = (
-            experiment_definition_dir / "configs" / f"tuner_{trial_id}.yml"
+        exec_cfg = trial.get("exec_config", default_exec_cfg)
+        params: dict[str, str] = dict(trial.get("params") or {})
+        exec_cfg_full = os.path.join(
+            pu.get_data_path(), "execution_configs", exec_cfg
         )
-        trial_config = load_yaml(trial_config_path)
-        slo_objectives[trial_id] = SloObjective.from_config(trial_config)
+        resolved_exec = load_yaml_with_params(exec_cfg_full, params)
+        slo_objectives[trial_id] = SloObjective(
+            SloObjectiveConfig.from_config(resolved_exec)
+        )
         formatting_ids_of_final_points[trial_id] = trial[
             "formatting_id_of_final_point"
         ]

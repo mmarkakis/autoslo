@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run every experiment under 9991_main_experiments sequentially.
-# Each subdirectory that contains a run.sh is executed in sorted order.
+# Each subdirectory that contains a trial_spec.yml is executed in sorted order.
 # The script aborts immediately if any experiment fails (set -e).
 #
 # Usage (from repo root):
@@ -10,16 +10,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-for run_sh in $(find "$SCRIPT_DIR" -mindepth 2 -maxdepth 2 -name "run.sh" | sort); do
-    exp_dir="$(dirname "$run_sh")"
-    exp_name="$(basename "$exp_dir")"
+for spec in $(find "$SCRIPT_DIR" -mindepth 2 -maxdepth 2 -name "trial_spec.yml" | sort); do
+    exp_spec_path="$(dirname "$spec")"
+    exp_name="$(basename "$exp_spec_path")"
 
     echo ""
     echo "================================================================="
     echo "  Experiment: $exp_name"
     echo "================================================================="
 
-    bash "$run_sh"
+    python src/autoslo/experiments/run.py "$exp_spec_path"
 done
 
 echo ""
