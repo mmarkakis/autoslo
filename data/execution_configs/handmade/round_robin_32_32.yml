@@ -1,7 +1,7 @@
 workload_config:
   workload_name: redbench_provisioned_157_0
-  start_date_inclusive: "2024-05-27"
-  end_date_inclusive: "2024-05-27"
+  start_date_inclusive: "<TARGET_DATE>"
+  end_date_inclusive: "<TARGET_DATE>"
   rescale_factor: 0.16666667
 
 forecaster_config:

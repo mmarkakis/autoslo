@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from rich.console import Console
 
@@ -20,9 +20,12 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
-from autoslo.config.utils import copy_and_apply_overrides
-from autoslo.filesystem.structured_events import wall_clock_utc
-from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
+from autoslo.config.utils import (
+    copy_and_apply_overrides,
+    make_run_id,
+    parse_params,
+)
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
@@ -47,7 +50,11 @@ class PolicyTuner:
         initial_execution_config_path: str,
         tuner_config_path: str,
         force: bool = False,
+        params: dict[str, str] | None = None,
     ) -> None:
+
+        if params is None:
+            params = {}
 
         # Load the execution config. If the path is not absolute, assume it is
         # relative to data/execution_configs.
@@ -57,8 +64,8 @@ class PolicyTuner:
                 "execution_configs",
                 initial_execution_config_path,
             )
-        self._initial_execution_config = load_yaml(
-            initial_execution_config_path
+        self._initial_execution_config = load_yaml_with_params(
+            initial_execution_config_path, params
         )
 
         # Load the tuner config. If the path is not absolute, assume it is relative
@@ -67,14 +74,16 @@ class PolicyTuner:
             tuner_config_path = os.path.join(
                 pu.get_data_path(), "tuner_configs", tuner_config_path
             )
-        self._tuner_config = load_yaml(tuner_config_path)
+        self._tuner_config = load_yaml_with_params(tuner_config_path, params)
 
-        # Construct a run_id from the execution config and tuner config stems.
-        run_id = "#".join(
+        # Construct a run_id from the execution config and tuner config stems
+        # plus any injected params.
+        run_id = make_run_id(
             [
                 Path(initial_execution_config_path).stem,
                 Path(tuner_config_path).stem,
-            ]
+            ],
+            params,
         )
 
         # Check that the tuning output path and/or the publication path don't
@@ -108,15 +117,15 @@ class PolicyTuner:
         else:
             os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
 
-        # Persist configs for reproducibility.
+        # Persist substituted configs for reproducibility.
         initial_execution_config_out_path = (
             self._out_dir / "initial_execution_config.yml"
         )
-        shutil.copy2(
-            initial_execution_config_path, initial_execution_config_out_path
+        dump_yaml(
+            self._initial_execution_config, initial_execution_config_out_path
         )
         tuner_config_out_path = self._out_dir / "tuner_config.yml"
-        shutil.copy2(tuner_config_path, tuner_config_out_path)
+        dump_yaml(self._tuner_config, tuner_config_out_path)
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator()
@@ -587,11 +596,22 @@ if __name__ == "__main__":
             "Commands that don't manage a run directory ignore this flag."
         ),
     )
+    parser.add_argument(
+        "--param",
+        action="append",
+        metavar="KEY=VALUE",
+        default=[],
+        help=(
+            "Substitute <KEY> placeholder in the config with VALUE. "
+            "May be repeated: --param TARGET_DATE=2024-05-27."
+        ),
+    )
     args = parser.parse_args()
 
     pt = PolicyTuner(
         initial_execution_config_path=args.initial_execution_config_path,
         tuner_config_path=args.tuner_config_path,
         force=args.force,
+        params=parse_params(args.param),
     )
     pt.tune()

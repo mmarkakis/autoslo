@@ -2,27 +2,32 @@ import argparse
 import heapq
 import logging
 import os
+import shutil
+
 from pathlib import Path
 from typing import Callable, Optional
 
 from tqdm import tqdm
 
+import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.billing import Billing, BillingInterval
 from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.config.execution_config import ExecutionConfig
+from autoslo.config.utils import make_run_id, parse_params
 from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
 )
-from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
+from autoslo.visualizations.render_log_viewer import render_log_viewer
 
 
 class WorkloadSimulator:
@@ -65,7 +70,7 @@ class WorkloadSimulator:
         self._autoscaler = execution_config.autoscaler
         self._structured_handler = execution_config.structured_log_handler
 
-        dump_yaml(cfg, os.path.join(self._out_dir, "config.yml"))
+        dump_yaml(cfg, os.path.join(self._out_dir, "execution_config.yml"))
 
         # ── Activate initial clusters immediately (no spin-up delay) ──────
         pending_cluster_names = self._pool.clusters_in_state(
@@ -481,11 +486,51 @@ if __name__ == "__main__":
     description = "Run the WorkloadSimulator from a YAML execution config file."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "execution_config",
+        "execution_config_path",
         help="Path to the YAML execution config file.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Whether to force overwrite the output directory if it already "
+        "exists. By default, the simulator will raise an error if the output "
+        "directory already exists to avoid accidentally overwriting past runs.",
+    )
+    parser.add_argument(
+        "--param",
+        action="append",
+        metavar="KEY=VALUE",
+        default=[],
+        help=(
+            "Substitute <KEY> placeholder in the config with VALUE. "
+            "May be repeated: --param TARGET_DATE=2024-05-27."
+        ),
+    )
     args = parser.parse_args()
-    cfg = load_yaml(args.execution_config)
 
-    sim = WorkloadSimulator(cfg)
+    params = parse_params(args.param)
+
+    execution_config_path = args.execution_config_path
+    if not os.path.isabs(execution_config_path):
+        execution_config_path = os.path.join(
+            pu.get_data_path(),
+            "execution_configs",
+            execution_config_path,
+        )
+    cfg = load_yaml_with_params(execution_config_path, params)
+
+    run_id = make_run_id([Path(execution_config_path).stem], params)
+    out_dir = Path(os.path.join(pu.get_data_path(), "simulator_runs", run_id))
+    if os.path.exists(out_dir):
+        if args.force:
+            shutil.rmtree(out_dir)
+        else:
+            raise FileExistsError(
+                f"Output directory {out_dir} already exists. Use --force to overwrite."
+            )
+    os.makedirs(out_dir, exist_ok=False)
+
+    sim = WorkloadSimulator(cfg=cfg, out_dir=out_dir, write_text_log=True)
     sim.run()
+
+    render_log_viewer(os.path.join(out_dir, "structured_log.parquet"))

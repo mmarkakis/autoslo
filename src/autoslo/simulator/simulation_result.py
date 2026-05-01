@@ -36,8 +36,8 @@ class SimulationResult:
         """
         simulation_dir = Path(simulation_dir)
 
-        # -- build slo resolver for this scenario from its config.yml --
-        config_path = simulation_dir / "config.yml"
+        # -- build slo resolver for this scenario from its execution_config.yml --
+        config_path = simulation_dir / "execution_config.yml"
         config: dict[str, Any] = {}
         with open(config_path) as f:
             config = yaml.safe_load(f)

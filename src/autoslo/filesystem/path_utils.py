@@ -1,4 +1,6 @@
 import argparse
+import csv
+import datetime
 import os
 from datetime import datetime
 from typing import Optional, Union
@@ -125,6 +127,34 @@ def get_runs_path() -> str:
     Useful for API routes that need to expose this to the UI.
     """
     return os.path.join(get_data_path(), "runs")
+
+
+def append_to_run_log(run_id: str, config_id: str) -> None:
+    """Append one entry to ``data/runs/run_log.csv``.
+
+    The file is created with a header row on first use, then each
+    subsequent call appends a single data row.  The log is intentionally
+    append-only and never rewritten.
+
+    Parameters
+    ----------
+    run_id:
+        The timestamp-ms string that names the run output directory.
+    config_id:
+        The compound ``#``-separated identifier produced by
+        :func:`~autoslo.config.utils.make_run_id`, e.g.
+        ``"base_iconq#TARGET_DATE=2024-05-27"``.
+    """
+
+    log_path = os.path.join(get_runs_path(), "run_log.csv")
+    write_header = not os.path.exists(log_path)
+    started_at = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    os.makedirs(get_runs_path(), exist_ok=True)
+    with open(log_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["run_id", "config_id", "started_at"])
+        writer.writerow([run_id, config_id, started_at])
 
 
 def get_models_dir() -> str:

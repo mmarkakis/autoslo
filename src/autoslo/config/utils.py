@@ -45,3 +45,62 @@ def getd(
             return default
         d = d[part]
     return d
+
+
+def parse_params(raw: list[str]) -> dict[str, str]:
+    """Parse a list of ``KEY=value`` strings into a dict.
+
+    Parameters
+    ----------
+    raw:
+        List of strings, each of the form ``KEY=value``, as produced by
+        ``argparse`` with ``action="append"``.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of key → value.
+
+    Raises
+    ------
+    ValueError
+        If any entry does not contain exactly one ``=``, or has an empty key.
+    """
+    result: dict[str, str] = {}
+    for entry in raw:
+        parts = entry.split("=", 1)
+        if len(parts) != 2 or not parts[0]:
+            raise ValueError(
+                f"Invalid --param format: {entry!r}. Expected KEY=value."
+            )
+        result[parts[0]] = parts[1]
+    return result
+
+
+def make_run_id(stems: list[str], params: dict[str, str]) -> str:
+    """Build a ``#``-separated run identifier from config stems and params.
+
+    The stems are joined first (in the order given), followed by
+    ``KEY=value`` segments for every entry in *params*, sorted
+    lexicographically by key so the result is deterministic regardless of
+    the order params were supplied on the command line.
+
+    Parameters
+    ----------
+    stems:
+        Ordered list of config file stems, e.g.
+        ``["base_iconq", "sampled"]``.
+    params:
+        Substitution parameters, e.g. ``{"TARGET_DATE": "2024-05-27"}``.
+
+    Returns
+    -------
+    str
+        A ``#``-separated identifier, e.g.
+        ``"base_iconq#sampled#TARGET_DATE=2024-05-27"``.
+        When *params* is empty this degrades to ``"#".join(stems)``.
+    """
+    parts = list(stems)
+    for key in sorted(params):
+        parts.append(f"{key}={params[key]}")
+    return "#".join(parts)

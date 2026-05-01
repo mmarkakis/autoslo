@@ -8,6 +8,7 @@ leading-zero integers as octal.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -79,3 +80,67 @@ def load_yaml(path: str | Path) -> Any:
     """
     with open(path) as f:
         return yaml.safe_load(f) or {}
+
+
+_PLACEHOLDER_RE = re.compile(r"<([A-Z][A-Z0-9_]*)>")
+
+
+def detect_placeholders(text: str) -> list[str]:
+    """Return a list of placeholder names found in *text*.
+
+    Placeholders have the form ``<UPPERCASE_NAME>``, e.g. ``<TARGET_DATE>``.
+    The returned list may contain duplicates if the same placeholder appears
+    more than once.
+    """
+    return _PLACEHOLDER_RE.findall(text)
+
+
+def load_yaml_with_params(path: str | Path, params: dict[str, str]) -> Any:
+    """Load YAML from *path*, substituting ``<KEY>`` placeholders with values
+    from *params* before parsing.
+
+    Parameters
+    ----------
+    path:
+        Path to the YAML file (may contain ``<KEY>`` placeholder tokens).
+    params:
+        Mapping of placeholder name → replacement string.  Keys must not
+        include the surrounding angle brackets.
+
+    Returns
+    -------
+    Any
+        The parsed YAML value after substitution, or ``{}`` for an empty file.
+
+    Raises
+    ------
+    ValueError
+        If any ``<KEY>`` placeholder remains unresolved after substitution.
+    """
+
+    with open(path) as f:
+        text = f.read()
+
+    original_placeholders = set(detect_placeholders(text))
+
+    for key, value in params.items():
+        text = text.replace(f"<{key}>", value)
+
+    remaining = detect_placeholders(text)
+    if remaining:
+        raise ValueError(
+            f"Config '{Path(path).name}' contains unresolved placeholders after "
+            f"substitution: {', '.join(f'<{p}>' for p in sorted(set(remaining)))}. "
+            f"Provide them via --param KEY=value."
+        )
+
+    unused = set(params) - original_placeholders
+    if unused:
+        logging.debug(
+            "load_yaml_with_params: the following params were not used in "
+            "'%s': %s",
+            Path(path).name,
+            ", ".join(sorted(unused)),
+        )
+
+    return yaml.safe_load(text) or {}

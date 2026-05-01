@@ -15,14 +15,16 @@ from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.config.execution_config import ExecutionConfig
+from autoslo.config.utils import make_run_id, parse_params
 from autoslo.filesystem.logging import emit_structured
+from autoslo.filesystem.path_utils import append_to_run_log
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
     wall_clock_utc,
 )
-from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
@@ -507,6 +509,11 @@ class WorkloadRunner:
         ):
             self._structured_handler.finalize()
 
+    @property
+    def run_id(self) -> str:
+        """The unique identifier assigned to this run."""
+        return self._run_id
+
 
 if __name__ == "__main__":
 
@@ -516,8 +523,22 @@ if __name__ == "__main__":
         "execution_config",
         help="Path to the YAML execution config file.",
     )
+    parser.add_argument(
+        "--param",
+        action="append",
+        metavar="KEY=VALUE",
+        default=[],
+        help=(
+            "Substitute <KEY> placeholder in the config with VALUE. "
+            "May be repeated: --param TARGET_DATE=2024-05-27."
+        ),
+    )
     args = parser.parse_args()
-    cfg = load_yaml(args.execution_config)
+
+    params = parse_params(args.param)
+    cfg = load_yaml_with_params(args.execution_config, params)
+    config_id = make_run_id([Path(args.execution_config).stem], params)
 
     qr = WorkloadRunner(cfg)
+    append_to_run_log(run_id=qr.run_id, config_id=config_id)
     asyncio.run(qr.run())
