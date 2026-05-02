@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import plotext
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from rich.console import Console
 
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
@@ -15,6 +16,8 @@ from autoslo.simulator.aggregated_simulation_results import (
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.visualizations.colors import Palette
+
+_console = Console()
 
 
 @dataclass
@@ -187,6 +190,11 @@ def cost_vs_compliance_scatter(
 
     # Plot points.
     for pt in points:
+        if pt.formatting_id not in FORMATTING:
+            _console.print(
+                f"[yellow]Warning: unknown formatting_id '{pt.formatting_id}' "
+                f"— falling back to default style.[/]"
+            )
         label, color, marker = FORMATTING.get(
             pt.formatting_id, (pt.formatting_id, Palette.gray, "o")
         )

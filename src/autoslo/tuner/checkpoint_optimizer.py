@@ -377,6 +377,7 @@ class CheckpointOptimizer:
                         workload_configs=train_workload_configs,
                         configs=[current_config],
                         out_dir=round_dir / "baseline",
+                        workload_first=False,
                     )
                 )
                 train_results = nested_train_results[0]
@@ -452,6 +453,7 @@ class CheckpointOptimizer:
                 workload_configs=train_workload_configs,
                 configs=all_configs,
                 out_dir=round_dir / "train",
+                workload_first=False,
             )
             for i in range(len(checkpoints)):
                 checkpoint = checkpoints[i]

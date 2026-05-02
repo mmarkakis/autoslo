@@ -136,7 +136,7 @@ class ScenarioEvaluator:
         base_config: dict[str, Any],
         all_config_overrides: list[dict[str, Any]],
         config_labels: list[str] | None = None,
-        nest_outputs_by_config: bool = True,
+        workload_first: bool = True,
     ) -> list[list[SimulationResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
@@ -155,7 +155,7 @@ class ScenarioEvaluator:
             workload_configs=workload_configs,
             configs=configs,
             config_labels=config_labels,
-            nest_outputs_by_config=nest_outputs_by_config,
+            workload_first=workload_first,
         )
 
     def evaluate_batch_from_configs(
@@ -165,7 +165,7 @@ class ScenarioEvaluator:
         workload_configs: list[WorkloadConfig],
         configs: list[dict[str, Any]],
         config_labels: list[str] | None = None,
-        nest_outputs_by_config: bool = True,
+        workload_first: bool = True,
     ) -> list[list[SimulationResult]]:
         """
         Evaluate the cross-product of *workload_configs* and *configs* in
@@ -182,6 +182,11 @@ class ScenarioEvaluator:
             List of workload configurations (shared across all specs).
         configs :
             List of full config dicts for every scenario.
+        workload_first :
+            When ``True`` (default), output directories are nested as
+            ``out_dir / workload_id / config_label``.  When ``False``
+            (config-first, used by the tuner), they are nested as
+            ``out_dir / config_label / workload_id``.
 
         Returns
         -------
@@ -226,12 +231,10 @@ class ScenarioEvaluator:
                 )
                 config_label = config_labels[config_idx]
                 workload_config = workload_configs[workload_idx]
-                if nest_outputs_by_config:
-                    sim_out_dir = out_dir / config_label / workload_config.id()
+                if workload_first:
+                    sim_out_dir = out_dir / workload_config.id() / config_label
                 else:
-                    sim_out_dir = (
-                        out_dir / f"{config_label}#{workload_config.id()}"
-                    )
+                    sim_out_dir = out_dir / config_label / workload_config.id()
                 f = pool.submit(
                     _run_one_combination,
                     sim_out_dir,

@@ -173,6 +173,7 @@ class ParamSweep:
             base_config=self._config,
             all_config_overrides=val_overrides,
             out_dir=phase_dir / "val",
+            workload_first=False,
         )
         for i, idx in enumerate(top_k_indices):
             val_results = all_val_results[i]
@@ -219,6 +220,7 @@ class ParamSweep:
             base_config=self._config,
             all_config_overrides=candidates,
             out_dir=out_dir,
+            workload_first=False,
         )
         grid_results: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates):

@@ -271,6 +271,7 @@ class PolicyTuner:
             workload_configs=all_workload_configs,
             configs=[self._initial_execution_config],
             out_dir=summary_dir / "results",
+            workload_first=False,
         )
         all_results = all_results_nested[0]
         train_results = all_results[:n_train]
@@ -355,6 +356,7 @@ class PolicyTuner:
                 workload_configs=val_workload_configs,
                 configs=[post_ckpt_config],
                 out_dir=val_out,
+                workload_first=False,
             )
             val_results = nested[0]
             val_agg = AggregatedSimulationResults.aggregate_from(
