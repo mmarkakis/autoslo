@@ -1,2 +1,0 @@
-2026-05-01 14:47:04,459 - INFO - Run directory created at /home/markakis/chunkbench/data/simulation_runs/base_iconq
-2026-05-01 14:47:23,717 - WARNING - Spin-up denied: max_clusters=10 exhausted (used=10, reserved=0, available=0). action.reason=num_queries_in_window=30, slo_metric=SloMetric.BINARY, slo_metric_value=0.0526, slo_threshold=0.0500, slo_tightening_factor=0.8
