@@ -117,7 +117,7 @@ class ForecasterConfig(_PartialConfig):
             reservoir_config = ReservoirConfig.from_config(
                 cfg["forecaster_config"]
             )
-        except ValueError:
+        except (KeyError, ValueError):
             reservoir_config = None
         return super().from_config(cfg, reservoir_config=reservoir_config)
 
@@ -155,7 +155,7 @@ class SamplingConfig(_PartialConfig):
             forecaster_config = ForecasterConfig.from_config(
                 cfg["sampling_config"]
             )
-        except ValueError:
+        except (KeyError, ValueError):
             forecaster_config = None
         return super().from_config(cfg, forecaster_config=forecaster_config)
 
