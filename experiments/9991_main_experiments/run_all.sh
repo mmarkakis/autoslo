@@ -19,7 +19,7 @@ for spec in $(find "$SCRIPT_DIR" -mindepth 2 -maxdepth 2 -name "trial_spec.yml" 
     echo "  Experiment: $exp_name"
     echo "================================================================="
 
-    python src/autoslo/experiments/run.py "$exp_spec_path"
+    python src/autoslo/experiments/run_tuning.py "$exp_spec_path"
 done
 
 echo ""
