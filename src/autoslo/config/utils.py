@@ -78,7 +78,7 @@ def parse_params(raw: list[str]) -> dict[str, str]:
 
 
 def make_run_id(stems: list[str], params: dict[str, str]) -> str:
-    """Build a ``#``-separated run identifier from config stems and params.
+    """Build a ``__``-separated run identifier from config stems and params.
 
     The stems are joined first (in the order given), followed by
     ``KEY=value`` segments for every entry in *params*, sorted
@@ -96,11 +96,11 @@ def make_run_id(stems: list[str], params: dict[str, str]) -> str:
     Returns
     -------
     str
-        A ``#``-separated identifier, e.g.
-        ``"base_iconq#sampled#TARGET_DATE=2024-05-27"``.
-        When *params* is empty this degrades to ``"#".join(stems)``.
+        A ``__``-separated identifier, e.g.
+        ``"base_iconq__sampled__TARGET_DATE=2024-05-27"``.
+        When *params* is empty this degrades to ``"__".join(stems)``.
     """
     parts = list(stems)
     for key in sorted(params):
         parts.append(f"{key}={params[key]}")
-    return "#".join(parts)
+    return "__".join(parts)

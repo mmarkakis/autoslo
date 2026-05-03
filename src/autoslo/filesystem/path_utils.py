@@ -141,9 +141,9 @@ def append_to_run_log(run_id: str, config_id: str) -> None:
     run_id:
         The timestamp-ms string that names the run output directory.
     config_id:
-        The compound ``#``-separated identifier produced by
+        The compound ``__``-separated identifier produced by
         :func:`~autoslo.config.utils.make_run_id`, e.g.
-        ``"base_iconq#TARGET_DATE=2024-05-27"``.
+        ``"base_iconq__TARGET_DATE=2024-05-27"``.
     """
 
     log_path = os.path.join(get_runs_path(), "run_log.csv")

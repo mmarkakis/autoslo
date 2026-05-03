@@ -360,7 +360,7 @@ class CheckpointOptimizer:
         current_train_agg: AggregatedSimulationResults | None = None
 
         for round_idx in range(max_checkpoints):
-            console.rule(f"[bold cyan]Checkpoint round {round_idx}")
+            console.rule(f"[dim]Checkpoint round {round_idx}[/]", characters="-")
             round_dir = ckpt_dir / f"round_{round_idx:03d}"
             dump_yaml(current_config, round_dir / "initial_config.yml")
 

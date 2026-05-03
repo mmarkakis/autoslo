@@ -58,6 +58,7 @@ def _run_one_combination(
     combination_idx: int,
     workload_config: WorkloadConfig,
     config: dict[str, Any],
+    render_log: bool,
     progress_dict,
 ) -> SimulationResult:
     """Execute a single simulation inside a worker process.
@@ -99,7 +100,7 @@ def _run_one_combination(
         progress_dict[combination_idx] = (current, total)
 
     sim = WorkloadSimulator(config, out_dir=sim_out_dir, write_text_log=False)
-    result = sim.run(progress_callback=_progress_cb)
+    result = sim.run(progress_callback=_progress_cb, render_log=render_log)
     return result
 
 
@@ -137,6 +138,7 @@ class ScenarioEvaluator:
         all_config_overrides: list[dict[str, Any]],
         config_labels: list[str] | None = None,
         workload_first: bool = True,
+        render_log: bool = False,
     ) -> list[list[SimulationResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
@@ -156,6 +158,7 @@ class ScenarioEvaluator:
             configs=configs,
             config_labels=config_labels,
             workload_first=workload_first,
+            render_log=render_log,
         )
 
     def evaluate_batch_from_configs(
@@ -166,6 +169,7 @@ class ScenarioEvaluator:
         configs: list[dict[str, Any]],
         config_labels: list[str] | None = None,
         workload_first: bool = True,
+        render_log: bool = False,   
     ) -> list[list[SimulationResult]]:
         """
         Evaluate the cross-product of *workload_configs* and *configs* in
@@ -241,6 +245,7 @@ class ScenarioEvaluator:
                     combination_idx,
                     workload_config,
                     configs[config_idx],
+                    render_log, 
                     progress_dict,
                 )
                 futures[f] = combination_idx

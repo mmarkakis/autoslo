@@ -80,9 +80,6 @@ def main() -> None:
 
     print(f"\n[run_trials] All {total} trial(s) completed successfully.")
 
-    print("Plotting results...")
-    plot_experiment(spec_dir)
-
 
 if __name__ == "__main__":
     main()

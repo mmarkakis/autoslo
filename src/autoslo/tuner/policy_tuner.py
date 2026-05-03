@@ -323,7 +323,7 @@ class PolicyTuner:
 
         for i, rpus in enumerate(candidates):
             tag = f"candidate_{i}"
-            console.print(f"  [bold]Candidate {i}[/]: initial_rpus={rpus}")
+            console.rule(f"[bold yellow]Candidate {i}: initial_rpus={rpus}[/]")
 
             # Stamp this candidate's initial_rpus into the config.
             candidate_config = copy_and_apply_overrides(
@@ -367,7 +367,35 @@ class PolicyTuner:
             candidate_train_aggs.append(train_agg)
             candidate_val_aggs.append(val_agg)
 
-        # Select the best candidate on validation data.
+        # Print candidate comparison on training data.
+        console.rule(f"[bold yellow]Candidate Comparison on Training Data[/]")
+        comparison_entries = [
+            (f"Candidate {i} (initial_rpus={candidates[i]})", agg)
+            for i, agg in enumerate(candidate_train_aggs)
+        ]
+        AggregatedSimulationResults.print_comparison(
+            *comparison_entries,
+            console=console,
+            agg_method=self._agg_method,
+            slo_metric=self._slo_objective.slo_metric,
+            highlight_best=True,
+        )
+
+        # Print candidate comparison on validation data.
+        console.rule(f"[bold yellow]Candidate Comparison on Validation Data[/]")
+        comparison_entries = [
+            (f"Candidate {i} (initial_rpus={candidates[i]})", agg)
+            for i, agg in enumerate(candidate_val_aggs)
+        ]
+        AggregatedSimulationResults.print_comparison(
+            *comparison_entries,
+            console=console,
+            agg_method=self._agg_method,
+            slo_metric=self._slo_objective.slo_metric,
+            highlight_best=True,
+        )
+
+        # Select the best candidate on validation data and print.
         val_scores = [
             ViolationCost(
                 agg.primary_violation(self._slo_objective.slo_metric), agg.cost
@@ -375,30 +403,14 @@ class PolicyTuner:
             for agg in candidate_val_aggs
         ]
         best_idx = self._slo_objective.idx_of_best(val_scores)
-
         best_config = candidate_configs[best_idx]
         best_train_agg = candidate_train_aggs[best_idx]
         best_val_agg = candidate_val_aggs[best_idx]
         best_rpus = candidates[best_idx]
-
         console.print(
             f"  [green]Selected candidate {best_idx} "
             f"(initial_rpus={best_rpus})[/]"
         )
-
-        # Print comparison across all candidates.
-        if len(candidates) > 1:
-            comparison_entries = [
-                (f"Candidate {i} (rpus={candidates[i]})", agg)
-                for i, agg in enumerate(candidate_val_aggs)
-            ]
-            AggregatedSimulationResults.print_comparison(
-                *comparison_entries,
-                console=console,
-                agg_method=self._agg_method,
-                slo_metric=self._slo_objective.slo_metric,
-                highlight_best=True,
-            )
 
         # Persist best results.
         best_config_path = ckpt_root / "best_config.yml"

@@ -31,18 +31,6 @@ from autoslo.visualizations.render_log_viewer import render_log_viewer
 
 
 class WorkloadSimulator:
-    """
-    Overall strategy:
-    Phase 1: As each query comes in, route it to some endpoint to minimize the
-        number of SLO violations. Prefer active endpoints rather than starting
-        new ones.
-
-    Phase 2: At the end of the workload, we can now trade some (bounded) amount
-        of SLO violations for a lower execution cost. We can do this by
-        re-routing some queries to different endpoints and replying from that
-        point on.
-
-    """
 
     def __init__(
         self,
@@ -127,11 +115,8 @@ class WorkloadSimulator:
     def run(
         self,
         progress_callback: "Optional[Callable[[int, int], None]]" = None,
+        render_log: bool = False,
     ) -> SimulationResult:
-        """
-        First pass: route queries as they come in, preferring active endpoints
-        and minimizing SLO violations.
-        """
 
         print("Spinning up initial clusters...")
         self._pool.add_details_and_spin_up_initial_clusters(
@@ -271,6 +256,11 @@ class WorkloadSimulator:
 
         mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
         dump_yaml(seq_num_to_cluster_name, mapping_out_path)
+
+        if render_log:
+            render_log_viewer(
+                os.path.join(self._out_dir, "structured_log.parquet")
+            )
 
         return SimulationResult.load(self._out_dir)
 
@@ -531,6 +521,4 @@ if __name__ == "__main__":
     os.makedirs(out_dir, exist_ok=False)
 
     sim = WorkloadSimulator(cfg=cfg, out_dir=out_dir, write_text_log=True)
-    sim.run()
-
-    render_log_viewer(os.path.join(out_dir, "structured_log.parquet"))
+    sim.run(render_log=True)
