@@ -11,6 +11,7 @@ config/conn.yml
 data/__run_configs/aws.yml
 
 data/composite_workloads/**/cached*
+data/execution_configs/tuned/*.yml
 data/models/
 data/redset_byproducts/
 data/redset_executable_workloads/**/*.parquet
