@@ -1,8 +1,0 @@
-phase_key,phase_name,start_wall_utc,elapsed_s
-02_workloads,Phase 2: Preparing workloads,2026-04-30T23:01:16.485225Z,7.252
-03_baseline,Phase 3: Baseline evaluation,2026-04-30T23:01:23.736824Z,18.109
-04_checkpoints,Phase 4: Checkpoint optimization,2026-04-30T23:01:41.846381Z,180.933
-05_autoscaling_param_sweep,Phase 5: Autoscaler param sweep,2026-04-30T23:04:42.779765Z,247.339
-06_routing_param_sweep,Phase 6: Routing param sweep,2026-04-30T23:08:50.119282Z,46.950
-07_final,Phase 7: Persist & compare final,2026-04-30T23:09:37.069263Z,0.035
-TOTAL,TOTAL,2026-04-30T23:01:16.485225Z,500.619

@@ -41,13 +41,7 @@ uis/**/node_modules/
 .simulator-ui-meta/
 docs/*.md
 
-data/tuner_runs/*
-!data/tuner_runs/*/
-data/tuner_runs/*/*
-!data/tuner_runs/*/initial_execution_config.yml
-!data/tuner_runs/*/final_execution_config.yml
-!data/tuner_runs/*/timing_report.csv
-
+data/tuner_runs/
 data/simulator_runs/TESTTEST/
 
 profile.prof
