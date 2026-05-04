@@ -516,8 +516,6 @@ class PolicyTuner:
                     slo_metric=self._slo_objective.slo_metric,
                 )
 
-            return
-
             ### Phase 5: Autoscaler parameter sweep
             with self._timer.timed_phase(
                 "05_autoscaling_param_sweep", "Phase 5: Autoscaler param sweep"

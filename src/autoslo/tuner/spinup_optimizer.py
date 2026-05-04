@@ -67,7 +67,10 @@ def add_spinup_to_config(
 
     dot_delimited_key = "scheduled_spinups"
     existing = cfgu.getd(config, dot_delimited_key, [])
-    merged = existing + [{"rel_time_s": spinup.rel_time_s, "rpu": spinup.rpu}]
+    merged = sorted(
+        existing + [{"rel_time_s": spinup.rel_time_s, "rpu": spinup.rpu}],
+        key=lambda s: s["rel_time_s"],
+    )
     return cfgu.copy_and_apply_overrides(config, {dot_delimited_key: merged})
 
 
@@ -77,24 +80,18 @@ def find_next_spinup_time(
     slo_objective: SloObjective,
     min_delinquent_workloads: int,
     lead_time_s: float,
-) -> Optional[float]:
-    """
-    Find the next time at which to insert a scheduled spin-up, or None
-    if no such time can be found through the process below. The process is:
+    min_candidate_spacing_s: Optional[float] = None,
+) -> list[tuple[float, float]]:
+    """Return a ranked list of ``(placement_time, score)`` pairs.
 
-    1. For each of the scenarios in *results*, compute the start and end time
-        of each query from the structured logs. Also get its SLO from the
-        **slo-resolver**. Union the query start and query end events
-        across all scenarios into a single timeline.
-    2.  For each interval in this timeline, calculate whether each of the
-        workloads is in "SLO delinquency", based on its queries active during
-        that interval and the configured **slo_objective**. Then compute the
-        number of delinquent workloads.
-    3. Find the earliest interval where the number of delinquent workloads
-        exceeds *min_delinquent_workloads*. If no such interval exists,
-        return None.
-    4. Return the start time of that interval minus *lead_time_s*.
+    Each pair represents a candidate scheduled-spin-up placement time,
+    ordered by descending score (delinquency-weighted integral).  An
+    empty list means no viable placement time exists.
 
+    ``min_candidate_spacing_s`` is forwarded to
+    :func:`find_next_spinup_time_df`; see that function for details.
+
+    See :func:`find_next_spinup_time_df` for the full algorithm.
     """
     completion_structured_logs = []
     for result in results:
@@ -151,6 +148,7 @@ def find_next_spinup_time(
         slo_objective=slo_objective,
         min_delinquent_workloads=min_delinquent_workloads,
         lead_time_s=lead_time_s,
+        min_candidate_spacing_s=min_candidate_spacing_s,
     )
 
 
@@ -160,11 +158,36 @@ def find_next_spinup_time_df(
     slo_objective: SloObjective,
     min_delinquent_workloads: int,
     lead_time_s: float,
-) -> Optional[float]:
+    min_candidate_spacing_s: Optional[float] = None,
+) -> list[tuple[float, float]]:
+    """Return a ranked list of ``(placement_time, score)`` pairs.
+
+    Each pair represents a candidate scheduled-spin-up placement time,
+    ordered by descending score (delinquency-weighted integral, normalised
+    by the number of training scenarios).  An empty list means no viable
+    placement time exists.
+
+    Algorithm
+    ---------
+    1. Build a unified event timeline (query-start / query-end) across all
+       scenarios, maintaining per-scenario delinquency state as before.
+    2. Accumulate all non-zero-length intervals with their delinquency count.
+    3. Identify congestion *epochs*: maximal contiguous runs of intervals
+       where ``count >= min_delinquent_workloads``.  Each epoch contributes
+       one candidate placement time ``max(0, epoch_start - lead_time_s)``.
+       Epochs that collapse to the same placement time (e.g. multiple early
+       epochs all below ``lead_time_s``) are deduplicated.
+    4. Score each unique placement time as the sum of
+       ``(b - a) * count / N`` over all qualifying intervals that begin at
+       or after ``placement_time + lead_time_s``.
+    5. Filter out zero-score candidates, sort by descending score
+       (tiebreak: ascending placement time).
+    6. Greedily drop candidates that are within ``min_candidate_spacing_s``
+       of an already-retained candidate (higher-scoring candidates are
+       evaluated first, so lower-scoring near-duplicates are discarded).
+       ``None`` uses ``lead_time_s`` as the spacing threshold.
     """
-    Internal helper for find_next_spinup_time that takes pre-loaded
-    structured logs, for easier testing.
-    """
+    N = len(completion_structured_logs)
 
     # Create events per scenario and form a single timeline.
     events = []
@@ -178,7 +201,6 @@ def find_next_spinup_time_df(
             completions["query_text_id"].map(slo_resolver.resolve).fillna(0.0)
         )
 
-        # 1. Create events per scenario.
         for _, row in completions.iterrows():
             events.append(
                 {
@@ -200,24 +222,21 @@ def find_next_spinup_time_df(
                     "query_id": row["query_id"],
                 }
             )
-    events.sort(key=lambda x: x["time"])  # Sort by timestamp
+    events.sort(key=lambda x: x["time"])
 
-    # Process the intervals in the timeline.
-    active_queries: dict[int, dict[str, LatencySlo]] = defaultdict(
-        dict
-    )  # scenario_id -> query_id -> LatencySlo
+    # Walk the timeline, accumulating (a, b, delinquency_count) for every
+    # non-zero-length interval.
+    active_queries: dict[int, dict[str, LatencySlo]] = defaultdict(dict)
     delinquency_per_workload: dict[int, bool] = {
-        scenario_id: False
-        for scenario_id in range(len(completion_structured_logs))
+        scenario_id: False for scenario_id in range(N)
     }
+    intervals: list[tuple[float, float, int]] = []  # (a, b, count)
+
     for i in range(len(events) - 1):
         event = events[i]
         if event["event_type"] == "start":
             active_queries[event["scenario_id"]][event["query_id"]] = (
-                LatencySlo(
-                    event["latency_s"],
-                    event["slo_s"],
-                )
+                LatencySlo(event["latency_s"], event["slo_s"])
             )
         else:
             active_queries[event["scenario_id"]].pop(event["query_id"], None)
@@ -225,8 +244,7 @@ def find_next_spinup_time_df(
         scenario_active_queries = list(
             active_queries[event["scenario_id"]].values()
         )
-
-        if len(scenario_active_queries) > 0:
+        if scenario_active_queries:
             delinquency_per_workload[event["scenario_id"]] = (
                 not slo_objective.is_met(
                     per_query_latency_slo=scenario_active_queries
@@ -234,30 +252,94 @@ def find_next_spinup_time_df(
             )
         else:
             delinquency_per_workload[event["scenario_id"]] = False
-        num_delinquent_workloads = sum(delinquency_per_workload.values())
 
-        # Don't make decisions based on zero-length intervals.
-        this_event_time = event["time"]
-        next_event_time = events[i + 1]["time"]
-        if next_event_time == this_event_time:
-            continue
+        a = event["time"]
+        b = events[i + 1]["time"]
+        if b == a:
+            continue  # skip zero-length intervals
 
-        if num_delinquent_workloads >= min_delinquent_workloads:
-            spinup_time = this_event_time - lead_time_s
-            console.print(
-                f"[green]Found violating interval: "
-                f"{this_event_time:.2f}s to {next_event_time:.2f}s  "
-                f"with {num_delinquent_workloads} delinquent workloads. "
-                f"Suggesting spin-up at {spinup_time:.2f}s."
-            )
-            return max(0, spinup_time)
+        num_delinquent = sum(delinquency_per_workload.values())
+        intervals.append((a, b, num_delinquent))
 
-    console.print(
-        f" [green]No violating interval found with at least "
-        f"{min_delinquent_workloads} delinquent workloads."
+    # Identify congestion epochs and derive one placement time per epoch.
+    epoch_placement_times: list[float] = []
+    idx = 0
+    while idx < len(intervals):
+        a, b, count = intervals[idx]
+        if count >= min_delinquent_workloads:
+            epoch_start = a
+            while (
+                idx < len(intervals)
+                and intervals[idx][2] >= min_delinquent_workloads
+            ):
+                idx += 1
+            epoch_placement_times.append(max(0.0, epoch_start - lead_time_s))
+        else:
+            idx += 1
+
+    # Deduplicate while preserving first-occurrence order.
+    unique_placement_times: list[float] = list(
+        dict.fromkeys(epoch_placement_times)
     )
 
-    return None
+    if not unique_placement_times:
+        console.print(
+            f"[green]No violating interval found with at least "
+            f"{min_delinquent_workloads} delinquent workloads."
+        )
+        return []
+
+    # Score each placement time: delinquency-weighted integral / N.
+    scored: list[tuple[float, float]] = []
+    for t_p in unique_placement_times:
+        effective_start = t_p + lead_time_s
+        score = (
+            sum(
+                (b - a) * count
+                for a, b, count in intervals
+                if a >= effective_start and count >= min_delinquent_workloads
+            )
+            / N
+        )
+        if score > 0.0:
+            scored.append((t_p, score))
+
+    if not scored:
+        console.print(
+            "[green]No viable candidate times after scoring "
+            f"(all violations occur before lead_time_s={lead_time_s:.1f}s)."
+        )
+        return []
+
+    # Sort: descending score, ascending placement time as tiebreaker.
+    scored.sort(key=lambda x: (-x[1], x[0]))
+
+    # Greedy spacing deduplication: discard candidates within
+    # min_candidate_spacing_s of an already-retained candidate.
+    spacing = (
+        lead_time_s
+        if min_candidate_spacing_s is None
+        else min_candidate_spacing_s
+    )
+    if spacing > 0.0:
+        retained: list[tuple[float, float]] = []
+        for t_p, score in scored:
+            if all(abs(t_p - r_t) >= spacing for r_t, _ in retained):
+                retained.append((t_p, score))
+        scored = retained
+
+    if not scored:
+        console.print(
+            "[green]No viable candidate times remain after spacing "
+            f"deduplication (min_candidate_spacing_s={spacing:.1f}s)."
+        )
+        return []
+
+    console.print(
+        f"[green]Found {len(scored)} candidate placement time(s). "
+        f"Top candidate: t_p={scored[0][0]:.1f}s, score={scored[0][1]:.3f}."
+    )
+    return scored
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +415,9 @@ class SpinupOptimizer:
         min_delinquent_workloads = math.ceil(
             min_delinquent_workload_fraction * len(train_workload_configs)
         )
+        max_attempts_per_round = (
+            self._spinup_optimizer_config.max_attempts_per_round
+        )
 
         spinup_dir = self._run_dir / "spinups"
 
@@ -350,8 +435,7 @@ class SpinupOptimizer:
             round_dir = spinup_dir / f"round_{round_idx:03d}"
             dump_yaml(current_config, round_dir / "initial_config.yml")
 
-            # 1. Get baseline results (reuse from previous round
-            #    if available).
+            # 1. Get baseline results (reuse from previous round if available).
             if current_train_results is not None:
                 train_results = current_train_results
                 assert current_train_agg is not None
@@ -372,26 +456,23 @@ class SpinupOptimizer:
                 )
                 current_train_agg = agg_train_results
 
-            # 2. Find earliest promising spin-up time.
-            next_spinup_time = find_next_spinup_time(
+            # 2. Rank all viable candidate placement times.
+            ranked_candidates = find_next_spinup_time(
                 train_results,
                 slo_resolver=self._slo_resolver,
                 slo_objective=self._slo_objective,
                 min_delinquent_workloads=min_delinquent_workloads,
                 lead_time_s=self._lead_time_s,
+                min_candidate_spacing_s=self._spinup_optimizer_config.min_candidate_spacing_s,
             )
 
-            if next_spinup_time is None:
-                s = "[green]No promising spin-up time found — stopping."
-                console.print(s)
+            if not ranked_candidates:
+                console.print(
+                    "[green]No promising spin-up time found — stopping."
+                )
                 break
 
-            # 3. Try each RPU size.
-            cands: list[
-                tuple[ScheduledSpinUp, AggregatedSimulationResults]
-            ] = []
-            spinups = []
-            all_configs = []
+            # 3. Check cluster budget before trying any candidate.
             initial_rpus = cfgu.getd(
                 current_config, "managed_cluster_pool_config.initial_rpus", []
             )
@@ -399,119 +480,148 @@ class SpinupOptimizer:
                 current_config, "scheduled_spinups", []
             )
             max_clusters = int(
-                cfgu.getd(
-                    current_config,
-                    "autoscaling_config.max_clusters",
-                    10,
-                )
+                cfgu.getd(current_config, "autoscaling_config.max_clusters", 10)
             )
             total_clusters_needed = (
                 len(initial_rpus) + len(existing_spinups) + 1
-            )  # +1 for the new spin-up
+            )
             if total_clusters_needed > max_clusters:
                 console.print(
-                    f"[yellow]Cannot place new spin-up because the initial "
-                    f"setup requires {len(initial_rpus)} clusters and existing "
-                    f"spin-ups reserve {len(existing_spinups)} clusters, "
-                    f"while the max_clusters budget is {max_clusters}."
+                    f"[yellow]Cannot place new spin-up: initial setup requires "
+                    f"{len(initial_rpus)} clusters, existing spin-ups reserve "
+                    f"{len(existing_spinups)}, max_clusters={max_clusters}."
                 )
                 break
 
-            for rpu in self._spinup_optimizer_config.allowed_rpu_sizes:
-                spinup = ScheduledSpinUp(
-                    rel_time_s=max(0.0, next_spinup_time),
-                    rpu=rpu,
-                )
-                spinups.append(spinup)
-                trial_config = add_spinup_to_config(
-                    config=current_config, spinup=spinup
-                )
-                all_configs.append(trial_config)
-            all_trial_results = self._evaluator.evaluate_batch_from_configs(
-                progress_bar_label=f"round_{round_idx:03d}_candidates",
-                workload_configs=train_workload_configs,
-                configs=all_configs,
-                out_dir=round_dir / "train",
-                workload_first=False,
-            )
-            for i in range(len(spinups)):
-                spinup = spinups[i]
-                trial_results = all_trial_results[i]
-                agg = AggregatedSimulationResults.aggregate_from(
-                    trial_results, self._agg_method
-                )
-                cands.append((spinup, agg))
-
-            # 4. Pick best on training set.
             sm = self._slo_objective.slo_metric
-            best_idx = self._slo_objective.idx_of_best(
-                [
-                    ViolationCost(agg.primary_violation(sm), agg.cost)
-                    for _, agg in cands
-                ]
-            )
-            best_su, _ = cands[best_idx]
-            self._print_candidate_table(round_idx, cands, best_su)
-
-            AggregatedSimulationResults.print_comparison(
-                ("Current config", agg_train_results),
-                ("Best candidate", cands[best_idx][1]),
-                agg_method=self._agg_method,
-                slo_metric=sm,
-                console=console,
-            )
-
-            # 5. Accept the best spin-up only if it improves on the baseline
-            # under the canonical SloObjective ordering AND clears the minimum
-            # relative improvement threshold in the decisive dimension.
-            # When the baseline is infeasible the decisive dimension is
-            # violation; when it is feasible the decisive dimension is cost
-            # (mirroring the SloObjective.cmp contract exactly — see
-            # _is_improvement_large_enough for the full case analysis).
             baseline_vc = ViolationCost(
                 agg_train_results.primary_violation(sm),
                 agg_train_results.cost,
             )
-            best_vc = ViolationCost(
-                cands[best_idx][1].primary_violation(sm),
-                cands[best_idx][1].cost,
-            )
-            if not self._slo_objective.is_sufficient_improvement(
-                baseline_vc,
-                best_vc,
-                self._spinup_optimizer_config.min_rel_improvement_for_acceptance,
+
+            accepted_in_round = False
+            attempt_records: list[dict] = []
+            candidates_to_try = ranked_candidates[:max_attempts_per_round]
+
+            for attempt_idx, (placement_time, score) in enumerate(
+                candidates_to_try
             ):
-                console.print(
-                    f" [red]Rejecting: best candidate does not improve on the "
-                    f"baseline sufficiently "
-                    f"(violation {best_vc.violation:.6f} vs "
-                    f"{baseline_vc.violation:.6f}, "
-                    f"cost {best_vc.cost:.4f} vs {baseline_vc.cost:.4f})."
+                attempt_dir = round_dir / f"attempt_{attempt_idx:03d}"
+
+                # 4. Try each RPU size at this placement time.
+                spinups = []
+                all_configs = []
+                for rpu in self._spinup_optimizer_config.allowed_rpu_sizes:
+                    spinup = ScheduledSpinUp(
+                        rel_time_s=max(0.0, placement_time),
+                        rpu=rpu,
+                    )
+                    spinups.append(spinup)
+                    all_configs.append(
+                        add_spinup_to_config(
+                            config=current_config, spinup=spinup
+                        )
+                    )
+
+                all_trial_results = self._evaluator.evaluate_batch_from_configs(
+                    progress_bar_label=(
+                        f"round_{round_idx:03d}_attempt_{attempt_idx:03d}"
+                    ),
+                    workload_configs=train_workload_configs,
+                    configs=all_configs,
+                    out_dir=attempt_dir / "train",
+                    workload_first=False,
                 )
-                self._write_round_summary(round_idx, cands, best_su)
-                dump_yaml(current_config, round_dir / "final_config.yml")
-                break
+                cands: list[
+                    tuple[ScheduledSpinUp, AggregatedSimulationResults]
+                ] = []
+                for spinup, trial_results in zip(spinups, all_trial_results):
+                    agg = AggregatedSimulationResults.aggregate_from(
+                        trial_results, self._agg_method
+                    )
+                    cands.append((spinup, agg))
 
-            current_config = all_configs[best_idx]
-            # Carry forward the accepted candidate's results so the
-            # next round can skip re-evaluating the same config.
-            current_train_results = all_trial_results[best_idx]
-            current_train_agg = cands[best_idx][1]
-            console.print(
-                f"  [green]Accepted: violation "
-                f"{baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
-                f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
+                # 5. Pick best on training set.
+                best_idx = self._slo_objective.idx_of_best(
+                    [
+                        ViolationCost(agg.primary_violation(sm), agg.cost)
+                        for _, agg in cands
+                    ]
+                )
+                best_su, best_agg = cands[best_idx]
+                best_vc = ViolationCost(
+                    best_agg.primary_violation(sm), best_agg.cost
+                )
+
+                # 6. Accept if the best candidate improves on the baseline.
+                accepted = self._slo_objective.cmp(best_vc, baseline_vc) < 0
+
+                attempt_records.append(
+                    {
+                        "attempt_idx": attempt_idx,
+                        "placement_time": placement_time,
+                        "score": score,
+                        "outcome": "accepted" if accepted else "rejected",
+                        "best_rpu": best_su.rpu,
+                        "best_violation": best_vc.violation,
+                        "best_cost": best_vc.cost,
+                    }
+                )
+
+                if accepted:
+                    self._print_candidate_table(
+                        round_idx,
+                        attempt_idx,
+                        placement_time,
+                        score,
+                        cands,
+                        best_su,
+                    )
+                    AggregatedSimulationResults.print_comparison(
+                        ("Current config", agg_train_results),
+                        ("Best candidate", best_agg),
+                        agg_method=self._agg_method,
+                        slo_metric=sm,
+                        console=console,
+                    )
+                    console.print(
+                        f"  [green][round {round_idx} / attempt {attempt_idx}] "
+                        f"Accepted: violation "
+                        f"{baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
+                        f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
+                    )
+                    current_config = all_configs[best_idx]
+                    current_train_results = all_trial_results[best_idx]
+                    current_train_agg = best_agg
+                    accepted_in_round = True
+                    break
+                else:
+                    console.print(
+                        f"  [red][round {round_idx} / attempt {attempt_idx}] "
+                        f"Rejected t_p={placement_time:.1f}s "
+                        f"(score={score:.3f}): "
+                        f"best RPU={best_su.rpu}, "
+                        f"violation {baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
+                        f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
+                    )
+
+            self._write_round_summary(
+                round_idx, attempt_records, accepted_in_round
             )
-
-            # Write round summary.
-            self._write_round_summary(round_idx, cands, best_su)
             dump_yaml(current_config, round_dir / "final_config.yml")
+
+            if not accepted_in_round:
+                console.print(
+                    f"[red]Round {round_idx}: all {len(candidates_to_try)} "
+                    f"candidate(s) exhausted without acceptance — stopping."
+                )
+                break
 
         # Write the final config.
         dump_yaml(current_config, spinup_dir / "final_config.yml")
         assert (
             current_train_agg is not None
-                ), "No spin-up rounds were configured (max_spinups=0)."
+        ), "No spin-up rounds were configured (max_spinups=0)."
         return current_config, current_train_agg
 
     # ------------------------------------------------------------------
@@ -521,6 +631,9 @@ class SpinupOptimizer:
     def _print_candidate_table(
         self,
         round_idx: int,
+        attempt_idx: int,
+        placement_time: float,
+        score: float,
         candidates: list[
             tuple[
                 ScheduledSpinUp,
@@ -530,7 +643,10 @@ class SpinupOptimizer:
         best_su: ScheduledSpinUp,
     ) -> None:
         table = Table(
-            title=f"Round {round_idx} — Candidate RPU Sizes",
+            title=(
+                f"Round {round_idx} / Attempt {attempt_idx} — Candidate RPU Sizes "
+                f"(t_p={placement_time:.0f}s, score={score:.3f})"
+            ),
             show_lines=True,
         )
         table.add_column("RPU", justify="right")
@@ -563,35 +679,14 @@ class SpinupOptimizer:
     def _write_round_summary(
         self,
         round_idx: int,
-        candidates: list[
-            tuple[
-                ScheduledSpinUp,
-                AggregatedSimulationResults,
-            ]
-        ],
-        best_su: ScheduledSpinUp,
+        attempts: list[dict],
+        accepted: bool,
     ) -> None:
         round_dir = self._run_dir / "spinups" / f"round_{round_idx:03d}"
         round_dir.mkdir(parents=True, exist_ok=True)
         summary = {
             "round_idx": round_idx,
-            "selected_spinup": {
-                "rel_time_s": best_su.rel_time_s,
-                "rpu": best_su.rpu,
-            },
-            "candidates": [
-                {
-                    "rpu": su.rpu,
-                    "rel_time_s": su.rel_time_s,
-                    "train_violation": agg.primary_violation(
-                        self._slo_objective.slo_metric
-                    ),
-                    "train_cost": agg.cost,
-                    "train_violation_rate": agg.violation_rate,
-                    "train_violation_amount_s": agg.violation_amount_s,
-                    "train_violation_relative_mean": agg.violation_relative_mean,
-                }
-                for su, agg in candidates
-            ],
+            "outcome": "accepted" if accepted else "rejected",
+            "attempts": attempts,
         }
         dump_yaml(summary, round_dir / "round_summary.yml")

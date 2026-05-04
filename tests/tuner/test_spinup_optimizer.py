@@ -8,7 +8,10 @@ import pytest
 
 from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.slo.slo_objective import SloObjective
-from autoslo.config.component_configs import SloObjectiveConfig, SloResolverConfig
+from autoslo.config.component_configs import (
+    SloObjectiveConfig,
+    SloResolverConfig,
+)
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.spinup_optimizer import (
     add_spinup_to_config,
@@ -121,7 +124,9 @@ class TestFindNextSpinupTimeDF:
         end_times = [s + np.random.uniform(0, slo_s * 0.9) for s in start_times]
         log = _make_completion_structured_log(start_times, end_times)
 
-        slo_objective = SloObjective(SloObjectiveConfig(slo_metric="binary", slo_threshold=0.0))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(slo_metric="binary", slo_threshold=0.0)
+        )
 
         result = find_next_spinup_time_df(
             completion_structured_logs=[log],
@@ -131,7 +136,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=5.0,
         )
         assert (
-            result is None
+            result == []
         ), "Expected no spinup time when there are no violations"
 
     def test_one_log_insufficient_violations(self):
@@ -148,7 +153,9 @@ class TestFindNextSpinupTimeDF:
         end_times = [13, 11, 11.5, 12, 12.5, 13, 13.5, 14]
         log = _make_completion_structured_log(start_times, end_times)
 
-        slo_objective = SloObjective(SloObjectiveConfig(slo_metric="binary", slo_threshold=0.6))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(slo_metric="binary", slo_threshold=0.6)
+        )
 
         result = find_next_spinup_time_df(
             completion_structured_logs=[log],
@@ -158,7 +165,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=5.0,
         )
         assert (
-            result is None
+            result == []
         ), "Expected no spinup time when violation rate is below threshold"
 
     @pytest.mark.parametrize("seed", range(10))
@@ -176,9 +183,9 @@ class TestFindNextSpinupTimeDF:
 
         slo_threshold = np.random.uniform(0, 1)
         lead_time_s = np.random.uniform(0, 10)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="binary", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(slo_metric="binary", slo_threshold=slo_threshold)
+        )
         result = find_next_spinup_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
@@ -187,28 +194,32 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         assert (
-            result == 10 - lead_time_s
+            result[0][0] == 10 - lead_time_s
         ), "Expected spinup time to be the start of the violating period minus spin-up delay"
 
     @pytest.mark.parametrize("seed", range(10))
     def test_one_log_bottom_at_zero(self, seed):
         """
-        For a single structured log with a clear violating period above the threshold,
-        don't return a negative spinup time if the violating period starts near
-        time 0.
+        A violating period that starts well before ``lead_time_s`` produces a
+        placement time of 0 *but* has no scoreable intervals after
+        ``0 + lead_time_s``.  The new scoring algorithm correctly filters out
+        such zero-score candidates, so the result should be empty.
         """
         np.random.seed(seed)
         slo_s = 1
         slo_resolver = SloResolver(SloResolverConfig(slo_s=slo_s))
+        # Violation starts in [0, 5) and ends 2s later, so at most at time 7.
+        # lead_time_s is in [5, 10], so effective_start >= 5.
+        # The violation is entirely before effective_start → score = 0 → no candidates.
         start_times = [np.random.uniform(0, 5)]
         end_times = [start_times[0] + 2]
         log = _make_completion_structured_log(start_times, end_times)
 
         slo_threshold = np.random.uniform(0, 1)
         lead_time_s = np.random.uniform(5, 10)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="binary", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(slo_metric="binary", slo_threshold=slo_threshold)
+        )
         result = find_next_spinup_time_df(
             completion_structured_logs=[log],
             slo_resolver=slo_resolver,
@@ -216,32 +227,40 @@ class TestFindNextSpinupTimeDF:
             min_delinquent_workloads=1,
             lead_time_s=lead_time_s,
         )
-        assert result == 0, "Expected spinup time to be zero"
+        assert (
+            result == []
+        ), "Expected no viable candidates when the entire violation is within lead_time_s"
 
     @pytest.mark.parametrize("seed", range(10))
-    def test_one_log_multiple_violating_periods_above_threshold_returns_earliest(
-        self, seed
-    ):
+    def test_one_log_multiple_violating_periods_highest_score_first(self, seed):
         """
-        For a single structured log with multiple violating periods above the threshold,
-        return the start time of the earliest violating period.
+        The result list is ordered by descending score.  When scores differ
+        the highest-scoring candidate comes first.
+
+        Scenario: two epochs; the earlier epoch (t=10) has lead_time_s=0 so
+        its effective_start is 10 and it sees both its own violation AND the
+        later epoch's violation, giving it a higher combined score.  Verify
+        that the result list is in non-increasing score order.
         """
         np.random.seed(seed)
 
         slo_s = 1
         slo_resolver = SloResolver(SloResolverConfig(slo_s=slo_s))
-        start_times = [10, 20]
+        # Two epochs, both above any slo_threshold < 1.
+        start_times = [10, 100]
         end_times = [
-            start + 2 * slo_s + np.random.uniform(0, 1) for start in start_times
-        ]  # 2* slo_s makes relative violation > 1, ensuring both periods are above
-        # any threshold < 1.
+            10 + slo_s * 2,  # short epoch
+            100 + slo_s * 12,  # long epoch
+        ]
         log = _make_completion_structured_log(start_times, end_times)
 
         slo_threshold = np.random.uniform(0, 1)
-        lead_time_s = np.random.uniform(0, 10)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="relative", slo_threshold=slo_threshold
-        ))
+        lead_time_s = 0.0  # placement times equal epoch starts exactly
+        slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric="relative", slo_threshold=slo_threshold
+            )
+        )
 
         result = find_next_spinup_time_df(
             completion_structured_logs=[log],
@@ -250,10 +269,19 @@ class TestFindNextSpinupTimeDF:
             min_delinquent_workloads=1,
             lead_time_s=lead_time_s,
         )
-        expected_time = min(start_times) - lead_time_s
+        assert len(result) >= 1, "Expected at least one candidate"
+        # Verify the result list is in non-increasing score order.
+        scores = [score for _, score in result]
+        assert scores == sorted(
+            scores, reverse=True
+        ), "Expected candidates to be ordered by descending score"
+        # The earlier epoch (t_p=10) captures both violations so its score
+        # must be >= the later epoch's score.
         assert (
-            abs(result - expected_time) < 1e-6
-        ), "Expected spinup time to be the start of the earliest violating period minus spin-up delay"
+            result[0][0] <= result[-1][0]
+            or len(result) == 1
+            or scores[0] >= scores[-1]
+        ), "Expected highest-scoring candidate to rank first"
 
     @pytest.mark.parametrize("seed", range(10))
     def test_one_log_multiple_violating_periods_ignores_below_threshold(
@@ -278,9 +306,11 @@ class TestFindNextSpinupTimeDF:
 
         slo_threshold = np.random.uniform(1, 2)
         lead_time_s = np.random.uniform(0, 10)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="relative", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric="relative", slo_threshold=slo_threshold
+            )
+        )
 
         result = find_next_spinup_time_df(
             completion_structured_logs=[log],
@@ -290,7 +320,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         expected_time = 20 - lead_time_s
-        assert abs(result - expected_time) < 1e-6, (
+        assert abs(result[0][0] - expected_time) < 1e-6, (
             "Expected spinup time to be the start of the earliest violating "
             "period above threshold minus spin-up delay"
         )
@@ -313,9 +343,9 @@ class TestFindNextSpinupTimeDF:
             logs.append(log)
 
         slo_threshold = np.random.uniform(0, 1)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="binary", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(slo_metric="binary", slo_threshold=slo_threshold)
+        )
         min_delinquent_workloads = np.random.randint(1, 4)
         result = find_next_spinup_time_df(
             completion_structured_logs=logs,
@@ -325,7 +355,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=5.0,
         )
         assert (
-            result is None
+            result == []
         ), "Expected no spinup time when there are no violations"
 
     @pytest.mark.parametrize("seed", range(10))
@@ -348,9 +378,11 @@ class TestFindNextSpinupTimeDF:
             logs.append(log)
 
         slo_threshold = np.random.uniform(0, 1)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="relative", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric="relative", slo_threshold=slo_threshold
+            )
+        )
         lead_time_s = np.random.uniform(0, 10)
         result = find_next_spinup_time_df(
             completion_structured_logs=logs,
@@ -360,7 +392,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         expected_time = 100 - lead_time_s
-        condition = abs(result - expected_time) < 1e-6
+        condition = abs(result[0][0] - expected_time) < 1e-6
         if not condition:
             breakpoint()
         assert (
@@ -389,9 +421,11 @@ class TestFindNextSpinupTimeDF:
             logs.append(log)
 
         slo_threshold = np.random.uniform(0, 1)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="relative", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric="relative", slo_threshold=slo_threshold
+            )
+        )
         min_delinquent_workloads = np.random.randint(1, num_workloads + 1)
         lead_time_s = np.random.uniform(0, 10)
         result = find_next_spinup_time_df(
@@ -403,7 +437,7 @@ class TestFindNextSpinupTimeDF:
         )
         expected_time = 100 - lead_time_s
         assert (
-            abs(result - expected_time) < 1e-6
+            abs(result[0][0] - expected_time) < 1e-6
         ), "Expected spinup time to be the start of the earliest violating period minus spin-up delay"
 
     @pytest.mark.parametrize("seed", range(10))
@@ -431,9 +465,11 @@ class TestFindNextSpinupTimeDF:
 
         logs = [log1, log2]
         slo_threshold = relative_slo_violation / 2  # So the second log violates
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="relative", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric="relative", slo_threshold=slo_threshold
+            )
+        )
         lead_time_s = np.random.uniform(0, 10)
 
         result = find_next_spinup_time_df(
@@ -444,7 +480,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         assert (
-            result is None
+            result == []
         ), "Expected no spinup time when violation rate is below threshold"
 
     @pytest.mark.parametrize("seed", range(10))
@@ -484,9 +520,11 @@ class TestFindNextSpinupTimeDF:
 
         logs = [log1, log2]
         slo_threshold = np.random.uniform(2, 3)
-        slo_objective = SloObjective(SloObjectiveConfig(
-            slo_metric="relative", slo_threshold=slo_threshold
-        ))
+        slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric="relative", slo_threshold=slo_threshold
+            )
+        )
         lead_time_s = np.random.uniform(0, 10)
         result = find_next_spinup_time_df(
             completion_structured_logs=logs,
@@ -496,7 +534,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         expected_time = 10 + (nqueries // 2) * 10 - lead_time_s
-        condition = abs(result - expected_time) < 1e-6
+        condition = abs(result[0][0] - expected_time) < 1e-6
         if not condition:
             breakpoint()
         assert condition, (

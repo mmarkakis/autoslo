@@ -291,12 +291,23 @@ class SpinupOptimizerConfig(_PartialConfig):
 
     max_spinups: int = 5
     min_delinquent_workload_fraction: float = 0.5
-    min_rel_improvement_for_acceptance: float = 0.01
     lead_time_s: float = 360.0
     initial_rpu_candidates: list[list[int]] = field(
         default_factory=lambda: [[16], [8], [32]]
     )
     allowed_rpu_sizes: list[int] = field(default_factory=lambda: [4, 8, 16, 32])
+    max_attempts_per_round: int = 10
+    # Minimum distance (seconds) between any two retained placement-time
+    # candidates.  After scoring, candidates are greedily selected in
+    # descending-score order; a candidate is dropped if it falls within
+    # this distance of an already-selected candidate.
+    #
+    # None (the default) means use lead_time_s.  Two placement times closer
+    # than lead_time_s apart produce a spin-up arrival difference smaller than
+    # the lead window itself, so they are effectively targeting the same point
+    # in the workload and should count as a single attempt.
+    # Set to 0.0 to disable spacing enforcement entirely.
+    min_candidate_spacing_s: Optional[float] = None
 
 
 @dataclass(frozen=True)
