@@ -27,7 +27,7 @@ managed_cluster_pool_config:
   initial_rpus:
     - 16
 
-capacity_checkpoints: []
+scheduled_spinups: []
 
 query_router_config:
   routing_policy_name: use_iconq_model

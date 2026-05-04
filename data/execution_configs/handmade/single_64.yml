@@ -30,7 +30,7 @@ managed_cluster_pool_config:
   initial_rpus:
     - 64
 
-capacity_checkpoints: []
+scheduled_spinups: []
 
 query_router_config:
   routing_policy_name: round_robin
