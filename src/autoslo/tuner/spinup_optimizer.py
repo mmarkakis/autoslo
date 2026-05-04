@@ -1,6 +1,6 @@
-"""Greedy checkpoint optimiser — design step 4.
+"""Greedy scheduled spin-up optimiser — design step 4.
 
-Iteratively places :class:`CapacityCheckpoint` at the earliest
+Iteratively places :class:`ScheduledSpinUp` at the earliest
 sliding-window with a violation rate above the configured threshold,
 tries every allowed RPU size, picks the best on training data, and
 validates on held-out scenarios.  Stops when the budget is exhausted,
@@ -22,9 +22,9 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.config.utils as cfgu
-from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
+from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.component_configs import (
-    CheckpointOptimizerConfig,
+    SpinupOptimizerConfig,
     SloObjectiveConfig,
     SloResolverConfig,
     WorkloadConfig,
@@ -48,44 +48,30 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 
-def new_checkpoints_to_config(
+def add_spinup_to_config(
     config: dict[str, Any],
-    new_checkpoints: list[CapacityCheckpoint],
+    spinup: ScheduledSpinUp,
 ) -> dict[str, Any]:
+    """Return a copy of *config* with *spinup* appended.
 
-    initial_rpus_dot_delimited_key = "managed_cluster_pool_config.initial_rpus"
-    initial_rpus = copy.deepcopy(
-        cfgu.getd(config, initial_rpus_dot_delimited_key, [])
-    )
-    nonzero_checkpoints: list[dict[str, Any]] = []
-
-    for cp in new_checkpoints:
-        if cp.rel_time_s == 0:
-            initial_rpus.extend(cp.min_rpus)
-        else:
-            nonzero_checkpoints.append(
-                {
-                    "rel_time_s": cp.rel_time_s,
-                    "min_rpus": list(cp.min_rpus),
-                }
-            )
-
-    overrides = cfgu.copy_and_apply_overrides(
-        config,
-        {initial_rpus_dot_delimited_key: sorted(initial_rpus)},
-    )
-
-    if nonzero_checkpoints:
-        dot_delimited_key = "capacity_checkpoints"
-        existing_checkpoints = cfgu.getd(config, dot_delimited_key, [])
-        merged_checkpoints = existing_checkpoints + nonzero_checkpoints
-        overrides = cfgu.copy_and_apply_overrides(
-            overrides, {dot_delimited_key: merged_checkpoints}
+    If ``spinup.rel_time_s == 0`` the RPU is folded into
+    ``managed_cluster_pool_config.initial_rpus`` instead.
+    """
+    initial_rpus_key = "managed_cluster_pool_config.initial_rpus"
+    if spinup.rel_time_s == 0:
+        initial_rpus = copy.deepcopy(cfgu.getd(config, initial_rpus_key, []))
+        initial_rpus.append(spinup.rpu)
+        return cfgu.copy_and_apply_overrides(
+            config, {initial_rpus_key: sorted(initial_rpus)}
         )
-    return overrides
+
+    dot_delimited_key = "scheduled_spinups"
+    existing = cfgu.getd(config, dot_delimited_key, [])
+    merged = existing + [{"rel_time_s": spinup.rel_time_s, "rpu": spinup.rpu}]
+    return cfgu.copy_and_apply_overrides(config, {dot_delimited_key: merged})
 
 
-def find_next_checkpoint_time(
+def find_next_spinup_time(
     results: list[SimulationResult],
     slo_resolver: SloResolver,
     slo_objective: SloObjective,
@@ -93,7 +79,7 @@ def find_next_checkpoint_time(
     lead_time_s: float,
 ) -> Optional[float]:
     """
-    Find the next time at which to insert a capacity checkpoint, or None
+    Find the next time at which to insert a scheduled spin-up, or None
     if no such time can be found through the process below. The process is:
 
     1. For each of the scenarios in *results*, compute the start and end time
@@ -159,7 +145,7 @@ def find_next_checkpoint_time(
         ).dropna(subset=["rel_time_s", "latency_s"])
         completion_structured_logs.append(completions)
 
-    return find_next_checkpoint_time_df(
+    return find_next_spinup_time_df(
         completion_structured_logs=completion_structured_logs,
         slo_resolver=slo_resolver,
         slo_objective=slo_objective,
@@ -168,7 +154,7 @@ def find_next_checkpoint_time(
     )
 
 
-def find_next_checkpoint_time_df(
+def find_next_spinup_time_df(
     completion_structured_logs: list[pd.DataFrame],
     slo_resolver: SloResolver,
     slo_objective: SloObjective,
@@ -176,7 +162,7 @@ def find_next_checkpoint_time_df(
     lead_time_s: float,
 ) -> Optional[float]:
     """
-    Internal helper for find_next_checkpoint_time that takes pre-loaded
+    Internal helper for find_next_spinup_time that takes pre-loaded
     structured logs, for easier testing.
     """
 
@@ -262,7 +248,7 @@ def find_next_checkpoint_time_df(
                 f"[green]Found violating interval: "
                 f"{this_event_time:.2f}s to {next_event_time:.2f}s  "
                 f"with {num_delinquent_workloads} delinquent workloads. "
-                f"Suggesting checkpoint at {spinup_time:.2f}s."
+                f"Suggesting spin-up at {spinup_time:.2f}s."
             )
             return max(0, spinup_time)
 
@@ -275,12 +261,12 @@ def find_next_checkpoint_time_df(
 
 
 # ---------------------------------------------------------------------------
-# CheckpointOptimizer
+# SpinupOptimizer
 # ---------------------------------------------------------------------------
 
 
-class CheckpointOptimizer:
-    """Greedy capacity-checkpoint placement.
+class SpinupOptimizer:
+    """Greedy scheduled spin-up placement.
 
     Parameters
     ----------
@@ -296,7 +282,7 @@ class CheckpointOptimizer:
     def __init__(
         self,
         evaluator: ScenarioEvaluator,
-        checkpoint_optimizer_config: CheckpointOptimizerConfig,
+        spinup_optimizer_config: SpinupOptimizerConfig,
         config: dict[str, Any],
         run_dir: Path,
         agg_method: str,
@@ -305,8 +291,8 @@ class CheckpointOptimizer:
         self._config = config
         self._run_dir = run_dir
         self._agg_method = agg_method
-        self._checkpoint_optimizer_config = checkpoint_optimizer_config
-        self._lead_time_s = checkpoint_optimizer_config.lead_time_s
+        self._spinup_optimizer_config = spinup_optimizer_config
+        self._lead_time_s = spinup_optimizer_config.lead_time_s
 
         # SLO Resolver
         slo_resolver_config = SloResolverConfig.from_config(config)
@@ -324,9 +310,9 @@ class CheckpointOptimizer:
         self,
         train_workload_configs: list[WorkloadConfig],
     ) -> tuple[dict[str, Any], AggregatedSimulationResults]:
-        """Run the greedy checkpoint placement loop.
+        """Run the greedy spin-up placement loop.
 
-        Checkpoints are placed greedily using training data only.
+        Spin-ups are placed greedily using training data only.
         Validation is deferred to the caller.
 
         Parameters
@@ -337,21 +323,21 @@ class CheckpointOptimizer:
         Returns
         -------
         A tuple of ``(config, train_agg)`` where *config* is the full
-        config dict with the best checkpoint schedule applied and
+        config dict with the best spin-up schedule applied and
         *train_agg* is the aggregated training results for that config.
         """
-        max_checkpoints = self._checkpoint_optimizer_config.max_checkpoints
+        max_spinups = self._spinup_optimizer_config.max_spinups
         min_delinquent_workload_fraction = (
-            self._checkpoint_optimizer_config.min_delinquent_workload_fraction
+            self._spinup_optimizer_config.min_delinquent_workload_fraction
         )
         min_delinquent_workloads = math.ceil(
             min_delinquent_workload_fraction * len(train_workload_configs)
         )
 
-        ckpt_dir = self._run_dir / "checkpoints"
+        spinup_dir = self._run_dir / "spinups"
 
         current_config = copy.deepcopy(self._config)
-        dump_yaml(current_config, ckpt_dir / "initial_config.yml")
+        dump_yaml(current_config, spinup_dir / "initial_config.yml")
 
         # Track evaluation results for the current config to avoid
         # re-evaluation across rounds.  When a candidate is accepted,
@@ -359,9 +345,9 @@ class CheckpointOptimizer:
         current_train_results: list[SimulationResult] | None = None
         current_train_agg: AggregatedSimulationResults | None = None
 
-        for round_idx in range(max_checkpoints):
-            console.rule(f"[dim]Checkpoint round {round_idx}[/]", characters="-")
-            round_dir = ckpt_dir / f"round_{round_idx:03d}"
+        for round_idx in range(max_spinups):
+            console.rule(f"[dim]Spin-up round {round_idx}[/]", characters="-")
+            round_dir = spinup_dir / f"round_{round_idx:03d}"
             dump_yaml(current_config, round_dir / "initial_config.yml")
 
             # 1. Get baseline results (reuse from previous round
@@ -386,8 +372,8 @@ class CheckpointOptimizer:
                 )
                 current_train_agg = agg_train_results
 
-            # 2. Find earliest promising checkpoint time.
-            next_checkpoint_time = find_next_checkpoint_time(
+            # 2. Find earliest promising spin-up time.
+            next_spinup_time = find_next_spinup_time(
                 train_results,
                 slo_resolver=self._slo_resolver,
                 slo_objective=self._slo_objective,
@@ -395,27 +381,23 @@ class CheckpointOptimizer:
                 lead_time_s=self._lead_time_s,
             )
 
-            if next_checkpoint_time is None:
-                s = "[green]No promising checkpoint time found — stopping."
+            if next_spinup_time is None:
+                s = "[green]No promising spin-up time found — stopping."
                 console.print(s)
                 break
 
             # 3. Try each RPU size.
             cands: list[
-                tuple[CapacityCheckpoint, AggregatedSimulationResults]
+                tuple[ScheduledSpinUp, AggregatedSimulationResults]
             ] = []
-            checkpoints = []
+            spinups = []
             all_configs = []
             initial_rpus = cfgu.getd(
                 current_config, "managed_cluster_pool_config.initial_rpus", []
             )
-            existing_checkpoints = [
-                CapacityCheckpoint(
-                    rel_time_s=float(cp["rel_time_s"]),
-                    min_rpus=tuple(cp["min_rpus"]),
-                )
-                for cp in cfgu.getd(current_config, "capacity_checkpoints", [])
-            ]
+            existing_spinups = cfgu.getd(
+                current_config, "scheduled_spinups", []
+            )
             max_clusters = int(
                 cfgu.getd(
                     current_config,
@@ -423,29 +405,26 @@ class CheckpointOptimizer:
                     10,
                 )
             )
-            num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
-                existing_checkpoints
-            )
             total_clusters_needed = (
-                len(initial_rpus) + num_reserved_clusters + 1
-            )  # +1 for the new checkpoint
+                len(initial_rpus) + len(existing_spinups) + 1
+            )  # +1 for the new spin-up
             if total_clusters_needed > max_clusters:
                 console.print(
-                    f"[yellow]Cannot place new checkpoint because the initial "
+                    f"[yellow]Cannot place new spin-up because the initial "
                     f"setup requires {len(initial_rpus)} clusters and existing "
-                    f"checkpoints reserve {num_reserved_clusters} clusters, "
+                    f"spin-ups reserve {len(existing_spinups)} clusters, "
                     f"while the max_clusters budget is {max_clusters}."
                 )
                 break
 
-            for rpu in self._checkpoint_optimizer_config.allowed_rpu_sizes:
-                checkpoint = CapacityCheckpoint(
-                    rel_time_s=max(0.0, next_checkpoint_time),
-                    min_rpus=tuple(sorted(initial_rpus + [rpu])),
+            for rpu in self._spinup_optimizer_config.allowed_rpu_sizes:
+                spinup = ScheduledSpinUp(
+                    rel_time_s=max(0.0, next_spinup_time),
+                    rpu=rpu,
                 )
-                checkpoints.append(checkpoint)
-                trial_config = new_checkpoints_to_config(
-                    config=current_config, new_checkpoints=[checkpoint]
+                spinups.append(spinup)
+                trial_config = add_spinup_to_config(
+                    config=current_config, spinup=spinup
                 )
                 all_configs.append(trial_config)
             all_trial_results = self._evaluator.evaluate_batch_from_configs(
@@ -455,13 +434,13 @@ class CheckpointOptimizer:
                 out_dir=round_dir / "train",
                 workload_first=False,
             )
-            for i in range(len(checkpoints)):
-                checkpoint = checkpoints[i]
+            for i in range(len(spinups)):
+                spinup = spinups[i]
                 trial_results = all_trial_results[i]
                 agg = AggregatedSimulationResults.aggregate_from(
                     trial_results, self._agg_method
                 )
-                cands.append((checkpoint, agg))
+                cands.append((spinup, agg))
 
             # 4. Pick best on training set.
             sm = self._slo_objective.slo_metric
@@ -471,8 +450,8 @@ class CheckpointOptimizer:
                     for _, agg in cands
                 ]
             )
-            best_cp, _ = cands[best_idx]
-            self._print_candidate_table(round_idx, cands, best_cp)
+            best_su, _ = cands[best_idx]
+            self._print_candidate_table(round_idx, cands, best_su)
 
             AggregatedSimulationResults.print_comparison(
                 ("Current config", agg_train_results),
@@ -482,44 +461,34 @@ class CheckpointOptimizer:
                 console=console,
             )
 
-            # 5. Accept the best checkpoint only if it actually improves the
-            # metric we care about.
-            previous_best_slo = agg_train_results.primary_violation(sm)
-            new_best_slo = cands[best_idx][1].primary_violation(sm)
-            relative_improvement = (
-                (previous_best_slo - new_best_slo) / abs(previous_best_slo)
-                if previous_best_slo != 0
-                else 0
+            # 5. Accept the best spin-up only if it improves on the baseline
+            # under the canonical SloObjective ordering AND clears the minimum
+            # relative improvement threshold in the decisive dimension.
+            # When the baseline is infeasible the decisive dimension is
+            # violation; when it is feasible the decisive dimension is cost
+            # (mirroring the SloObjective.cmp contract exactly — see
+            # _is_improvement_large_enough for the full case analysis).
+            baseline_vc = ViolationCost(
+                agg_train_results.primary_violation(sm),
+                agg_train_results.cost,
             )
-            previous_best_cost = agg_train_results.cost
-            new_best_cost = cands[best_idx][1].cost
-            relative_cost_improvement = (
-                (previous_best_cost - new_best_cost) / abs(previous_best_cost)
-                if previous_best_cost != 0
-                else 0
+            best_vc = ViolationCost(
+                cands[best_idx][1].primary_violation(sm),
+                cands[best_idx][1].cost,
             )
-
-            min_rel_improvement_for_acceptance = (
-                self._checkpoint_optimizer_config.min_rel_improvement_for_acceptance
-            )
-            # To proceed,must either improve the SLO metric by at least epsilon,
-            # or improve the SLO by a positive amount and also improve cost by
-            # at least min_rel_improvement_for_acceptance.
-            if (
-                relative_improvement < min_rel_improvement_for_acceptance
-            ) and not (
-                relative_improvement > 0
-                and relative_cost_improvement
-                >= min_rel_improvement_for_acceptance
+            if not self._slo_objective.is_sufficient_improvement(
+                baseline_vc,
+                best_vc,
+                self._spinup_optimizer_config.min_rel_improvement_for_acceptance,
             ):
                 console.print(
-                    f" [red]Rejecting because SLO metric improvement "
-                    f"{relative_improvement:.2%} is below the "
-                    f"threshold of {min_rel_improvement_for_acceptance:.2%} "
-                    f"and cost impact {relative_cost_improvement:.2%} is not "
-                    f"sufficient."
+                    f" [red]Rejecting: best candidate does not improve on the "
+                    f"baseline sufficiently "
+                    f"(violation {best_vc.violation:.6f} vs "
+                    f"{baseline_vc.violation:.6f}, "
+                    f"cost {best_vc.cost:.4f} vs {baseline_vc.cost:.4f})."
                 )
-                self._write_round_summary(round_idx, cands, best_cp)
+                self._write_round_summary(round_idx, cands, best_su)
                 dump_yaml(current_config, round_dir / "final_config.yml")
                 break
 
@@ -529,20 +498,20 @@ class CheckpointOptimizer:
             current_train_results = all_trial_results[best_idx]
             current_train_agg = cands[best_idx][1]
             console.print(
-                f"  [green]Accepted with SLO metric improvement "
-                f"{relative_improvement:.2%} and cost impact "
-                f"{relative_cost_improvement:.2%}"
+                f"  [green]Accepted: violation "
+                f"{baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
+                f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
             )
 
             # Write round summary.
-            self._write_round_summary(round_idx, cands, best_cp)
+            self._write_round_summary(round_idx, cands, best_su)
             dump_yaml(current_config, round_dir / "final_config.yml")
 
         # Write the final config.
-        dump_yaml(current_config, ckpt_dir / "final_config.yml")
+        dump_yaml(current_config, spinup_dir / "final_config.yml")
         assert (
             current_train_agg is not None
-        ), "No checkpoint rounds were configured (max_checkpoints=0)."
+                ), "No spin-up rounds were configured (max_spinups=0)."
         return current_config, current_train_agg
 
     # ------------------------------------------------------------------
@@ -554,11 +523,11 @@ class CheckpointOptimizer:
         round_idx: int,
         candidates: list[
             tuple[
-                CapacityCheckpoint,
+                ScheduledSpinUp,
                 AggregatedSimulationResults,
             ]
         ],
-        best_cp: CapacityCheckpoint,
+        best_su: ScheduledSpinUp,
     ) -> None:
         table = Table(
             title=f"Round {round_idx} — Candidate RPU Sizes",
@@ -572,12 +541,12 @@ class CheckpointOptimizer:
         table.add_column("Train Cost ($)", justify="right")
         table.add_column("Selected", justify="center")
 
-        for cp, agg in candidates:
-            is_best = cp == best_cp
+        for su, agg in candidates:
+            is_best = su == best_su
             style = "bold green" if is_best else ""
             table.add_row(
-                ", ".join(str(rpu) for rpu in cp.min_rpus),
-                f"{cp.rel_time_s:.0f}",
+                str(su.rpu),
+                f"{su.rel_time_s:.0f}",
                 f"{agg.violation_rate:.4f}",
                 f"{agg.violation_amount_s:.4f}",
                 f"{agg.violation_relative_mean:.4f}",
@@ -596,24 +565,24 @@ class CheckpointOptimizer:
         round_idx: int,
         candidates: list[
             tuple[
-                CapacityCheckpoint,
+                ScheduledSpinUp,
                 AggregatedSimulationResults,
             ]
         ],
-        best_cp: CapacityCheckpoint,
+        best_su: ScheduledSpinUp,
     ) -> None:
-        round_dir = self._run_dir / "checkpoints" / f"round_{round_idx:03d}"
+        round_dir = self._run_dir / "spinups" / f"round_{round_idx:03d}"
         round_dir.mkdir(parents=True, exist_ok=True)
         summary = {
             "round_idx": round_idx,
-            "selected_checkpoint": {
-                "rel_time_s": best_cp.rel_time_s,
-                "min_rpus": list(best_cp.min_rpus),
+            "selected_spinup": {
+                "rel_time_s": best_su.rel_time_s,
+                "rpu": best_su.rpu,
             },
             "candidates": [
                 {
-                    "rpu": ", ".join(str(rpu) for rpu in cp.min_rpus),
-                    "rel_time_s": cp.rel_time_s,
+                    "rpu": su.rpu,
+                    "rel_time_s": su.rel_time_s,
                     "train_violation": agg.primary_violation(
                         self._slo_objective.slo_metric
                     ),
@@ -622,7 +591,7 @@ class CheckpointOptimizer:
                     "train_violation_amount_s": agg.violation_amount_s,
                     "train_violation_relative_mean": agg.violation_relative_mean,
                 }
-                for cp, agg in candidates
+                for su, agg in candidates
             ],
         }
         dump_yaml(summary, round_dir / "round_summary.yml")

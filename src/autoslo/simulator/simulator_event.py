@@ -4,7 +4,7 @@ from typing import Any
 
 @dataclass
 class SimulatorEventType:
-    CAPACITY_CHECKPOINT: str = "capacity_checkpoint"
+    SCHEDULED_SPINUP: str = "scheduled_spinup"
     CLUSTER_READY: str = "cluster_ready"
     QUERY_ARRIVAL: str = "query_arrival"
     QUERY_COMPLETION: str = "query_completion"

@@ -13,7 +13,7 @@ from rich.console import Console
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import (
-    CheckpointOptimizerConfig,
+    SpinupOptimizerConfig,
     ParamSweepConfig,
     SamplingConfig,
     SloObjectiveConfig,
@@ -32,7 +32,7 @@ from autoslo.simulator.aggregated_simulation_results import (
 )
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.tuner.checkpoint_optimizer import CheckpointOptimizer
+from autoslo.tuner.spinup_optimizer import SpinupOptimizer
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
@@ -291,32 +291,32 @@ class PolicyTuner:
 
         return train_agg, val_agg
 
-    def find_checkpoints(
+    def find_spinups(
         self,
         train_workload_configs: list[WorkloadConfig],
         val_workload_configs: list[WorkloadConfig],
     ) -> tuple[
         dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
     ]:
-        """Phase 4: Find promising checkpoints via greedy optimization.
+        """Phase 4: Find promising spin-ups via greedy optimization.
 
         When ``tuner_config.initial_rpu_candidates`` is provided, runs
-        checkpoint optimization independently for each candidate initial
-        RPU set, then selects the best (initial_rpus, checkpoint_schedule)
+        spin-up optimization independently for each candidate initial
+        RPU set, then selects the best (initial_rpus, spinup_schedule)
         pair on the validation set using threshold-aware selection.
 
         When the key is absent, behaves as before (single candidate
         from ``managed_cluster_pool_config.initial_rpus``).
         """
-        ckpt_root = self._out_dir / "04_checkpoints"
+        spinup_root = self._out_dir / "04_spinups"
 
         # Determine candidates.
-        checkpoint_optimizer_config = CheckpointOptimizerConfig.from_config(
+        spinup_optimizer_config = SpinupOptimizerConfig.from_config(
             self._tuner_config
         )
-        candidates = checkpoint_optimizer_config.initial_rpu_candidates
+        candidates = spinup_optimizer_config.initial_rpu_candidates
 
-        # Run checkpoint optimization for each candidate.
+        # Run spin-up optimization for each candidate.
         candidate_configs: list[dict[str, Any]] = []
         candidate_val_aggs: list[AggregatedSimulationResults] = []
         candidate_train_aggs: list[AggregatedSimulationResults] = []
@@ -332,19 +332,19 @@ class PolicyTuner:
             )
 
             # Each candidate gets its own subdirectory.
-            candidate_dir = ckpt_root / tag
+            candidate_dir = spinup_root / tag
             train_summary_path = (
-                candidate_dir / "checkpoints" / "train_summary.yml"
+                candidate_dir / "spinups" / "train_summary.yml"
             )
 
-            optimizer = CheckpointOptimizer(
+            optimizer = SpinupOptimizer(
                 evaluator=self._evaluator,
                 config=candidate_config,
-                checkpoint_optimizer_config=checkpoint_optimizer_config,
+                spinup_optimizer_config=spinup_optimizer_config,
                 run_dir=candidate_dir,
                 agg_method=self._agg_method,
             )
-            post_ckpt_config, train_agg = optimizer.optimize(
+            post_spinups_config, train_agg = optimizer.optimize(
                 train_workload_configs=train_workload_configs,
             )
             dump_yaml(train_agg, train_summary_path)
@@ -352,9 +352,9 @@ class PolicyTuner:
             # Evaluate on validation data.
             val_out = candidate_dir / "final" / "val"
             nested = self._evaluator.evaluate_batch_from_configs(
-                progress_bar_label=f"{tag}_ckpt_val",
+                progress_bar_label=f"{tag}_spinup_val",
                 workload_configs=val_workload_configs,
-                configs=[post_ckpt_config],
+                configs=[post_spinups_config],
                 out_dir=val_out,
                 workload_first=False,
             )
@@ -363,7 +363,7 @@ class PolicyTuner:
                 val_results, self._agg_method
             )
 
-            candidate_configs.append(post_ckpt_config)
+            candidate_configs.append(post_spinups_config)
             candidate_train_aggs.append(train_agg)
             candidate_val_aggs.append(val_agg)
 
@@ -413,10 +413,10 @@ class PolicyTuner:
         )
 
         # Persist best results.
-        best_config_path = ckpt_root / "best_config.yml"
+        best_config_path = spinup_root / "best_config.yml"
         dump_yaml(best_config, best_config_path)
-        dump_yaml(best_train_agg, ckpt_root / "best_train_summary.yml")
-        dump_yaml(best_val_agg, ckpt_root / "best_val_summary.yml")
+        dump_yaml(best_train_agg, spinup_root / "best_train_summary.yml")
+        dump_yaml(best_val_agg, spinup_root / "best_val_summary.yml")
 
         return best_config, best_train_agg, best_val_agg
 
@@ -489,32 +489,34 @@ class PolicyTuner:
                     highlight_best=False,
                 )
 
-            ### Phase 4: Checkpoint optimization
+            ### Phase 4: Spin-up optimization
             with self._timer.timed_phase(
-                "04_checkpoints", "Phase 4: Checkpoint optimization"
+                "04_spinups", "Phase 4: Spin-up optimization"
             ):
-                self._print_banner("Phase 4: Checkpoint optimization")
+                self._print_banner("Phase 4: Spin-up optimization")
                 (
-                    post_checkpoints_config,
-                    post_checkpoints_train,
-                    post_checkpoints_val,
-                ) = self.find_checkpoints(
+                    post_spinups_config,
+                    post_spinups_train,
+                    post_spinups_val,
+                ) = self.find_spinups(
                     train_workload_configs, val_workload_configs
                 )
                 AggregatedSimulationResults.print_comparison(
                     ("Baseline (train)", baseline_train),
-                    ("Post-checkpoints (train)", post_checkpoints_train),
+                    ("Post-spinups (train)", post_spinups_train),
                     console=console,
                     agg_method=self._agg_method,
                     slo_metric=self._slo_objective.slo_metric,
                 )
                 AggregatedSimulationResults.print_comparison(
                     ("Baseline (val)", baseline_val),
-                    ("Post-checkpoints (val)", post_checkpoints_val),
+                    ("Post-spinups (val)", post_spinups_val),
                     console=console,
                     agg_method=self._agg_method,
                     slo_metric=self._slo_objective.slo_metric,
                 )
+
+            return
 
             ### Phase 5: Autoscaler parameter sweep
             with self._timer.timed_phase(
@@ -524,7 +526,7 @@ class PolicyTuner:
                 post_first_sweep_config, _, _ = self.param_sweep(
                     train_workload_configs=train_workload_configs,
                     val_workload_configs=val_workload_configs,
-                    initial_config=post_checkpoints_config,
+                    initial_config=post_spinups_config,
                     phase_name="05_autoscaling_param_sweep",
                     config_key="autoscaling_param_sweep",
                 )

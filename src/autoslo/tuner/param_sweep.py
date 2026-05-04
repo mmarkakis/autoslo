@@ -70,7 +70,7 @@ class ParamSweep:
         other hyperparameters.
     base_overrides :
         Config overrides that are applied to *every* grid point (e.g.
-        optimised checkpoints from a previous phase).
+        optimised spin-ups from a previous phase).
     run_dir :
         Root directory for this tuner run.
     phase_name :

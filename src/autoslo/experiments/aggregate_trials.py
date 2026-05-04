@@ -282,7 +282,7 @@ def _load_config_pair(
     return _flatten_dict(init_cfg), _flatten_dict(final_cfg)
 
 
-_CHECKPOINT_KEY = "capacity_checkpoints"
+_CHECKPOINT_KEY = "scheduled_spinups"
 
 
 def _diff_configs(
@@ -290,7 +290,7 @@ def _diff_configs(
 ) -> list[tuple[str, Any, Any]]:
     """Return (key, base_val, tuned_val) for differing keys.
 
-    Excludes ``capacity_checkpoints`` (shown in its own table).
+    Excludes ``scheduled_spinups`` (shown in its own table).
     """
     diffs: list[tuple[str, Any, Any]] = []
     all_keys = sorted(set(base_flat) | set(tuned_flat))
@@ -304,8 +304,8 @@ def _diff_configs(
     return diffs
 
 
-def _extract_checkpoints(tuned_flat: dict[str, Any]) -> list[dict]:
-    """Return the capacity_checkpoints list from the flat config."""
+def _extract_spinups(tuned_flat: dict[str, Any]) -> list[dict]:
+    """Return the scheduled_spinups list from the flat config."""
     raw = tuned_flat.get(_CHECKPOINT_KEY)
     if isinstance(raw, list):
         return raw
@@ -435,13 +435,13 @@ def _collect_scenario_data(
     pair = _load_config_pair(scenario_dir)
     if pair:
         base_flat, tuned_flat = pair
-        cps = _extract_checkpoints(tuned_flat)
-        row["num_checkpoints"] = len(cps)
-        row["checkpoints"] = cps
+        cps = _extract_spinups(tuned_flat)
+        row["num_spinups"] = len(cps)
+        row["spinups"] = cps
         row["config_diffs"] = _diff_configs(base_flat, tuned_flat)
     else:
-        row["num_checkpoints"] = None
-        row["checkpoints"] = []
+        row["num_spinups"] = None
+        row["spinups"] = []
         row["config_diffs"] = []
 
     return row
@@ -519,30 +519,30 @@ def _print_train_val_table(
         console.print(table)
 
 
-def _print_checkpoint_table(
+def _print_spinup_table(
     console: Console, rows: list[dict], trial_column_label: str
 ) -> None:
-    """Print the capacity checkpoints table."""
-    if not any(r.get("checkpoints") for r in rows):
+    """Print the scheduled spin-ups table."""
+    if not any(r.get("spinups") for r in rows):
         return
     table = Table(
-        title="Capacity Checkpoints Added by Tuner",
+        title="Scheduled Spin-Ups Added by Tuner",
         show_lines=True,
     )
     table.add_column(trial_column_label, justify="left")
-    table.add_column("# Checkpts", justify="right")
+    table.add_column("# Spin-Ups", justify="right")
     table.add_column("Times (s)", justify="left")
-    table.add_column("RPU Sizes", justify="left")
+    table.add_column("RPU", justify="left")
     for r in rows:
-        cps = r.get("checkpoints", [])
+        cps = r.get("spinups", [])
         if not cps:
             table.add_row(r["label"], "0", "—", "—")
         else:
             times = ", ".join(
-                f"{cp.get('rel_time_s', cp.get('time_s', '?')):.0f}"
+                f"{cp.get('rel_time_s', '?'):.0f}"
                 for cp in cps
             )
-            rpus = ", ".join(str(cp.get("min_rpus", "?")) for cp in cps)
+            rpus = ", ".join(str(cp.get("rpu", "?")) for cp in cps)
             table.add_row(r["label"], str(len(cps)), times, rpus)
     console.print()
     console.print(table)
@@ -624,37 +624,37 @@ def _write_csv(rows: list[dict], results_dir: Path) -> Path:
         "label",
         "slo_metric",
         *metric_keys,
-        "num_checkpoints",
-        "checkpoint_details",
+        "num_spinups",
+        "spinup_details",
     ]
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for r in rows:
             out_row = {k: r.get(k) for k in fieldnames}
-            cps = r.get("checkpoints", [])
-            out_row["checkpoint_details"] = json.dumps(cps) if cps else ""
+            cps = r.get("spinups", [])
+            out_row["spinup_details"] = json.dumps(cps) if cps else ""
             writer.writerow(out_row)
     return csv_path
 
 
-def _write_checkpoints_csv(rows: list[dict], results_dir: Path) -> Path | None:
-    """Write a per-checkpoint CSV."""
-    if not any(r.get("checkpoints") for r in rows):
+def _write_spinups_csv(rows: list[dict], results_dir: Path) -> Path | None:
+    """Write a per-spin-up CSV."""
+    if not any(r.get("spinups") for r in rows):
         return None
     results_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = results_dir / "checkpoints.csv"
+    csv_path = results_dir / "spinups.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["scenario", "checkpoint_idx", "time_s", "min_rpus"])
+        writer.writerow(["scenario", "spinup_idx", "time_s", "rpu"])
         for r in rows:
-            for i, cp in enumerate(r.get("checkpoints", [])):
+            for i, cp in enumerate(r.get("spinups", [])):
                 writer.writerow(
                     [
                         r["label"],
                         i,
-                        cp.get("time_s", cp.get("rel_time_s", "?")),
-                        json.dumps(cp.get("min_rpus", [])),
+                        cp.get("rel_time_s", "?"),
+                        cp.get("rpu", "?"),
                     ]
                 )
     return csv_path
@@ -740,7 +740,7 @@ def main() -> None:
         trial_column_label=trial_column_label,
     )
 
-    _print_checkpoint_table(console, rows, trial_column_label)
+    _print_spinup_table(console, rows, trial_column_label)
 
     _print_param_diff_table(console, rows, trial_column_label, results_dir)
 
@@ -748,9 +748,9 @@ def main() -> None:
     csv_path = _write_csv(rows, results_dir)
     console.print(f"\nCSV written to: {csv_path}")
 
-    ckpt_csv = _write_checkpoints_csv(rows, results_dir)
-    if ckpt_csv:
-        console.print(f"Checkpoints written to: {ckpt_csv}")
+    spinup_csv = _write_spinups_csv(rows, results_dir)
+    if spinup_csv:
+        console.print(f"Spin-ups written to: {spinup_csv}")
 
     console.print(
         "\n[dim]Run plot_results.py in this experiment directory to "

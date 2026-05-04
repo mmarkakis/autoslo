@@ -71,8 +71,8 @@ class EventType(str, Enum):
     STATS_COLLECTED = "stats_collected"
     CLUSTER_REMOVED = "cluster_removed"
 
-    # Capacity checkpoint
-    CAPACITY_CHECKPOINT_RECONCILIATION = "capacity_checkpoint_reconciliation"
+    # Scheduled spin-up
+    SCHEDULED_SPINUP_EXECUTED = "scheduled_spinup_executed"
 
     # Autoscaler
     RPU_COUNTERFACTUAL = "rpu_counterfactual"
@@ -151,12 +151,10 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     ],
     EventType.TEAR_DOWN_DECISION: ["reason"],
     EventType.TEAR_DOWN_REQUESTED: ["reason", "force"],
-    EventType.CAPACITY_CHECKPOINT_RECONCILIATION: [
-        "checkpoint_rel_time_s",
-        "desired",
-        "current",
-        "spin_ups_needed",
-    ],
+    EventType.SCHEDULED_SPINUP_EXECUTED: [
+        "scheduled_rel_time_s",
+        "rpu",
+    ], 
     EventType.RPU_COUNTERFACTUAL: ["slo_violation", "cost"],
     EventType.RPU_SELECTION: ["slo_violation", "cost"],
 }

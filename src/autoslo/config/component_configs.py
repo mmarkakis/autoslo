@@ -12,7 +12,7 @@ from autoslo.slo.slo_metric import SloMetric
 # - provisioner_config
 # - [workload_runner_config]
 # - managed_cluster_pool_config
-# - capacity_checkpoints
+# - scheduled_spinups
 # - query_router_config
 # - autoscaler_config
 
@@ -20,7 +20,7 @@ from autoslo.slo.slo_metric import SloMetric
 # A "tuner config" is the YAML config file that a user provides to run the
 # policy tuner, alongisde an initial execution config. It contains:
 # - sampling_config
-# - checkpoint_optimizer_config
+# - spinup_optimizer_config
 # - [autoscaling_param_sweep.param_sweep_config]
 # - [query_routing_param_sweep.param_sweep_config]
 
@@ -283,13 +283,13 @@ class ManagedClusterPoolConfig(_PartialConfig):
 
 
 @dataclass(frozen=True)
-class CheckpointOptimizerConfig(_PartialConfig):
+class SpinupOptimizerConfig(_PartialConfig):
     """
-    Configuration for the checkpoint optimizer, including the criteria
-    for accepting checkpoints and the initial RPU candidates.
+    Configuration for the spin-up optimizer, including the criteria
+    for accepting spin-ups and the initial RPU candidates.
     """
 
-    max_checkpoints: int = 5
+    max_spinups: int = 5
     min_delinquent_workload_fraction: float = 0.5
     min_rel_improvement_for_acceptance: float = 0.01
     lead_time_s: float = 360.0

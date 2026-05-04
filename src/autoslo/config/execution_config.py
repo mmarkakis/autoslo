@@ -5,11 +5,11 @@ from typing import Optional
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.autoscaler import Autoscaler
-from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
+from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.component_configs import (
     AutoscalerConfig,
     ManagedClusterPoolConfig,
@@ -35,7 +35,7 @@ class ExecutionConfig:
     out_dir: str | Path
     workload: Workload
     pool: ManagedClusterPool
-    capacity_checkpoints: list[CapacityCheckpoint]
+    scheduled_spinups: list[ScheduledSpinUp]
     router: QueryRouter
     autoscaler: Autoscaler
     structured_log_handler: StructuredLogHandler
@@ -80,7 +80,7 @@ class ExecutionConfig:
         slo_resolver_config = SloResolverConfig.from_config(cfg)
         slo_objective_config = SloObjectiveConfig.from_config(cfg)
         autoscaler_config = AutoscalerConfig.from_config(cfg)
-        capacity_checkpoints = CapacityCheckpoint.from_config(cfg)
+        scheduled_spinups = ScheduledSpinUp.from_config(cfg)
         if is_runner:
             workload_runner_config = WorkloadRunnerConfig.from_config(cfg)
         else:
@@ -90,9 +90,7 @@ class ExecutionConfig:
         # Necessary compute
         iconq_model = IconqModel.load(query_router_config.iconq_model_id)
         cluster_cache_state_dim = iconq_model.iconq_query_featurizer.num_tables
-        num_reserved_clusters = CapacityCheckpoint.worst_case_total_spinups(
-            capacity_checkpoints
-        )
+        num_reserved_clusters = ScheduledSpinUp.total_spinups(scheduled_spinups)
 
         # Parse remaining configs
         provisioner_config = ProvisionerConfig.from_config(
@@ -143,7 +141,7 @@ class ExecutionConfig:
             out_dir=out_dir,
             workload=workload,
             pool=pool,
-            capacity_checkpoints=capacity_checkpoints,
+            scheduled_spinups=scheduled_spinups,
             router=router,
             autoscaler=autoscaler,
             structured_log_handler=structured_log_handler,

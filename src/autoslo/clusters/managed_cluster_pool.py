@@ -85,7 +85,7 @@ class ManagedClusterPool:
                 f"config.max_clusters={config.max_clusters} is "
                 f"too low: initial RPUs ({len(config.initial_rpus)}) + "
                 f"worst-case "
-                f"checkpoint reservation ({config.num_reserved_clusters}) "
+                f"scheduled spin-up reservation ({config.num_reserved_clusters}) "
                 f"requires at least "
                 f"{total_clusters_needed}."
             )
@@ -516,7 +516,7 @@ class ManagedClusterPool:
             self._finalize_removal(cluster_name, rel_time_s)
 
     # ------------------------------------------------------------------
-    # Routing and checkpointing support
+    # Routing and spin-up support
     # ------------------------------------------------------------------
 
     def snapshot(self, only_ready: bool) -> dict[str, ClusterView]:

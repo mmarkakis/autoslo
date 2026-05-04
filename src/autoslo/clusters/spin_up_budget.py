@@ -79,7 +79,7 @@ class SpinUpBudget:
     def try_consume_reserved(self) -> bool:
         """Atomically draw `1` unit from ``_reserved``.
 
-        Used by capacity-checkpoint reconciliation, which must never fail
+        Used by scheduled spin-up execution, which must never fail
         as long as the upfront reservation was sized correctly.
         Returns ``False`` only if ``_reserved < 1`` (a programming bug —
         the config-load validation should have caught it).

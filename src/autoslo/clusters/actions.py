@@ -10,7 +10,7 @@ class ScalingAction:
 class SpinUpAction(ScalingAction):
     rpu: int
     from_reserved_budget: bool = False # Whether this spin-up should draw from 
-    # the reserved budget (e.g. for capacity checkpoints) or the regular budget.
+    # the reserved budget (e.g. for scheduled spin-ups) or the regular budget.
 
 
 @dataclass(frozen=True)

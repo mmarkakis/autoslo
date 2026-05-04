@@ -11,9 +11,9 @@ from typing import Optional
 from tqdm.auto import tqdm
 
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
-from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
+from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.execution_config import ExecutionConfig
 from autoslo.config.utils import make_run_id, parse_params
 from autoslo.filesystem.logging import emit_structured
@@ -62,7 +62,7 @@ class WorkloadRunner:
         self._out_dir = execution_config.out_dir
         self._workload = execution_config.workload
         self._pool = execution_config.pool
-        self._capacity_checkpoints = execution_config.capacity_checkpoints
+        self._scheduled_spinups = execution_config.scheduled_spinups
         self._router = execution_config.router
         self._autoscaler = execution_config.autoscaler
         self._structured_handler = execution_config.structured_log_handler
@@ -83,20 +83,18 @@ class WorkloadRunner:
         self._pending_spin_ups: list[concurrent.futures.Future] = []
 
     # ------------------------------------------------------------------
-    # Async checkpoint reconciliation (live runner)
+    # Async scheduled spin-up (live runner)
     # ------------------------------------------------------------------
 
-    async def _reconcile_checkpoint_async(
+    async def _execute_scheduled_spinup_async(
         self,
-        checkpoint: CapacityCheckpoint,
-        async_reference_ts: float,
+        spinup: ScheduledSpinUp,
     ) -> None:
-        """Wait until *checkpoint.rel_time_s* elapses, then reconcile."""
-        delay = checkpoint.rel_time_s - self._rel_time_s()
+        """Wait until *spinup.rel_time_s* elapses, then spin up."""
+        delay = spinup.rel_time_s - self._rel_time_s()
         if delay > 0:
             await asyncio.sleep(delay)
-        checkpoint.reconcile(
-            pool=self._pool,
+        spinup.execute(
             source="WorkloadRunner",
             on_spin_up=self._on_live_spin_up,
             write_text_log=self._write_text_log,
@@ -406,12 +404,10 @@ class WorkloadRunner:
 
         tasks: list[asyncio.Task] = []
 
-        # Schedule capacity checkpoint reconciliations.
-        for cp in self._capacity_checkpoints:
+        # Schedule spin-up executions.
+        for su in self._scheduled_spinups:
             tasks.append(
-                asyncio.ensure_future(
-                    self._reconcile_checkpoint_async(cp, async_reference_ts)
-                )
+                asyncio.ensure_future(self._execute_scheduled_spinup_async(su))
             )
 
         self._pbar = tqdm(

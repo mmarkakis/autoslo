@@ -3,7 +3,6 @@ import heapq
 import logging
 import os
 import shutil
-
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -12,9 +11,9 @@ from tqdm import tqdm
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.billing import Billing, BillingInterval
-from autoslo.clusters.capacity_checkpoint import CapacityCheckpoint
 from autoslo.clusters.cluster import Cluster, ClusterState
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
+from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.execution_config import ExecutionConfig
 from autoslo.config.utils import make_run_id, parse_params
 from autoslo.filesystem.logging import emit_structured
@@ -53,7 +52,7 @@ class WorkloadSimulator:
         self._out_dir = execution_config.out_dir
         self._workload = execution_config.workload
         self._pool = execution_config.pool
-        self._capacity_checkpoints = execution_config.capacity_checkpoints
+        self._scheduled_spinups = execution_config.scheduled_spinups
         self._router = execution_config.router
         self._autoscaler = execution_config.autoscaler
         self._structured_handler = execution_config.structured_log_handler
@@ -163,13 +162,13 @@ class WorkloadSimulator:
             )
         )
 
-        # Add all the checkpoint creation events to the heap.
-        for checkpoint in self._capacity_checkpoints:
+        # Add all the scheduled spin-up events to the heap.
+        for spinup in self._scheduled_spinups:
             self._pending_events.append(
                 SimulatorEvent(
-                    rel_time_s=checkpoint.rel_time_s,
-                    event_type=SimulatorEventType.CAPACITY_CHECKPOINT,
-                    details={"checkpoint": checkpoint},
+                    rel_time_s=spinup.rel_time_s,
+                    event_type=SimulatorEventType.SCHEDULED_SPINUP,
+                    details={"spinup": spinup},
                 )
             )
         # Add all the query arrival events to the heap.
@@ -194,8 +193,8 @@ class WorkloadSimulator:
                     self._handle_query_arrival(event, seq_num_to_cluster_name)
                 case SimulatorEventType.QUERY_COMPLETION:
                     self._handle_query_completion(event, progress_callback)
-                case SimulatorEventType.CAPACITY_CHECKPOINT:
-                    self._handle_capacity_checkpoint(event)
+                case SimulatorEventType.SCHEDULED_SPINUP:
+                    self._handle_scheduled_spinup(event)
                 case SimulatorEventType.CLUSTER_READY:
                     self._handle_cluster_ready(event)
 
@@ -387,15 +386,13 @@ class WorkloadSimulator:
         ):
             progress_callback(self._completed_queries, self._total_queries)
 
-    def _handle_capacity_checkpoint(self, event: SimulatorEvent) -> None:
+    def _handle_scheduled_spinup(self, event: SimulatorEvent) -> None:
         """
-        Handle a capacity checkpoint event: check the current provisioned
-        capacity against the checkpoint's requirements, and if there is a gap,
-        trigger the necessary spin-ups to meet the checkpoint.
+        Handle a scheduled spin-up event: unconditionally spin up one cluster
+        of the specified RPU size.
         """
-        checkpoint: CapacityCheckpoint = event.details["checkpoint"]
-        checkpoint.reconcile(
-            pool=self._pool,
+        spinup: ScheduledSpinUp = event.details["spinup"]
+        spinup.execute(
             source="WorkloadSimulator",
             on_spin_up=self._on_sim_spin_up,
             write_text_log=self._write_text_log,
