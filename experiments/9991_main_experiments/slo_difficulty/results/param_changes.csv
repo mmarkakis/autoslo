@@ -1,9 +1,0 @@
-scenario,parameter,initial,final
-1.5x,autoscaling_config.idle_time_before_tear_down_s,1200.0,600.0
-1.5x,autoscaling_config.slo_tightening_factor,0.8,1.0
-2.5x,autoscaling_config.idle_time_before_tear_down_s,1200.0,300.0
-2.5x,autoscaling_config.slo_tightening_factor,0.8,0.6
-4x,autoscaling_config.idle_time_before_tear_down_s,1200.0,600.0
-4x,autoscaling_config.observation_window_s,300.0,120.0
-4x,autoscaling_config.slo_tightening_factor,0.8,0.6
-4x,managed_cluster_pool_config.initial_rpus,[16],[8]
