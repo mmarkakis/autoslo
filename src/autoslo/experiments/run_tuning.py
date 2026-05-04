@@ -13,7 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from autoslo.experiments.aggregate_trials import plot_experiment
 from autoslo.filesystem.yaml_helpers import load_yaml
 
 

@@ -1,0 +1,88 @@
+plot_name: slo_difficulty
+title: "Effect of SLO Difficulty"
+
+panels:
+  - title: "SLO = 1.5× isolated p90"
+    series:
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "base_iconq_variable_slo_dict__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__SLO_DICT_FILENAME=ext_tpcds1000_rpu16_p90_k1.5.yml__TARGET_DATE=2024-05-27"
+        label: "SLO = 1.5× isolated p90"
+        formatting_id: prev_month
+      # ── Fixed-cluster baselines (round-robin; SLO dict is irrelevant) ────
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
+        label: "16 RPU"
+        formatting_id: "16 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
+        label: "16+16 RPU"
+        formatting_id: "16+16 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
+        label: "32 RPU"
+        formatting_id: "32 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
+        label: "32+32 RPU"
+        formatting_id: "32+32 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
+        label: "64 RPU"
+        formatting_id: "64 RPU"
+
+  - title: "SLO = 2.5× isolated p90"
+    series:
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "base_iconq_variable_slo_dict__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__SLO_DICT_FILENAME=ext_tpcds1000_rpu16_p90_k2.5.yml__TARGET_DATE=2024-05-27"
+        label: "SLO = 2.5× isolated p90"
+        formatting_id: prev_month
+      # ── Fixed-cluster baselines (round-robin; SLO dict is irrelevant) ────
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
+        label: "16 RPU"
+        formatting_id: "16 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
+        label: "16+16 RPU"
+        formatting_id: "16+16 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
+        label: "32 RPU"
+        formatting_id: "32 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
+        label: "32+32 RPU"
+        formatting_id: "32+32 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
+        label: "64 RPU"
+        formatting_id: "64 RPU"
+
+  - title: "SLO = 4.0× isolated p90"
+    series:
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "base_iconq_variable_slo_dict__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__SLO_DICT_FILENAME=ext_tpcds1000_rpu16_p90_k4.0.yml__TARGET_DATE=2024-05-27"
+        label: "SLO = 4.0× isolated p90"
+        formatting_id: prev_month
+      # ── Fixed-cluster baselines (round-robin; SLO dict is irrelevant) ────
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
+        label: "16 RPU"
+        formatting_id: "16 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
+        label: "16+16 RPU"
+        formatting_id: "16+16 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
+        label: "32 RPU"
+        formatting_id: "32 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
+        label: "32+32 RPU"
+        formatting_id: "32+32 RPU"
+      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
+        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
+        label: "64 RPU"
+        formatting_id: "64 RPU"
+

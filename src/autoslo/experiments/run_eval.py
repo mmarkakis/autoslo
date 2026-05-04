@@ -32,7 +32,7 @@ from rich.console import Console
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.config.utils import make_run_id
-from autoslo.filesystem.yaml_helpers import load_yaml
+from autoslo.filesystem.yaml_helpers import load_yaml, load_yaml_with_params
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 
 console = Console()
@@ -133,6 +133,30 @@ def main() -> None:
                 configs.append(load_yaml(tuned_path))
                 labels.append(run_id)
 
+        # Baselines: exec configs run directly without a tuner step.
+        # Each entry: {exec_config: "path/to/cfg.yml", params: {KEY: val}}
+        # run_id = make_run_id([exec_stem], params)  (no tuner stem).
+        for baseline in entry.get("baselines", []):
+            exec_cfg: str = baseline["exec_config"]
+            params: dict[str, str] = dict(baseline.get("params") or {})
+            run_id = make_run_id([Path(exec_cfg).stem], params)
+
+            out_dir = sim_runs_dir / workload_config.id() / run_id
+            if not args.force and (out_dir / "execution_config.yml").exists():
+                console.print(f"[dim]Skipping baseline '{run_id}' (already complete)[/]")
+                continue
+
+            if args.force and out_dir.exists():
+                shutil.rmtree(out_dir)
+
+            exec_cfg_path = (
+                Path(exec_cfg)
+                if Path(exec_cfg).is_absolute()
+                else root_path / exec_cfg
+            )
+            configs.append(load_yaml_with_params(exec_cfg_path, params))
+            labels.append(run_id)
+
         if not configs:
             console.print(
                 f"[dim]No runs to dispatch for workload '{workload_config.id()}'[/]"
@@ -150,6 +174,7 @@ def main() -> None:
             configs=configs,
             config_labels=labels,
             workload_first=True,
+            render_log=True
         )
 
     console.print("\n[bold green]Evaluation complete.[/]")
