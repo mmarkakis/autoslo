@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +14,11 @@ from rich.console import Console
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import (
-    SpinupOptimizerConfig,
     ParamSweepConfig,
     SamplingConfig,
     SloObjectiveConfig,
     SloResolverConfig,
+    SpinupOptimizerConfig,
     WorkloadConfig,
 )
 from autoslo.config.utils import (
@@ -25,6 +26,7 @@ from autoslo.config.utils import (
     make_run_id,
     parse_params,
 )
+from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.simulator.aggregated_simulation_results import (
@@ -32,14 +34,22 @@ from autoslo.simulator.aggregated_simulation_results import (
 )
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.tuner.spinup_optimizer import SpinupOptimizer
 from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.tuner.spinup_optimizer import SpinupOptimizer
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+class AlreadyCompleteError(Exception):
+    """Raised when a tuning run's outputs are already up to date.
+
+    Caught by callers (the script's ``__main__`` block and
+    ``run_tuning.py``) to emit a skip message and exit 0.
+    """
 
 
 class PolicyTuner:
@@ -86,36 +96,32 @@ class PolicyTuner:
             params,
         )
 
-        # Check that the tuning output path and/or the publication path don't
-        # already exist, unless --force is passed. In the later case, wipe them.
         self._out_dir = Path(
             os.path.join(pu.get_data_path(), "tuner_runs", run_id)
         )
-        if self._out_dir.exists():
-            if force:
-                shutil.rmtree(self._out_dir)
-            else:
-                console.print(
-                    f"[red]Error: Tuner output path {self._out_dir  } already exists. "
-                    f"Pass --force to overwrite.[/]"
-                )
-                exit(1)
-        else:
-            os.makedirs(self._out_dir, exist_ok=True)
         self._publication_path = os.path.join(
             pu.get_data_path(), "execution_configs", "tuned", run_id + ".yml"
         )
+
+        # Without --force, skip if the published tuned config already exists
+        # and is not older than both input configs (i.e. it is up to date).
+        if not force and is_up_to_date(
+            Path(self._publication_path),
+            Path(initial_execution_config_path),
+            Path(tuner_config_path),
+        ):
+            raise AlreadyCompleteError(
+                f"Tuned config '{self._publication_path}' is up to date; "
+                f"skipping. Pass --force to re-run regardless."
+            )
+
+        # Wipe any existing outputs before re-running (stale or --force).
+        if self._out_dir.exists():
+            shutil.rmtree(self._out_dir)
         if os.path.exists(self._publication_path):
-            if force:
-                os.remove(self._publication_path)
-            else:
-                console.print(
-                    f"[red]Error: Publication path {self._publication_path} "
-                    f"already exists. Pass --force to overwrite.[/]"
-                )
-                exit(1)
-        else:
-            os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
+            os.remove(self._publication_path)
+        os.makedirs(self._out_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
 
         # Persist substituted configs for reproducibility.
         initial_execution_config_out_path = (
@@ -333,9 +339,7 @@ class PolicyTuner:
 
             # Each candidate gets its own subdirectory.
             candidate_dir = spinup_root / tag
-            train_summary_path = (
-                candidate_dir / "spinups" / "train_summary.yml"
-            )
+            train_summary_path = candidate_dir / "spinups" / "train_summary.yml"
 
             optimizer = SpinupOptimizer(
                 evaluator=self._evaluator,
@@ -622,10 +626,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    pt = PolicyTuner(
-        initial_execution_config_path=args.initial_execution_config_path,
-        tuner_config_path=args.tuner_config_path,
-        force=args.force,
-        params=parse_params(args.param),
-    )
+    try:
+        pt = PolicyTuner(
+            initial_execution_config_path=args.initial_execution_config_path,
+            tuner_config_path=args.tuner_config_path,
+            force=args.force,
+            params=parse_params(args.param),
+        )
+    except AlreadyCompleteError as exc:
+        console.print(f"[dim]Skipping: {exc}[/]")
+        sys.exit(0)
     pt.tune()

@@ -32,6 +32,7 @@ from rich.console import Console
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.config.utils import make_run_id
+from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import load_yaml, load_yaml_with_params
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 
@@ -118,16 +119,13 @@ def main() -> None:
                     continue
 
                 out_dir = sim_runs_dir / workload_config.id() / run_id
-                if (
-                    not args.force
-                    and (out_dir / "execution_config.yml").exists()
+                if not args.force and is_up_to_date(
+                    out_dir / "execution_config.yml", tuned_path
                 ):
-                    console.print(
-                        f"[dim]Skipping '{run_id}' (already complete)[/]"
-                    )
+                    console.print(f"[dim]Skipping '{run_id}' (up to date)[/]")
                     continue
 
-                if args.force and out_dir.exists():
+                if out_dir.exists():
                     shutil.rmtree(out_dir)
 
                 configs.append(load_yaml(tuned_path))
@@ -142,11 +140,15 @@ def main() -> None:
             run_id = make_run_id([Path(exec_cfg).stem], params)
 
             out_dir = sim_runs_dir / workload_config.id() / run_id
-            if not args.force and (out_dir / "execution_config.yml").exists():
-                console.print(f"[dim]Skipping baseline '{run_id}' (already complete)[/]")
+            if not args.force and is_up_to_date(
+                out_dir / "execution_config.yml", exec_cfg_path
+            ):
+                console.print(
+                    f"[dim]Skipping baseline '{run_id}' (up to date)[/]"
+                )
                 continue
 
-            if args.force and out_dir.exists():
+            if out_dir.exists():
                 shutil.rmtree(out_dir)
 
             exec_cfg_path = (
@@ -174,7 +176,7 @@ def main() -> None:
             configs=configs,
             config_labels=labels,
             workload_first=True,
-            render_log=True
+            render_log=True,
         )
 
     console.print("\n[bold green]Evaluation complete.[/]")

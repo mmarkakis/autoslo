@@ -9,11 +9,14 @@ derived from the trial's ``params`` dict.
 from __future__ import annotations
 
 import argparse
-import subprocess
-import sys
 from pathlib import Path
 
+from rich.console import Console
+
 from autoslo.filesystem.yaml_helpers import load_yaml
+from autoslo.tuner.policy_tuner import AlreadyCompleteError, PolicyTuner
+
+console = Console()
 
 
 def main() -> None:
@@ -23,6 +26,14 @@ def main() -> None:
     parser.add_argument(
         "spec",
         help="Path to trial_spec.yml, or to the experiment directory containing it.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-run all trials unconditionally, even if their tuned configs "
+            "are already up to date."
+        ),
     )
     args = parser.parse_args()
 
@@ -55,29 +66,23 @@ def main() -> None:
         tuner_cfg = trial.get("tuner_config", default_tuner_cfg)
         params: dict[str, str] = dict(trial.get("params") or {})
 
-        cmd = [
-            sys.executable,
-            "src/autoslo/tuner/policy_tuner.py",
-            exec_cfg,
-            tuner_cfg,
-            "--force",
-        ]
-        for key, val in sorted(params.items()):
-            cmd += ["--param", f"{key}={val}"]
-        print(
-            f"\n[run_trials] ({idx}/{total}) trial '{tid}' — "
-            f"{' '.join(cmd)}"
+        console.print(
+            f"\n[bold]({idx}/{total})[/] Tuning trial [cyan]{tid}[/] "
+            f"(exec={exec_cfg}, tuner={tuner_cfg})"
         )
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print(
-                f"\n[run_trials] ERROR: tuner exited with code "
-                f"{result.returncode} for trial '{tid}'.",
-                file=sys.stderr,
+        try:
+            pt = PolicyTuner(
+                initial_execution_config_path=exec_cfg,
+                tuner_config_path=tuner_cfg,
+                force=args.force,
+                params=params or None,
             )
-            sys.exit(result.returncode)
+        except AlreadyCompleteError as exc:
+            console.print(f"[dim]Skipping '{tid}': {exc}[/]")
+            continue
+        pt.tune()
 
-    print(f"\n[run_trials] All {total} trial(s) completed successfully.")
+    console.print(f"\n[bold green]All {total} trial(s) completed.[/]")
 
 
 if __name__ == "__main__":

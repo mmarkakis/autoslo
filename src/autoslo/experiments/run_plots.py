@@ -22,7 +22,6 @@ Usage (from repo root)::
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -33,6 +32,7 @@ from autoslo.config.component_configs import (
     SloObjectiveConfig,
     SloResolverConfig,
 )
+from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.slo.slo_metric import SloMetric
@@ -44,6 +44,28 @@ from autoslo.visualizations.scatter_plots import (
 )
 
 console = Console()
+
+
+def _plot_is_up_to_date(
+    spec: dict, spec_path: Path, plot_path: Path, sim_runs_dir: Path
+) -> bool:
+    """Return True iff *plot_path* is up to date with respect to its inputs.
+
+    Inputs considered:
+    - The plot_spec.yml itself.
+    - Every ``execution_config.yml`` in the simulator_runs directories
+      referenced by the spec's series entries.
+    """
+    extra_inputs = [spec_path]
+    for panel in spec.get("panels", []):
+        for entry in panel.get("series", []):
+            wid = entry.get("workload_id", "")
+            eid = entry.get("exec_config_id", "")
+            if wid and eid:
+                extra_inputs.append(
+                    sim_runs_dir / wid / eid / "execution_config.yml"
+                )
+    return is_up_to_date(plot_path, *extra_inputs)
 
 
 def _x_value(result: SimulationResult, metric: SloMetric) -> float:
@@ -70,7 +92,9 @@ def _slo_fingerprint(
     return (slo_obj, SloResolverConfig.from_config(exec_config))
 
 
-def _render_spec(spec_path: Path, sim_runs_dir: Path) -> None:
+def _render_spec(
+    spec_path: Path, sim_runs_dir: Path, force: bool = False
+) -> None:
     """Render one plot_spec.yml to PNGs in its sibling plots/ directory."""
     spec = load_yaml(spec_path)
     spec_dir = spec_path.parent
@@ -78,6 +102,13 @@ def _render_spec(spec_path: Path, sim_runs_dir: Path) -> None:
     plot_title: str = spec.get("title", plot_name)
     panels: list[dict] = spec["panels"]
     num_panels = len(panels)
+
+    plot_path = spec_dir / f"{plot_name}.png"
+    if not force and _plot_is_up_to_date(
+        spec, spec_path, plot_path, sim_runs_dir
+    ):
+        console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
+        return
 
     if num_panels == 0:
         console.print(
@@ -189,7 +220,6 @@ def _render_spec(spec_path: Path, sim_runs_dir: Path) -> None:
             ax=ax,
         )
 
-    plot_path = spec_dir / f"{plot_name}.png"
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     console.print(f"[green]Saved:[/] {plot_path}")
@@ -209,6 +239,11 @@ def main() -> None:
             "Path to a plot_spec.yml file, or a directory whose immediate "
             "subdirectories are searched for plot_spec.yml files."
         ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-render all plots unconditionally, ignoring staleness.",
     )
     args = parser.parse_args()
 
@@ -230,7 +265,7 @@ def main() -> None:
         console.print(
             f"\n[cyan]Processing:[/] {spec_path.relative_to(pu.AUTOSLO_ROOT)}"
         )
-        _render_spec(spec_path, sim_runs_dir)
+        _render_spec(spec_path, sim_runs_dir, force=args.force)
 
     console.print(f"\n[bold green]Done.[/]")
 

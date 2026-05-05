@@ -3,6 +3,7 @@ import csv
 import datetime
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Union
 
 import pandas as pd
@@ -127,6 +128,19 @@ def get_runs_path() -> str:
     Useful for API routes that need to expose this to the UI.
     """
     return os.path.join(get_data_path(), "runs")
+
+
+def is_up_to_date(output: Path, *inputs: Path) -> bool:
+    """Return True iff *output* exists and is not older than any of *inputs*.
+
+    A missing input path is ignored — it cannot be newer than anything.
+    Intended for mtime-based incremental skipping: if this returns True the
+    caller can safely skip recomputing *output*.
+    """
+    if not output.exists():
+        return False
+    out_mtime = output.stat().st_mtime
+    return all(not p.exists() or p.stat().st_mtime <= out_mtime for p in inputs)
 
 
 def append_to_run_log(run_id: str, config_id: str) -> None:
@@ -289,7 +303,9 @@ class RunLocator:
                 filtered_summary = filtered_summary[filtered_summary[k] == v]
             else:
                 filtered_summary = filtered_summary[
-                    filtered_summary[k].str.contains(str(v), regex=False, na=False)
+                    filtered_summary[k].str.contains(
+                        str(v), regex=False, na=False
+                    )
                 ]
 
         return sorted(filtered_summary["run_id"].tolist())
@@ -407,8 +423,11 @@ class RunLocator:
         # that every column in the parquet summary file has a uniform type.
         # This handles cases like `routing_policy = {}` in legacy runs.
         return {
-            k: (v if isinstance(v, (str, int, float, bool)) or v is None
-                else json.dumps(v))
+            k: (
+                v
+                if isinstance(v, (str, int, float, bool)) or v is None
+                else json.dumps(v)
+            )
             for k, v in raw.items()
         }
 
