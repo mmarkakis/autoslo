@@ -2,7 +2,7 @@
 *.egg-info/
 *.egg
 *.whl
-
+.vscode
 .ui-meta/
 .planning/
 
