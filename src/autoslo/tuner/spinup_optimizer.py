@@ -29,6 +29,7 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
+from autoslo.filesystem.logging import query_latencies_from_log
 from autoslo.filesystem.yaml_helpers import dump_yaml
 from autoslo.simulator.aggregated_simulation_results import (
     AggregatedSimulationResults,
@@ -99,47 +100,11 @@ def find_next_spinup_time(
         if not log_path.exists():
             raise FileNotFoundError(f"Missing log file: {log_path}")
 
-        # Read arrivals and completions, then pivot to compute latency
-        # (latency_s lives inside the JSON ``details`` column, not as a
-        # top-level field).
-        log = pd.read_parquet(
-            log_path,
-            columns=[
-                "rel_time_s",
-                "event_type",
-                "query_id",
-                "query_text_id",
-                "details",
-            ],
-        )
-        log = log[log["event_type"].isin({"arrival", "completion"})]
-
-        # Pivot to get arrival and completion times per query.
-        pivoted = log.pivot(
-            index=["query_id", "query_text_id"],
-            columns="event_type",
-            values="rel_time_s",
-        )
-        if (
-            "completion" not in pivoted.columns
-            or pivoted["completion"].dropna().empty
-        ):
+        completions = query_latencies_from_log(log_path)
+        if completions.empty:
             raise ValueError(
                 f"No successful completion events in log: {log_path}"
             )
-
-        completions = pd.DataFrame(
-            {
-                "query_id": pivoted.index.get_level_values("query_id"),
-                "query_text_id": pivoted.index.get_level_values(
-                    "query_text_id"
-                ),
-                "rel_time_s": pivoted["completion"].values,
-                "latency_s": (
-                    pivoted["completion"] - pivoted["arrival"]
-                ).values,
-            }
-        ).dropna(subset=["rel_time_s", "latency_s"])
         completion_structured_logs.append(completions)
 
     return find_next_spinup_time_df(
@@ -193,10 +158,6 @@ def find_next_spinup_time_df(
     events = []
     for scenario_id, completions in enumerate(completion_structured_logs):
 
-        completions["latency_s"] = completions["latency_s"].fillna(0.0)
-        completions["start_time"] = (
-            completions["rel_time_s"] - completions["latency_s"]
-        )
         completions["slo_s"] = (
             completions["query_text_id"].map(slo_resolver.resolve).fillna(0.0)
         )
@@ -204,7 +165,7 @@ def find_next_spinup_time_df(
         for _, row in completions.iterrows():
             events.append(
                 {
-                    "time": row["start_time"],
+                    "time": row["arrival_s"],
                     "event_type": "start",
                     "latency_s": row["latency_s"],
                     "slo_s": row["slo_s"],
@@ -214,7 +175,7 @@ def find_next_spinup_time_df(
             )
             events.append(
                 {
-                    "time": row["rel_time_s"],
+                    "time": row["completion_s"],
                     "event_type": "end",
                     "latency_s": row["latency_s"],
                     "slo_s": row["slo_s"],

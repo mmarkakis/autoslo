@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import yaml
 
 from autoslo.config.component_configs import SloResolverConfig
+from autoslo.filesystem.logging import query_latencies_from_log
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 
@@ -60,37 +60,17 @@ class SimulationResult:
 
         log_path = simulation_dir / "structured_log.parquet"
         if log_path.exists():
-            log = pd.read_parquet(
-                log_path,
-                columns=[
-                    "rel_time_s",
-                    "event_type",
-                    "query_id",
-                    "query_text_id",
-                ],
-            )
-            log = log[log["event_type"].isin({"arrival", "completion"})]
-            if not log.empty:
-
-                pivoted = log.pivot(
-                    index=["query_id", "query_text_id"],
-                    columns="event_type",
-                    values="rel_time_s",
-                )
-                latencies = (
-                    pivoted["completion"] - pivoted["arrival"]
-                ).tolist()
+            latencies_df = query_latencies_from_log(log_path)
+            if not latencies_df.empty:
+                num_queries = len(latencies_df)
                 per_row_slo = (
-                    pivoted.index.get_level_values("query_text_id")
+                    latencies_df["query_text_id"]
                     .map(slo_resolver.resolve)
                     .fillna(0.0)
                 )
-
-                ## TODO: Deal with failed queries. Not super needed here because
-                ## in the simulator all queries succeed, but needed in principle.
                 lat_and_slos = [
                     LatencySlo(lat, slo)
-                    for lat, slo in zip(latencies, per_row_slo)
+                    for lat, slo in zip(latencies_df["latency_s"], per_row_slo)
                 ]
                 violation_rate = SloMetric.BINARY.aggregate_batch(lat_and_slos)
                 violation_amount_s = SloMetric.ABSOLUTE_S.aggregate_batch(

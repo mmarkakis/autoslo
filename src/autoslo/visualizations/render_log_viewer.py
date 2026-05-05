@@ -208,13 +208,16 @@ def _parse_log(
                 query_text_id = str(qtid)
                 break
 
-        latency_s = exec_finish_s - exec_start_s
         slo_s = slo_resolver.resolve(query_text_id if query_text_id else None)
         rpu = _safe_rpu(cluster_name)
 
         # Use arrival_s if available, otherwise exec_start_s
         if arrival_s is None:
             arrival_s = exec_start_s
+
+        # End-to-end latency: arrival (or exec start as fallback) to completion.
+        # None for queries that have not yet completed.
+        latency_s = (completion_s - arrival_s) if completion_s is not None else None
 
         # For overall bar extent
         end_s = completion_s if completion_s is not None else exec_finish_s

@@ -6,6 +6,7 @@ import logging
 import os
 
 import pandas as pd
+import pytest
 
 from autoslo.filesystem.logging import (
     LOGGER_NAME,
@@ -13,6 +14,7 @@ from autoslo.filesystem.logging import (
     REQUIRED_KEYS_LIST,
     StructuredLogHandler,
     emit_structured,
+    query_latencies_from_log,
     setup_structured_logging,
 )
 from autoslo.filesystem.structured_events import (
@@ -346,3 +348,123 @@ class TestThreadSafety:
         for h in list(logger.handlers):
             if isinstance(h, StructuredLogHandler):
                 logger.removeHandler(h)
+
+
+# ---------------------------------------------------------------------------
+# query_latencies_from_log
+# ---------------------------------------------------------------------------
+
+_BASE_COLS = ["wall_clock_s", "rel_time_s", "source", "event_type",
+              "query_id", "query_text_id"]
+
+
+def _make_log(*rows: dict) -> pd.DataFrame:
+    """Build a minimal structured-log DataFrame from explicit row dicts."""
+    defaults = {"wall_clock_s": 0.0, "source": "test", "query_text_id": "1"}
+    records = [{**defaults, **r} for r in rows]
+    return pd.DataFrame(records)
+
+
+class TestQueryLatenciesFromLog:
+
+    def test_happy_path_dataframe(self):
+        log = _make_log(
+            {"event_type": "arrival",    "query_id": "q0", "rel_time_s": 1.0},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 3.0},
+        )
+        result = query_latencies_from_log(log)
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["arrival_s"] == pytest.approx(1.0)
+        assert row["completion_s"] == pytest.approx(3.0)
+        assert row["latency_s"] == pytest.approx(2.0)
+        assert set(result.columns) == {"query_id", "query_text_id",
+                                       "arrival_s", "completion_s", "latency_s"}
+
+    def test_happy_path_parquet(self, tmp_path):
+        log = _make_log(
+            {"event_type": "arrival",    "query_id": "q0", "rel_time_s": 2.0},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 5.0},
+        )
+        path = tmp_path / "structured_log.parquet"
+        log.to_parquet(path, index=False)
+        result = query_latencies_from_log(path)
+        assert len(result) == 1
+        assert result.iloc[0]["latency_s"] == pytest.approx(3.0)
+
+    def test_multi_query(self):
+        log = _make_log(
+            {"event_type": "arrival",    "query_id": "q0", "rel_time_s": 0.0, "query_text_id": "1"},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 1.0, "query_text_id": "1"},
+            {"event_type": "arrival",    "query_id": "q1", "rel_time_s": 0.5, "query_text_id": "2"},
+            {"event_type": "completion", "query_id": "q1", "rel_time_s": 2.5, "query_text_id": "2"},
+            {"event_type": "arrival",    "query_id": "q2", "rel_time_s": 1.0, "query_text_id": "3"},
+            {"event_type": "completion", "query_id": "q2", "rel_time_s": 4.0, "query_text_id": "3"},
+        )
+        result = query_latencies_from_log(log).set_index("query_id")
+        assert result.loc["q0", "latency_s"] == pytest.approx(1.0)
+        assert result.loc["q1", "latency_s"] == pytest.approx(2.0)
+        assert result.loc["q2", "latency_s"] == pytest.approx(3.0)
+
+    def test_drop_incomplete_true_default(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0},
+        )
+        result = query_latencies_from_log(log)
+        assert len(result) == 0
+
+    def test_drop_incomplete_partial(self):
+        log = _make_log(
+            {"event_type": "arrival",    "query_id": "q0", "rel_time_s": 0.0},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 1.0},
+            {"event_type": "arrival",    "query_id": "q1", "rel_time_s": 0.0},
+        )
+        result = query_latencies_from_log(log)
+        assert len(result) == 1
+        assert result.iloc[0]["query_id"] == "q0"
+
+    def test_drop_incomplete_false_keeps_nan(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0},
+        )
+        result = query_latencies_from_log(log, drop_incomplete=False)
+        assert len(result) == 1
+        assert pd.isna(result.iloc[0]["completion_s"])
+        assert pd.isna(result.iloc[0]["latency_s"])
+
+    def test_empty_log_returns_empty_dataframe(self):
+        log = _make_log()
+        result = query_latencies_from_log(log)
+        assert len(result) == 0
+        assert set(result.columns) == {"query_id", "query_text_id",
+                                       "arrival_s", "completion_s", "latency_s"}
+
+    def test_no_completion_events(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0},
+            {"event_type": "arrival", "query_id": "q1", "rel_time_s": 1.0},
+        )
+        assert len(query_latencies_from_log(log)) == 0
+        result_full = query_latencies_from_log(log, drop_incomplete=False)
+        assert len(result_full) == 2
+        assert result_full["latency_s"].isna().all()
+
+    def test_duplicate_event_raises(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0},
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.1},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 1.0},
+        )
+        with pytest.raises(ValueError, match="q0"):
+            query_latencies_from_log(log)
+
+    def test_extra_columns_ignored(self):
+        log = _make_log(
+            {"event_type": "arrival",    "query_id": "q0", "rel_time_s": 0.0,
+             "cluster_name": "c1", "details": "{}"},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 2.0,
+             "cluster_name": "c1", "details": "{}"},
+        )
+        result = query_latencies_from_log(log)
+        assert "cluster_name" not in result.columns
+        assert result.iloc[0]["latency_s"] == pytest.approx(2.0)

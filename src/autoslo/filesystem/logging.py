@@ -36,7 +36,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from autoslo.filesystem.structured_events import BaseStructuredEvent
+from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
 
 # ---------------------------------------------------------------------------
 # Required keys every record must carry
@@ -295,3 +295,82 @@ def setup_run_logging(
         logger.propagate = False
         logging.info(f"Run directory created at {out_dir}")
     return setup_structured_logging(out_dir=out_dir)
+
+
+# ---------------------------------------------------------------------------
+# Analysis helpers
+# ---------------------------------------------------------------------------
+
+_LATENCY_COLS = ["rel_time_s", "event_type", "query_id", "query_text_id"]
+
+
+def query_latencies_from_log(
+    log: pd.DataFrame | Path,
+    *,
+    drop_incomplete: bool = True,
+) -> pd.DataFrame:
+    """Return per-query end-to-end latency (COMPLETION − ARRIVAL rel_time_s).
+
+    Accepts either an already-loaded DataFrame or a Path to a parquet file.
+    Returns one row per query with columns: query_id, query_text_id,
+    arrival_s, completion_s, latency_s.
+    Rows where either event is missing are dropped when drop_incomplete=True
+    (default) or kept as NaN when False.
+    Raises ValueError on duplicate (query_id, event_type) pairs.
+    """
+    if isinstance(log, Path):
+        log = pd.read_parquet(log, columns=_LATENCY_COLS)
+
+    if log.empty or "event_type" not in log.columns:
+        return pd.DataFrame(
+            columns=["query_id", "query_text_id", "arrival_s", "completion_s", "latency_s"]
+        )
+
+    log = log[log["event_type"].isin(
+        {EventType.ARRIVAL.value, EventType.COMPLETION.value}
+    )][_LATENCY_COLS].copy()
+
+    if log.empty:
+        return pd.DataFrame(
+            columns=["query_id", "query_text_id", "arrival_s", "completion_s", "latency_s"]
+        )
+
+    dupes = log.groupby(["query_id", "event_type"]).size()
+    dupes = dupes[dupes > 1]
+    if not dupes.empty:
+        bad_ids = dupes.index.get_level_values("query_id").unique().tolist()
+        raise ValueError(
+            f"Duplicate (query_id, event_type) pairs in structured log for "
+            f"query_id(s): {bad_ids!r}"
+        )
+
+    pivoted = (
+        log.pivot(
+            index=["query_id", "query_text_id"],
+            columns="event_type",
+            values="rel_time_s",
+        )
+        .rename_axis(columns=None)
+        .reset_index()
+    )
+
+    for col in (EventType.ARRIVAL.value, EventType.COMPLETION.value):
+        if col not in pivoted.columns:
+            pivoted[col] = float("nan")
+
+    result = pd.DataFrame(
+        {
+            "query_id": pivoted["query_id"],
+            "query_text_id": pivoted["query_text_id"].astype(str),
+            "arrival_s": pivoted[EventType.ARRIVAL.value],
+            "completion_s": pivoted[EventType.COMPLETION.value],
+            "latency_s": (
+                pivoted[EventType.COMPLETION.value] - pivoted[EventType.ARRIVAL.value]
+            ),
+        }
+    )
+
+    if drop_incomplete:
+        result = result.dropna(subset=["arrival_s", "completion_s"]).reset_index(drop=True)
+
+    return result
