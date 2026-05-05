@@ -74,10 +74,6 @@ class WorkloadConfig(_PartialConfig):
     rescale_factor: float = 1.0
 
     def id(self) -> str:
-        """
-        Get a unique ID for this workload config, based on the workload name and
-        date range.
-        """
         return "__".join(
             [
                 self.workload_name,
@@ -85,6 +81,19 @@ class WorkloadConfig(_PartialConfig):
                 self.end_date_inclusive or "end",
                 f"rf{self.rescale_factor:.3f}",
             ]
+        )
+
+    @classmethod
+    def from_id(cls, wid: str) -> "WorkloadConfig":
+        """Reconstruct a WorkloadConfig from its id() string."""
+        parts = wid.split("__")
+        name = "__".join(parts[:-3])
+        start, end, rf = parts[-3], parts[-2], parts[-1]
+        return cls(
+            workload_name=name,
+            start_date_inclusive=None if start == "start" else start,
+            end_date_inclusive=None if end == "end" else end,
+            rescale_factor=float(rf[2:]),
         )
 
 
@@ -192,7 +201,6 @@ class QueryRouterConfig(_PartialConfig):
 
     forecaster_config: Optional[ForecasterConfig] = None
 
-    
     @classmethod
     def from_config(cls, cfg: dict, **kwargs) -> Self:
         """
@@ -205,7 +213,6 @@ class QueryRouterConfig(_PartialConfig):
         except (KeyError, ValueError):
             forecaster_config = None
         return super().from_config(cfg, forecaster_config=forecaster_config)
-
 
     def __post_init__(self):
         if not (0 <= self.cache_risk_cost_multiplier):
@@ -316,6 +323,7 @@ class ParamSweepConfig(_PartialConfig):
     Configuration for a parameter sweep, including the target component and
     the parameters to sweep.
     """
+
     params: dict[str, list[Any]]
     strategy: str = "grid"
     val_top_k: int = 10
