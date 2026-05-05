@@ -1,14 +1,14 @@
 experiment_name: observation_period_exp
 experiment_name_human: "Optimizing on Different History Lengths"
 plot_on_one_panel: true
-exec_config: "handmade/base_iconq.yml"
-tuner_config: "sampled.yml"
+exec_config: "exec:handmade/base_iconq"
+tuner_config: "tuner:sampled"
 
 trials:
   - trial_id: ground_truth
     trial_id_human: "Target day (oracle)"
     formatting_id_of_final_point: ground_truth
-    tuner_config: "groundtruth.yml"
+    tuner_config: "tuner:groundtruth"
     params:
       TARGET_DATE: "2024-05-27"
       PAST_PERIOD_START_DATE: "2024-05-27"

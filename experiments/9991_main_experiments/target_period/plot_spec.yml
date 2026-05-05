@@ -4,108 +4,52 @@ title: "Generalization Across Target Days"
 panels:
   - title: "May 24"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-23__PAST_PERIOD_START_DATE=2024-04-24__TARGET_DATE=2024-05-24"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/target_period
+          trial_id: may_24
+        workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
         label: "Opt. on Past 1 Month"
         formatting_id: prev_month
-      - workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-24"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-24"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-24"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-24"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-24"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-24"}
+        workload_id: redbench_provisioned_157_0__2024-05-24__2024-05-24__rf0.167
 
   - title: "May 25"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-24__PAST_PERIOD_START_DATE=2024-04-25__TARGET_DATE=2024-05-25"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/target_period
+          trial_id: may_25
+        workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
         label: "Opt. on Past 1 Month"
         formatting_id: prev_month
-      - workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-25"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-25"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-25"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-25"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-25"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-25"}
+        workload_id: redbench_provisioned_157_0__2024-05-25__2024-05-25__rf0.167
 
   - title: "May 26"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-25__PAST_PERIOD_START_DATE=2024-04-26__TARGET_DATE=2024-05-26"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/target_period
+          trial_id: may_26
+        workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
         label: "Opt. on Past 1 Month"
         formatting_id: prev_month
-      - workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-26"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-26"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-26"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-26"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-26"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-26"}
+        workload_id: redbench_provisioned_157_0__2024-05-26__2024-05-26__rf0.167
 
   - title: "May 27"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/target_period
+          trial_id: may_27
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Opt. on Past 1 Month"
         formatting_id: prev_month
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-27"}
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167

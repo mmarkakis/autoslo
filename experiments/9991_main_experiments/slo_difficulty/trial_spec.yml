@@ -1,8 +1,8 @@
 experiment_name: slo_difficulty_exp
 experiment_name_human: "Simulation Results with Different SLO Difficulties"
 plot_on_one_panel: false
-exec_config: "handmade/base_iconq_variable_slo_dict.yml"
-tuner_config: "sampled.yml"
+exec_config: "exec:handmade/base_iconq_variable_slo_dict"
+tuner_config: "tuner:sampled"
 
 trials:
   - trial_id: one_point_five_x

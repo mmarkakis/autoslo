@@ -24,15 +24,7 @@ workload_runs:
       - spec_dir: experiments/9991_main_experiments/slo_difficulty
         trial_ids: null
     baselines:
-      - exec_config: data/execution_configs/handmade/single_16.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/round_robin_16_16.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/single_32.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/round_robin_32_32.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/single_64.yml
+      - group: fixed_clusters
         params: {TARGET_DATE: "2024-05-27"}
 
   # ── target_period: each trial is evaluated on its own target day ─────
@@ -45,15 +37,7 @@ workload_runs:
       - spec_dir: experiments/9991_main_experiments/target_period
         trial_ids: [may_24]
     baselines:
-      - exec_config: data/execution_configs/handmade/single_16.yml
-        params: {TARGET_DATE: "2024-05-24"}
-      - exec_config: data/execution_configs/handmade/round_robin_16_16.yml
-        params: {TARGET_DATE: "2024-05-24"}
-      - exec_config: data/execution_configs/handmade/single_32.yml
-        params: {TARGET_DATE: "2024-05-24"}
-      - exec_config: data/execution_configs/handmade/round_robin_32_32.yml
-        params: {TARGET_DATE: "2024-05-24"}
-      - exec_config: data/execution_configs/handmade/single_64.yml
+      - group: fixed_clusters
         params: {TARGET_DATE: "2024-05-24"}
 
   - workload_config:
@@ -65,15 +49,7 @@ workload_runs:
       - spec_dir: experiments/9991_main_experiments/target_period
         trial_ids: [may_25]
     baselines:
-      - exec_config: data/execution_configs/handmade/single_16.yml
-        params: {TARGET_DATE: "2024-05-25"}
-      - exec_config: data/execution_configs/handmade/round_robin_16_16.yml
-        params: {TARGET_DATE: "2024-05-25"}
-      - exec_config: data/execution_configs/handmade/single_32.yml
-        params: {TARGET_DATE: "2024-05-25"}
-      - exec_config: data/execution_configs/handmade/round_robin_32_32.yml
-        params: {TARGET_DATE: "2024-05-25"}
-      - exec_config: data/execution_configs/handmade/single_64.yml
+      - group: fixed_clusters
         params: {TARGET_DATE: "2024-05-25"}
 
   - workload_config:
@@ -85,15 +61,7 @@ workload_runs:
       - spec_dir: experiments/9991_main_experiments/target_period
         trial_ids: [may_26]
     baselines:
-      - exec_config: data/execution_configs/handmade/single_16.yml
-        params: {TARGET_DATE: "2024-05-26"}
-      - exec_config: data/execution_configs/handmade/round_robin_16_16.yml
-        params: {TARGET_DATE: "2024-05-26"}
-      - exec_config: data/execution_configs/handmade/single_32.yml
-        params: {TARGET_DATE: "2024-05-26"}
-      - exec_config: data/execution_configs/handmade/round_robin_32_32.yml
-        params: {TARGET_DATE: "2024-05-26"}
-      - exec_config: data/execution_configs/handmade/single_64.yml
+      - group: fixed_clusters
         params: {TARGET_DATE: "2024-05-26"}
 
   - workload_config:
@@ -105,13 +73,5 @@ workload_runs:
       - spec_dir: experiments/9991_main_experiments/target_period
         trial_ids: [may_27]   # same tuned run as observation_period/prev_month; skipped if already done
     baselines:
-      - exec_config: data/execution_configs/handmade/single_16.yml
+      - group: fixed_clusters
         params: {TARGET_DATE: "2024-05-27"}   # same as canonical; skipped if already done
-      - exec_config: data/execution_configs/handmade/round_robin_16_16.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/single_32.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/round_robin_32_32.yml
-        params: {TARGET_DATE: "2024-05-27"}
-      - exec_config: data/execution_configs/handmade/single_64.yml
-        params: {TARGET_DATE: "2024-05-27"}

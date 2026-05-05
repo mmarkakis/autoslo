@@ -1,0 +1,20 @@
+# Named baseline groups referenced from eval specs and plot specs.
+# Each entry: exec_config (required), label (required), formatting_id (required).
+# Params are supplied at the reference site.
+
+fixed_clusters:
+  - exec_config: "exec:handmade/single_16"
+    label: "16 RPU"
+    formatting_id: "16 RPU"
+  - exec_config: "exec:handmade/round_robin_16_16"
+    label: "16+16 RPU"
+    formatting_id: "16+16 RPU"
+  - exec_config: "exec:handmade/single_32"
+    label: "32 RPU"
+    formatting_id: "32 RPU"
+  - exec_config: "exec:handmade/round_robin_32_32"
+    label: "32+32 RPU"
+    formatting_id: "32+32 RPU"
+  - exec_config: "exec:handmade/single_64"
+    label: "64 RPU"
+    formatting_id: "64 RPU"

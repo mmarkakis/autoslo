@@ -32,6 +32,10 @@ from autoslo.config.component_configs import (
     SloObjectiveConfig,
     SloResolverConfig,
 )
+from autoslo.filesystem.config_resolver import (
+    expand_series_entries,
+    resolve_series_exec_config_id,
+)
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.simulator.simulation_result import SimulationResult
@@ -54,13 +58,15 @@ def _plot_is_up_to_date(
     Inputs considered:
     - The plot_spec.yml itself.
     - Every ``execution_config.yml`` in the simulator_runs directories
-      referenced by the spec's series entries.
+      referenced by the spec's series entries (resolved via
+      :func:`resolve_series_exec_config_id`).
     """
+    root = Path(pu.AUTOSLO_ROOT)
     extra_inputs = [spec_path]
     for panel in spec.get("panels", []):
-        for entry in panel.get("series", []):
+        for entry in expand_series_entries(panel.get("series", [])):
             wid = entry.get("workload_id", "")
-            eid = entry.get("exec_config_id", "")
+            eid = resolve_series_exec_config_id(entry, root)
             if wid and eid:
                 extra_inputs.append(
                     sim_runs_dir / wid / eid / "execution_config.yml"
@@ -126,9 +132,18 @@ def _render_spec(
     panel_slo_obj: dict[int, SloObjective] = {}
 
     for panel_id, panel_def in enumerate(panels):
-        for series_entry in panel_def["series"]:
+        for series_entry in expand_series_entries(panel_def["series"]):
             workload_id: str = series_entry["workload_id"]
-            exec_config_id: str = series_entry["exec_config_id"]
+            exec_config_id: str | None = resolve_series_exec_config_id(
+                series_entry, Path(pu.AUTOSLO_ROOT)
+            )
+            if exec_config_id is None:
+                console.print(
+                    f"[yellow]Warning: could not resolve exec_config_id for "
+                    f"series entry in panel {panel_id} of '{plot_name}' "
+                    f"— skipping this point.[/]"
+                )
+                continue
             label: str = series_entry["label"]
             formatting_id: str = series_entry["formatting_id"]
 

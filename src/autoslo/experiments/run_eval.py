@@ -32,6 +32,7 @@ from rich.console import Console
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.config.utils import make_run_id
+from autoslo.filesystem.config_resolver import expand_eval_baselines, resolve_config
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import load_yaml, load_yaml_with_params
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
@@ -105,7 +106,11 @@ def main() -> None:
                 tuner_cfg: str = trial.get("tuner_config", default_tuner)
                 params: dict[str, str] = dict(trial.get("params") or {})
                 run_id = make_run_id(
-                    [Path(exec_cfg).stem, Path(tuner_cfg).stem], params
+                    [
+                        resolve_config(exec_cfg).stem,
+                        resolve_config(tuner_cfg).stem,
+                    ],
+                    params,
                 )
                 tuned_path = (
                     data_path / "execution_configs" / "tuned" / f"{run_id}.yml"
@@ -134,10 +139,11 @@ def main() -> None:
         # Baselines: exec configs run directly without a tuner step.
         # Each entry: {exec_config: "path/to/cfg.yml", params: {KEY: val}}
         # run_id = make_run_id([exec_stem], params)  (no tuner stem).
-        for baseline in entry.get("baselines", []):
+        for baseline in expand_eval_baselines(entry.get("baselines", [])):
             exec_cfg: str = baseline["exec_config"]
             params: dict[str, str] = dict(baseline.get("params") or {})
-            run_id = make_run_id([Path(exec_cfg).stem], params)
+            exec_cfg_path = resolve_config(exec_cfg)
+            run_id = make_run_id([exec_cfg_path.stem], params)
 
             out_dir = sim_runs_dir / workload_config.id() / run_id
             if not args.force and is_up_to_date(
@@ -151,11 +157,6 @@ def main() -> None:
             if out_dir.exists():
                 shutil.rmtree(out_dir)
 
-            exec_cfg_path = (
-                Path(exec_cfg)
-                if Path(exec_cfg).is_absolute()
-                else root_path / exec_cfg
-            )
             configs.append(load_yaml_with_params(exec_cfg_path, params))
             labels.append(run_id)
 

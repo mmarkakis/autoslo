@@ -3,40 +3,32 @@ title: "Effect of Observation Period Length"
 
 panels:
   - series:
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq__groundtruth__PAST_PERIOD_END_DATE=2024-05-27__PAST_PERIOD_START_DATE=2024-05-27__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/observation_period
+          trial_id: ground_truth
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Opt. on Target Day (oracle)"
         formatting_id: ground_truth
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-05-26__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/observation_period
+          trial_id: prev_day
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Opt. on Past 1 Day"
         formatting_id: prev_day
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-05-20__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/observation_period
+          trial_id: prev_week
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Opt. on Past 1 Week"
         formatting_id: prev_week
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/observation_period
+          trial_id: prev_month
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Opt. on Past 1 Month"
         formatting_id: prev_month
-      # ── Fixed-cluster baselines ────────────────────────────────────────
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      # ── Fixed-cluster baselines ───────────────────────────────────────
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-27"}
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167

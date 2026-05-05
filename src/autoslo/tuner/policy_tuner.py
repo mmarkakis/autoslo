@@ -26,6 +26,7 @@ from autoslo.config.utils import (
     make_run_id,
     parse_params,
 )
+from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.forecasting.forecaster import Forecaster
@@ -66,24 +67,15 @@ class PolicyTuner:
         if params is None:
             params = {}
 
-        # Load the execution config. If the path is not absolute, assume it is
-        # relative to data/execution_configs.
-        if not os.path.isabs(initial_execution_config_path):
-            initial_execution_config_path = os.path.join(
-                pu.get_data_path(),
-                "execution_configs",
-                initial_execution_config_path,
-            )
+        # Resolve both config paths via the unified resolver.
+        initial_execution_config_path = str(
+            resolve_config(initial_execution_config_path)
+        )
+        tuner_config_path = str(resolve_config(tuner_config_path))
+
         self._initial_execution_config = load_yaml_with_params(
             initial_execution_config_path, params
         )
-
-        # Load the tuner config. If the path is not absolute, assume it is relative
-        # to data/tuner_configs.
-        if not os.path.isabs(tuner_config_path):
-            tuner_config_path = os.path.join(
-                pu.get_data_path(), "tuner_configs", tuner_config_path
-            )
         self._tuner_config = load_yaml_with_params(tuner_config_path, params)
 
         # Construct a run_id from the execution config and tuner config stems

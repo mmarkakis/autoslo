@@ -4,85 +4,40 @@ title: "Effect of SLO Strictness"
 panels:
   - title: "Threshold = 1%"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq_variable_slo_threshold__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__SLO_THRESHOLD=0.01__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/slo_strictness
+          trial_id: one_percent
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Threshold = 1%"
         formatting_id: prev_month
-      # ── Fixed-cluster baselines (round-robin; SLO threshold is irrelevant) ──
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      # ── Fixed-cluster baselines (SLO threshold is irrelevant) ─────────
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-27"}
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
 
   - title: "Threshold = 5%"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq_variable_slo_threshold__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__SLO_THRESHOLD=0.05__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/slo_strictness
+          trial_id: five_percent
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Threshold = 5%"
         formatting_id: prev_month
-      # ── Fixed-cluster baselines (round-robin; SLO threshold is irrelevant) ──
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-27"}
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
 
   - title: "Threshold = 10%"
     series:
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "base_iconq_variable_slo_threshold__sampled__PAST_PERIOD_END_DATE=2024-05-26__PAST_PERIOD_START_DATE=2024-04-27__SLO_THRESHOLD=0.10__TARGET_DATE=2024-05-27"
+      - trial_ref:
+          spec_dir: experiments/9991_main_experiments/slo_strictness
+          trial_id: ten_percent
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
         label: "Threshold = 10%"
         formatting_id: prev_month
-      # ── Fixed-cluster baselines (round-robin; SLO threshold is irrelevant) ──
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_16__TARGET_DATE=2024-05-27"
-        label: "16 RPU"
-        formatting_id: "16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_16_16__TARGET_DATE=2024-05-27"
-        label: "16+16 RPU"
-        formatting_id: "16+16 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_32__TARGET_DATE=2024-05-27"
-        label: "32 RPU"
-        formatting_id: "32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "round_robin_32_32__TARGET_DATE=2024-05-27"
-        label: "32+32 RPU"
-        formatting_id: "32+32 RPU"
-      - workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
-        exec_config_id: "single_64__TARGET_DATE=2024-05-27"
-        label: "64 RPU"
-        formatting_id: "64 RPU"
-
+      - baseline_group:
+          name: fixed_clusters
+          params: {TARGET_DATE: "2024-05-27"}
+        workload_id: redbench_provisioned_157_0__2024-05-27__2024-05-27__rf0.167
