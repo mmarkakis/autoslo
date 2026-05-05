@@ -289,7 +289,7 @@ class RunLocator:
                 filtered_summary = filtered_summary[filtered_summary[k] == v]
             else:
                 filtered_summary = filtered_summary[
-                    filtered_summary[k].str.contains(str(v), regex=False)
+                    filtered_summary[k].str.contains(str(v), regex=False, na=False)
                 ]
 
         return sorted(filtered_summary["run_id"].tolist())
@@ -350,6 +350,69 @@ class RunLocator:
         return last_run_id, run_summary_cols
 
     @staticmethod
+    def _load_run_params(run_dir: str) -> dict:
+        """
+        Load run parameters from a run directory, handling both legacy and
+        current config file formats.
+
+        Legacy runs store a flat parameter dict in ``run_params.yml``.
+        Newer runs store a deeply nested config in ``config.yml``; these are
+        recursively flattened into dot-separated keys (e.g.
+        ``workload_config.workload_name``) so that all rows in the summary
+        DataFrame share a common ``run_id`` column.
+
+        All non-scalar values (dicts, lists, etc.) are serialised to JSON
+        strings so that every column in the resulting summary parquet file
+        has a uniform scalar type.
+
+        Parameters:
+            run_dir: Name of the run directory (not the full path).
+
+        Returns:
+            A flat ``dict`` suitable for inclusion as a DataFrame row.
+        """
+        import json
+
+        runs_path = get_runs_path()
+        old_path = os.path.join(runs_path, run_dir, "run_params.yml")
+        new_path = os.path.join(runs_path, run_dir, "config.yml")
+
+        if os.path.exists(old_path):
+            with open(old_path, "r") as f:
+                raw = yaml.safe_load(f)
+        else:
+            with open(new_path, "r") as f:
+                config = yaml.safe_load(f)
+
+            def _flatten(d: dict, prefix: str = "") -> dict:
+                result: dict = {}
+                for k, v in d.items():
+                    key = f"{prefix}.{k}" if prefix else k
+                    if isinstance(v, dict):
+                        result.update(_flatten(v, key))
+                    else:
+                        result[key] = v
+                return result
+
+            raw = _flatten(config)
+
+            # Ensure run_id lives at the top level regardless of nesting depth.
+            if "run_id" not in raw:
+                for key in list(raw.keys()):
+                    if key.endswith(".run_id"):
+                        raw["run_id"] = raw.pop(key)
+                        break
+
+        # Sanitize: convert any remaining non-scalar values to JSON strings so
+        # that every column in the parquet summary file has a uniform type.
+        # This handles cases like `routing_policy = {}` in legacy runs.
+        return {
+            k: (v if isinstance(v, (str, int, float, bool)) or v is None
+                else json.dumps(v))
+            for k, v in raw.items()
+        }
+
+    @staticmethod
     def _regenerate(run_dirs: list[str]) -> tuple[str, list[str]]:
         """
         Regenerate the run summary file based on the given list of run
@@ -363,15 +426,10 @@ class RunLocator:
             run_summary_cols: A list of column names in the summary DataFrame.
         """
 
-        # For each run dir, read its run_params.yml and append as a dataframe
-        # row.
+        # For each run dir, read its config and append as a dataframe row.
         l = []
         for run_dir in run_dirs:
-            run_params_path = os.path.join(
-                get_runs_path(), run_dir, "run_params.yml"
-            )
-            with open(run_params_path, "r") as f:
-                run_params = yaml.safe_load(f)
+            run_params = RunLocator._load_run_params(run_dir)
             l.append(run_params)
 
         run_summary = pd.DataFrame(l).reset_index(drop=True)

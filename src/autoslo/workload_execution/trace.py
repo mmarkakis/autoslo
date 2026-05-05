@@ -468,6 +468,14 @@ class Trace:
         try:
             idx = 1 if has_prepended_run_information else 0
             raw_id = query_text.split("\\n")[idx][3:].strip()
+
+            if raw_id.startswith("Filename"):
+                # We are in one of the old traces where the line was:
+                # -- Filename: query086_003.sql
+                raw_id = raw_id.split()[-1][5:-4]
+                template_id, query_index = raw_id.split("_")
+                raw_id = f"{schema_name}#{template_id}#{query_index}"
+
             return QueryTextId(raw_id)
 
         except Exception as e:
