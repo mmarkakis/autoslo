@@ -91,18 +91,3 @@ class SimulationResult:
             total_cost=total_cost,
             num_queries=num_queries,
         )
-
-    @staticmethod
-    def load_batch(
-        batch_dir: str | Path,
-    ) -> list[SimulationResult]:
-        """Load all simulation results from the given directory."""
-        batch_dir = Path(batch_dir)
-        results: list[SimulationResult] = []
-        for simulation_dir in batch_dir.iterdir():
-            if simulation_dir.is_dir():
-                result = SimulationResult.load(
-                    simulation_dir=simulation_dir,
-                )
-                results.append(result)
-        return results

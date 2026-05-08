@@ -31,14 +31,10 @@ data/redset_executable_workloads/redbench_*/matching_*/workload.csv
 
 data/__query_texts/
 
-site/
 docs/reference/
 docs/index.md
 docs/assets/
 
-uis/**/node_modules/
-.classifier-ui-meta/
-.simulator-ui-meta/
 docs/*.md
 
 data/tuner_runs/

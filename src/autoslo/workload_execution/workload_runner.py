@@ -75,7 +75,7 @@ class WorkloadRunner:
             max_workers=self._workload_runner_config.max_threads
         )
 
-        dump_yaml(cfg, os.path.join(self._out_dir, "config.yml"))
+        dump_yaml(cfg, os.path.join(self._out_dir, "execution_config.yml"))
 
         # ── Instance Variables ───────────────────────────────────────────────
         self._routing_lock = threading.Lock()
