@@ -138,6 +138,7 @@ class ForecasterConfig(_PartialConfig):
     forecast_policy_name: str
     decay_factor: float = 0.5
     fixed_queries_per_hour: int = 100
+    rescale_factor: float = 1.0
     reservoir_config: Optional[ReservoirConfig] = None
 
     @classmethod

@@ -84,7 +84,7 @@ class QueryRouter:
                 workload_config=forecasted_workload_config
             )
             forecasted_workload = forecasted_workload.rescale_rel_times(
-                reservoir_config.rescale_factor
+                forecaster_config.rescale_factor
             )
             rel_time_s_to_forecasted_table_vecs = forecasted_workload.get_rel_time_s_to_table_vecs(
                 iconq_query_featurizer=self._iconq_model.iconq_query_featurizer
