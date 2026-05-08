@@ -70,7 +70,7 @@ class QueryRouter:
             reservoir_config = forecaster_config.reservoir_config
 
             target_date = (
-                pd.Timestamp(reservoir_config.end_date_inclusive)
+                pd.Timestamp(reservoir_config.last_day_date_inclusive)
                 + pd.Timedelta(days=1)
             ).date()
             forecaster = Forecaster(forecaster_config=forecaster_config)

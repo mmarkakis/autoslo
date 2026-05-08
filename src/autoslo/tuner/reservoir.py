@@ -37,16 +37,32 @@ class QueryReservoir:
             )
 
         if reservoir_config is not None:
-            workload = Workload(workload_config=reservoir_config)
+            workload_config = reservoir_config.to_workload_config()
+            workload = Workload(workload_config=workload_config)
+            df = workload.df.copy()
 
             # Input parsing/validation.
-            if workload.df.empty:
+            if df.empty:
                 raise ValueError("Cannot build reservoir from empty workload.")
+
+            # Slice
+            tz = df["abs_start_time"].dt.tz
+            last_day_end = (
+                pd.Timestamp(reservoir_config.last_day_date_inclusive)
+                .normalize()
+                .tz_localize(tz)
+            ) + pd.Timedelta(days=1)
+            first_day_start = last_day_end - pd.Timedelta(
+                days=reservoir_config.num_days
+            )
+            df = df[
+                (df["abs_start_time"] >= first_day_start)
+                & (df["abs_start_time"] < last_day_end)
+            ].reset_index(drop=True)
 
             # Set up bins.
             # Key is (date, hour_of_day), Monday is 0
             # Value is a dictionary from query_text_id to query count
-            df = workload.df.copy()
             df["date"] = df["abs_start_time"].dt.date
             df["hour"] = df["abs_start_time"].dt.hour
             count_df = (
@@ -56,9 +72,9 @@ class QueryReservoir:
             )
             console.print(
                 f"  Built reservoir based on workload "
-                f"{reservoir_config.workload_name} over the period "
-                f"{reservoir_config.start_date_inclusive} to "
-                f"{reservoir_config.end_date_inclusive}."
+                f"{reservoir_config.workload_name} based on "
+                f"{reservoir_config.num_days} days of data ending on "
+                f"{reservoir_config.last_day_date_inclusive} (inclusive)."
             )
         assert count_df is not None
         self._count_df = count_df

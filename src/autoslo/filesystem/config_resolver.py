@@ -5,6 +5,7 @@ Supported syntax:
   exec:<path>    →  data/execution_configs/<path>.yml
   tuner:<name>   →  data/tuner_configs/<name>.yml
   eval:<name>    →  data/simulator_eval_specs/<name>.yml
+  trial:<path>   →  experiments/<path>/trial_spec.yml  (root-relative)
 """
 
 from __future__ import annotations
@@ -38,6 +39,21 @@ def resolve_config(ref: str) -> Path:
     return data / sub_dir / (path_part + ".yml")
 
 
+def resolve_trial_spec_path(ref: str) -> Path:
+    """Resolve a ``trial:<path>`` reference to the trial_spec.yml Path.
+
+    ``trial:9991_main_experiments/observation_period`` resolves to
+    ``<repo_root>/experiments/9991_main_experiments/observation_period/trial_spec.yml``.
+    """
+    scheme, _, path_part = ref.partition(":")
+    if scheme.lower() != "trial":
+        raise ValueError(
+            f"Expected 'trial:' scheme in '{ref}'."
+        )
+    root = Path(pu.AUTOSLO_ROOT)
+    return root / "experiments" / path_part / "trial_spec.yml"
+
+
 @functools.lru_cache(maxsize=64)
 def _load_trial_spec(spec_path: Path) -> dict:
     return load_yaml(spec_path)
@@ -50,18 +66,16 @@ def resolve_series_exec_config_id(
     Return the exec_config_id string for a plot-spec series entry.
 
     Handles two formats:
-      trial_ref:    {spec_dir, trial_id} -> make_run_id from trial_spec.yml
-      baseline_ref: {exec_config, params} -> make_run_id([exec_stem], params)
+      trial:    {spec, trial_id} -> make_run_id from trial_spec.yml
+      baseline: {exec_config, params} -> make_run_id([exec_stem], params)
     """
     if root is None:
         root = Path(pu.AUTOSLO_ROOT)
 
-    if "trial_ref" in entry:
-        ref = entry["trial_ref"]
-        spec_dir = Path(ref["spec_dir"])
-        if not spec_dir.is_absolute():
-            spec_dir = root / spec_dir
-        trial_spec = _load_trial_spec(spec_dir / "trial_spec.yml")
+    if "trial" in entry:
+        ref = entry["trial"]
+        trial_spec_path = resolve_trial_spec_path(ref["spec"])
+        trial_spec = _load_trial_spec(trial_spec_path)
         trial_id: str = ref["trial_id"]
         default_exec: str = trial_spec.get("exec_config", "")
         default_tuner: str = trial_spec.get("tuner_config", "")
@@ -78,12 +92,12 @@ def resolve_series_exec_config_id(
                     params,
                 )
         warnings.warn(
-            f"trial_id '{trial_id}' not found in {spec_dir / 'trial_spec.yml'}"
+            f"trial_id '{trial_id}' not found in {trial_spec_path}"
         )
         return None
 
-    if "baseline_ref" in entry:
-        ref = entry["baseline_ref"]
+    if "baseline" in entry:
+        ref = entry["baseline"]
         exec_path = resolve_config(ref["exec_config"])
         params = dict(ref.get("params") or {})
         return make_run_id([exec_path.stem], params)
@@ -97,11 +111,7 @@ def resolve_series_exec_config_id(
 
 @functools.lru_cache(maxsize=1)
 def _load_baseline_groups() -> dict:
-    path = (
-        Path(pu.get_data_path())
-        / "simulator_eval_specs"
-        / "baseline_groups.yml"
-    )
+    path = Path(pu.get_data_path()) / "baseline_groups.yml"
     return load_yaml(path) if path.exists() else {}
 
 
@@ -136,22 +146,25 @@ def expand_eval_baselines(baselines: list[dict]) -> list[dict]:
 
 
 def expand_series_entries(entries: list[dict]) -> list[dict]:
-    """Expand {baseline_group, workload_id} entries in a plot-spec series list."""
+    """Expand ``baseline_group`` entries in a plot-spec series list.
+
+    Each ``baseline_group`` entry expands into N individual ``baseline``
+    entries whose ``label`` and ``formatting_id`` come from the group
+    definition.  All other entry shapes are passed through unchanged.
+    """
     result: list[dict] = []
     for entry in entries:
         if "baseline_group" not in entry:
             result.append(entry)
             continue
         bg = entry["baseline_group"]
-        wid = entry.get("workload_id", "")
         for m in _expand_group(bg["name"], dict(bg.get("params") or {})):
             result.append(
                 {
-                    "baseline_ref": {
+                    "baseline": {
                         "exec_config": m["exec_config"],
                         "params": m["params"],
                     },
-                    "workload_id": wid,
                     "label": m["label"],
                     "formatting_id": m["formatting_id"],
                 }

@@ -95,7 +95,9 @@ def is_up_to_date(output: Path, *inputs: Path) -> bool:
     return all(not p.exists() or p.stat().st_mtime <= out_mtime for p in inputs)
 
 
-def append_to_run_log(run_id: str, config_id: str) -> None:
+def append_to_run_log(
+    run_id: str, config_id: str, workload_id: str = ""
+) -> None:
     """Append one entry to ``data/runs/run_log.csv``.
 
     The file is created with a header row on first use, then each
@@ -110,6 +112,9 @@ def append_to_run_log(run_id: str, config_id: str) -> None:
         The compound ``__``-separated identifier produced by
         :func:`~autoslo.config.utils.make_run_id`, e.g.
         ``"base_iconq__TARGET_DATE=2024-05-27"``.
+    workload_id:
+        The workload identifier produced by :meth:`WorkloadConfig.id`.
+        May be empty for callers that do not track workload.
     """
 
     log_path = os.path.join(get_runs_path(), "run_log.csv")
@@ -119,8 +124,33 @@ def append_to_run_log(run_id: str, config_id: str) -> None:
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(["run_id", "config_id", "started_at"])
-        writer.writerow([run_id, config_id, started_at])
+            writer.writerow(["run_id", "config_id", "workload_id", "started_at"])
+        writer.writerow([run_id, config_id, workload_id, started_at])
+
+
+def find_most_recent_live_run_id(
+    config_id: str, workload_id: str
+) -> Optional[str]:
+    """Return the most recent ``run_id`` for a (workload_id, config_id) pair.
+
+    Reads ``data/runs/run_log.csv`` and returns the entry with the largest
+    ``run_id`` (a ms-epoch string) whose ``config_id`` and ``workload_id``
+    both match.  Returns ``None`` if the log does not exist, the columns are
+    absent, or no matching entry is found.
+    """
+    log_path = os.path.join(get_runs_path(), "run_log.csv")
+    if not os.path.exists(log_path):
+        return None
+    with open(log_path, newline="") as f:
+        reader = csv.DictReader(f)
+        if "workload_id" not in (reader.fieldnames or []):
+            return None
+        best: Optional[str] = None
+        for row in reader:
+            if row["config_id"] == config_id and row["workload_id"] == workload_id:
+                if best is None or int(row["run_id"]) > int(best):
+                    best = row["run_id"]
+    return best
 
 
 def get_models_dir() -> str:

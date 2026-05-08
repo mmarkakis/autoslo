@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import shutil
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +19,7 @@ from autoslo.config.component_configs import (
     SpinupOptimizerConfig,
     WorkloadConfig,
 )
-from autoslo.config.utils import (
-    copy_and_apply_overrides,
-    make_run_id,
-    parse_params,
-)
-from autoslo.filesystem.config_resolver import resolve_config
+from autoslo.config.utils import copy_and_apply_overrides, make_run_id
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.forecasting.forecaster import Forecaster
@@ -62,16 +55,11 @@ class PolicyTuner:
         tuner_config_path: str,
         force: bool = False,
         params: dict[str, str] | None = None,
+        run_id: str | None = None,
     ) -> None:
 
         if params is None:
             params = {}
-
-        # Resolve both config paths via the unified resolver.
-        initial_execution_config_path = str(
-            resolve_config(initial_execution_config_path)
-        )
-        tuner_config_path = str(resolve_config(tuner_config_path))
 
         self._initial_execution_config = load_yaml_with_params(
             initial_execution_config_path, params
@@ -80,19 +68,24 @@ class PolicyTuner:
 
         # Construct a run_id from the execution config and tuner config stems
         # plus any injected params.
-        run_id = make_run_id(
-            [
-                Path(initial_execution_config_path).stem,
-                Path(tuner_config_path).stem,
-            ],
-            params,
-        )
+        self._run_id = run_id
+        if self._run_id is None:
+            self._run_id = make_run_id(
+                [
+                    Path(initial_execution_config_path).stem,
+                    Path(tuner_config_path).stem,
+                ],
+                params,
+            )
 
         self._out_dir = Path(
-            os.path.join(pu.get_data_path(), "tuner_runs", run_id)
+            os.path.join(pu.get_data_path(), "tuner_runs", self._run_id)
         )
         self._publication_path = os.path.join(
-            pu.get_data_path(), "execution_configs", "tuned", run_id + ".yml"
+            pu.get_data_path(),
+            "execution_configs",
+            "tuned",
+            self._run_id + ".yml",
         )
 
         # Without --force, skip if the published tuned config already exists
@@ -177,15 +170,13 @@ class PolicyTuner:
             train_workload_config = WorkloadConfig(
                 workload_name="t_0",
                 workload_dir=train_dir,
-                start_date_inclusive=workload_config.start_date_inclusive,
-                end_date_inclusive=workload_config.end_date_inclusive,
+                target_date=workload_config.target_date,
                 rescale_factor=workload_config.rescale_factor,
             )
             val_workload_config = WorkloadConfig(
                 workload_name="v_0",
                 workload_dir=val_dir,
-                start_date_inclusive=workload_config.start_date_inclusive,
-                end_date_inclusive=workload_config.end_date_inclusive,
+                target_date=workload_config.target_date,
                 rescale_factor=workload_config.rescale_factor,
             )
 
@@ -202,7 +193,7 @@ class PolicyTuner:
         train_fraction = self._sampling_config.train_fraction
         n_train = int(num_scenarios * train_fraction)
         n_val = num_scenarios - n_train
-        target_date = workload_config.start_date_inclusive
+        target_date = workload_config.target_date
         rescale_factor = workload_config.rescale_factor
         assert target_date is not None
 
@@ -584,48 +575,3 @@ class PolicyTuner:
         console.print()
         console.rule(f"[bold cyan]{message}")
         console.print()
-
-
-if __name__ == "__main__":
-
-    description = "Run the policy tuner from a YAML config file."
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument(
-        "initial_execution_config_path",
-        help="Path to the YAML execution config file.",
-    )
-    parser.add_argument(
-        "tuner_config_path",
-        help="Path to the YAML tuner config file.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help=(
-            "Overwrite an existing run/output directory if present. "
-            "Commands that don't manage a run directory ignore this flag."
-        ),
-    )
-    parser.add_argument(
-        "--param",
-        action="append",
-        metavar="KEY=VALUE",
-        default=[],
-        help=(
-            "Substitute <KEY> placeholder in the config with VALUE. "
-            "May be repeated: --param TARGET_DATE=2024-05-27."
-        ),
-    )
-    args = parser.parse_args()
-
-    try:
-        pt = PolicyTuner(
-            initial_execution_config_path=args.initial_execution_config_path,
-            tuner_config_path=args.tuner_config_path,
-            force=args.force,
-            params=parse_params(args.param),
-        )
-    except AlreadyCompleteError as exc:
-        console.print(f"[dim]Skipping: {exc}[/]")
-        sys.exit(0)
-    pt.tune()

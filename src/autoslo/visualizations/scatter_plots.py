@@ -25,21 +25,22 @@ class ScatterPoint:
     """A single point on a cost-vs-compliance scatter plot."""
 
     formatting_id: str
+    label: str
     x: float
     y: float
 
 
 FORMATTING = {
-    "initial": ("Initial", Palette.gray, "x"),
-    "ground_truth": ("Opt. on Target Day", Palette.dark_purple, "*"),
-    "prev_day": ("Opt. on Past 1 day", Palette.light_blue, "o"),
-    "prev_week": ("Opt. on Past 1 week", Palette.dark_blue, "o"),
-    "prev_month": ("Opt. on Past 1 month", Palette.dark_green, "o"),
-    "16 RPU": ("16 RPU", Palette.light_orange, "s"),
-    "16+16 RPU": ("16+16 RPU", Palette.light_orange, "D"),
-    "32 RPU": ("32 RPU", Palette.dark_orange, "s"),
-    "32+32 RPU": ("32+32 RPU", Palette.dark_orange, "D"),
-    "64 RPU": ("64 RPU", Palette.dark_red, "s"),
+    "initial": (Palette.gray, "x"),
+    "ground_truth": (Palette.dark_purple, "*"),
+    "prev_day": (Palette.light_blue, "o"),
+    "prev_week": (Palette.dark_blue, "o"),
+    "prev_month": (Palette.dark_green, "o"),
+    "base_16": (Palette.light_orange, "s"),
+    "base_16_16": (Palette.light_orange, "D"),
+    "base_32": (Palette.dark_orange, "s"),
+    "base_32_32": (Palette.dark_orange, "D"),
+    "base_64": (Palette.dark_red, "s"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
@@ -195,10 +196,8 @@ def cost_vs_compliance_scatter(
                 f"[yellow]Warning: unknown formatting_id '{pt.formatting_id}' "
                 f"— falling back to default style.[/]"
             )
-        label, color, marker = FORMATTING.get(
-            pt.formatting_id, (pt.formatting_id, Palette.gray, "o")
-        )
-        ax.scatter(pt.x, pt.y, label=label, color=color, marker=marker, s=60)
+        color, marker = FORMATTING.get(pt.formatting_id, (Palette.gray, "o"))
+        ax.scatter(pt.x, pt.y, label=pt.label, color=color, marker=marker, s=60)
 
     ax.set_xlabel(x_metric_asobj.to_plot_axis_label())
     ax.set_ylabel("Cost ($)")

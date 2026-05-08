@@ -124,7 +124,7 @@ def load_yaml_with_params(path: str | Path, params: dict[str, str]) -> Any:
     original_placeholders = set(detect_placeholders(text))
 
     for key, value in params.items():
-        text = text.replace(f"<{key}>", value)
+        text = text.replace(f"<{key}>", str(value))
 
     remaining = detect_placeholders(text)
     if remaining:

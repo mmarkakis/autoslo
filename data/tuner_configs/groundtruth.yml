@@ -35,6 +35,5 @@ query_routing_param_sweep:
           fixed_queries_per_hour: 100
           reservoir_config:
             workload_name: redbench_provisioned_157_0
-            start_date_inclusive: "<PAST_PERIOD_START_DATE>"
-            end_date_inclusive: "<PAST_PERIOD_END_DATE>"
-            rescale_factor: 0.16666667
+            last_day_date_inclusive: "<LAST_DAY_DATE_INCLUSIVE>"
+            num_days: <NUM_DAYS>

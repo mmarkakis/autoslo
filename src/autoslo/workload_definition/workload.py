@@ -104,23 +104,19 @@ class Workload:
         # Slice.
         tz = self._df["abs_start_time"].dt.tz
         mask = pd.Series(True, index=self._df.index)
-        if self._workload_config.start_date_inclusive is not None:
+        if self._workload_config.target_date is not None:
             parsed_start = (
-                pd.Timestamp(self._workload_config.start_date_inclusive)
+                pd.Timestamp(self._workload_config.target_date)
                 .normalize()
                 .tz_localize(tz)
             )
+            parsed_end = parsed_start + pd.Timedelta(days=1)
             mask &= self._df["abs_start_time"] >= parsed_start
-        if self._workload_config.end_date_inclusive is not None:
-            parsed_end = pd.Timestamp(
-                self._workload_config.end_date_inclusive
-            ).normalize().tz_localize(tz) + pd.Timedelta(days=1)
             mask &= self._df["abs_start_time"] < parsed_end
         self._df = self._df[mask].reset_index(drop=True)
 
         # Apply timing transformations.
         self.rescale_rel_times(self._workload_config.rescale_factor)
-
 
     # ------------------------------------------------------------------
     # Core interface

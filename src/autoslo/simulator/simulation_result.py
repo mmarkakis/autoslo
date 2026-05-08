@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -26,6 +26,7 @@ class SimulationResult:
     @staticmethod
     def load(
         simulation_dir: str | Path,
+        slo_resolver: Optional[SloResolver] = None,
     ) -> SimulationResult:
         """Load a SimulationResult from the output directory of a single
         simulation.
@@ -36,12 +37,14 @@ class SimulationResult:
         """
         simulation_dir = Path(simulation_dir)
 
-        # -- build slo resolver for this scenario from its execution_config.yml --
-        config_path = simulation_dir / "execution_config.yml"
-        config: dict[str, Any] = {}
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
-        slo_resolver = SloResolver(SloResolverConfig.from_config(config))
+        # -- If not provided, build slo resolver for this scenario from its 
+        # execution_config.yml --
+        if slo_resolver is None:
+            config_path = simulation_dir / "execution_config.yml"
+            config: dict[str, Any] = {}
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+            slo_resolver = SloResolver(SloResolverConfig.from_config(config))
 
         # -- cost --
         total_cost = 0.0

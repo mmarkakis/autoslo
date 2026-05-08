@@ -1,41 +1,67 @@
 # AutoSLO
-Mock extended benchmark workloads by composing chunks
 
 
 
-# Workgroup creation runbook
+## Policy Tuning
 
-1. Create workgroup
-    - Impose base RPU = max RPU
-    - Make sure to add the admin password manually.
-    - Attach IAM roles (command access, loader)
-    - Export logs as needed.
-    
-    
+`src/autoslo/entry_points/tune.py`
 
-2. Make publicly accessible:
-```bash
- aws redshift-serverless update-workgroup   --workgroup-name <workgroup_name>  --publicly-accessible 
-```
+**Objective**: Optimize an `execution_config` for a (maybe forecasted) workload.
 
-3. Attach TPC-DS data
-    - Go to query editor v2, connect to dev on the new workgroup.
-    - Run:
-```SQL
+**Conceptual Inputs**: 
+- An initial `execution_config` living in `data/execution_configs/*/`
+- A tuner config living in `data/tuner_configs`.
+- Values for certain parameters in these two files.
 
-CREATE DATABASE tpcds_db
-FROM DATASHARE tpcds_datashare
-OF ACCOUNT '147854383891'
-NAMESPACE '1015d398-b04c-40d0-bb67-257e0956c96d';
+**Concrete Inputs**:
+One the command line, we have two options:
+- Provide the three inputs above separately.
+- Point to a `tuning_manifest` living in `data/manifests/tuning/`, a 
+YAML file containing the above inputs.
 
-CREATE EXTERNAL SCHEMA ext_tpcds1 FROM redshift DATABASE tpcds_db SCHEMA tpcds1;
-CREATE EXTERNAL SCHEMA ext_tpcds10 FROM redshift DATABASE tpcds_db SCHEMA tpcds10;
-CREATE EXTERNAL SCHEMA ext_tpcds100 FROM redshift DATABASE tpcds_db SCHEMA tpcds100;
-CREATE EXTERNAL SCHEMA ext_tpcds1000 FROM redshift DATABASE tpcds_db SCHEMA tpcds1000;
-CREATE EXTERNAL SCHEMA ext_tpcds3000 FROM redshift DATABASE tpcds_db SCHEMA tpcds3000;
-CREATE EXTERNAL SCHEMA ext_tpcds10000 FROM redshift DATABASE tpcds_db SCHEMA tpcds10000;
+**Outputs**: 
+- An optimized `execution_config`, stored in  `data/execution_configs/tuned/`.
+- Detailed intermediate outputs stored in `data/tuner_runs/<TUNER_RUN_NAME>`. 
+The `TUNER_RUN_NAME` is deterministically derived from the inputs. 
 
-```
 
-python3 experiments/08_selector_benchmarking/verbose_selection_on_chunk.py --iconq_model_id=1769376434 --workload_name=tpcds_99templates_00pctheavy_120meaninterarrivals --optimize_cumulative_slo_violation_time --use_stage_for_isolated_queries --run_id 9999 --use_simulator
+## Execution
 
+`src/autoslo/entry_points/execute.py`
+
+**Objective**: Execute combinations of (workload, `execution_config`), either
+against the simulator or against live Redshift clusters.
+
+**Inputs**:
+- An `execution_manifest` specifying the combinations to run, living in 
+`data/manifests/execution`.
+- A flag for whether to run against the simulator or against live clusters.
+
+**Outputs if running against simulator**:
+- A directory with simulation results for each combination, stored at 
+`data/simulator_runs/<workload_id>/<execution_config_id>` (derived automatically
+from the specification of each combination)
+
+**Outputs if running against Redshift**:
+- A directory with run results for each combination, stored at 
+`data/runs/<run_timestamp>` (derived automatically), so that we never overwrite
+runs even if rerunning the same combination.
+- An updated metadata file at `data/runs/map.yml`, collecting tuples of (
+    `<run_timestamp>, <workload_id>, <execution_config_id>`).
+
+
+
+## Plotting
+
+`src/autoslo/entry_points/plot.py`
+
+**Objective**: Plot the SLO performance of different execution outputs (on the
+simulator or on live workload clusters)
+
+**Inputs**: 
+- A `plotting_manifest` specifying the points to plot, living in 
+`data/manifests/plotting/<plot_name>.yml`.
+- A flag for whether to plot based on simulator runs or live cluster runs.
+
+**Outputs**:
+- A plot living in `data/plots/<plot_name>.png`

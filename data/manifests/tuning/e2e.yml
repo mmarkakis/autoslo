@@ -1,0 +1,144 @@
+locals:
+    default_configs: &default_configs
+        initial_execution_config: "exec:handmade/base_iconq"
+        tuner_config: "tuner:sampled"
+    default_slo: &default_slo
+        SLO_DICT_FILENAME: "ext_tpcds1000_rpu16_p90_k4.0.yml"
+        SLO_THRESHOLD: 0.05
+    may27_default_params: &may27_default_params
+        LAST_DAY_DATE_INCLUSIVE: "2024-05-26"
+        NUM_DAYS: 30
+        TARGET_DATE: "2024-05-27"
+        <<: *default_slo
+    may26_default_params: &may26_default_params
+        LAST_DAY_DATE_INCLUSIVE: "2024-05-25"
+        NUM_DAYS: 30
+        TARGET_DATE: "2024-05-26"
+        <<: *default_slo
+    may25_default_params: &may25_default_params
+        LAST_DAY_DATE_INCLUSIVE: "2024-05-24"
+        NUM_DAYS: 30
+        TARGET_DATE: "2024-05-25"
+        <<: *default_slo
+    may24_default_params: &may24_default_params
+        LAST_DAY_DATE_INCLUSIVE: "2024-05-23"
+        NUM_DAYS: 30
+        TARGET_DATE: "2024-05-24"
+        <<: *default_slo
+
+main_content:
+    # May 27 runs
+    may27_1month_k4_thresh5:
+        configs: *default_configs
+        params: *may27_default_params
+    may27_1week_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            NUM_DAYS: 7
+    may27_1day_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            NUM_DAYS: 1
+    may27_oracle_k4_thresh5:
+        configs:
+            initial_execution_config: "exec:handmade/base_iconq"
+            tuner_config: "tuner:groundtruth"
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+
+    # May 26 runs
+    may26_1month_k4_thresh5:
+        configs: *default_configs
+        params: *may26_default_params
+    may26_1week_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may26_default_params
+            NUM_DAYS: 7
+    may26_1day_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may26_default_params
+            NUM_DAYS: 1
+    may26_oracle_k4_thresh5:
+        configs:
+            initial_execution_config: "exec:handmade/base_iconq"
+            tuner_config: "tuner:groundtruth"
+        params:
+            <<: *may26_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-26"
+            NUM_DAYS: 1
+
+    # May 25 runs
+    may25_1month_k4_thresh5:
+        configs: *default_configs
+        params: *may25_default_params
+    may25_1week_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may25_default_params
+            NUM_DAYS: 7
+    may25_1day_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may25_default_params
+            NUM_DAYS: 1
+    may25_oracle_k4_thresh5:
+        configs:
+            initial_execution_config: "exec:handmade/base_iconq"
+            tuner_config: "tuner:groundtruth"
+        params:
+            <<: *may25_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-25"
+            NUM_DAYS: 1
+
+    # May 24 runs
+    may24_1month_k4_thresh5:
+        configs: *default_configs
+        params: *may24_default_params
+    may24_1week_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may24_default_params
+            NUM_DAYS: 7
+    may24_1day_k4_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may24_default_params
+            NUM_DAYS: 1
+    may24_oracle_k4_thresh5:
+        configs:
+            initial_execution_config: "exec:handmade/base_iconq"
+            tuner_config: "tuner:groundtruth"
+        params:
+            <<: *may24_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-24"
+            NUM_DAYS: 1
+
+    # Other thresholds
+    may27_1month_k4_thresh1:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            SLO_THRESHOLD: 0.01
+    may27_1month_k4_thresh10:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            SLO_THRESHOLD: 0.10
+
+    # Other k values
+    may27_1month_k1.5_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            SLO_DICT_FILENAME: "ext_tpcds1000_rpu16_p90_k1.5.yml"
+    may27_1month_k2.5_thresh5:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            SLO_DICT_FILENAME: "ext_tpcds1000_rpu16_p90_k2.5.yml"

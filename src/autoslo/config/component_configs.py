@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Self
 
+import autoslo.filesystem.path_utils as pu
 from autoslo.slo.slo_metric import SloMetric
 
 # An "execution config" is the YAML config file that a user provides to run
@@ -69,16 +70,18 @@ class WorkloadConfig(_PartialConfig):
 
     workload_name: str
     workload_dir: Optional[str | Path] = None  # Defaults to data/workloads/
-    start_date_inclusive: Optional[str] = None  # YYYY-MM-DD
-    end_date_inclusive: Optional[str] = None  # YYYY-MM-DD
+    target_date: Optional[str] = None  # YYYY-MM-DD
     rescale_factor: float = 1.0
+
+    def __post_init__(self):
+        if self.workload_dir is None:
+            object.__setattr__(self, "workload_dir", pu.get_workloads_dir())
 
     def id(self) -> str:
         return "__".join(
             [
                 self.workload_name,
-                self.start_date_inclusive or "start",
-                self.end_date_inclusive or "end",
+                self.target_date or "target",
                 f"rf{self.rescale_factor:.3f}",
             ]
         )
@@ -88,22 +91,42 @@ class WorkloadConfig(_PartialConfig):
         """Reconstruct a WorkloadConfig from its id() string."""
         parts = wid.split("__")
         name = "__".join(parts[:-3])
-        start, end, rf = parts[-3], parts[-2], parts[-1]
+        target, rf = parts[-3], parts[-1]
         return cls(
             workload_name=name,
-            start_date_inclusive=None if start == "start" else start,
-            end_date_inclusive=None if end == "end" else end,
+            target_date=None if target == "target" else target,
             rescale_factor=float(rf[2:]),
         )
 
 
 @dataclass(frozen=True)
-class ReservoirConfig(WorkloadConfig):
+class ReservoirConfig(_PartialConfig):
     """
     Configuration for the query reservoir, including the schema and parameters
     for loading the reservoir. This is a subclass of WorkloadConfig since the
     reservoir is built from a workload.
     """
+
+    workload_name: str
+    last_day_date_inclusive: str  # YYYY-MM-DD
+    num_days: int = 1
+    workload_dir: Optional[str | Path] = None  # Defaults to data/workloads/
+
+    def __post_init__(self):
+        if self.workload_dir is None:
+            object.__setattr__(self, "workload_dir", pu.get_workloads_dir())
+
+    def to_workload_config(self) -> WorkloadConfig:
+        """
+        Convert this ReservoirConfig to a WorkloadConfig that covers at least
+        the same time period.
+        """
+        return WorkloadConfig(
+            workload_name=self.workload_name,
+            workload_dir=self.workload_dir,
+            target_date=None,
+            rescale_factor=1.0,
+        )
 
 
 @dataclass(frozen=True)
