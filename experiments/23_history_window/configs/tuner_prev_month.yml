@@ -21,7 +21,7 @@ runner_config:
   max_threads: 512
   
 provisioner_config:
-  relative_aws_config_path: data/__run_configs/aws.yml
+  relative_aws_config_path: data/config/aws.yml
   spin_up_delay_s: 300.0
 
 managed_cluster_pool_config:
