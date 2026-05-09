@@ -53,43 +53,7 @@ def _plot_is_up_to_date(
     return is_up_to_date(plot_path, *inputs)
 
 
-def main() -> None:
-    # Argument parsing.
-    description = "Generate a plot from a plot manifest."
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument(
-        "--plotting_manifest_path",
-        help=(
-            "Name of the plot manifest (resolved under "
-            "data/manifests/plotting) or an explicit path to a .yml file."
-        ),
-    )
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="Run sequentially using the workload runner, not the simulator.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Re-render the plot even if it is already up to date.",
-    )
-    args = parser.parse_args()
-
-    manifest_path = Path(args.plotting_manifest_path)
-    if not manifest_path.is_absolute():
-        name = (
-            args.plotting_manifest_path
-            if args.plotting_manifest_path.endswith(".yml")
-            else args.plotting_manifest_path + ".yml"
-        )
-        manifest_path = (
-            Path(pu.get_data_path()) / "manifests" / "plotting" / name
-        )
-    if not manifest_path.exists():
-        parser.error(f"Plot manifest not found: {manifest_path}")
-
-    # Useful work.
+def _generate_plot(manifest_path: Path, force: bool) -> None:
     manifest = load_yaml(manifest_path)
     content = manifest["main_content"]
     plot_name = manifest_path.stem
@@ -102,7 +66,7 @@ def main() -> None:
 
     points_spec: list[dict] = content["points"]
 
-    if not args.force and _plot_is_up_to_date(
+    if not force and _plot_is_up_to_date(
         manifest_path, plot_path, points_spec, sim_runs_dir
     ):
         console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
@@ -156,6 +120,62 @@ def main() -> None:
         plot_legend_to(legend_path)
         console.print(f"[green]Saved:[/] {legend_path}")
 
+
+def main() -> None:
+    # Argument parsing.
+    description = "Generate a plot from a plot manifest."
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "--plotting_manifest_path",
+        help=(
+            "Name of the plot manifest (resolved under "
+            "data/manifests/plotting) or an explicit path to a .yml file."
+        ),
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Generate all plots defined in the manifest directory.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Run sequentially using the workload runner, not the simulator.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-render the plot even if it is already up to date.",
+    )
+    args = parser.parse_args()
+
+    manifests_dir = Path(pu.get_data_path()) / "manifests" / "plotting"
+
+    if args.all:
+        manifest_paths = sorted(manifests_dir.glob("*.yml"))
+        if not manifest_paths:
+            console.print("[yellow]No plot manifests found in the manifest directory.[/]")
+            return
+        for manifest_path in manifest_paths:
+            _generate_plot(manifest_path, force=args.force)
+        console.print("\n[bold green]Done.[/]")
+        return
+
+    if not args.plotting_manifest_path:
+        parser.error("one of --plotting_manifest_path or --all is required")
+
+    manifest_path = Path(args.plotting_manifest_path)
+    if not manifest_path.is_absolute():
+        name = (
+            args.plotting_manifest_path
+            if args.plotting_manifest_path.endswith(".yml")
+            else args.plotting_manifest_path + ".yml"
+        )
+        manifest_path = manifests_dir / name
+    if not manifest_path.exists():
+        parser.error(f"Plot manifest not found: {manifest_path}")
+
+    _generate_plot(manifest_path, force=args.force)
     console.print("\n[bold green]Done.[/]")
 
 
