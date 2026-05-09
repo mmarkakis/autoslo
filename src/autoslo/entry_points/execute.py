@@ -32,7 +32,7 @@ def main():
     )
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "execution_manifest",
+        "--execution_manifest_path",
         help=(
             "Name of the execution manifest (resolved under "
             "data/manifests/execution) or an explicit path to a .yml file."
@@ -53,7 +53,7 @@ def main():
     )
     args = parser.parse_args()
 
-    manifest_path = Path(args.execution_manifest)
+    manifest_path = Path(args.execution_manifest_path)
     if not manifest_path.is_absolute():
         manifest_path = (
             Path(pu.get_data_path())

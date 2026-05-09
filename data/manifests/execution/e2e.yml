@@ -17,7 +17,7 @@ locals:
     rescale_factor: 0.16666667
 
 main_content:
-  # May 27 base runs
+  # May 27 runs
   - workload_config: *may27_workload_config
     execution_config: exec:tuned/may27_oracle_k4_thresh5
   - workload_config: *may27_workload_config
@@ -27,11 +27,33 @@ main_content:
   - workload_config: *may27_workload_config
     execution_config: exec:tuned/may27_1month_k4_thresh5
 
-  # Other days
+  # May 26 runs
+  - workload_config: *may26_workload_config
+    execution_config: exec:tuned/may26_oracle_k4_thresh5
+  - workload_config: *may26_workload_config
+    execution_config: exec:tuned/may26_1day_k4_thresh5
+  - workload_config: *may26_workload_config
+    execution_config: exec:tuned/may26_1week_k4_thresh5
   - workload_config: *may26_workload_config
     execution_config: exec:tuned/may26_1month_k4_thresh5
+
+  # May 25 runs
+  - workload_config: *may25_workload_config
+    execution_config: exec:tuned/may25_oracle_k4_thresh5
+  - workload_config: *may25_workload_config
+    execution_config: exec:tuned/may25_1day_k4_thresh5
+  - workload_config: *may25_workload_config
+    execution_config: exec:tuned/may25_1week_k4_thresh5
   - workload_config: *may25_workload_config
     execution_config: exec:tuned/may25_1month_k4_thresh5
+
+  # May 24 runs
+  - workload_config: *may24_workload_config
+    execution_config: exec:tuned/may24_oracle_k4_thresh5
+  - workload_config: *may24_workload_config
+    execution_config: exec:tuned/may24_1day_k4_thresh5
+  - workload_config: *may24_workload_config
+    execution_config: exec:tuned/may24_1week_k4_thresh5
   - workload_config: *may24_workload_config
     execution_config: exec:tuned/may24_1month_k4_thresh5
 

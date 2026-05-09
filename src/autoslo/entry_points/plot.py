@@ -58,7 +58,7 @@ def main() -> None:
     description = "Generate a plot from a plot manifest."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
-        "plot_manifest",
+        "--plotting_manifest_path",
         help=(
             "Name of the plot manifest (resolved under "
             "data/manifests/plotting) or an explicit path to a .yml file."
@@ -76,12 +76,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    manifest_path = Path(args.plot_manifest)
+    manifest_path = Path(args.plotting_manifest_path)
     if not manifest_path.is_absolute():
         name = (
-            args.plot_manifest
-            if args.plot_manifest.endswith(".yml")
-            else args.plot_manifest + ".yml"
+            args.plotting_manifest_path
+            if args.plotting_manifest_path.endswith(".yml")
+            else args.plotting_manifest_path + ".yml"
         )
         manifest_path = (
             Path(pu.get_data_path()) / "manifests" / "plotting" / name
