@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 from rich.console import Console
 
 import autoslo.filesystem.path_utils as pu
@@ -41,53 +42,36 @@ def _x_value(result: ExecutionResult, metric: SloMetric) -> float:
 def _plot_is_up_to_date(
     manifest_path: Path,
     plot_path: Path,
-    points: list[dict],
+    all_points_specs: list[list[dict]],
     sim_runs_dir: Path,
 ) -> bool:
     inputs = [manifest_path]
-    for point in points:
-        workload_config = WorkloadConfig.from_config(point)
-        exec_cfg_path = resolve_config(point["execution_config"])
-        run_dir = sim_runs_dir / workload_config.id() / exec_cfg_path.stem
-        inputs.append(run_dir / "execution_config.yml")
+    for points_spec in all_points_specs:
+        for point in points_spec:
+            workload_config = WorkloadConfig.from_config(point)
+            exec_cfg_path = resolve_config(point["execution_config"])
+            run_dir = sim_runs_dir / workload_config.id() / exec_cfg_path.stem
+            inputs.append(run_dir / "execution_config.yml")
     return is_up_to_date(plot_path, *inputs)
 
 
-def _generate_plot(manifest_path: Path, force: bool) -> None:
-    manifest = load_yaml(manifest_path)
-    content = manifest["main_content"]
-    plot_name = manifest_path.stem
-
-    data_path = Path(pu.get_data_path())
-    sim_runs_dir = data_path / "simulator_runs"
-    plots_dir = data_path / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    plot_path = plots_dir / f"{plot_name}.png"
-
-    points_spec: list[dict] = content["points"]
-
-    if not force and _plot_is_up_to_date(
-        manifest_path, plot_path, points_spec, sim_runs_dir
-    ):
-        console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
-        return
-
-    slo_obj = SloObjective(SloObjectiveConfig.from_config(content))
-    slo_resolver = SloResolver(SloResolverConfig.from_config(content))
-
+def _load_scatter_points(
+    points_spec: list[dict],
+    slo_obj: SloObjective,
+    slo_resolver: SloResolver,
+    sim_runs_dir: Path,
+) -> list[ScatterPoint]:
     scatter_points: list[ScatterPoint] = []
     for point in points_spec:
         workload_config = WorkloadConfig.from_config(point)
         exec_cfg_path = resolve_config(point["execution_config"])
         run_dir = sim_runs_dir / workload_config.id() / exec_cfg_path.stem
-
         if not (run_dir / "execution_config.yml").exists():
             console.print(
                 f"[yellow]Warning: simulation run not found at {run_dir} "
                 f"— skipping point '{point['label']}'.[/]"
             )
             continue
-
         result = ExecutionResult.load(run_dir, slo_resolver=slo_resolver)
         scatter_points.append(
             ScatterPoint(
@@ -97,6 +81,32 @@ def _generate_plot(manifest_path: Path, force: bool) -> None:
                 y=result.total_cost,
             )
         )
+    return scatter_points
+
+
+def _generate_single_panel_plot(
+    content: dict,
+    manifest_path: Path,
+    plot_path: Path,
+    plot_name: str,
+    sim_runs_dir: Path,
+    plots_dir: Path,
+    force: bool,
+) -> None:
+    points_spec: list[dict] = content["points"]
+
+    if not force and _plot_is_up_to_date(
+        manifest_path, plot_path, [points_spec], sim_runs_dir
+    ):
+        console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
+        return
+
+    slo_obj = SloObjective(SloObjectiveConfig.from_config(content))
+    slo_resolver = SloResolver(SloResolverConfig.from_config(content))
+
+    scatter_points = _load_scatter_points(
+        points_spec, slo_obj, slo_resolver, sim_runs_dir
+    )
 
     if not scatter_points:
         console.print(
@@ -119,6 +129,157 @@ def _generate_plot(manifest_path: Path, force: bool) -> None:
         legend_path = plots_dir / f"{plot_name}_legend.png"
         plot_legend_to(legend_path)
         console.print(f"[green]Saved:[/] {legend_path}")
+
+
+def _generate_multi_panel_plot(
+    manifest: dict,
+    manifest_path: Path,
+    plot_path: Path,
+    plot_name: str,
+    sim_runs_dir: Path,
+    plots_dir: Path,
+    force: bool,
+) -> None:
+    layout: dict = manifest.get("layout", {})
+    panels_spec: list[dict] = manifest["panels"]
+
+    # Validate: no duplicate (row, col).
+    seen_positions: set[tuple[int, int]] = set()
+    for panel in panels_spec:
+        pos = (panel["row"], panel["col"])
+        if pos in seen_positions:
+            raise ValueError(
+                f"Duplicate panel position {pos} in manifest '{plot_name}'."
+            )
+        seen_positions.add(pos)
+
+    # Infer grid dimensions from panel positions, allow explicit overrides.
+    max_row = max(p["row"] for p in panels_spec)
+    max_col = max(p["col"] for p in panels_spec)
+    rows: int = layout.get("rows", max_row + 1)
+    cols: int = layout.get("cols", max_col + 1)
+
+    # Validate all panels are within bounds.
+    for panel in panels_spec:
+        if panel["row"] >= rows or panel["col"] >= cols:
+            raise ValueError(
+                f"Panel at ({panel['row']}, {panel['col']}) is out of bounds "
+                f"for a {rows}x{cols} grid in manifest '{plot_name}'."
+            )
+
+    # Up-to-date check across all panels.
+    all_points_specs = [p["points"] for p in panels_spec]
+    if not force and _plot_is_up_to_date(
+        manifest_path, plot_path, all_points_specs, sim_runs_dir
+    ):
+        console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
+        return
+
+    figsize: tuple[float, float] = tuple(
+        layout.get("figsize", [6 * cols, 5 * rows])
+    )
+    shared_xlim: bool = layout.get("shared_xlim", False)
+    shared_ylim: bool = layout.get("shared_ylim", False)
+    show_legend: bool = layout.get("show_legend", False)
+
+    fig, axes_2d = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
+
+    rendered_xlims: list[tuple[float, float]] = []
+    rendered_ylims: list[tuple[float, float]] = []
+    rendered_axes: list[Axes] = []
+
+    for panel in panels_spec:
+        row, col = panel["row"], panel["col"]
+        ax: Axes = axes_2d[row][col]
+
+        slo_obj = SloObjective(SloObjectiveConfig.from_config(panel))
+        slo_resolver = SloResolver(SloResolverConfig.from_config(panel))
+        points_spec: list[dict] = panel["points"]
+
+        scatter_points = _load_scatter_points(
+            points_spec, slo_obj, slo_resolver, sim_runs_dir
+        )
+
+        if not scatter_points:
+            console.print(
+                f"[yellow]No data points found for panel ({row}, {col}) "
+                f"in '{plot_name}' — leaving panel blank.[/]"
+            )
+            ax.set_visible(False)
+            continue
+
+        title: str | None = panel.get("title") or None
+        _, _, xlims, ylims = cost_vs_compliance_scatter(
+            scatter_points,
+            x_metric=slo_obj.slo_metric,
+            x_threshold_objective=slo_obj,
+            title=title,
+            ax=ax,
+        )
+        rendered_xlims.append(xlims)
+        rendered_ylims.append(ylims)
+        rendered_axes.append(ax)
+
+    # Apply shared axis limits if requested.
+    if shared_xlim and rendered_xlims:
+        unified_left = min(lims[0] for lims in rendered_xlims)
+        unified_right = max(lims[1] for lims in rendered_xlims)
+        for ax in rendered_axes:
+            ax.set_xlim(unified_left, unified_right)
+
+    if shared_ylim and rendered_ylims:
+        unified_bottom = min(lims[0] for lims in rendered_ylims)
+        unified_top = max(lims[1] for lims in rendered_ylims)
+        for ax in rendered_axes:
+            ax.set_ylim(unified_bottom, unified_top)
+
+    # Hide unused axes.
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) not in seen_positions:
+                axes_2d[r][c].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    console.print(f"[green]Saved:[/] {plot_path}")
+
+    if show_legend:
+        legend_path = plots_dir / f"{plot_name}_legend.png"
+        plot_legend_to(legend_path)
+        console.print(f"[green]Saved:[/] {legend_path}")
+
+
+def _generate_plot(manifest_path: Path, force: bool) -> None:
+    manifest = load_yaml(manifest_path)
+    plot_name = manifest_path.stem
+
+    data_path = Path(pu.get_data_path())
+    sim_runs_dir = data_path / "simulator_runs"
+    plots_dir = data_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = plots_dir / f"{plot_name}.png"
+
+    if "panels" in manifest['main_content']:    
+        _generate_multi_panel_plot(
+            manifest["main_content"],
+            manifest_path,
+            plot_path,
+            plot_name,
+            sim_runs_dir,
+            plots_dir,
+            force,
+        )
+    else:
+        _generate_single_panel_plot(
+            manifest["main_content"],
+            manifest_path,
+            plot_path,
+            plot_name,
+            sim_runs_dir,
+            plots_dir,
+            force,
+        )
 
 
 def main() -> None:
