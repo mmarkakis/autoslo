@@ -2,6 +2,7 @@ import os
 import uuid
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional, cast
 
 import pandas as pd
@@ -517,7 +518,9 @@ class Trace:
             if os.path.exists(config_path):
                 with open(config_path) as f:
                     cfg = yaml.safe_load(f) or {}
-                schema_name = cfg.get("basic_config", {}).get("schema_name", "") #FIXME
+                schema_name = cfg.get("basic_config", {}).get(
+                    "schema_name", ""
+                )  # FIXME
             else:
                 schema_name = ""
 
@@ -777,6 +780,31 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
+
+    @staticmethod
+    def aborted_query_ids_from_dir(run_dir) -> set[str]:
+        """Return the raw Redshift query IDs that were aborted in *run_dir*.
+
+        Reads only the ``query_id`` and ``status`` columns from every
+        ``sys_query_history+<cluster>.parquet`` file in *run_dir* without
+        constructing a full :class:`Trace` object.  A query is considered
+        aborted when its ``status`` value does not contain ``"success"``
+        (mirrors :meth:`was_aborted`).
+
+        Returns an empty set when no ``sys_query_history`` files are present.
+
+        Parameters
+        ----------
+        run_dir :
+            Path to the run output directory (e.g. ``data/runs/<run_id>/``).
+        """
+        run_dir = Path(run_dir)
+        aborted: set[str] = set()
+        for pq_path in run_dir.glob("sys_query_history+*.parquet"):
+            df = pd.read_parquet(pq_path, columns=["query_id", "status"])
+            mask = ~df["status"].str.contains("success", na=False)
+            aborted.update(df.loc[mask, "query_id"].astype(str).tolist())
+        return aborted
 
     # ------------------------------------------------------------------
     # SLO configuration and compliance
