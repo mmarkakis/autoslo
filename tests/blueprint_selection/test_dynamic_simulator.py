@@ -16,8 +16,8 @@ import pytest
 
 from autoslo.capacity.policy_tuner import DynamicClusterConfig
 from autoslo.clusters.cluster import Cluster
-from autoslo.simulator.workload_simulator import WorkloadSimulator
 from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
 # ---------------------------------------------------------------------------
 # Helpers

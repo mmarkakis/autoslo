@@ -23,13 +23,13 @@ from rich.progress import (
 
 import autoslo.config.utils as cfgu
 from autoslo.config.component_configs import WorkloadConfig
-from autoslo.simulator.simulation_result import SimulationResult
-from autoslo.simulator.workload_simulator import WorkloadSimulator
 from autoslo.tuner.parallelism import (
     _init_worker,
     deg_of_parallelism,
     inner_level_num_cpus,
 )
+from autoslo.workload_execution.execution_result import ExecutionResult
+from autoslo.workload_execution.workload_simulator import WorkloadSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _run_one_combination(
     config: dict[str, Any],
     render_log: bool,
     progress_dict,
-) -> SimulationResult:
+) -> ExecutionResult:
     """Execute a single simulation inside a worker process.
 
     This function is the target for :class:`ProcessPoolExecutor`.  It is
@@ -139,7 +139,7 @@ class ScenarioEvaluator:
         config_labels: list[str] | None = None,
         workload_first: bool = True,
         render_log: bool = False,
-    ) -> list[list[SimulationResult]]:
+    ) -> list[list[ExecutionResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
         accepts a list of override dicts instead of full configs, and applies
@@ -169,8 +169,8 @@ class ScenarioEvaluator:
         configs: list[dict[str, Any]],
         config_labels: list[str] | None = None,
         workload_first: bool = True,
-        render_log: bool = False,   
-    ) -> list[list[SimulationResult]]:
+        render_log: bool = False,
+    ) -> list[list[ExecutionResult]]:
         """
         Evaluate the cross-product of *workload_configs* and *configs* in
         parallel, with unified progress tracking and result collection.
@@ -195,7 +195,7 @@ class ScenarioEvaluator:
         Returns
         -------
         A nested list where ``results[config_idx][workload_idx]`` is the
-        :class:`SimulationResult` for that combination.  The outer list
+        :class:`ExecutionResult` for that combination.  The outer list
         is ordered by *configs* and the inner list by *workload_configs*.
         """
 
@@ -216,7 +216,7 @@ class ScenarioEvaluator:
         progress_dict = mgr.dict()
         ctx = get_context("spawn")
         num_workloads = len(workload_configs)
-        results: dict[int, dict[int, SimulationResult]] = {}
+        results: dict[int, dict[int, ExecutionResult]] = {}
         out_dir = Path(out_dir)
 
         # Execute in parallel.
@@ -245,7 +245,7 @@ class ScenarioEvaluator:
                     combination_idx,
                     workload_config,
                     configs[config_idx],
-                    render_log, 
+                    render_log,
                     progress_dict,
                 )
                 futures[f] = combination_idx

@@ -10,12 +10,12 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from rich.console import Console
 
-from autoslo.simulator.aggregated_simulation_results import (
-    AggregatedSimulationResults,
-)
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.visualizations.colors import Palette
+from autoslo.workload_execution.aggregated_execution_results import (
+    AggregatedExecutionResults,
+)
 
 _console = Console()
 
@@ -230,7 +230,7 @@ def cost_vs_compliance_scatter(
 
 
 def cli_cost_vs_compliance_scatter(
-    entries: list[tuple[str, AggregatedSimulationResults]],
+    entries: list[tuple[str, AggregatedExecutionResults]],
     slo_objective: SloObjective,
 ) -> None:
     """Print a terminal scatter plot of violation vs cost."""

@@ -1,7 +1,7 @@
 import argparse
 
 from autoslo.blueprint_selection.selector import BlueprintSelector
-from autoslo.simulator.workload_simulator import (
+from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
 

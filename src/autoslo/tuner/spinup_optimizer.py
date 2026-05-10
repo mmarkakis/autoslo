@@ -24,21 +24,21 @@ from rich.table import Table
 import autoslo.config.utils as cfgu
 from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.component_configs import (
-    SpinupOptimizerConfig,
     SloObjectiveConfig,
     SloResolverConfig,
+    SpinupOptimizerConfig,
     WorkloadConfig,
 )
 from autoslo.filesystem.logging import query_latencies_from_log
 from autoslo.filesystem.yaml_helpers import dump_yaml
-from autoslo.simulator.aggregated_simulation_results import (
-    AggregatedSimulationResults,
-)
-from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.workload_execution.aggregated_execution_results import (
+    AggregatedExecutionResults,
+)
+from autoslo.workload_execution.execution_result import ExecutionResult
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -76,7 +76,7 @@ def add_spinup_to_config(
 
 
 def find_next_spinup_time(
-    results: list[SimulationResult],
+    results: list[ExecutionResult],
     slo_resolver: SloResolver,
     slo_objective: SloObjective,
     min_delinquent_workloads: int,
@@ -352,7 +352,7 @@ class SpinupOptimizer:
     def optimize(
         self,
         train_workload_configs: list[WorkloadConfig],
-    ) -> tuple[dict[str, Any], AggregatedSimulationResults]:
+    ) -> tuple[dict[str, Any], AggregatedExecutionResults]:
         """Run the greedy spin-up placement loop.
 
         Spin-ups are placed greedily using training data only.
@@ -388,8 +388,8 @@ class SpinupOptimizer:
         # Track evaluation results for the current config to avoid
         # re-evaluation across rounds.  When a candidate is accepted,
         # its results carry forward as the next round's baseline.
-        current_train_results: list[SimulationResult] | None = None
-        current_train_agg: AggregatedSimulationResults | None = None
+        current_train_results: list[ExecutionResult] | None = None
+        current_train_agg: AggregatedExecutionResults | None = None
 
         for round_idx in range(max_spinups):
             console.rule(f"[dim]Spin-up round {round_idx}[/]", characters="-")
@@ -412,7 +412,7 @@ class SpinupOptimizer:
                     )
                 )
                 train_results = nested_train_results[0]
-                agg_train_results = AggregatedSimulationResults.aggregate_from(
+                agg_train_results = AggregatedExecutionResults.aggregate_from(
                     train_results, self._agg_method
                 )
                 current_train_agg = agg_train_results
@@ -494,10 +494,10 @@ class SpinupOptimizer:
                     workload_first=False,
                 )
                 cands: list[
-                    tuple[ScheduledSpinUp, AggregatedSimulationResults]
+                    tuple[ScheduledSpinUp, AggregatedExecutionResults]
                 ] = []
                 for spinup, trial_results in zip(spinups, all_trial_results):
-                    agg = AggregatedSimulationResults.aggregate_from(
+                    agg = AggregatedExecutionResults.aggregate_from(
                         trial_results, self._agg_method
                     )
                     cands.append((spinup, agg))
@@ -538,7 +538,7 @@ class SpinupOptimizer:
                         cands,
                         best_su,
                     )
-                    AggregatedSimulationResults.print_comparison(
+                    AggregatedExecutionResults.print_comparison(
                         ("Current config", agg_train_results),
                         ("Best candidate", best_agg),
                         agg_method=self._agg_method,
@@ -598,7 +598,7 @@ class SpinupOptimizer:
         candidates: list[
             tuple[
                 ScheduledSpinUp,
-                AggregatedSimulationResults,
+                AggregatedExecutionResults,
             ]
         ],
         best_su: ScheduledSpinUp,

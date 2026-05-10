@@ -52,7 +52,7 @@ import yaml
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.workload_definition.query import SloMetric
-from autoslo.simulator.workload_simulator import (
+from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
 from autoslo.capacity.policy_tuner import (

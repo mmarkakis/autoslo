@@ -15,7 +15,6 @@ from autoslo.config.component_configs import (
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import load_yaml
-from autoslo.simulator.simulation_result import SimulationResult
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -24,11 +23,12 @@ from autoslo.visualizations.scatter_plots import (
     cost_vs_compliance_scatter,
     plot_legend_to,
 )
+from autoslo.workload_execution.execution_result import ExecutionResult
 
 console = Console()
 
 
-def _x_value(result: SimulationResult, metric: SloMetric) -> float:
+def _x_value(result: ExecutionResult, metric: SloMetric) -> float:
     if metric is SloMetric.BINARY:
         return result.violation_rate
     if metric is SloMetric.ABSOLUTE_S:
@@ -88,7 +88,7 @@ def _generate_plot(manifest_path: Path, force: bool) -> None:
             )
             continue
 
-        result = SimulationResult.load(run_dir, slo_resolver=slo_resolver)
+        result = ExecutionResult.load(run_dir, slo_resolver=slo_resolver)
         scatter_points.append(
             ScatterPoint(
                 formatting_id=point["formatting_id"],
@@ -154,7 +154,9 @@ def main() -> None:
     if args.all:
         manifest_paths = sorted(manifests_dir.glob("*.yml"))
         if not manifest_paths:
-            console.print("[yellow]No plot manifests found in the manifest directory.[/]")
+            console.print(
+                "[yellow]No plot manifests found in the manifest directory.[/]"
+            )
             return
         for manifest_path in manifest_paths:
             _generate_plot(manifest_path, force=args.force)

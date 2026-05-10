@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.simulator.workload_simulator import (
+from autoslo.workload_execution.workload_simulator import (
     WorkloadSimulator,
 )
 from autoslo.clusters.blueprint import Blueprint

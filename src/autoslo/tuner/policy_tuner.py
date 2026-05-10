@@ -23,9 +23,6 @@ from autoslo.config.utils import copy_and_apply_overrides, make_run_id
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.forecasting.forecaster import Forecaster
-from autoslo.simulator.aggregated_simulation_results import (
-    AggregatedSimulationResults,
-)
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.param_sweep import ParamSweep
@@ -33,6 +30,9 @@ from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.spinup_optimizer import SpinupOptimizer
 from autoslo.workload_definition.workload import Workload
+from autoslo.workload_execution.aggregated_execution_results import (
+    AggregatedExecutionResults,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -234,7 +234,7 @@ class PolicyTuner:
         self,
         train_workload_configs: list[WorkloadConfig],
         val_workload_configs: list[WorkloadConfig],
-    ) -> tuple[AggregatedSimulationResults, AggregatedSimulationResults]:
+    ) -> tuple[AggregatedExecutionResults, AggregatedExecutionResults]:
         """Phase 3: Evaluate the initial config as a baseline.
 
         Runs all training and validation scenarios with the unmodified
@@ -266,10 +266,10 @@ class PolicyTuner:
         train_results = all_results[:n_train]
         val_results = all_results[n_train:]
 
-        train_agg = AggregatedSimulationResults.aggregate_from(
+        train_agg = AggregatedExecutionResults.aggregate_from(
             train_results, self._agg_method
         )
-        val_agg = AggregatedSimulationResults.aggregate_from(
+        val_agg = AggregatedExecutionResults.aggregate_from(
             val_results, self._agg_method
         )
 
@@ -285,7 +285,7 @@ class PolicyTuner:
         train_workload_configs: list[WorkloadConfig],
         val_workload_configs: list[WorkloadConfig],
     ) -> tuple[
-        dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
+        dict[str, Any], AggregatedExecutionResults, AggregatedExecutionResults
     ]:
         """Phase 4: Find promising spin-ups via greedy optimization.
 
@@ -307,8 +307,8 @@ class PolicyTuner:
 
         # Run spin-up optimization for each candidate.
         candidate_configs: list[dict[str, Any]] = []
-        candidate_val_aggs: list[AggregatedSimulationResults] = []
-        candidate_train_aggs: list[AggregatedSimulationResults] = []
+        candidate_val_aggs: list[AggregatedExecutionResults] = []
+        candidate_train_aggs: list[AggregatedExecutionResults] = []
 
         for i, rpus in enumerate(candidates):
             tag = f"candidate_{i}"
@@ -346,7 +346,7 @@ class PolicyTuner:
                 workload_first=False,
             )
             val_results = nested[0]
-            val_agg = AggregatedSimulationResults.aggregate_from(
+            val_agg = AggregatedExecutionResults.aggregate_from(
                 val_results, self._agg_method
             )
 
@@ -360,7 +360,7 @@ class PolicyTuner:
             (f"Candidate {i} (initial_rpus={candidates[i]})", agg)
             for i, agg in enumerate(candidate_train_aggs)
         ]
-        AggregatedSimulationResults.print_comparison(
+        AggregatedExecutionResults.print_comparison(
             *comparison_entries,
             console=console,
             agg_method=self._agg_method,
@@ -374,7 +374,7 @@ class PolicyTuner:
             (f"Candidate {i} (initial_rpus={candidates[i]})", agg)
             for i, agg in enumerate(candidate_val_aggs)
         ]
-        AggregatedSimulationResults.print_comparison(
+        AggregatedExecutionResults.print_comparison(
             *comparison_entries,
             console=console,
             agg_method=self._agg_method,
@@ -415,7 +415,7 @@ class PolicyTuner:
         phase_name: str,
         config_key: str,
     ) -> tuple[
-        dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
+        dict[str, Any], AggregatedExecutionResults, AggregatedExecutionResults
     ]:
         """
         Phases 5 & 6: Autoscaler and routing parameter sweeps.
@@ -467,7 +467,7 @@ class PolicyTuner:
                 baseline_train, baseline_val = self.evaluate_baseline(
                     train_workload_configs, val_workload_configs
                 )
-                AggregatedSimulationResults.print_comparison(
+                AggregatedExecutionResults.print_comparison(
                     ("Baseline (train)", baseline_train),
                     ("Baseline (val)", baseline_val),
                     console=console,
@@ -488,14 +488,14 @@ class PolicyTuner:
                 ) = self.find_spinups(
                     train_workload_configs, val_workload_configs
                 )
-                AggregatedSimulationResults.print_comparison(
+                AggregatedExecutionResults.print_comparison(
                     ("Baseline (train)", baseline_train),
                     ("Post-spinups (train)", post_spinups_train),
                     console=console,
                     agg_method=self._agg_method,
                     slo_metric=self._slo_objective.slo_metric,
                 )
-                AggregatedSimulationResults.print_comparison(
+                AggregatedExecutionResults.print_comparison(
                     ("Baseline (val)", baseline_val),
                     ("Post-spinups (val)", post_spinups_val),
                     console=console,
@@ -547,14 +547,14 @@ class PolicyTuner:
                 summary_dir.mkdir(parents=True, exist_ok=True)
                 dump_yaml(tuned_train, summary_dir / "train_summary.yml")
                 dump_yaml(tuned_val, summary_dir / "val_summary.yml")
-                AggregatedSimulationResults.print_comparison(
+                AggregatedExecutionResults.print_comparison(
                     ("Initial (train)", baseline_train),
                     ("Final (train)", tuned_train),
                     console=console,
                     agg_method=self._agg_method,
                     slo_metric=self._slo_objective.slo_metric,
                 )
-                AggregatedSimulationResults.print_comparison(
+                AggregatedExecutionResults.print_comparison(
                     ("Initial (val)", baseline_val),
                     ("Final (val)", tuned_val),
                     console=console,

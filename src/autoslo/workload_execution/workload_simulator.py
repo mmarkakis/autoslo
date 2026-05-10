@@ -24,9 +24,12 @@ from autoslo.filesystem.structured_events import (
 )
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.routing.wrapper import route_and_update_bookkeeping
-from autoslo.simulator.simulation_result import SimulationResult
-from autoslo.simulator.simulator_event import SimulatorEvent, SimulatorEventType
 from autoslo.visualizations.render_log_viewer import render_log_viewer
+from autoslo.workload_execution.execution_result import ExecutionResult
+from autoslo.workload_execution.simulator_event import (
+    SimulatorEvent,
+    SimulatorEventType,
+)
 
 
 class WorkloadSimulator:
@@ -115,7 +118,7 @@ class WorkloadSimulator:
         self,
         progress_callback: "Optional[Callable[[int, int], None]]" = None,
         render_log: bool = False,
-    ) -> SimulationResult:
+    ) -> ExecutionResult:
 
         print("Spinning up initial clusters...")
         self._pool.add_details_and_spin_up_initial_clusters(
@@ -261,7 +264,7 @@ class WorkloadSimulator:
                 os.path.join(self._out_dir, "structured_log.parquet")
             )
 
-        return SimulationResult.load(self._out_dir)
+        return ExecutionResult.load(self._out_dir)
 
     def _handle_query_arrival(
         self, event: SimulatorEvent, seq_num_to_cluster_name: dict[int, str]

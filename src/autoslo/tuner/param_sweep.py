@@ -23,11 +23,11 @@ from rich.table import Table
 import autoslo.config.utils as cfgu
 from autoslo.config.component_configs import ParamSweepConfig, WorkloadConfig
 from autoslo.filesystem.yaml_helpers import dump_yaml
-from autoslo.simulator.aggregated_simulation_results import (
-    AggregatedSimulationResults,
-)
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.workload_execution.aggregated_execution_results import (
+    AggregatedExecutionResults,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -104,7 +104,7 @@ class ParamSweep:
         val_workload_configs: list[WorkloadConfig],
         param_sweep_config: ParamSweepConfig,
     ) -> tuple[
-        dict[str, Any], AggregatedSimulationResults, AggregatedSimulationResults
+        dict[str, Any], AggregatedExecutionResults, AggregatedExecutionResults
     ]:
         """Run a parameter sweep and return the best config with its metrics.
 
@@ -177,7 +177,7 @@ class ParamSweep:
         )
         for i, idx in enumerate(top_k_indices):
             val_results = all_val_results[i]
-            val_agg = AggregatedSimulationResults.aggregate_from(
+            val_agg = AggregatedExecutionResults.aggregate_from(
                 val_results, self._agg_method
             )
             val_primary = val_agg.primary_violation(
@@ -224,7 +224,7 @@ class ParamSweep:
         )
         grid_results: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates):
-            train_agg = AggregatedSimulationResults.aggregate_from(
+            train_agg = AggregatedExecutionResults.aggregate_from(
                 all_train_results[idx], self._agg_method
             )
             train_primary = train_agg.primary_violation(
