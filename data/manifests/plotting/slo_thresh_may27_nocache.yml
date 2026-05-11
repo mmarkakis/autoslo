@@ -1,0 +1,100 @@
+locals:
+  may27_workload_config: &may27_workload_config
+    workload_name: redbench_provisioned_157_0
+    target_date: "2024-05-27"
+    rescale_factor: 0.16666667
+  baseline_16: &baseline_16
+    label: "16 RPU"
+    formatting_id: base_16
+    workload_config: *may27_workload_config
+    execution_config: exec:handmade/single_16
+  baseline_16_16: &baseline_16_16
+    label: "16+16 RPU"
+    formatting_id: base_16_16
+    workload_config: *may27_workload_config
+    execution_config: exec:handmade/round_robin_16_16
+  baseline_32: &baseline_32
+    label: "32 RPU"
+    formatting_id: base_32
+    workload_config: *may27_workload_config
+    execution_config: exec:handmade/single_32
+  baseline_32_32: &baseline_32_32
+    label: "32+32 RPU"
+    formatting_id: base_32_32
+    workload_config: *may27_workload_config
+    execution_config: exec:handmade/round_robin_32_32
+  baseline_64: &baseline_64
+    label: "64 RPU"
+    formatting_id: base_64
+    workload_config: *may27_workload_config
+    execution_config: exec:handmade/single_64
+
+main_content:
+
+  layout:
+    rows: 3
+    cols: 1
+    shared_xlim: true
+    shared_ylim: true
+
+  panels:
+  - row: 0
+    col: 0
+    title: "1%"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.01
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p50_k4.yml"
+    points:
+      - label: "Opt. on Past 1 Month"
+        formatting_id: prev_month
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1month_k4_thresh1_nocache
+      - <<: *baseline_16
+      - <<: *baseline_16_16
+      - <<: *baseline_32
+      - <<: *baseline_32_32
+      - <<: *baseline_64
+  - row: 1
+    col: 0
+    title: "5%"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p50_k4.yml"
+    points:
+      - label: "Opt. on Past 1 Month"
+        formatting_id: prev_month
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1month_k4_thresh5_nocache
+      - <<: *baseline_16
+      - <<: *baseline_16_16
+      - <<: *baseline_32
+      - <<: *baseline_32_32
+      - <<: *baseline_64
+  - row: 2
+    col: 0
+    title: "10%"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.10
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p50_k4.yml"
+    points:
+      - label: "Opt. on Past 1 Month"
+        formatting_id: prev_month
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1month_k4_thresh10_nocache
+      - <<: *baseline_16
+      - <<: *baseline_16_16
+      - <<: *baseline_32
+      - <<: *baseline_32_32
+      - <<: *baseline_64
