@@ -47,7 +47,7 @@ main_content:
       slo_threshold: 0.01
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "ext_tpcds1000_rpu16_p90_k4.0.yml"
+      slo_dict_filename: "1778469201294_p50_k4.yml"
     points:
       - label: "Opt. on Past 1 Month"
         formatting_id: prev_month
@@ -67,7 +67,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "ext_tpcds1000_rpu16_p90_k4.0.yml"
+      slo_dict_filename: "1778469201294_p50_k4.yml"
     points:
       - label: "Opt. on Past 1 Month"
         formatting_id: prev_month
@@ -87,7 +87,7 @@ main_content:
       slo_threshold: 0.10
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "ext_tpcds1000_rpu16_p90_k4.0.yml"
+      slo_dict_filename: "1778469201294_p50_k4.yml"
     points:
       - label: "Opt. on Past 1 Month"
         formatting_id: prev_month

@@ -5,7 +5,7 @@ workload_config:
 
 slo_resolver_config:
   slo_s: 30.0
-  slo_dict_filename: ext_tpcds1000_rpu16_p90_k4.0.yml
+  slo_dict_filename: "1778469201294_p50_k4.yml"
 
 slo_objective_config:
   slo_metric: binary

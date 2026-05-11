@@ -40,19 +40,19 @@ main_content:
   panels:
   - row: 0
     col: 0
-    title: "k=1.5"
+    title: "k=2"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "ext_tpcds1000_rpu16_p90_k1.5.yml"
+      slo_dict_filename: "1778469201294_p50_k2.yml"
     points:
       - label: "Opt. on Past 1 Month"
         formatting_id: prev_month
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k1.5_thresh5
+        execution_config: exec:tuned/may27_1month_k2_thresh5
       - <<: *baseline_16
       - <<: *baseline_16_16
       - <<: *baseline_32
@@ -60,19 +60,19 @@ main_content:
       - <<: *baseline_64
   - row: 1
     col: 0
-    title: "k=2.5"
+    title: "k=4"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "ext_tpcds1000_rpu16_p90_k2.5.yml"
+      slo_dict_filename: "1778469201294_p50_k4.yml"
     points:
       - label: "Opt. on Past 1 Month"
         formatting_id: prev_month
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k2.5_thresh5
+        execution_config: exec:tuned/may27_1month_k4_thresh5
       - <<: *baseline_16
       - <<: *baseline_16_16
       - <<: *baseline_32
@@ -80,19 +80,19 @@ main_content:
       - <<: *baseline_64
   - row: 2
     col: 0
-    title: "k=4.0"
+    title: "k=8"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "ext_tpcds1000_rpu16_p90_k4.0.yml"
+      slo_dict_filename: "1778469201294_p50_k8.yml"
     points:
       - label: "Opt. on Past 1 Month"
         formatting_id: prev_month
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k4_thresh5
+        execution_config: exec:tuned/may27_1month_k8_thresh5
       - <<: *baseline_16
       - <<: *baseline_16_16
       - <<: *baseline_32

@@ -65,9 +65,9 @@ main_content:
 
   # Other k values
   - workload_config: *may27_workload_config
-    execution_config: exec:tuned/may27_1month_k1.5_thresh5
+    execution_config: exec:tuned/may27_1month_k2_thresh5
   - workload_config: *may27_workload_config
-    execution_config: exec:tuned/may27_1month_k2.5_thresh5
+    execution_config: exec:tuned/may27_1month_k8_thresh5
 
   # Baseline runs - May 27
   - workload_config: *may27_workload_config

@@ -5,7 +5,7 @@ workload_config:
 
 slo_resolver_config:
   slo_s: 30.0
-  slo_dict_filename: "<SLO_DICT_FILENAME>"
+  slo_dict_filename: "1778469201294_p50_k<KAPPA>.yml"
 
 slo_objective_config:
   slo_metric: binary

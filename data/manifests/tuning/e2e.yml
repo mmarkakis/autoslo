@@ -3,7 +3,7 @@ locals:
         initial_execution_config: "exec:handmade/base_iconq"
         tuner_config: "tuner:sampled"
     default_slo: &default_slo
-        SLO_DICT_FILENAME: "ext_tpcds1000_rpu16_p90_k4.0.yml"
+        KAPPA: 4
         SLO_THRESHOLD: 0.05
     may27_default_params: &may27_default_params
         LAST_DAY_DATE_INCLUSIVE: "2024-05-26"
@@ -132,13 +132,13 @@ main_content:
             SLO_THRESHOLD: 0.10
 
     # Other k values
-    may27_1month_k1.5_thresh5:
+    may27_1month_k2_thresh5:
         configs: *default_configs
         params:
             <<: *may27_default_params
-            SLO_DICT_FILENAME: "ext_tpcds1000_rpu16_p90_k1.5.yml"
-    may27_1month_k2.5_thresh5:
+            KAPPA: 2
+    may27_1month_k8_thresh5:
         configs: *default_configs
         params:
             <<: *may27_default_params
-            SLO_DICT_FILENAME: "ext_tpcds1000_rpu16_p90_k2.5.yml"
+            KAPPA: 8
