@@ -140,7 +140,7 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     EventType.COMPLETION: ["success"],
     EventType.LATENCY_UPDATE: ["old_latency_s", "latency_s"],
     EventType.ROUTING: ["slo_violation", "cost"],
-    EventType.SPIN_UP_DECISION: ["rpu", "reason"],
+    EventType.SPIN_UP_DECISION: ["rpu", "reason", "autoscaling_policy"],
     EventType.SPIN_UP_REQUESTED: ["reason"],
     EventType.SPIN_UP_BLOCKED: [
         "reason",

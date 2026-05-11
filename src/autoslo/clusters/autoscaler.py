@@ -6,6 +6,7 @@ from typing import Optional
 import numpy as np
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
+from autoslo.clusters.autoscaling_policy import AutoscalingPolicy
 from autoslo.clusters.cluster import (
     Cluster,
     ClusterState,
@@ -57,6 +58,9 @@ class Autoscaler:
         )
         self._slo_tightening_factor = autoscaler_config.slo_tightening_factor
         self._cluster_cache_state_dim = cluster_cache_state_dim
+        self._autoscaling_policy = AutoscalingPolicy(
+            autoscaler_config.autoscaling_policy
+        )
         self._trigger_slo_resolver = (
             slo_resolver.tightened(autoscaler_config.slo_tightening_factor)
             if autoscaler_config.slo_tightening_factor != 1.0
@@ -200,7 +204,7 @@ class Autoscaler:
         self,
         rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, ClusterView],
-    ) -> list[SpinUpAction]:
+    ) -> list[ScalingAction]:
         """
         Recommend spinning up a cluster if both are true:
         1. The window has at least ``min_observations_to_act`` queries.
@@ -211,6 +215,8 @@ class Autoscaler:
         """
 
         # Determine if we are disallowed from spinning up.
+        if self._autoscaling_policy == AutoscalingPolicy.NOOP:
+            return []
         if len(self.allowed_rpu_sizes) == 0 or self._spin_up_disabled:
             return []
 
@@ -256,10 +262,30 @@ class Autoscaler:
                 rel_time_s=rel_time_s,
                 event_type=EventType.SPIN_UP_DECISION,
                 source="Autoscaler",
-                details={"rpu": best_rpu, "reason": action.reason},
+                details={
+                    "rpu": best_rpu,
+                    "reason": action.reason,
+                    "autoscaling_policy": self._autoscaling_policy.value,
+                },
             )
         )
-        return [action]
+        returned_actions: list[ScalingAction] = [action]
+
+        if (
+            self._autoscaling_policy
+            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
+        ):
+            replace_teardowns = [
+                TearDownAction(
+                    reason="replace policy",
+                    cluster_name=cluster_name,
+                )
+                for cluster_name, cluster_view in pool_snapshot_with_current_query.items()
+                if cluster_view.state == ClusterState.READY
+            ]
+            returned_actions.extend(replace_teardowns)
+
+        return returned_actions
 
     def consider_teardown(
         self,
@@ -315,6 +341,16 @@ class Autoscaler:
         """
         Select the RPU size for a new cluster based on the current window.
         """
+        if self._autoscaling_policy == AutoscalingPolicy.DUPLICATE_LARGEST:
+            assert self._snapshot_at_window_start is not None
+            ready_rpus = [
+                cluster_view.rpu
+                for cluster_view in self._snapshot_at_window_start.values()
+                if cluster_view.state == ClusterState.READY
+            ]
+            return (
+                max(ready_rpus) if ready_rpus else max(self._allowed_rpu_sizes)
+            )
 
         viol_and_costs: list[ViolationCost] = []
 
@@ -372,10 +408,18 @@ class Autoscaler:
         assert self._window_start_time_s is not None
 
         # Build a fully mutable local snapshot for replay from the frozen views.
-        local_cluster_pool: dict[str, Cluster] = {
-            cluster_name: view.to_cluster()
-            for cluster_name, view in self._snapshot_at_window_start.items()
-        }
+        # REPLACE policy evaluates each candidate RPU in isolation (no existing
+        # clusters), since it models replacing the entire pool with one cluster.
+        if (
+            self._autoscaling_policy
+            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
+        ):
+            local_cluster_pool: dict[str, Cluster] = {}
+        else:
+            local_cluster_pool = {
+                cluster_name: cluster_view.to_cluster()
+                for cluster_name, cluster_view in self._snapshot_at_window_start.items()
+            }
         hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
         local_cluster_pool[hyp_cluster_name] = Cluster(
             creation_time_s=self._window_start_time_s,

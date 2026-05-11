@@ -201,6 +201,7 @@ class AutoscalerConfig(_PartialConfig):
     """
 
     allowed_rpu_sizes: list[int]
+    autoscaling_policy: str = "add_single_best"
     min_cluster_lifetime_s: float = 1200.0
     idle_time_before_tear_down_s: float = 300.0
     observation_window_s: float = 120.0
