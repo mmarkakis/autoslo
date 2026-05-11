@@ -120,15 +120,28 @@ class SloObjective:
         )
         return [idx for idx, _ in sorted_candidates]
 
-    def idx_of_best(self, candidates: list[ViolationCost]) -> int:
+    def idx_of_best(
+        self, candidates: list[ViolationCost], ignore_threshold: bool = False
+    ) -> int:
         """Return the index of the best ``(violation, cost)`` candidate.
 
         Applies the same lexicographic policy as :meth:`is_b_better`:
         feasible candidates (metric ≤ threshold) are preferred and ranked
         by cost; if none are feasible, the one with the lowest violation
         (tiebreak: cost) wins.
+
+        Parameters
+        ----------
+        candidates:
+            List of ``(violation, cost)`` pairs to compare.
+        ignore_threshold:
+            If True, ignore the threshold and try to minimize violation first,
+            then cost.  This is useful for the router.
         """
         if len(candidates) == 0:
             raise ValueError("No candidates provided")
-        best = min(candidates, key=functools.cmp_to_key(self.cmp))
+        if ignore_threshold:
+            best = min(candidates, key=lambda x: (x.violation, x.cost))
+        else:
+            best = min(candidates, key=functools.cmp_to_key(self.cmp))
         return candidates.index(best)
