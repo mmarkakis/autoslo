@@ -437,6 +437,28 @@ class Trace:
 
         return pd.concat(series).reindex(self.query_ids)
 
+    @property
+    def query_id_mapping(self) -> pd.Series:
+        """
+        Get a mapping from trace-based query ids to the workload query ids
+        supplied at runtime.
+
+        Returns:
+            A pandas Series mapping trace-based query ids to workload query ids.
+        """
+        series = []
+        for df in self._dfs["sys_query_history"].values():
+            s = df.set_index("query_id")["query_text"].apply(
+                lambda x: x.split("\\n")[0].split("/")[1]
+            )
+            series.append(s)
+
+        return (
+            pd.concat(series)
+            .reindex(self.query_ids)
+            .rename("workload_query_id")
+        )
+
     @staticmethod
     def extract_query_text_id(
         query_text: str,
