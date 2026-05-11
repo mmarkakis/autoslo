@@ -3,28 +3,67 @@ from __future__ import annotations
 import argparse
 import asyncio
 import shutil
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from rich.console import Console
+from rich.table import Table
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
-from autoslo.config.utils import copy_and_apply_overrides
+from autoslo.config.utils import copy_and_apply_overrides, make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import (
     append_to_run_log,
     find_most_recent_live_run_id,
     is_up_to_date,
 )
-from autoslo.filesystem.yaml_helpers import load_yaml
+from autoslo.filesystem.yaml_helpers import load_yaml, load_yaml_with_params
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.workload_execution.execution_result import ExecutionResult
 from autoslo.workload_execution.workload_runner import WorkloadRunner
 
 console = Console()
 
 
+@dataclass
+class _RunRecord:
+    label: str
+    wid: str
+    run_dir: Path
+    was_run: bool
+
+
+def _print_summary(records: list[_RunRecord], wall_elapsed_s: float) -> None:
+    n_specified = len(records)
+    n_run = sum(r.was_run for r in records)
+
+    total_sim_s = 0.0
+    total_cost = 0.0
+    for r in records:
+        try:
+            result = ExecutionResult.load(r.run_dir)
+            total_sim_s += result.total_rel_time_s or 0.0
+            total_cost += result.total_cost
+        except Exception:
+            pass
+
+    table = Table(title="Execution Summary", show_header=False, box=None, padding=(0, 2))
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_row("Wall-clock time", f"{wall_elapsed_s:.1f} s")
+    table.add_row("Runs specified", str(n_specified))
+    table.add_row("Runs actually executed", str(n_run))
+    table.add_row("Total run time (rel_time_s)", f"{total_sim_s:.1f} s")
+    table.add_row("Total cost", f"${total_cost:.4f}")
+    console.print()
+    console.print(table)
+
+
 def main():
+    t_start = time.monotonic()
     # Argument parsing.
     description = (
         "Run the workload simulator or workload runner from an "
@@ -69,14 +108,17 @@ def main():
     data_path = Path(pu.get_data_path())
 
     if not args.live:
-        _run_simulator(entries, data_path, force=args.force)
+        records = _run_simulator(entries, data_path, force=args.force)
     else:
-        _run_live(entries, force=args.force)
+        records = _run_live(entries, force=args.force)
 
     console.print("\n[bold green]Execution complete.[/]")
+    _print_summary(records, wall_elapsed_s=time.monotonic() - t_start)
 
 
-def _run_simulator(entries: list[dict], data_path: Path, force: bool) -> None:
+def _run_simulator(
+    entries: list[dict], data_path: Path, force: bool
+) -> list[_RunRecord]:
     """Dispatch all (workload, exec_config) pairs through the simulator."""
     sim_runs_dir = data_path / "simulator_runs"
     evaluator = ScenarioEvaluator()
@@ -85,11 +127,13 @@ def _run_simulator(entries: list[dict], data_path: Path, force: bool) -> None:
     workload_by_wid: dict[str, WorkloadConfig] = {}
     configs_by_wid: dict[str, list[dict]] = defaultdict(list)
     labels_by_wid: dict[str, list[str]] = defaultdict(list)
+    records: list[_RunRecord] = []
 
     for entry in entries:
         workload_config = WorkloadConfig.from_config(entry)
         exec_cfg_path = resolve_config(entry["execution_config"])
-        config_label = exec_cfg_path.stem
+        params = entry.get("params", {})
+        config_label = make_run_id([exec_cfg_path.stem], params)
         wid = workload_config.id()
 
         out_dir = sim_runs_dir / wid / config_label
@@ -99,14 +143,16 @@ def _run_simulator(entries: list[dict], data_path: Path, force: bool) -> None:
             console.print(
                 f"[dim]Skipping '{config_label}' for '{wid}' (up to date)[/]"
             )
+            records.append(_RunRecord(config_label, wid, out_dir, was_run=False))
             continue
 
         if out_dir.exists():
             shutil.rmtree(out_dir)
 
         workload_by_wid[wid] = workload_config
-        configs_by_wid[wid].append(load_yaml(exec_cfg_path))
+        configs_by_wid[wid].append(load_yaml_with_params(exec_cfg_path, params))
         labels_by_wid[wid].append(config_label)
+        records.append(_RunRecord(config_label, wid, out_dir, was_run=True))
 
     for wid, workload_config in workload_by_wid.items():
         configs = configs_by_wid[wid]
@@ -125,16 +171,20 @@ def _run_simulator(entries: list[dict], data_path: Path, force: bool) -> None:
             render_log=True,
         )
 
+    return records
 
-def _run_live(entries: list[dict], force: bool) -> None:
+
+def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
     """
     Run each (workload, exec_config) pair sequentially against live clusters.
     """
     runs_path = Path(pu.get_runs_path())
+    records: list[_RunRecord] = []
     for entry in entries:
         workload_config = WorkloadConfig.from_config(entry)
         exec_cfg_path = resolve_config(entry["execution_config"])
-        config_label = exec_cfg_path.stem
+        params = entry.get("params", {})
+        config_label = make_run_id([exec_cfg_path.stem], params)
         wid = workload_config.id()
 
         if not force:
@@ -145,9 +195,17 @@ def _run_live(entries: list[dict], force: bool) -> None:
                 console.print(
                     f"[dim]Skipping '{config_label}' for '{wid}' (up to date)[/]"
                 )
+                records.append(
+                    _RunRecord(
+                        config_label,
+                        wid,
+                        runs_path / recent_run_id,
+                        was_run=False,
+                    )
+                )
                 continue
 
-        cfg = load_yaml(exec_cfg_path)
+        cfg = load_yaml_with_params(exec_cfg_path, params)
         cfg = copy_and_apply_overrides(
             cfg, {"workload_config": workload_config.to_dict()}
         )
@@ -160,6 +218,11 @@ def _run_live(entries: list[dict], force: bool) -> None:
             run_id=runner.run_id, config_id=config_label, workload_id=wid
         )
         asyncio.run(runner.run())
+        records.append(
+            _RunRecord(config_label, wid, runs_path / runner.run_id, was_run=True)
+        )
+
+    return records
 
 
 if __name__ == "__main__":

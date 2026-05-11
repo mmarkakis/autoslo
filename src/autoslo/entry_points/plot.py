@@ -13,6 +13,7 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
     WorkloadConfig,
 )
+from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import load_yaml
@@ -20,6 +21,7 @@ from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.visualizations.scatter_plots import (
+    ImprovementArrow,
     ScatterPoint,
     cost_vs_compliance_scatter,
     plot_legend_to,
@@ -50,7 +52,9 @@ def _plot_is_up_to_date(
         for point in points_spec:
             workload_config = WorkloadConfig.from_config(point)
             exec_cfg_path = resolve_config(point["execution_config"])
-            run_dir = sim_runs_dir / workload_config.id() / exec_cfg_path.stem
+            params = point.get("params", {})
+            config_label = make_run_id([exec_cfg_path.stem], params)
+            run_dir = sim_runs_dir / workload_config.id() / config_label
             inputs.append(run_dir / "execution_config.yml")
     return is_up_to_date(plot_path, *inputs)
 
@@ -65,7 +69,9 @@ def _load_scatter_points(
     for point in points_spec:
         workload_config = WorkloadConfig.from_config(point)
         exec_cfg_path = resolve_config(point["execution_config"])
-        run_dir = sim_runs_dir / workload_config.id() / exec_cfg_path.stem
+        params = point.get("params", {})
+        config_label = make_run_id([exec_cfg_path.stem], params)
+        run_dir = sim_runs_dir / workload_config.id() / config_label
         if not (run_dir / "execution_config.yml").exists():
             console.print(
                 f"[yellow]Warning: simulation run not found at {run_dir} "
@@ -92,6 +98,7 @@ def _generate_single_panel_plot(
     sim_runs_dir: Path,
     plots_dir: Path,
     force: bool,
+    live: bool = False,
 ) -> None:
     points_spec: list[dict] = content["points"]
 
@@ -104,6 +111,18 @@ def _generate_single_panel_plot(
     slo_obj = SloObjective(SloObjectiveConfig.from_config(content))
     slo_resolver = SloResolver(SloResolverConfig.from_config(content))
 
+    show_target_region: bool = content.get("show_target_region", False)
+
+    improvement_arrow_spec = content.get("improvement_arrow")
+    improvement_arrow = (
+        ImprovementArrow(
+            base_label=improvement_arrow_spec["base_label"],
+            target_label=improvement_arrow_spec["target_label"],
+        )
+        if improvement_arrow_spec
+        else None
+    )
+
     scatter_points = _load_scatter_points(
         points_spec, slo_obj, slo_resolver, sim_runs_dir
     )
@@ -115,20 +134,23 @@ def _generate_single_panel_plot(
         return
 
     title: str | None = content.get("title") or None
-    fig, _, _, _ = cost_vs_compliance_scatter(
+    fig, ax, _, _ = cost_vs_compliance_scatter(
         scatter_points,
         x_metric=slo_obj.slo_metric,
-        x_threshold_objective=slo_obj,
+        x_threshold_objective=slo_obj if show_target_region else None,
         title=title,
+        show_legend=content.get("show_legend", False),
+        improvement_arrow=improvement_arrow,
     )
+    if not live:
+        ax.text(
+            0.98, 0.98, "[Simulated]",
+            transform=ax.transAxes,
+            color="red", ha="right", va="top", fontsize=9,
+        )
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     console.print(f"[green]Saved:[/] {plot_path}")
-
-    if content.get("show_legend", False):
-        legend_path = plots_dir / f"{plot_name}_legend.png"
-        plot_legend_to(legend_path)
-        console.print(f"[green]Saved:[/] {legend_path}")
 
 
 def _generate_multi_panel_plot(
@@ -139,6 +161,7 @@ def _generate_multi_panel_plot(
     sim_runs_dir: Path,
     plots_dir: Path,
     force: bool,
+    live: bool = False,
 ) -> None:
     layout: dict = manifest.get("layout", {})
     panels_spec: list[dict] = manifest["panels"]
@@ -181,6 +204,7 @@ def _generate_multi_panel_plot(
     shared_xlim: bool = layout.get("shared_xlim", False)
     shared_ylim: bool = layout.get("shared_ylim", False)
     show_legend: bool = layout.get("show_legend", False)
+    show_target_region: bool = layout.get("show_target_region", False)
 
     fig, axes_2d = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
 
@@ -195,6 +219,16 @@ def _generate_multi_panel_plot(
         slo_obj = SloObjective(SloObjectiveConfig.from_config(panel))
         slo_resolver = SloResolver(SloResolverConfig.from_config(panel))
         points_spec: list[dict] = panel["points"]
+
+        improvement_arrow_spec = panel.get("improvement_arrow")
+        improvement_arrow = (
+            ImprovementArrow(
+                base_label=improvement_arrow_spec["base_label"],
+                target_label=improvement_arrow_spec["target_label"],
+            )
+            if improvement_arrow_spec
+            else None
+        )
 
         scatter_points = _load_scatter_points(
             points_spec, slo_obj, slo_resolver, sim_runs_dir
@@ -212,10 +246,24 @@ def _generate_multi_panel_plot(
         _, _, xlims, ylims = cost_vs_compliance_scatter(
             scatter_points,
             x_metric=slo_obj.slo_metric,
-            x_threshold_objective=slo_obj,
+            x_threshold_objective=(
+                slo_obj
+                if (
+                    show_target_region or panel.get("show_target_region", False)
+                )
+                else None
+            ),
             title=title,
             ax=ax,
+            show_legend=show_legend or panel.get("show_legend", False),
+            improvement_arrow=improvement_arrow,
         )
+        if not live:
+            ax.text(
+                0.98, 0.98, "[Simulated]",
+                transform=ax.transAxes,
+                color="red", ha="right", va="top", fontsize=9,
+            )
         rendered_xlims.append(xlims)
         rendered_ylims.append(ylims)
         rendered_axes.append(ax)
@@ -224,14 +272,16 @@ def _generate_multi_panel_plot(
     if shared_xlim and rendered_xlims:
         unified_left = min(lims[0] for lims in rendered_xlims)
         unified_right = max(lims[1] for lims in rendered_xlims)
+        padding = (unified_right - unified_left) * 0.05
         for ax in rendered_axes:
-            ax.set_xlim(unified_left, unified_right)
+            ax.set_xlim(0, unified_right + padding)
 
     if shared_ylim and rendered_ylims:
         unified_bottom = min(lims[0] for lims in rendered_ylims)
         unified_top = max(lims[1] for lims in rendered_ylims)
+        padding = (unified_top - unified_bottom) * 0.05
         for ax in rendered_axes:
-            ax.set_ylim(unified_bottom, unified_top)
+            ax.set_ylim(0, unified_top + padding)
 
     # Hide unused axes.
     for r in range(rows):
@@ -250,7 +300,7 @@ def _generate_multi_panel_plot(
         console.print(f"[green]Saved:[/] {legend_path}")
 
 
-def _generate_plot(manifest_path: Path, force: bool) -> None:
+def _generate_plot(manifest_path: Path, force: bool, live: bool = False) -> None:
     manifest = load_yaml(manifest_path)
     plot_name = manifest_path.stem
 
@@ -258,9 +308,10 @@ def _generate_plot(manifest_path: Path, force: bool) -> None:
     sim_runs_dir = data_path / "simulator_runs"
     plots_dir = data_path / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    plot_path = plots_dir / f"{plot_name}.png"
+    stem = f"{plot_name}_live" if live else plot_name
+    plot_path = plots_dir / f"{stem}.png"
 
-    if "panels" in manifest['main_content']:    
+    if "panels" in manifest["main_content"]:
         _generate_multi_panel_plot(
             manifest["main_content"],
             manifest_path,
@@ -269,6 +320,7 @@ def _generate_plot(manifest_path: Path, force: bool) -> None:
             sim_runs_dir,
             plots_dir,
             force,
+            live=live,
         )
     else:
         _generate_single_panel_plot(
@@ -279,6 +331,7 @@ def _generate_plot(manifest_path: Path, force: bool) -> None:
             sim_runs_dir,
             plots_dir,
             force,
+            live=live,
         )
 
 
@@ -320,7 +373,7 @@ def main() -> None:
             )
             return
         for manifest_path in manifest_paths:
-            _generate_plot(manifest_path, force=args.force)
+            _generate_plot(manifest_path, force=args.force, live=args.live)
         console.print("\n[bold green]Done.[/]")
         return
 
@@ -338,7 +391,7 @@ def main() -> None:
     if not manifest_path.exists():
         parser.error(f"Plot manifest not found: {manifest_path}")
 
-    _generate_plot(manifest_path, force=args.force)
+    _generate_plot(manifest_path, force=args.force, live=args.live)
     console.print("\n[bold green]Done.[/]")
 
 

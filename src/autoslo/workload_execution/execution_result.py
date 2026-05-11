@@ -62,6 +62,7 @@ class ExecutionResult:
     violation_relative_mean: float
     total_cost: float
     num_queries: int
+    total_rel_time_s: float
 
     @staticmethod
     def load(
@@ -110,6 +111,7 @@ class ExecutionResult:
         violation_amount_s = 0.0
         violation_relative_mean = 0.0
         num_queries = 0
+        total_rel_time_s = 0
 
         log_path = execution_dir / "structured_log.parquet"
         if log_path.exists():
@@ -132,6 +134,8 @@ class ExecutionResult:
                 violation_relative_mean = SloMetric.RELATIVE.aggregate_batch(
                     lat_and_slos
                 )
+            total_rel_time_s = latencies_df["completion_s"].max()
+
 
         # For live runs: print a warning if there were aborted queries.
         if is_live:
@@ -151,4 +155,5 @@ class ExecutionResult:
             violation_relative_mean=violation_relative_mean,
             total_cost=total_cost,
             num_queries=num_queries,
+            total_rel_time_s=total_rel_time_s,
         )

@@ -30,6 +30,19 @@ class ScatterPoint:
     y: float
 
 
+@dataclass
+class ImprovementArrow:
+    """Config for an annotated arrow showing improvement from one point to another.
+
+    The arrow is drawn from ``base_label`` to ``target_label``, and annotated
+    with the percentage change along both axes.  Specify these per-panel in the
+    plotting manifest under the ``improvement_arrow`` key.
+    """
+
+    base_label: str
+    target_label: str
+
+
 FORMATTING = {
     "initial": (Palette.gray, "x"),
     "ground_truth": (Palette.dark_purple, "*"),
@@ -41,6 +54,9 @@ FORMATTING = {
     "base_32": (Palette.dark_orange, "s"),
     "base_32_32": (Palette.dark_orange, "D"),
     "base_64": (Palette.dark_red, "s"),
+    "round_robin": (Palette.light_orange, "s"),
+    "stage": (Palette.light_blue, "^"),
+    "iconq": (Palette.light_green, "o"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
@@ -73,7 +89,8 @@ def cost_vs_compliance_scatter(
     ax: Axes | None = None,
     x_threshold_color: str = Palette.light_green,
     x_threshold_objective: SloObjective | None = None,
-    report_improvement: bool = False,
+    improvement_arrow: ImprovementArrow | None = None,
+    show_legend: bool = False,
 ) -> tuple[Figure, Axes, tuple[float, float], tuple[float, float]]:
     """Create a cost-vs-compliance scatter plot.
 
@@ -111,6 +128,8 @@ def cost_vs_compliance_scatter(
         If set, a vertical band is shaded according to the SLO threshold defined
         in the given SLO objective, only if the x-axis metric matches the SLO
         metric of the objective.
+    show_legend :
+        Whether to show a legend for the points.
 
     Returns
     -------
@@ -158,37 +177,6 @@ def cost_vs_compliance_scatter(
             transform=ax.get_xaxis_transform(),
         )
 
-    # Report improvement, if requested and possible.
-    if report_improvement:
-        # Find the point formatted with "prev_month", the end of the arrow.
-        ending_point = [
-            pt for pt in points if pt.formatting_id.startswith("prev")
-        ]
-        ending_point.sort(key=lambda pt: (pt.x, pt.y))
-        # Find the point formatted with "32+32 RPU", the start of the arrow.
-        starting_point = [pt for pt in points if "RPU" in pt.formatting_id]
-        starting_point.sort(key=lambda pt: (pt.x, pt.y))
-
-        start = starting_point[0]
-        end = ending_point[0]
-        ax.annotate(
-            "",
-            xy=(end.x, end.y),
-            xytext=(start.x, start.y),
-            arrowprops=dict(arrowstyle="->", color=Palette.gray, lw=1),
-            zorder=-10,
-        )
-        violation_ratio = end.x / start.x if start.x > 0 else float("inf")
-        cost_ratio = end.y / start.y if start.y > 0 else float("inf")
-        ax.text(
-            min(start.x, end.x) + abs(end.x - start.x) * 0.6,
-            (start.y + end.y) * 0.5,
-            f"Violation ↓ {1 -violation_ratio:.1%}\nCost ↓ {1 -cost_ratio:.1%}",
-            color=Palette.gray,
-            ha="left",
-            va="center",
-        )
-
     # Plot points.
     for pt in points:
         if pt.formatting_id not in FORMATTING:
@@ -213,9 +201,17 @@ def cost_vs_compliance_scatter(
     if title:
         ax.set_title(title)
 
+    # Maybe add legend.
+    if show_legend:
+        ax.legend(loc="lower right")
+
     # Relative padding around x data.
     xvals = [pt.x for pt in points]
-    left, right = existing_xlims if existing_xlims else (min(xvals), max(xvals))
+    left, right = (
+        existing_xlims
+        if existing_xlims
+        else ((min(xvals), max(xvals)))
+    )
     if x_scale == "linear" and len(points) > 0:
         additional = (max(xvals) - min(xvals)) * x_pad
         left = 0
@@ -225,6 +221,57 @@ def cost_vs_compliance_scatter(
         left = min(left, min(xvals) / factor)
         right = max(right, max(xvals) * factor)
     ax.set_xlim(left, right)
+
+    # Draw improvement arrow if requested.
+    if improvement_arrow is not None:
+        base_pts = [
+            pt for pt in points if pt.label == improvement_arrow.base_label
+        ]
+        target_pts = [
+            pt for pt in points if pt.label == improvement_arrow.target_label
+        ]
+        if not base_pts:
+            _console.print(
+                f"[yellow]Warning: improvement_arrow base_label "
+                f"'{improvement_arrow.base_label}' not found — skipping arrow.[/]"
+            )
+        elif not target_pts:
+            _console.print(
+                f"[yellow]Warning: improvement_arrow target_label "
+                f"'{improvement_arrow.target_label}' not found — skipping arrow.[/]"
+            )
+        else:
+            base = base_pts[0]
+            target = target_pts[0]
+            ax.annotate(
+                "",
+                xy=(target.x, target.y),
+                xytext=(base.x, base.y),
+                arrowprops=dict(
+                    arrowstyle="->", color=Palette.gray, lw=1.5, linestyle="--"
+                ),
+                zorder=-10,
+            )
+            parts: list[str] = []
+            if base.x != 0:
+                x_change = (target.x - base.x) / abs(base.x)
+                direction = "←" if x_change < 0 else "→"
+                parts.append(f"Violation {direction} {abs(x_change):.1%}")
+            if base.y != 0:
+                y_change = (target.y - base.y) / abs(base.y)
+                direction = "↓" if y_change < 0 else "↑"
+                parts.append(f"Cost {direction} {abs(y_change):.1%}")
+            if parts:
+                ax.text(
+                    0.1,
+                    0.1,
+                    "\n".join(parts),
+                    color=Palette.gray,
+                    ha="left",
+                    va="bottom",
+                    transform=ax.transAxes,
+                )
+
     fig.tight_layout()
     return fig, ax, (left, right), (bottom, top)
 
