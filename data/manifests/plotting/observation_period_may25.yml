@@ -6,7 +6,7 @@ locals:
 
 main_content:
   title: null
-  show_legend: False
+  show_legend: "May 25 - Opt. with cache-aware routing"
   slo_objective_config:
     slo_metric: binary
     slo_threshold: 0.05

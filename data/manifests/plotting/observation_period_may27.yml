@@ -5,8 +5,8 @@ locals:
     rescale_factor: 0.16666667
 
 main_content:
-  title: null
-  show_legend: False
+  title: "May 27 - Opt. with cache-aware routing"
+  show_legend: false
   slo_objective_config:
     slo_metric: binary
     slo_threshold: 0.05
