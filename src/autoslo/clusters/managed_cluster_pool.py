@@ -362,6 +362,12 @@ class ManagedClusterPool:
             and self._out_dir is not None
         ):
             try:
+                logger.info(
+                    "Waiting 60s before collecting stats for cluster %s "
+                    "to allow system tables to flush.",
+                    cluster_name,
+                )
+                time.sleep(60)
                 RedshiftRunStatsCollector.collect_cluster_stats(
                     cluster_name,
                     cluster.conn_info,

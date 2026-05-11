@@ -157,6 +157,7 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     ], 
     EventType.RPU_COUNTERFACTUAL: ["slo_violation", "cost"],
     EventType.RPU_SELECTION: ["slo_violation", "cost"],
+    EventType.QUERY_EXECUTION_FINISH: ["latency_s"],
 }
 
 

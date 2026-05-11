@@ -29,6 +29,7 @@ from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
+from autoslo.workload_definition.workload import Workload
 
 
 class WorkloadRunner:
@@ -70,7 +71,9 @@ class WorkloadRunner:
 
         self._closed_loop = self._workload_runner_config.closed_loop
         schema_name = self._workload_runner_config.schema_name
-        self._query_text_registry = QueryTextRegistry(schema_name)
+        self._query_text_registry = QueryTextRegistry(
+            schema_name, one_statement_per_query=True
+        )
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=self._workload_runner_config.max_threads
         )
@@ -81,6 +84,11 @@ class WorkloadRunner:
         self._routing_lock = threading.Lock()
         self._spin_ups_lock = threading.Lock()
         self._pending_spin_ups: list[concurrent.futures.Future] = []
+
+    @property
+    def workload(self) -> Workload:
+        """The Workload being executed."""
+        return self._workload
 
     # ------------------------------------------------------------------
     # Async scheduled spin-up (live runner)
@@ -536,5 +544,9 @@ if __name__ == "__main__":
     config_id = make_run_id([Path(args.execution_config).stem], params)
 
     qr = WorkloadRunner(cfg)
-    append_to_run_log(run_id=qr.run_id, config_id=config_id)
+    append_to_run_log(
+        run_id=qr.run_id,
+        config_id=config_id,
+        workload_id=qr.workload.workload_config.id(),
+    )
     asyncio.run(qr.run())

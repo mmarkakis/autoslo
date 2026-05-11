@@ -32,7 +32,6 @@ from typing import Optional
 import pandas as pd
 
 import autoslo.filesystem.path_utils as pu
-
 from autoslo.workload_definition.query import QueryTextId
 
 _REGISTRY_SUBDIR = "__query_texts"
@@ -45,8 +44,9 @@ _cache: dict[str, dict[str, str]] = {}
 class QueryTextRegistry:
     """Lazily-loaded, per-schema registry mapping ``query_text_id`` to SQL."""
 
-    def __init__(self, schema_name: str):
+    def __init__(self, schema_name: str, one_statement_per_query: bool = True):
         self.schema_name = schema_name
+        self.one_statement_per_query = one_statement_per_query
         self._ensure_loaded(schema_name)
 
     def get(self, query_text_id: QueryTextId | str) -> Optional[str]:
@@ -116,7 +116,9 @@ class QueryTextRegistry:
         _cache[schema_name] = dict(mapping)
 
     @classmethod
-    def load_schema(cls, schema_name: str) -> dict[str, str]:
+    def load_schema(
+        cls, schema_name: str, one_statement_per_query: bool = True
+    ) -> dict[str, str]:
         """Load and return the mapping for *schema_name* from disk.
 
         Reads
@@ -126,6 +128,8 @@ class QueryTextRegistry:
         ----------
         schema_name:
             The schema identifier.
+        one_statement_per_query:
+            Whether to enforce one statement per query.
 
         Returns
         -------
@@ -144,9 +148,12 @@ class QueryTextRegistry:
                 f"Expected: {path}"
             )
         df = pd.read_parquet(path, columns=["query_text_id", "query_text"])
-        return dict(
-            zip(df["query_text_id"].astype(str), df["query_text"].astype(str))
-        )
+        texts = df["query_text"].astype(str)
+        if one_statement_per_query:
+            texts = texts.apply(
+                lambda t: f"{t.split(';')[0]};" if ";" in t else t
+            )
+        return dict(zip(df["query_text_id"].astype(str), texts))
 
     @classmethod
     def save_schema(cls, schema_name: str, mapping: dict[str, str]) -> None:
@@ -179,17 +186,20 @@ class QueryTextRegistry:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    @classmethod
-    def _ensure_loaded(cls, schema_name: str) -> None:
+    def _ensure_loaded(self, schema_name: str) -> None:
         """Populate the cache for *schema_name* from disk if not already done."""
         if schema_name not in _cache:
             try:
-                _cache[schema_name] = cls.load_schema(schema_name)
+                _cache[schema_name] = self.load_schema(
+                    schema_name, self.one_statement_per_query
+                )
             except FileNotFoundError:
                 # Create the summary file from individual query text files if
                 # possible, then retry loading.
-                cls._create_registry_summary_file(schema_name)
-                _cache[schema_name] = cls.load_schema(schema_name)
+                self._create_registry_summary_file(schema_name)
+                _cache[schema_name] = self.load_schema(
+                    schema_name, self.one_statement_per_query
+                )
 
     @classmethod
     def _registry_path(cls, schema_name: str) -> str:

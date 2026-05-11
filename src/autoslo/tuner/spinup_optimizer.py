@@ -96,7 +96,7 @@ def find_next_spinup_time(
     """
     completion_structured_logs = []
     for result in results:
-        log_path = result.simulation_dir / "structured_log.parquet"
+        log_path = result.execution_dir / "structured_log.parquet"
         if not log_path.exists():
             raise FileNotFoundError(f"Missing log file: {log_path}")
 

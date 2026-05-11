@@ -128,6 +128,11 @@ class Workload:
         return self._workload_config.workload_name
 
     @property
+    def workload_config(self) -> WorkloadConfig:
+        """The workload configuration."""
+        return self._workload_config
+
+    @property
     def rescale_factor(self) -> float:
         """The factor by which the workload's relative start times have been
         scaled, taken from the workload config."""

@@ -1,6 +1,5 @@
 import argparse
 import csv
-import datetime
 import os
 from datetime import datetime
 from pathlib import Path
@@ -119,7 +118,7 @@ def append_to_run_log(
 
     log_path = os.path.join(get_runs_path(), "run_log.csv")
     write_header = not os.path.exists(log_path)
-    started_at = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    started_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     os.makedirs(get_runs_path(), exist_ok=True)
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)

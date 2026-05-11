@@ -360,6 +360,9 @@ class WorkloadSimulator:
                 cluster_name=cluster_name,
                 query_id=query_id,
                 query_text_id=query_text_id,
+                details={
+                    "latency_s": latency_s_from_event,
+                },
             )
         )
 

@@ -69,6 +69,7 @@ class ExecutionConfig:
         out_dir = out_dir or os.path.join(
             pu.get_data_path(), default_parent, run_id
         )
+        os.makedirs(out_dir, exist_ok=True)
         structured_log_handler = setup_run_logging(
             out_dir=out_dir,
             write_text_log=write_text_log,
