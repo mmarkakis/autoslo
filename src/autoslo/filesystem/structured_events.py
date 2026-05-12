@@ -77,6 +77,7 @@ class EventType(str, Enum):
     # Autoscaler
     RPU_COUNTERFACTUAL = "rpu_counterfactual"
     RPU_SELECTION = "rpu_selection"
+    FORCED_DECISION_POINT = "forced_decision_point"
 
     # ------------------------------------------------------------------
     # Grouped subsets
@@ -154,10 +155,11 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     EventType.SCHEDULED_SPINUP_EXECUTED: [
         "scheduled_rel_time_s",
         "rpu",
-    ], 
+    ],
     EventType.RPU_COUNTERFACTUAL: ["slo_violation", "cost"],
     EventType.RPU_SELECTION: ["slo_violation", "cost"],
     EventType.QUERY_EXECUTION_FINISH: ["latency_s"],
+    EventType.FORCED_DECISION_POINT: ["force_one_decision_after_query_count"],
 }
 
 

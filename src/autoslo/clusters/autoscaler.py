@@ -41,6 +41,7 @@ class Autoscaler:
         query_router_config: QueryRouterConfig,
         autoscaler_config: AutoscalerConfig,
         out_dir: str | Path,
+        force_one_decision_after_query_count: Optional[int] = None,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
@@ -73,6 +74,13 @@ class Autoscaler:
         self._snapshot_at_window_start: Optional[dict[str, ClusterView]] = None
         self._window_queries: list[Query] = []
         self._spin_up_disabled: bool = False
+
+        # Forced mode (set when force_one_decision_after_query_count is
+        # provided).
+        self._force_one_decision_after_query_count: Optional[int] = (
+            force_one_decision_after_query_count
+        )
+        self._inform_count: int = 0
 
     # ------------------------------------------------------------------
     # Properties
@@ -112,6 +120,10 @@ class Autoscaler:
     @property
     def slo_tightening_factor(self) -> float:
         return self._slo_tightening_factor
+
+    @property
+    def forced_decision_mode(self) -> bool:
+        return self._force_one_decision_after_query_count is not None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -156,12 +168,16 @@ class Autoscaler:
         pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[ScalingAction]:
 
+        self._inform_count += 1
         actions: list[ScalingAction] = []
 
         # Start new window if needed.
         if (self._window_start_time_s is None) or (
-            (rel_time_s - self._window_start_time_s)
-            > self._observation_window_s
+            not self.forced_decision_mode
+            and (
+                (rel_time_s - self._window_start_time_s)
+                > self._observation_window_s
+            )
         ):
             self._reset_window(
                 rel_time_s,
@@ -171,7 +187,9 @@ class Autoscaler:
 
         # Add the current query to the existing window.
         self._window_queries.append(current_query)
-        if len(self._window_queries) < self._min_observations_to_act:
+        if not self.forced_decision_mode and (
+            len(self._window_queries) < self._min_observations_to_act
+        ):
             return actions
 
         # Determine whether to take any spinup actions.
@@ -217,42 +235,86 @@ class Autoscaler:
         if len(self.allowed_rpu_sizes) == 0 or self._spin_up_disabled:
             return []
 
-        # Determine if we have enough observations to act.
-        if len(self._window_queries) < self._min_observations_to_act:
-            return []
-
-        # Determine if there are ongoing spinups.
-        for cluster in pool_snapshot_with_current_query.values():
-            if cluster.state == ClusterState.PENDING:
+        if self.forced_decision_mode:
+            ### IN FORCED MODE ###
+            if self._inform_count != self._force_one_decision_after_query_count:
                 return []
 
-        # Determine if the (possibly tightened) SLO objective is met.
-        lat_and_slos = []
-        for cluster_name, cluster in pool_snapshot_with_current_query.items():
-            for q in cluster.active_queries:
-                pred_lat = cluster.predicted_latencies[q.query_id]
-                slo = self._trigger_slo_resolver.resolve(q.query_text_id)
-                lat_and_slos.append(LatencySlo(pred_lat, slo))
-        slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
-            lat_and_slos
-        )
-        slo_is_met = self._slo_objective.is_met_from_aggregated(
-            slo_metric_value
-        )
-        if slo_is_met:
-            return []
+            emit_structured(
+                BaseStructuredEvent(
+                    rel_time_s=rel_time_s,
+                    event_type=EventType.FORCED_DECISION_POINT,
+                    source="Autoscaler",
+                    details={
+                        "force_one_decision_after_query_count": (
+                            self._force_one_decision_after_query_count
+                        )
+                    },
+                )
+            )
+            reason = (
+                f"forced decision point, "
+                f"force_one_decision_after_query_count="
+                f"{self._force_one_decision_after_query_count}, "
+                f"autoscaling_policy={self._autoscaling_policy.value}"
+            )
+        else:
+            ### NOT IN FORCED MODE: CHECK CONDITIONS ###
 
-        # Find the best size to spin up.
-        best_rpu = self._select_rpu(rel_time_s)
-        action = SpinUpAction(
-            reason=(
+            # Determine if we have enough observations to act.
+            if len(self._window_queries) < self._min_observations_to_act:
+                return []
+
+            # Determine if there are ongoing spinups.
+            for cluster in pool_snapshot_with_current_query.values():
+                if cluster.state == ClusterState.PENDING:
+                    return []
+
+            # Determine if the (possibly tightened) SLO objective is met.
+            lat_and_slos = []
+            for (
+                cluster_name,
+                cluster,
+            ) in pool_snapshot_with_current_query.items():
+                for q in cluster.active_queries:
+                    pred_lat = cluster.predicted_latencies[q.query_id]
+                    slo = self._trigger_slo_resolver.resolve(q.query_text_id)
+                    lat_and_slos.append(LatencySlo(pred_lat, slo))
+            slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
+                lat_and_slos
+            )
+            slo_is_met = self._slo_objective.is_met_from_aggregated(
+                slo_metric_value
+            )
+            if slo_is_met:
+                return []
+
+            reason = (
                 f"num_queries_in_window={len(self._window_queries)}, "
                 f"slo_metric={self._slo_objective.slo_metric}, "
                 f"slo_metric_value={slo_metric_value:.4f}, "
                 f"slo_threshold={self._slo_objective.slo_threshold:.4f}, "
                 f"slo_tightening_factor={self._slo_tightening_factor}"
-            ),
+            )
+
+        # Find the best size to spin up.
+
+        best_rpu = self._select_rpu(rel_time_s)
+        deferred_teardowns: tuple[str, ...] = ()
+        if (
+            self._autoscaling_policy
+            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
+        ):
+            deferred_teardowns = tuple(
+                cluster_name
+                for cluster_name, cluster_view in pool_snapshot_with_current_query.items()
+                if cluster_view.state == ClusterState.READY
+            )
+
+        action = SpinUpAction(
+            reason=reason,
             rpu=best_rpu,
+            deferred_teardowns=deferred_teardowns,
         )
         emit_structured(
             BaseStructuredEvent(
@@ -266,23 +328,7 @@ class Autoscaler:
                 },
             )
         )
-        returned_actions: list[ScalingAction] = [action]
-
-        if (
-            self._autoscaling_policy
-            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
-        ):
-            replace_teardowns = [
-                TearDownAction(
-                    reason="replace policy",
-                    cluster_name=cluster_name,
-                )
-                for cluster_name, cluster_view in pool_snapshot_with_current_query.items()
-                if cluster_view.state == ClusterState.READY
-            ]
-            returned_actions.extend(replace_teardowns)
-
-        return returned_actions
+        return [action]
 
     def consider_teardown(
         self,
@@ -296,6 +342,11 @@ class Autoscaler:
         """
 
         tear_down_actions: list[TearDownAction] = []
+
+        if self.forced_decision_mode:
+            ### IN FORCED MODE: DO NOT TEAR DOWN ANYTHING (TO AVOID INTERFERING
+            # WITH THE FORCED SPIN-UP DECISION) ###
+            return tear_down_actions
 
         for cluster_name, cluster in pool_snapshot_with_current_query.items():
             if (cluster.state != ClusterState.READY) or (

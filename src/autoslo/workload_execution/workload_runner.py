@@ -151,6 +151,11 @@ class WorkloadRunner:
                     },
                 )
             )
+            for cn in action.deferred_teardowns:
+                self._pool.request_tear_down(
+                    TearDownAction(reason="Deferred teardown", cluster_name=cn),
+                    self._rel_time_s(),
+                )
 
         future.add_done_callback(_on_spin_up_done)
         with self._spin_ups_lock:

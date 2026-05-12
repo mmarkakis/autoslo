@@ -96,7 +96,10 @@ class WorkloadSimulator:
             SimulatorEvent(
                 rel_time_s=ready_time,
                 event_type=SimulatorEventType.CLUSTER_READY,
-                details={"cluster_name": cluster_name},
+                details={
+                    "cluster_name": cluster_name,
+                    "deferred_teardowns": action.deferred_teardowns,
+                },
             ),
         )
 
@@ -429,6 +432,12 @@ class WorkloadSimulator:
                 },
             )
         )
+
+        for cn in event.details.get("deferred_teardowns", ()):
+            self._pool.request_tear_down(
+                TearDownAction(reason="Deferred teardown", cluster_name=cn),
+                self._current_sim_time_s,
+            )
 
     def write_out_billing_interval_analysis(self) -> None:
         """

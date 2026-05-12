@@ -135,6 +135,15 @@ class ExecutionConfig:
             autoscaler_config=autoscaler_config,
             cluster_cache_state_dim=cluster_cache_state_dim,
             out_dir=out_dir,
+            force_one_decision_after_query_count=(
+                int(
+                    workload.num_queries
+                    * autoscaler_config.force_one_decision_after_query_fraction
+                )
+                if autoscaler_config.force_one_decision_after_query_fraction
+                is not None
+                else None
+            ),
         )
 
         return ExecutionConfig(
