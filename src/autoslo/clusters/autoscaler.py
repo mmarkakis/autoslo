@@ -174,9 +174,6 @@ class Autoscaler:
         if len(self._window_queries) < self._min_observations_to_act:
             return actions
 
-        # Store rel_time_s for use in structured event emissions.
-        self._latest_rel_time_s = rel_time_s
-
         # Determine whether to take any spinup actions.
         spin_up_actions = self.consider_spin_up(
             rel_time_s,
@@ -327,7 +324,7 @@ class Autoscaler:
 
                 emit_structured(
                     BaseStructuredEvent(
-                        rel_time_s=self._latest_rel_time_s,
+                        rel_time_s=rel_time_s,
                         event_type=EventType.TEAR_DOWN_DECISION,
                         source="Autoscaler",
                         cluster_name=cluster_name,
@@ -361,7 +358,7 @@ class Autoscaler:
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
                 BaseStructuredEvent(
-                    rel_time_s=self._latest_rel_time_s,
+                    rel_time_s=rel_time_s,
                     event_type=EventType.RPU_COUNTERFACTUAL,
                     source="Autoscaler",
                     cluster_name=hyp_cluster_name,
@@ -381,7 +378,7 @@ class Autoscaler:
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
         emit_structured(
             BaseStructuredEvent(
-                rel_time_s=self._latest_rel_time_s,
+                rel_time_s=rel_time_s,
                 event_type=EventType.RPU_SELECTION,
                 source="Autoscaler",
                 cluster_name=best_hyp_cluster_name,
