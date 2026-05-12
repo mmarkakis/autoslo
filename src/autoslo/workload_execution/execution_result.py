@@ -136,16 +136,15 @@ class ExecutionResult:
                 )
             total_rel_time_s = latencies_df["completion_s"].max()
 
-
         # For live runs: print a warning if there were aborted queries.
         if is_live:
-            aborted_ids = Trace.aborted_query_ids_from_dir(execution_dir)
-            num_aborted = len(aborted_ids)
-            if num_aborted > 0:
+            num_aborted_queries = Trace(execution_dir.name).was_aborted().sum()
+            if num_aborted_queries > 0:
                 print(
-                    f"Warning: detected {num_aborted} aborted queries in live "
-                    f"run {execution_dir}. These queries are not included in "
-                    "the violation metrics, but may indicate instability."
+                    f"Warning: detected {num_aborted_queries} aborted queries "
+                    f"in live run {execution_dir}. These queries are not "
+                    "included in the violation metrics, but may indicate "
+                    "instability."
                 )
 
         return ExecutionResult(

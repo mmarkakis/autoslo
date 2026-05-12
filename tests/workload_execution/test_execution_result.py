@@ -1,4 +1,5 @@
-"""Tests for ExecutionResult and Trace.aborted_query_ids_from_dir."""
+"""Tests for ExecutionResult."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,8 +11,6 @@ import yaml
 from autoslo.config.component_configs import SloResolverConfig
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_execution.execution_result import ExecutionResult
-from autoslo.workload_execution.trace import Trace
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -127,8 +126,18 @@ def test_load_simulation_no_violations(tmp_path: Path) -> None:
     _write_structured_log(
         tmp_path,
         [
-            {"query_id": "q1", "query_text_id": "s#001#001", "arrival_s": 0.0, "completion_s": 1.0},
-            {"query_id": "q2", "query_text_id": "s#001#002", "arrival_s": 1.0, "completion_s": 2.0},
+            {
+                "query_id": "q1",
+                "query_text_id": "s#001#001",
+                "arrival_s": 0.0,
+                "completion_s": 1.0,
+            },
+            {
+                "query_id": "q2",
+                "query_text_id": "s#001#002",
+                "arrival_s": 1.0,
+                "completion_s": 2.0,
+            },
         ],
     )
 
@@ -148,8 +157,18 @@ def test_load_simulation_all_violations(tmp_path: Path) -> None:
     _write_structured_log(
         tmp_path,
         [
-            {"query_id": "q1", "query_text_id": "s#001#001", "arrival_s": 0.0, "completion_s": 10.0},
-            {"query_id": "q2", "query_text_id": "s#001#002", "arrival_s": 0.0, "completion_s": 10.0},
+            {
+                "query_id": "q1",
+                "query_text_id": "s#001#001",
+                "arrival_s": 0.0,
+                "completion_s": 10.0,
+            },
+            {
+                "query_id": "q2",
+                "query_text_id": "s#001#002",
+                "arrival_s": 0.0,
+                "completion_s": 10.0,
+            },
         ],
     )
 
@@ -157,7 +176,9 @@ def test_load_simulation_all_violations(tmp_path: Path) -> None:
 
     assert r.violation_rate == pytest.approx(1.0)
     assert r.violation_amount_s == pytest.approx(5.0)  # mean(10-5, 10-5)
-    assert r.violation_relative_mean == pytest.approx(1.0)  # mean((10-5)/5, ...)
+    assert r.violation_relative_mean == pytest.approx(
+        1.0
+    )  # mean((10-5)/5, ...)
 
 
 def test_load_simulation_empty_log(tmp_path: Path) -> None:
@@ -165,7 +186,14 @@ def test_load_simulation_empty_log(tmp_path: Path) -> None:
     _write_billing(tmp_path, total_billed_cost=0.0)
     # Write an empty structured log (no ARRIVAL/COMPLETION rows)
     pd.DataFrame(
-        columns=["query_id", "query_text_id", "rel_time_s", "event_type", "source", "wall_clock_s"]
+        columns=[
+            "query_id",
+            "query_text_id",
+            "rel_time_s",
+            "event_type",
+            "source",
+            "wall_clock_s",
+        ]
     ).to_parquet(tmp_path / "structured_log.parquet", index=False)
 
     r = ExecutionResult.load(tmp_path)
@@ -220,7 +248,14 @@ def test_load_live_run_cost_from_usage(tmp_path: Path) -> None:
     _write_sys_serverless_usage(tmp_path, charged_seconds=charged_s)
     _write_structured_log(
         tmp_path,
-        [{"query_id": "q1", "query_text_id": "s#001#001", "arrival_s": 0.0, "completion_s": 1.0}],
+        [
+            {
+                "query_id": "q1",
+                "query_text_id": "s#001#001",
+                "arrival_s": 0.0,
+                "completion_s": 1.0,
+            }
+        ],
     )
 
     r = ExecutionResult.load(tmp_path)
@@ -233,11 +268,22 @@ def test_load_live_run_cost_sums_multiple_clusters(tmp_path: Path) -> None:
     from autoslo.clusters.cluster import Cluster
 
     _write_execution_config(tmp_path)
-    _write_sys_serverless_usage(tmp_path, charged_seconds=1800.0, cluster_name="c1")
-    _write_sys_serverless_usage(tmp_path, charged_seconds=1800.0, cluster_name="c2")
+    _write_sys_serverless_usage(
+        tmp_path, charged_seconds=1800.0, cluster_name="c1"
+    )
+    _write_sys_serverless_usage(
+        tmp_path, charged_seconds=1800.0, cluster_name="c2"
+    )
     _write_structured_log(
         tmp_path,
-        [{"query_id": "q1", "query_text_id": "s#001#001", "arrival_s": 0.0, "completion_s": 1.0}],
+        [
+            {
+                "query_id": "q1",
+                "query_text_id": "s#001#001",
+                "arrival_s": 0.0,
+                "completion_s": 1.0,
+            }
+        ],
     )
 
     r = ExecutionResult.load(tmp_path)
@@ -261,7 +307,14 @@ def test_load_live_run_aborted_queries_not_counted_as_violations(
     # One successful query well within SLO (1 s vs 5 s)
     _write_structured_log(
         tmp_path,
-        [{"query_id": "q_ok", "query_text_id": "s#001#001", "arrival_s": 0.0, "completion_s": 1.0}],
+        [
+            {
+                "query_id": "q_ok",
+                "query_text_id": "s#001#001",
+                "arrival_s": 0.0,
+                "completion_s": 1.0,
+            }
+        ],
     )
     # One aborted query visible only in sys_query_history
     _write_sys_query_history(
@@ -286,7 +339,14 @@ def test_load_live_run_no_aborted_queries_no_warning(
     _write_sys_serverless_usage(tmp_path, charged_seconds=0.0)
     _write_structured_log(
         tmp_path,
-        [{"query_id": "q1", "query_text_id": "s#001#001", "arrival_s": 0.0, "completion_s": 1.0}],
+        [
+            {
+                "query_id": "q1",
+                "query_text_id": "s#001#001",
+                "arrival_s": 0.0,
+                "completion_s": 1.0,
+            }
+        ],
     )
     _write_sys_query_history(
         tmp_path,
@@ -298,53 +358,3 @@ def test_load_live_run_no_aborted_queries_no_warning(
     assert r.num_queries == 1
     assert r.violation_rate == pytest.approx(0.0)
     assert capsys.readouterr().out == ""
-
-
-# ---------------------------------------------------------------------------
-# Trace.aborted_query_ids_from_dir
-# ---------------------------------------------------------------------------
-
-
-def test_aborted_query_ids_no_files(tmp_path: Path) -> None:
-    result = Trace.aborted_query_ids_from_dir(tmp_path)
-    assert result == set()
-
-
-def test_aborted_query_ids_all_success(tmp_path: Path) -> None:
-    _write_sys_query_history(
-        tmp_path,
-        [
-            {"query_id": "q1", "status": "success"},
-            {"query_id": "q2", "status": "success   "},  # trailing whitespace OK
-        ],
-    )
-    result = Trace.aborted_query_ids_from_dir(tmp_path)
-    assert result == set()
-
-
-def test_aborted_query_ids_mixed(tmp_path: Path) -> None:
-    _write_sys_query_history(
-        tmp_path,
-        [
-            {"query_id": "q1", "status": "success"},
-            {"query_id": "q2", "status": "failed"},
-            {"query_id": "q3", "status": "error"},
-        ],
-    )
-    result = Trace.aborted_query_ids_from_dir(tmp_path)
-    assert result == {"q2", "q3"}
-
-
-def test_aborted_query_ids_multiple_clusters(tmp_path: Path) -> None:
-    _write_sys_query_history(
-        tmp_path,
-        [{"query_id": "q1", "status": "success"}, {"query_id": "q2", "status": "failed"}],
-        cluster_name="c1",
-    )
-    _write_sys_query_history(
-        tmp_path,
-        [{"query_id": "q3", "status": "failed"}],
-        cluster_name="c2",
-    )
-    result = Trace.aborted_query_ids_from_dir(tmp_path)
-    assert result == {"q2", "q3"}

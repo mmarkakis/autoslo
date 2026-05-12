@@ -1,6 +1,6 @@
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
-from collections import defaultdict
 
 import pandas as pd
 import pytest
@@ -64,46 +64,6 @@ def _trace_from_df(df: pd.DataFrame, cluster_name: str = "clusterA") -> Trace:
         else datetime.now()
     )
     return tr
-
-
-def test_validate_missing_columns_raises():
-    """
-    Verify that creating a Trace from an incomplete internal state leads to
-    property access errors (no sys_query_history data).
-    """
-    # Build Trace with no sys_query_history data
-    tr = Trace.__new__(Trace)
-    tr._dfs = {}  # no clusters
-    with pytest.raises(ValueError):
-        _ = tr.earliest_query_start_time
-
-
-def test_normalize_and_reset_start_shifts_and_restores_times():
-    """
-    Test that normalize_start_to shifts times and reset_start restores the
-    original earliest start time.
-    """
-    base = datetime(2021, 1, 1, 0, 0, 0)
-    df = _make_trace_df([(0, 10), (20, 5)], base=base)
-    tr = _trace_from_df(df)
-    cluster = "clusterA"
-    orig_earliest = tr._dfs[cluster]["sys_query_history"]["start_time"].min()
-    new_start = pd.Timestamp(datetime(2021, 1, 2, 0, 0, 0))
-    tr.normalize_start_to(new_start)
-    assert (
-        tr._dfs[cluster]["sys_query_history"]["start_time"].min() == new_start
-    )
-    assert tr._dfs[cluster]["sys_query_history"][
-        "end_time"
-    ].min() == new_start + timedelta(seconds=10)
-    assert tr._dfs[cluster]["sys_query_history"][
-        "end_time"
-    ].max() == new_start + timedelta(seconds=25)
-    tr.reset_start()
-    assert (
-        tr._dfs[cluster]["sys_query_history"]["start_time"].min()
-        == orig_earliest
-    )
 
 
 def test_latency_and_counts_and_quantile_behavior():
@@ -185,62 +145,3 @@ def test_invalid_constructor_arguments_raise_value_error():
     required = Trace.REQUIRED_COLUMNS["sys_query_history"]
     for col in ["start_time", "end_time", "elapsed_time"]:
         assert col in required
-    # Accessing latest/earliest when no sys_query_history should raise
-    tr = Trace.__new__(Trace)
-    tr._dfs = {"some_cluster": {}}  # cluster present but no sys_query_history
-    with pytest.raises(ValueError):
-        _ = tr.latest_query_end_time
-
-
-def test_earliest_query_start_time():
-    """
-    Verify that earliest_query_start_time property returns the correct value.
-    """
-    base = datetime(2021, 1, 1)
-    df = _make_trace_df([(10, 5), (0, 10), (20, 2)], base=base)
-    tr = _trace_from_df(df)
-    expected_earliest = pd.Timestamp(base)
-    assert tr.earliest_query_start_time == expected_earliest
-
-
-def test_latest_query_end_time():
-    """
-    Verify that latest_query_end_time property returns the correct value.
-    """
-    base = datetime(2021, 1, 1)
-    df = _make_trace_df([(10, 5), (0, 10), (20, 15)], base=base)
-    tr = _trace_from_df(df)
-    expected_latest = pd.Timestamp(base + timedelta(seconds=35))
-    assert tr.latest_query_end_time == expected_latest
-
-
-def test_append_merges_data_correctly():
-    """
-    Verify that appending one Trace to another merges their data correctly. 
-    Do not actually inspect the underlying dataframes here.
-    """
-    base = datetime(2021, 1, 1)
-    df1 = _make_trace_df([(0, 10), (20, 5)], base=base)
-    df2 = _make_trace_df([(15, 10), (40, 5)], base=base)
-    tr1 = _trace_from_df(df1)
-    tr2 = _trace_from_df(df2)
-
-    tr1.append(tr2, time_gap_s=60)
-
-    expected_latest = pd.Timestamp(base + timedelta(seconds=25+60-15+45))
-    assert tr1.latest_query_end_time == expected_latest
-    
-    expected_earliest = pd.Timestamp(base)
-    assert tr1.earliest_query_start_time == expected_earliest
-
-    expected_latencies = [10.0, 5.0, 10.0, 5.0]  # in seconds
-    assert tr1.latencies_s == expected_latencies
-
-    expected_billed_s = 60 + 60  # two billed intervals of 60s each
-    actual_billed_s = Trace._billed_s(
-        tr1._dfs["clusterA"]["sys_query_history"]["start_time"],
-        tr1._dfs["clusterA"]["sys_query_history"]["end_time"],
-    )
-    assert pytest.approx(actual_billed_s, rel=1e-6) == expected_billed_s
-
-

@@ -1,7 +1,6 @@
 import os
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional, cast
 
 import pandas as pd
@@ -13,8 +12,6 @@ import autoslo.filesystem.path_utils as pu
 import autoslo.tuner.parallelism as plu
 from autoslo.clusters.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
-from autoslo.slo.slo_metric import SloMetric
-from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_definition.query_plan_registry import QueryPlanRegistry
 
@@ -86,16 +83,6 @@ class Trace:
     REDSHIFT_ELAPSED_TIME_UNIT = "us"  # microseconds
     BYTES_IN_MEGABYTE = 1_000_000
 
-    REDSHIFT_SYSTEM_TABLE_SUBSTRINGS = [
-        "sys_",
-        "svv_",
-        "stl_",
-        "stv_",
-        "svcs_",
-        "svl_",
-    ]
-    REDSHIFT_PERMANENT_TABLE_SUBSTRINGS = ["tpcds1000"]
-
     def __init__(self, run_id: str):
         """
         Create a Trace instance from a run directory, reading in only the
@@ -116,8 +103,6 @@ class Trace:
 
         # For caching.
         self._query_ids: list[TraceQueryId] = []
-        self._slo_config: dict | None = None
-        self._slo_resolver: SloResolver | None = None
 
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
@@ -172,11 +157,6 @@ class Trace:
         return TraceQueryId(query_id).cluster_name
 
     @staticmethod
-    def redshift_query_id_from_query_id(query_id: str) -> str:
-        """Extract the raw Redshift integer ID from a :class:`TraceQueryId`."""
-        return TraceQueryId(query_id).redshift_query_id
-
-    @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
         """
         Check if the Parquet file at the specified path contains the required
@@ -202,116 +182,6 @@ class Trace:
             )
         pa.set_cpu_count(plu.inner_level_num_cpus())
         return pd.read_parquet(path, columns=column_list, engine="pyarrow")
-
-    def normalize_start_to(self, new_start: datetime) -> "Trace":
-        """
-        Normalize start and end times of the trace so that the earliest start
-        time is equal to `new_start`.
-
-        Parameters:
-            new_start: The new start time for the earliest query in the trace.
-
-        Returns:
-            A new Trace instance with normalized start times.
-        """
-
-        # We use the start and end times from sys_query_history as the source of
-        # truth for the trace.
-        for cluster_name, df in self._dfs["sys_query_history"].items():
-            earliest_start = df["start_time"].min()
-            shift = pd.Timestamp(new_start) - earliest_start
-            normalized_df = df.copy()
-            normalized_df["start_time"] = normalized_df["start_time"] + shift
-            normalized_df["end_time"] = normalized_df["end_time"] + shift
-            self._dfs["sys_query_history"][cluster_name] = normalized_df
-
-        return self
-
-    def reset_start(self) -> "Trace":
-        """
-        Reset start and end times of the trace to their original values.
-
-        Returns:
-            A new Trace instance with original start times.
-        """
-        return self.normalize_start_to(self._original_start)
-
-    def append(self, other: "Trace") -> "Trace":
-        """
-        Append another Trace instance to this one. That is, treat the queries
-        in the `other` trace as occurring after the queries in this trace.
-        Insert the specified time gap between the two traces.
-
-        Parameters:
-            other: The other Trace instance to append.
-
-        Returns:
-            A new Trace instance containing the combined trace data.
-
-        Raises:
-            ValueError: If the earliest start time of the other trace is before
-                the latest end time of this trace.
-        """
-
-        latest_end_time = self.latest_query_end_time
-        other_earliest_start = other.earliest_query_start_time
-        if other_earliest_start < latest_end_time:
-            raise ValueError(
-                "Cannot append trace: the earliest start time of the other "
-                "trace is before the latest end time of this trace."
-            )
-
-        # Append the dataframes per cluster and table.
-        for table_name, clusters in self._dfs.items():
-            if table_name not in other._dfs:
-                continue
-            other_clusters = other._dfs[table_name]
-            for cluster_name, df in clusters.items():
-                if cluster_name not in other_clusters:
-                    continue
-                combined_df = pd.concat(
-                    [
-                        df,
-                        other_clusters[cluster_name],
-                    ]
-                ).reset_index(drop=True)
-                self._dfs[table_name][cluster_name] = combined_df
-
-        return self
-
-    @property
-    def earliest_query_start_time(self) -> datetime:
-        """
-        Get the earliest start time across all clusters in the trace.
-
-        Returns:
-            The earliest start time as a datetime object.
-        """
-        earliest_start = None
-        for df in self._dfs["sys_query_history"].values():
-            cluster_earliest = df["start_time"].min()
-            if earliest_start is None or cluster_earliest < earliest_start:
-                earliest_start = cluster_earliest
-        if earliest_start is None:
-            raise ValueError("No sys_query_history data found in the trace.")
-        return earliest_start
-
-    @property
-    def latest_query_end_time(self) -> datetime:
-        """
-        Get the latest end time across all clusters in the trace.
-
-        Returns:
-            The latest end time as a datetime object.
-        """
-        latest_end = None
-        for df in self._dfs["sys_query_history"].values():
-            cluster_latest = df["end_time"].max()
-            if latest_end is None or cluster_latest > latest_end:
-                latest_end = cluster_latest
-        if latest_end is None:
-            raise ValueError("No sys_query_history data found in the trace.")
-        return latest_end
 
     @property
     def num_queries(self) -> int:
@@ -376,18 +246,6 @@ class Trace:
             A list of unique cluster names.
         """
         return list(self._dfs["sys_query_history"].keys())
-
-    @property
-    def routing_times_s(self) -> list[float]:
-        """
-        Placeholder method to return the time taken to route each query.
-
-        Returns:
-            A list of routing times in seconds.
-        """
-        # FIXME: Placeholder implementation - routing strategy should record
-        # this and write it out.
-        return [0.0 for _ in range(self.num_queries)]
 
     def cost_of_cluster(self, cluster_name: str) -> float:
         """
@@ -632,25 +490,6 @@ class Trace:
 
         return pd.Series(non_overlapping_dict).reindex(self.query_ids)
 
-    def mbytes_scanned(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the total MB scanned per query.
-        """
-        series = []
-        query_ids = self.query_ids
-        for df in self._dfs["sys_query_detail"].values():
-            condition = df["query_id"].isin(query_ids) & (
-                df["step_name"] == "scan"
-            )
-            s = df[condition].groupby("query_id")["output_bytes"].sum()
-            series.append(s)
-
-        concatenated = pd.Series(
-            pd.concat(series).reindex(query_ids) / Trace.BYTES_IN_MEGABYTE
-        )
-        return concatenated
-
     def arrival_times(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
@@ -667,27 +506,6 @@ class Trace:
 
         return pd.concat(series).reindex(self.query_ids)
 
-    def relative_arrival_times_s(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the arrival times (start times in SYS_QUERY_HISTORY) of each query,
-        relative to the earliest start time in the trace, in seconds.
-
-        The order of the query IDs in the Series matches the order of the query
-        IDs provided by the `query_ids` property.
-        """
-        earliest_start = self.earliest_query_start_time
-
-        series = []
-        for df in self._dfs["sys_query_history"].values():
-            s = (
-                pd.to_datetime(df.set_index("query_id")["start_time"])
-                - earliest_start
-            ).dt.total_seconds()
-            series.append(s)
-
-        return pd.concat(series).reindex(self.query_ids)
-
     def completion_times(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
@@ -700,24 +518,6 @@ class Trace:
         for df in self._dfs["sys_query_history"].values():
             s = df.set_index("query_id")["end_time"]
             s = pd.to_datetime(s)
-            series.append(s)
-
-        return pd.concat(series).reindex(self.query_ids)
-
-    @property
-    def routing_decisions(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the routing decisions (cluster names) of each query.
-
-        The order of the query IDs in the Series matches the order of the query
-        IDs provided by the `query_ids` property.
-        """
-        series = []
-        for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id", drop=False)["query_id"].apply(
-                lambda x: Trace.cluster_name_from_query_id(x)
-            )
             series.append(s)
 
         return pd.concat(series).reindex(self.query_ids)
@@ -815,177 +615,6 @@ class Trace:
 
         return pd.concat(series).reindex(self.query_ids)
 
-    @staticmethod
-    def aborted_query_ids_from_dir(run_dir) -> set[str]:
-        """Return the raw Redshift query IDs that were aborted in *run_dir*.
-
-        Reads only the ``query_id`` and ``status`` columns from every
-        ``sys_query_history+<cluster>.parquet`` file in *run_dir* without
-        constructing a full :class:`Trace` object.  A query is considered
-        aborted when its ``status`` value does not contain ``"success"``
-        (mirrors :meth:`was_aborted`).
-
-        Returns an empty set when no ``sys_query_history`` files are present.
-
-        Parameters
-        ----------
-        run_dir :
-            Path to the run output directory (e.g. ``data/runs/<run_id>/``).
-        """
-        run_dir = Path(run_dir)
-        aborted: set[str] = set()
-        for pq_path in run_dir.glob("sys_query_history+*.parquet"):
-            df = pd.read_parquet(pq_path, columns=["query_id", "status"])
-            mask = ~df["status"].str.contains("success", na=False)
-            aborted.update(df.loc[mask, "query_id"].astype(str).tolist())
-        return aborted
-
-    # ------------------------------------------------------------------
-    # SLO configuration and compliance
-    # ------------------------------------------------------------------
-
-    @property
-    def slo_config(self) -> dict:
-        """Return the ``slo_config`` section from the run's
-        ``runner_config.yml``.
-
-        Returns an empty dict when no ``runner_config.yml`` is present
-        (e.g. for simulator-generated runs).  The result is lazily loaded
-        and cached for the lifetime of this :class:`Trace`.
-        """
-        if self._slo_config is None:
-            run_dir = os.path.join(pu.get_runs_path(), self._run_id)
-            config_path = os.path.join(run_dir, "runner_config.yml")
-            if os.path.exists(config_path):
-                with open(config_path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                self._slo_config = cfg.get("slo_config", {})
-            else:
-                self._slo_config = {}
-        return self._slo_config
-
-    def make_resolver(
-        self,
-        override_slo_s: float | None = None,
-    ) -> SloResolver:
-        """Build a :class:`SloResolver` from this trace's SLO configuration.
-
-        When ``slo_dict_filename`` is present in the config the regular
-        ``SloResolver.__init__`` constructor is used so the YAML file in
-        ``data/slos/`` is actually loaded.  If an inline ``slo_dict`` is
-        provided instead, ``SloResolver.from_dict`` is used.
-
-        Parameters:
-            override_slo_s: If given, replaces the config's ``slo_s`` as
-                the default (fallback) SLO.
-
-        Returns:
-            A fully configured :class:`SloResolver`.
-        """
-        cfg = self.slo_config
-        default = (
-            override_slo_s
-            if override_slo_s is not None
-            else cfg.get("slo_s", 0.0)
-        )
-        slo_dict = cfg.get("slo_dict") or {}
-        slo_dict_filename = cfg.get("slo_dict_filename")
-
-        if slo_dict:
-            return SloResolver.from_dict(
-                default_slo_s=default,
-                slo_dict=slo_dict,
-                slo_dict_filename=slo_dict_filename,
-            )
-        elif slo_dict_filename:
-            return SloResolver(
-                default_slo_s=default,
-                slo_dict_filename=slo_dict_filename,
-            )
-        else:
-            return SloResolver.from_dict(default_slo_s=default, slo_dict={})
-
-    @property
-    def slo_resolver(self) -> SloResolver:
-        """Default :class:`SloResolver` for this trace (no overrides).
-
-        Lazily built and cached.  Call :meth:`make_resolver` directly
-        when you need a custom ``override_slo_s``.
-        """
-        if self._slo_resolver is None:
-            self._slo_resolver = self.make_resolver()
-        return self._slo_resolver
-
-    def slo_compliance(
-        self,
-        resolver: SloResolver | None = None,
-        query_text_ids: pd.Series | None = None,
-    ) -> pd.DataFrame:
-        """Compute per-query SLO compliance.
-
-        Parameters:
-            resolver:
-                A :class:`SloResolver` mapping query text IDs to SLO
-                thresholds.  Defaults to :attr:`slo_resolver` (built from
-                the run's ``runner_config.yml``).
-            query_text_ids:
-                A Series indexed by query_id with string or
-                :class:`QueryTextId` values.  Defaults to
-                :attr:`query_text_ids`.
-
-        Returns:
-            A DataFrame indexed by ``query_id`` with columns:
-            ``query_text_id``, ``latency_s``, ``slo_s``, ``is_aborted``,
-            ``violates_slo``, ``violation_amount_s``, ``violation_relative``.
-        """
-        if resolver is None:
-            resolver = self.slo_resolver
-        if query_text_ids is None:
-            query_text_ids = self.query_text_ids
-
-        latencies = self.latencies_s
-        aborted = self.was_aborted()
-
-        rows = []
-        for qid in self.query_ids:
-            lat = float(latencies[qid])
-            qtid = query_text_ids.get(qid)
-            slo_s = resolver.resolve(qtid)
-            is_ab = bool(aborted.get(qid, False))
-            if is_ab:
-                viol_amt = 0.0
-                viol_rel = 0.0
-                violates = False
-            else:
-                viol_amt = SloMetric.ABSOLUTE_S.calculate(lat, slo_s)
-                viol_rel = SloMetric.RELATIVE.calculate(lat, slo_s)
-                violates = SloMetric.BINARY.calculate(lat, slo_s) > 0
-            rows.append(
-                {
-                    "query_id": qid,
-                    "query_text_id": qtid,
-                    "latency_s": lat,
-                    "slo_s": slo_s,
-                    "is_aborted": is_ab,
-                    "violates_slo": violates,
-                    "violation_amount_s": viol_amt,
-                    "violation_relative": viol_rel,
-                }
-            )
-        return pd.DataFrame.from_records(rows).set_index("query_id")
-
-    def was_cached(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        booleans indicating whether each query was served from the result cache.
-        """
-        series = []
-        for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["result_cache_hit"]
-            series.append(s)
-
-        return pd.concat(series).reindex(self.query_ids)
-
     def error_messages(self) -> pd.Series:
         """
         Return a Series where the index is the query IDs and the values are
@@ -996,141 +625,6 @@ class Trace:
             s = df.set_index("query_id")["error_message"]
             series.append(s)
         return pd.concat(series).reindex(self.query_ids).str.strip()
-
-    def query_type(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the type of each query (e.g., 'SELECT', 'INSERT', etc.).
-        """
-        series = []
-        for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["query_type"]
-            series.append(s)
-        return pd.concat(series).reindex(self.query_ids)
-
-    def _count_distinct_table_names_containing(
-        self, substrings: list[str]
-    ) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the count of distinct table names containing any of the specified
-        substrings associated with each query.
-
-        Parameters:
-            substring: The substring to search for in table names.
-        """
-        series = []
-        query_ids = self.query_ids
-        joined_substrings = "|".join(substrings)
-        for df in self._dfs["sys_query_detail"].values():
-            condition = df["query_id"].isin(query_ids)
-            s = (
-                df[condition]
-                .groupby("query_id")["table_name"]
-                .apply(
-                    lambda x: x.str.contains(joined_substrings, na=False).sum()
-                )
-            )
-            series.append(s)
-        return pd.concat(series).reindex(query_ids, fill_value=0)
-
-    def num_external_tables(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the count of distinct external table names associated with each query.
-        """
-        # FIXME: Assume we don't have external tables for now.
-        return pd.Series(0, index=self.query_ids)
-
-    def num_system_tables(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the count of distinct system table names associated with each query.
-        """
-        return self._count_distinct_table_names_containing(
-            Trace.REDSHIFT_SYSTEM_TABLE_SUBSTRINGS
-        )
-
-    def num_permanent_tables(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the count of distinct permanent table names associated with each query.
-        """
-        return self._count_distinct_table_names_containing(
-            Trace.REDSHIFT_PERMANENT_TABLE_SUBSTRINGS
-        )
-
-    def _count_word_in_plan_rows(self, word: str) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the count of occurrences of the specified word in the plan nodes.
-
-        FIXME: This lumps together the features from all clusters in the trace.
-        We may want to separate them per cluster in the future to properly
-        support multi-cluster traces, or at least document this behavior.
-        """
-        series = []
-        query_ids = self.query_ids
-        for df in self._dfs["sys_query_explain"].values():
-            condition = df["query_id"].isin(query_ids)
-            s = (
-                df[condition]["plan_node"]
-                .str.lower()
-                .str.contains(word.lower(), na=False)
-                .groupby(df["query_id"])
-                .sum()
-            )
-            series.append(s)
-        return pd.concat(series).reindex(query_ids)
-
-    def num_joins(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the number of joins.
-        """
-        return self._count_word_in_plan_rows("join")
-
-    def num_scans(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the number of scans.
-        """
-        return self._count_word_in_plan_rows("scan")
-
-    def num_aggregates(self) -> pd.Series:
-        """
-        Return a Series where the index is the query IDs and the values are
-        the number of aggregates.
-        """
-        return self._count_word_in_plan_rows("aggregate")
-
-    def rpu_per_cluster(self) -> dict[str, int]:
-        """
-        Returns the RPU corresponding to each cluster of the blueprint on
-        which this trace was executed.
-
-        Returns:
-            A dictionary mapping cluster names to their respective RPUs.
-        """
-        # Find out the name of the blueprint.
-        run_params_path = os.path.join(
-            pu.get_runs_path(), self._run_id, "run_params.yml"
-        )
-        with open(run_params_path, "r") as f:
-            run_params = yaml.safe_load(f)
-        blueprint_name = run_params["blueprint_name"]
-
-        # For this blueprint, find out the cluster names and their RPUs.
-        bp_cluster_names = pu.get_blueprint_dicts_from_config()[blueprint_name][
-            "cluster_names"
-        ]
-        all_cluster_names_to_rpu = {
-            k: v["rpu"] for k, v in pu.get_cluster_dicts_from_config().items()
-        }
-        bp_cluster_names_to_rpu = {
-            name: all_cluster_names_to_rpu[name] for name in bp_cluster_names
-        }
-        return bp_cluster_names_to_rpu
 
     def sys_query_explain_rows_per_query(self) -> dict[str, pd.DataFrame]:
         """
