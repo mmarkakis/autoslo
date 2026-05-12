@@ -1,6 +1,3 @@
-from dataclasses import dataclass
-from typing import Optional
-
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -246,6 +243,7 @@ class ConcurrentQueryDataset(Dataset):
         targets: dict[str, float] | None = None,
         is_lower_bound: dict[str, bool] | None = None,
         use_log_runtime: bool = True,
+        run_id: str = "",
     ) -> "ConcurrentQueryDataset":
         """
         Build a dataset from base queries and their pre-computed neighbors.
@@ -265,7 +263,7 @@ class ConcurrentQueryDataset(Dataset):
                 is a censored (lower-bound) observation.  When *None*, defaults
                 to False.
             use_log_runtime: Whether to use log(runtime) as the target variable.
-           
+
         Returns:
             A ConcurrentQueryDataset ready for training or inference.
         """
@@ -291,22 +289,21 @@ class ConcurrentQueryDataset(Dataset):
         run_ids_out = []
         y_is_lower_bound_out = []
 
-        for cluster_name, base_to_neighbors in cluster_to_base_to_neighbors.items():
+        for (
+            cluster_name,
+            base_to_neighbors,
+        ) in cluster_to_base_to_neighbors.items():
             # Derive RPU once per cluster for stage-prediction lookup.
             rpu = iconq_interaction_featurizer._get_rpu(cluster_name)
 
             def _stage_pred(q: Query) -> float:
                 return q.stage_predictions_per_rpu.get(rpu, -1.0)
 
-          
-
             # General path: distinct neighbor lists per base query.
             for base_query in base_to_neighbors.keys():
 
                 # Build qb_entries: self-interaction first, then neighbors.
-                qb_entries: list[
-                    tuple[float, QueryTextId, float, bool]
-                ] = [
+                qb_entries: list[tuple[float, QueryTextId, float, bool]] = [
                     (
                         base_query.rel_start_time_s,
                         base_query.query_text_id,
@@ -316,12 +313,14 @@ class ConcurrentQueryDataset(Dataset):
                 ]
                 for neighbor in base_to_neighbors[base_query]:
                     if neighbor.query_id != base_query.query_id:
-                        qb_entries.append((
-                            neighbor.rel_start_time_s,
-                            neighbor.query_text_id,
-                            _stage_pred(neighbor),
-                            False,  # is_self
-                        ))
+                        qb_entries.append(
+                            (
+                                neighbor.rel_start_time_s,
+                                neighbor.query_text_id,
+                                _stage_pred(neighbor),
+                                False,  # is_self
+                            )
+                        )
 
                 arr, pinch_idx = (
                     iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
@@ -346,7 +345,7 @@ class ConcurrentQueryDataset(Dataset):
                 pinch_points.append(pinch_idx)
                 query_ids_out.append(base_query.query_id)
                 query_text_id_out.append(base_query.query_text_id)
-                run_ids_out.append(cluster_name)
+                run_ids_out.append(run_id or cluster_name)
                 lb = (
                     is_lower_bound.get(base_query.query_id, False)
                     if is_lower_bound is not None

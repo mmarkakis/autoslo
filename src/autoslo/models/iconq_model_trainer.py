@@ -1,4 +1,4 @@
-from autoslo.models.query_timeline import QueryTimeline
+from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
 from autoslo.models.iconq_model import IconqModel, NNModelTrainConfig
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.nn.runtime_net import RuntimeNet
@@ -35,15 +35,15 @@ def iconq_model_trainer(  # pylint: disable=arguments-differ,too-many-locals
     use_fixed_window_max_neighbors_per_side = (
         iconq_model._init_config.use_fixed_window_max_neighbors_per_side
     )
-    
+
     datasets = []
     for run_id in train_config.run_ids:
         trace = Trace(run_id)
-        query_timeline = QueryTimeline(iconq_model=iconq_model, slo_s = 0)
-        query_timeline.initialize_from_trace(trace)
-        dataset = query_timeline.get_dataset(
-            use_log_runtime=iconq_model.trained_on_log_runtime,
+        dataset = build_dataset_from_trace(
+            trace=trace,
+            iconq_model=iconq_model,
             run_id=run_id,
+            use_log_runtime=iconq_model.trained_on_log_runtime,
             use_fixed_window_radius_s=use_fixed_window_radius_s,
             use_fixed_window_max_neighbors_per_side=(
                 use_fixed_window_max_neighbors_per_side

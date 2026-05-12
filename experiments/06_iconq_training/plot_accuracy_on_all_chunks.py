@@ -6,7 +6,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.models.query_timeline import QueryTimeline
+from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_execution.trace import Trace
@@ -119,14 +119,17 @@ def main(iconq_model_id: str, use_stage_for_isolated_queries: bool):
                 )
 
                 trace = Trace(trace_run_id)
-                query_timeline = QueryTimeline(model)
-                query_timeline.initialize_from_trace(
-                    trace,
+                dataset = build_dataset_from_trace(
+                    trace=trace,
+                    iconq_model=model,
+                    run_id=trace_run_id,
                 )
-
-                predictions = query_timeline.predict_all(
-                    use_stage_for_isolated_queries=use_stage_for_isolated_queries
-                )
+                raw = model.predict_from_dataset(dataset)
+                predictions = {
+                    qid: pred.overall_mean_s()
+                    for run_preds in raw.values()
+                    for qid, pred in run_preds.items()
+                }
 
                 true_y = trace.latencies_s
                 predicted_y = predictions
