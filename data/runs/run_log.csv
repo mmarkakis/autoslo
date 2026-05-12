@@ -1,2 +1,5 @@
 run_id,config_id,workload_id,started_at
-1778469201294,tpcds_benchmarking,poisson_99_1_3_0.2_42__2026-01-01__rf1.000,2026-05-11T03:13:22Z
+1778469201294,tpcds_benchmarking__RPU=16,poisson_99_1_3_0.2_42__2026-01-01__rf1.000,2026-05-11T03:13:22Z
+1778596303399,tpcds_benchmarking__RPU=8,poisson_99_1_3_0.2_42__2026-01-01__rf1.000,2026-05-12T14:31:43Z
+1778596401747,tpcds_benchmarking__RPU=4,poisson_99_1_3_0.2_42__2026-01-01__rf1.000,2026-05-12T14:33:22Z
+1778596415878,tpcds_benchmarking__RPU=32,poisson_99_1_3_0.2_42__2026-01-01__rf1.000,2026-05-12T14:33:36Z

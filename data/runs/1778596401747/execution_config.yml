@@ -1,35 +1,27 @@
 workload_config:
   workload_name: poisson_99_1_3_0.2_42
-  target_date: "2026-01-01"
+  target_date: '2026-01-01'
   rescale_factor: 1
-
 slo_resolver_config:
   slo_s: 30.0
-  slo_dict_filename: "1778469201294_p50_k4.yml"
-
+  slo_dict_filename: 1778469201294_p50_k4.yml
 slo_objective_config:
   slo_metric: binary
   slo_threshold: 0.05
-
 provisioner_config:
   aws_config_path: data/config/aws.yml
   spin_up_delay_s: 300.0
-
 workload_runner_config:
   max_threads: 512
   schema_name: ext_tpcds1000
   closed_loop: true
-
 managed_cluster_pool_config:
   maxconns: 1000
   max_clusters: 15
   initial_rpus:
-    - <RPU>
-
+  - 4
 scheduled_spinups: []
-
 query_router_config:
   routing_policy_name: round_robin
-
 autoscaler_config:
   allowed_rpu_sizes: []

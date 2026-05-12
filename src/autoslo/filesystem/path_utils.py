@@ -65,6 +65,7 @@ def get_redset_raw_data(
 
     return path
 
+
 def get_data_path() -> str:
     """
     Return the absolute DATA_PATH used by autoslo.
@@ -123,7 +124,9 @@ def append_to_run_log(
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(["run_id", "config_id", "workload_id", "started_at"])
+            writer.writerow(
+                ["run_id", "config_id", "workload_id", "started_at"]
+            )
         writer.writerow([run_id, config_id, workload_id, started_at])
 
 
@@ -146,7 +149,10 @@ def find_most_recent_live_run_id(
             return None
         best: Optional[str] = None
         for row in reader:
-            if row["config_id"] == config_id and row["workload_id"] == workload_id:
+            if (
+                row["config_id"] == config_id
+                and row["workload_id"] == workload_id
+            ):
                 if best is None or int(row["run_id"]) > int(best):
                     best = row["run_id"]
     return best
