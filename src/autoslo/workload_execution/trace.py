@@ -1,5 +1,4 @@
 import os
-import uuid
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +17,32 @@ from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import QueryTextId
 from autoslo.workload_definition.query_plan_registry import QueryPlanRegistry
+
+
+class TraceQueryId(str):
+    """Stable identifier for a query recorded in a Trace.
+
+    Format:  ``"{run_id}#{cluster_name}#{redshift_int}"``
+    Example: ``"run20260512#cluster_a#812345"``
+
+    A ``str`` subclass — call sites that only need a plain string work
+    without modification.  Distinct from the workload query ID carried by
+    :class:`~autoslo.workload_definition.query.Query` in routing and
+    simulation; use :meth:`Trace.workload_query_id_mapping` to cross
+    between the two spaces.
+    """
+
+    @property
+    def run_id(self) -> str:
+        return self.split("#")[0]
+
+    @property
+    def cluster_name(self) -> str:
+        return self.split("#")[1]
+
+    @property
+    def redshift_query_id(self) -> str:
+        return self.split("#")[2]
 
 
 class Trace:
@@ -88,10 +113,9 @@ class Trace:
                 run directory.
         """
         self._run_id = run_id
-        self._uuid = uuid.uuid4()
 
         # For caching.
-        self._query_ids: list[str] = []
+        self._query_ids: list[TraceQueryId] = []
         self._slo_config: dict | None = None
         self._slo_resolver: SloResolver | None = None
 
@@ -114,14 +138,11 @@ class Trace:
                 if len(df) == 0:
                     continue
 
-                # N.B.: We may create longer traces by appending multiple copies
-                # of the same run of the same chunk to each other. To maintain
-                # proper joins across the sys tables of each copy, we append
-                # a UUID to each query_id.
                 if "query_id" in df.columns:
-                    df["query_id"] = df.apply(
-                        lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
-                        axis=1,
+                    df["query_id"] = df["query_id"].apply(
+                        lambda raw_id: TraceQueryId(
+                            f"{self._run_id}#{cluster_name}#{raw_id}"
+                        )
                     )
 
                 if table_name == "sys_query_explain":
@@ -147,29 +168,13 @@ class Trace:
 
     @staticmethod
     def cluster_name_from_query_id(query_id: str) -> str:
-        """
-        Extract the cluster name from a query ID.
-
-        Parameters:
-            query_id: The query ID from which to extract the cluster name.
-
-        Returns:
-            The cluster name as a string.
-        """
-        return query_id.rsplit("_", maxsplit=1)[0]
+        """Extract the cluster name from a :class:`TraceQueryId`."""
+        return TraceQueryId(query_id).cluster_name
 
     @staticmethod
     def redshift_query_id_from_query_id(query_id: str) -> str:
-        """
-        Extract the Redshift query ID from a query ID.
-
-        Parameters:
-            query_id: The query ID from which to extract the Redshift query ID.
-
-        Returns:
-            The Redshift query ID as a string.
-        """
-        return query_id.rsplit("_", maxsplit=1)[-1].split("#", maxsplit=1)[0]
+        """Extract the raw Redshift integer ID from a :class:`TraceQueryId`."""
+        return TraceQueryId(query_id).redshift_query_id
 
     @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
@@ -407,7 +412,7 @@ class Trace:
         return charged_seconds / 3600 * Cluster.US_EAST_1_COST_PER_RPU_HOUR
 
     @property
-    def query_ids(self) -> list[str]:
+    def query_ids(self) -> list[TraceQueryId]:
         """
         Get the query IDs of the queries in the trace.
 
@@ -438,13 +443,19 @@ class Trace:
         return pd.concat(series).reindex(self.query_ids)
 
     @property
-    def query_id_mapping(self) -> pd.Series:
-        """
-        Get a mapping from trace-based query ids to the workload query ids
-        supplied at runtime.
+    def workload_query_id_mapping(self) -> pd.Series:
+        """Map each :class:`TraceQueryId` to the workload query ID embedded in
+        the SQL comment by :class:`~...workload_runner.WorkloadRunner`::
+
+            --{run_id}/{workload_query_id}\\n{sql}
+
+        This is the canonical bridge from :class:`TraceQueryId` space into the
+        workload query ID space used by routing and simulation.  Returns
+        ``None`` for entries whose SQL was not submitted via
+        :class:`WorkloadRunner`.
 
         Returns:
-            A pandas Series mapping trace-based query ids to workload query ids.
+            A Series indexed by :class:`TraceQueryId` with string values.
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
@@ -551,18 +562,16 @@ class Trace:
                 pd.Series,
                 pd.read_parquet(cache_path).squeeze("columns"),
             )
-            # Stale-cache guard: old format stored bare "template_index"
-            # strings without a '#'.  Detect and invalidate.
-            if not concatenated.empty and "#" not in str(concatenated.iloc[0]):
+            # Invalidate caches written by older formats:
+            #   - bare "template_index"  →  0 '#' in the index
+            #   - old "cluster_name_int#uuid4"  →  1 '#' in the index
+            # New format "run_id#cluster_name#int" has exactly 2 '#'.
+            if (
+                not concatenated.empty
+                and str(concatenated.index[0]).count("#") != 2
+            ):
                 os.remove(cache_path)
             else:
-                # Re-attach the current UUID so joins against live query IDs work.
-                concatenated.index = pd.Index(
-                    [
-                        f"{q.split('#')[0]}#{self._uuid}"
-                        for q in concatenated.index
-                    ]
-                )
                 return concatenated.map(QueryTextId)
 
         # Compute query text IDs from the raw query texts.
@@ -574,9 +583,12 @@ class Trace:
                 ),
                 columns=["query_id", "query_text"],
             )
-            df_with_query_text["query_id"] = df_with_query_text.apply(
-                lambda r: f"{cluster_name}_{r['query_id']}#{self._uuid}",
-                axis=1,
+            df_with_query_text["query_id"] = df_with_query_text[
+                "query_id"
+            ].apply(
+                lambda raw_id: TraceQueryId(
+                    f"{self._run_id}#{cluster_name}#{raw_id}"
+                )
             )
             df_with_query_text["query_text_id"] = df_with_query_text[
                 "query_text"
@@ -743,7 +755,7 @@ class Trace:
             if cached_plan is not None:
                 d[query_id] = cached_plan
             else:
-                cluster = query_id.rsplit("_", maxsplit=1)[0]
+                cluster = TraceQueryId(query_id).cluster_name
                 query_ids_to_parse_per_cluster[cluster].append(
                     (query_id, query_text_id)
                 )

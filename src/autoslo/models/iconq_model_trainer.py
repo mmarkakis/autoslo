@@ -42,7 +42,6 @@ def iconq_model_trainer(  # pylint: disable=arguments-differ,too-many-locals
         dataset = build_dataset_from_trace(
             trace=trace,
             iconq_model=iconq_model,
-            run_id=run_id,
             use_log_runtime=iconq_model.trained_on_log_runtime,
             use_fixed_window_radius_s=use_fixed_window_radius_s,
             use_fixed_window_max_neighbors_per_side=(

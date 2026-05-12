@@ -7,6 +7,7 @@ from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.workload_definition.query import Query, QueryTextId
+from autoslo.workload_execution.trace import TraceQueryId
 
 
 class ConcurrentQueryDataset(Dataset):
@@ -243,7 +244,6 @@ class ConcurrentQueryDataset(Dataset):
         targets: dict[str, float] | None = None,
         is_lower_bound: dict[str, bool] | None = None,
         use_log_runtime: bool = True,
-        run_id: str = "",
     ) -> "ConcurrentQueryDataset":
         """
         Build a dataset from base queries and their pre-computed neighbors.
@@ -345,7 +345,13 @@ class ConcurrentQueryDataset(Dataset):
                 pinch_points.append(pinch_idx)
                 query_ids_out.append(base_query.query_id)
                 query_text_id_out.append(base_query.query_text_id)
-                run_ids_out.append(run_id or cluster_name)
+                # For TraceQueryIds the run_id is embedded in the key itself;
+                # for routing-time WorkloadQueryIds fall back to cluster_name.
+                run_ids_out.append(
+                    base_query.query_id.run_id
+                    if isinstance(base_query.query_id, TraceQueryId)
+                    else cluster_name
+                )
                 lb = (
                     is_lower_bound.get(base_query.query_id, False)
                     if is_lower_bound is not None

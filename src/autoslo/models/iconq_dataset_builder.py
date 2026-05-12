@@ -13,7 +13,6 @@ from autoslo.workload_execution.trace import Trace
 def build_dataset_from_trace(
     trace: Trace,
     iconq_model: IconqModel,
-    run_id: str,
     use_log_runtime: bool = False,
     use_fixed_window_radius_s: Optional[float] = None,
     use_fixed_window_max_neighbors_per_side: Optional[int] = None,
@@ -78,11 +77,13 @@ def build_dataset_from_trace(
 
     # Targets are actual observed latencies; aborted queries are censored
     # (their recorded latency is a lower bound on the true latency).
-    targets = {
+    targets: dict[str, float] = {
         qid: (completion_times[qid] - arrival_times[qid]).total_seconds()
         for qid in query_ids
     }
-    is_lower_bound = {qid: bool(was_aborted[qid]) for qid in query_ids}
+    is_lower_bound: dict[str, bool] = {
+        qid: bool(was_aborted[qid]) for qid in query_ids
+    }
 
     return ConcurrentQueryDataset.build_from_query_groups(
         iconq_interaction_featurizer=interaction_featurizer,
@@ -90,7 +91,6 @@ def build_dataset_from_trace(
         targets=targets,
         is_lower_bound=is_lower_bound,
         use_log_runtime=use_log_runtime,
-        run_id=run_id,
     )
 
 
