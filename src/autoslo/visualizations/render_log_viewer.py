@@ -32,6 +32,7 @@ import yaml
 from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import SloResolverConfig
 from autoslo.filesystem.structured_events import EventType
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
@@ -114,11 +115,14 @@ def _safe_rpu(cluster_name: str) -> int | None:
 
 
 def _parse_log(
-    df: pd.DataFrame,
+    structured_log: StructuredLog,
     slo_resolver: SloResolver,
     log_kind: str,
 ) -> dict:
     """Parse a structured log DataFrame into the JS data payload."""
+
+    df = structured_log.df
+    success_by_qid = structured_log.query_success()
 
     events = df.sort_values("rel_time_s")
 
@@ -190,8 +194,7 @@ def _parse_log(
         success: bool | None = None
         if completion_evts:
             completion_s = completion_evts[0]["rel_time_s"]
-            details = completion_evts[0]["details"]
-            success = details.get("success")
+            success = success_by_qid.get(qid)
 
         # Cluster name from QUERY_ROUTED or execution events
         routed_evts = by_type.get(EventType.QUERY_ROUTED.value, [])
@@ -217,7 +220,9 @@ def _parse_log(
 
         # End-to-end latency: arrival (or exec start as fallback) to completion.
         # None for queries that have not yet completed.
-        latency_s = (completion_s - arrival_s) if completion_s is not None else None
+        latency_s = (
+            (completion_s - arrival_s) if completion_s is not None else None
+        )
 
         # For overall bar extent
         end_s = completion_s if completion_s is not None else exec_finish_s
@@ -1393,7 +1398,8 @@ def render_log_viewer(log_path, output: Optional[str] = None) -> None:
     )
 
     print(f"Reading {log_path} ...")
-    df = pd.read_parquet(log_path)
+    structured_log = StructuredLog.load(log_path)
+    df = structured_log.df
     print(f"  {len(df)} events, {df['event_type'].nunique()} event types")
 
     _validate_rel_time(df)
@@ -1401,7 +1407,7 @@ def render_log_viewer(log_path, output: Optional[str] = None) -> None:
     kind = _detect_log_kind(df)
     print(f"  Detected log kind: {kind}")
 
-    data = _parse_log(df, slo_resolver, kind)
+    data = _parse_log(structured_log, slo_resolver, kind)
 
     print(
         f"  {len(data['queries'])} queries across {len(set(q['cluster_name'] for q in data['queries']))} clusters"

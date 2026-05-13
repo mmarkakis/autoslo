@@ -28,6 +28,7 @@ Design
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -359,6 +360,14 @@ class StructuredLog:
         """Full consolidated log, lazy-loaded and cached."""
         if self._df is None:
             self._df = pd.read_parquet(self._parquet_path)
+            if any(col not in self._df.columns for col in REQUIRED_KEYS):
+                missing = [
+                    col for col in REQUIRED_KEYS if col not in self._df.columns
+                ]
+                raise ValueError(
+                    f"Structured log at {self._parquet_path} is missing "
+                    f"required column(s): {missing}"
+                )
         return self._df
 
     def query_latencies(self, *, drop_incomplete: bool = True) -> pd.DataFrame:
@@ -447,3 +456,45 @@ class StructuredLog:
             ).reset_index(drop=True)
 
         return result
+
+    def query_success(self) -> pd.Series:
+        """Return a boolean Series indexed by query_id indicating whether each
+        completed query succeeded.
+
+        Parses the ``details["success"]`` flag from every ``COMPLETION`` event.
+        Only queries that have a ``COMPLETION`` row with a parseable ``success``
+        field are included.  Analogous to
+        :meth:`~autoslo.workload_execution.trace.Trace.was_aborted`.
+        """
+        df = self.df
+
+        completions = df[df["event_type"] == EventType.COMPLETION.value].copy()
+        if completions.empty or "details" not in completions.columns:
+            return pd.Series(dtype=bool, name="success")
+
+        # Take the first COMPLETION row per query_id.
+        completions = completions.drop_duplicates(
+            subset=["query_id"], keep="first"
+        )
+        completions = completions[completions["query_id"].notna()]
+
+        def _extract_success(raw) -> bool | None:
+            if isinstance(raw, dict):
+                d: dict = raw
+            elif isinstance(raw, str) and raw:
+                try:
+                    d = json.loads(raw)
+                except (ValueError, json.JSONDecodeError):
+                    return None
+            else:
+                return None
+            val = d.get("success")
+            return bool(val) if val is not None else None
+
+        completions["_success"] = completions["details"].apply(_extract_success)
+        valid = completions[completions["_success"].notna()]
+        return (
+            valid.set_index("query_id")["_success"]
+            .astype(bool)
+            .rename("success")
+        )
