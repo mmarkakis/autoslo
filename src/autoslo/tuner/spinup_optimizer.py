@@ -29,7 +29,7 @@ from autoslo.config.component_configs import (
     SpinupOptimizerConfig,
     WorkloadConfig,
 )
-from autoslo.filesystem.logging import query_latencies_from_log
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import dump_yaml
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
@@ -100,7 +100,9 @@ def find_next_spinup_time(
         if not log_path.exists():
             raise FileNotFoundError(f"Missing log file: {log_path}")
 
-        completions = query_latencies_from_log(log_path)
+        completions = StructuredLog.load(log_path).query_latencies(
+            drop_incomplete=True
+        )
         if completions.empty:
             raise ValueError(
                 f"No successful completion events in log: {log_path}"

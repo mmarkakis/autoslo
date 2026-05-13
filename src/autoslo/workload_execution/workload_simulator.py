@@ -16,12 +16,12 @@ from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.execution_config import ExecutionConfig
 from autoslo.config.utils import make_run_id, parse_params
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     QueryRelatedEvent,
 )
+from autoslo.filesystem.structured_log import emit_structured
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.visualizations.render_log_viewer import render_log_viewer

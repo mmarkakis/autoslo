@@ -14,7 +14,7 @@ from pathlib import Path
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadRunnerConfig
-from autoslo.filesystem.logging import query_latencies_from_log
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.workload_definition.query import QueryTextId
 
@@ -24,8 +24,8 @@ _DEFAULT_MULTIPLIERS = [1, 2, 3, 4, 5, 8, 10]
 
 def generate_slo_tables(
     run_id: str,
-    baseline_percentiles: list[float] = _DEFAULT_PERCENTILES,
-    multipliers: list[float] = _DEFAULT_MULTIPLIERS,
+    baseline_percentiles: list[int] = _DEFAULT_PERCENTILES,
+    multipliers: list[int] = _DEFAULT_MULTIPLIERS,
 ) -> None:
     """
     Generate SLO tables for all ``(percentile, multiplier)`` combinations.
@@ -45,7 +45,7 @@ def generate_slo_tables(
             f"(expected at {log_path})."
         )
 
-    df = query_latencies_from_log(log_path)
+    df = StructuredLog.load(log_path).query_latencies(drop_incomplete=True)
     df["template_id"] = df["query_text_id"].map(
         lambda qid: QueryTextId(qid).template_id
     )
@@ -76,7 +76,9 @@ def generate_slo_tables(
             slo_dict = {
                 str(t): round(float(v * k), 3) for t, v in baseline.items()
             }
-            out_path = os.path.join(slo_dir, f"{run_id}_p{int(p)}_k{int(k)}.yml")
+            out_path = os.path.join(
+                slo_dir, f"{run_id}_p{int(p)}_k{int(k)}.yml"
+            )
             dump_yaml(
                 {
                     "run_id": run_id,

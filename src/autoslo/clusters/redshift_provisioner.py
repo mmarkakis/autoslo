@@ -32,12 +32,12 @@ from autoslo.clusters.cluster import Cluster
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
 from autoslo.config.component_configs import ProvisionerConfig
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
     EventType,
     wall_clock_utc,
 )
+from autoslo.filesystem.structured_log import emit_structured
 
 logger = logging.getLogger(__name__)
 

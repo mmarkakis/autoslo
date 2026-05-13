@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -11,7 +9,7 @@ import yaml
 
 from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import SloResolverConfig
-from autoslo.filesystem.logging import query_latencies_from_log
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
 from autoslo.slo.slo_resolver import SloResolver
@@ -115,7 +113,9 @@ class ExecutionResult:
 
         log_path = execution_dir / "structured_log.parquet"
         if log_path.exists():
-            latencies_df = query_latencies_from_log(log_path)
+            latencies_df = StructuredLog.load(log_path).query_latencies(
+                drop_incomplete=True
+            )
             if not latencies_df.empty:
                 num_queries = len(latencies_df)
                 per_row_slo = (

@@ -31,29 +31,19 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
+import autoslo.filesystem.path_utils as pu
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
-
-# ---------------------------------------------------------------------------
-# Required keys every record must carry
-# ---------------------------------------------------------------------------
-
-REQUIRED_KEYS_LIST = ["wall_clock_s", "rel_time_s", "source", "event_type"]
-REQUIRED_KEYS = frozenset(REQUIRED_KEYS_LIST)
-
-# ---------------------------------------------------------------------------
-# Canonical logger name used by all components
-# ---------------------------------------------------------------------------
-
-LOGGER_NAME = "autoslo.structured"
 
 # ---------------------------------------------------------------------------
 # Public helper: emit a structured record
 # ---------------------------------------------------------------------------
+
+LOGGER_NAME = "autoslo.structured"
 
 
 def emit_structured(event: BaseStructuredEvent) -> None:
@@ -82,6 +72,9 @@ def emit_structured(event: BaseStructuredEvent) -> None:
 # ---------------------------------------------------------------------------
 # Structured-log handler
 # ---------------------------------------------------------------------------
+
+REQUIRED_KEYS_LIST = ["wall_clock_s", "rel_time_s", "source", "event_type"]
+REQUIRED_KEYS = frozenset(REQUIRED_KEYS_LIST)
 
 
 class StructuredLogHandler(logging.Handler):
@@ -170,9 +163,10 @@ class StructuredLogHandler(logging.Handler):
         self._shard_idx += 1
         self._buffer.clear()
 
-    def finalize(self) -> str | None:
-        """Flush remaining records, consolidate shards, and return the
-        path to the consolidated file (or ``None`` if nothing was logged).
+    def finalize(self) -> StructuredLog | None:
+        """Flush remaining records, consolidate shards, and return a
+        :class:`StructuredLog` for the consolidated file (or ``None`` if
+        nothing was logged).
 
         Shard files are deleted after consolidation.
         """
@@ -215,7 +209,7 @@ class StructuredLogHandler(logging.Handler):
             out_path = os.path.join(self._out_dir, self._filename)
             consolidated.to_parquet(out_path, index=False)
             self._shard_idx = 0
-            return out_path
+            return StructuredLog.load(Path(out_path))
 
     def reset(self, out_dir: str | None = None) -> None:
         """Drop all buffered records and shard state for a new run.
@@ -272,6 +266,7 @@ def setup_structured_logging(
 
     return handler
 
+
 def setup_run_logging(
     out_dir: str | Path,
     write_text_log: bool,
@@ -298,79 +293,157 @@ def setup_run_logging(
 
 
 # ---------------------------------------------------------------------------
-# Analysis helpers
+# StructuredLog — read-only analytical view of a consolidated log
 # ---------------------------------------------------------------------------
 
 _LATENCY_COLS = ["rel_time_s", "event_type", "query_id", "query_text_id"]
 
 
-def query_latencies_from_log(
-    log: pd.DataFrame | Path,
-    *,
-    drop_incomplete: bool = True,
-) -> pd.DataFrame:
-    """Return per-query end-to-end latency (COMPLETION − ARRIVAL rel_time_s).
+class StructuredLog:
+    """Read-only view of a consolidated structured log Parquet file.
 
-    Accepts either an already-loaded DataFrame or a Path to a parquet file.
-    Returns one row per query with columns: query_id, query_text_id,
-    arrival_s, completion_s, latency_s.
-    Rows where either event is missing are dropped when drop_incomplete=True
-    (default) or kept as NaN when False.
-    Raises ValueError on duplicate (query_id, event_type) pairs.
+    Analogous to :class:`~autoslo.workload_execution.trace.Trace` for
+    Redshift query history, but for the autoslo structured event log.
+
+    Obtain an instance via :meth:`load` (from a run ID or explicit path)
+    or directly from :meth:`StructuredLogHandler.finalize`.
     """
-    if isinstance(log, Path):
-        log = pd.read_parquet(log, columns=_LATENCY_COLS)
 
-    if log.empty or "event_type" not in log.columns:
-        return pd.DataFrame(
-            columns=["query_id", "query_text_id", "arrival_s", "completion_s", "latency_s"]
+    def __init__(self, parquet_path: Path) -> None:
+        self._parquet_path = parquet_path
+        self._df: pd.DataFrame | None = None
+
+    @classmethod
+    def load(cls, source: str | Path | pd.DataFrame) -> StructuredLog:
+        """Load a consolidated structured log.
+
+        Parameters
+        ----------
+        source :
+            One of:
+
+            * A ``pd.DataFrame`` — used directly as the in-memory log.
+            * A run ID string (resolved to
+              ``data/runs/<run_id>/structured_log.parquet``).
+            * A :class:`~pathlib.Path` / path-like string pointing to the
+              Parquet file or the directory that contains it.
+        """
+        if isinstance(source, pd.DataFrame):
+            instance = cls.__new__(cls)
+            instance._parquet_path = None  # type: ignore[assignment]
+            instance._df = source
+            return instance
+
+        path = Path(source)
+        if isinstance(source, str) and not path.exists():
+            # Treat as a run ID.
+            path = Path(pu.get_runs_path()) / source / "structured_log.parquet"
+        elif path.is_dir():
+            path = path / "structured_log.parquet"
+
+        if not path.exists():
+            raise FileNotFoundError(f"No structured log found at {path}")
+
+        return cls(path)
+
+    @property
+    def path(self) -> Path | None:
+        """
+        Path to the consolidated Parquet file, or ``None`` for in-memory
+        instances.
+        """
+        return self._parquet_path
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Full consolidated log, lazy-loaded and cached."""
+        if self._df is None:
+            self._df = pd.read_parquet(self._parquet_path)
+        return self._df
+
+    def query_latencies(self, *, drop_incomplete: bool = True) -> pd.DataFrame:
+        """Return per-query end-to-end latency (COMPLETION − ARRIVAL rel_time_s).
+
+        Columns: ``query_id``, ``query_text_id``, ``arrival_s``,
+        ``completion_s``, ``latency_s``.
+        Rows where either event is missing are dropped when
+        *drop_incomplete* is ``True`` (default) or kept as ``NaN`` when
+        ``False``.
+        Raises ``ValueError`` on duplicate (query_id, event_type) pairs.
+        """
+        df = (
+            self.df[_LATENCY_COLS]
+            if set(_LATENCY_COLS).issubset(self.df.columns)
+            else self.df
         )
 
-    log = log[log["event_type"].isin(
-        {EventType.ARRIVAL.value, EventType.COMPLETION.value}
-    )][_LATENCY_COLS].copy()
+        if df.empty or "event_type" not in df.columns:
+            return pd.DataFrame(
+                columns=[
+                    "query_id",
+                    "query_text_id",
+                    "arrival_s",
+                    "completion_s",
+                    "latency_s",
+                ]
+            )
 
-    if log.empty:
-        return pd.DataFrame(
-            columns=["query_id", "query_text_id", "arrival_s", "completion_s", "latency_s"]
+        filtered = df[
+            df["event_type"].isin(
+                {EventType.ARRIVAL.value, EventType.COMPLETION.value}
+            )
+        ][_LATENCY_COLS].copy()
+
+        if filtered.empty:
+            return pd.DataFrame(
+                columns=[
+                    "query_id",
+                    "query_text_id",
+                    "arrival_s",
+                    "completion_s",
+                    "latency_s",
+                ]
+            )
+
+        dupes = filtered.groupby(["query_id", "event_type"]).size()
+        dupes = dupes[dupes > 1]
+        if not dupes.empty:
+            bad_ids = dupes.index.get_level_values("query_id").unique().tolist()
+            raise ValueError(
+                f"Duplicate (query_id, event_type) pairs in structured log for "
+                f"query_id(s): {bad_ids!r}"
+            )
+
+        pivoted = (
+            filtered.pivot(
+                index=["query_id", "query_text_id"],
+                columns="event_type",
+                values="rel_time_s",
+            )
+            .rename_axis(columns=None)
+            .reset_index()
         )
 
-    dupes = log.groupby(["query_id", "event_type"]).size()
-    dupes = dupes[dupes > 1]
-    if not dupes.empty:
-        bad_ids = dupes.index.get_level_values("query_id").unique().tolist()
-        raise ValueError(
-            f"Duplicate (query_id, event_type) pairs in structured log for "
-            f"query_id(s): {bad_ids!r}"
+        for col in (EventType.ARRIVAL.value, EventType.COMPLETION.value):
+            if col not in pivoted.columns:
+                pivoted[col] = float("nan")
+
+        result = pd.DataFrame(
+            {
+                "query_id": pivoted["query_id"],
+                "query_text_id": pivoted["query_text_id"].astype(str),
+                "arrival_s": pivoted[EventType.ARRIVAL.value],
+                "completion_s": pivoted[EventType.COMPLETION.value],
+                "latency_s": (
+                    pivoted[EventType.COMPLETION.value]
+                    - pivoted[EventType.ARRIVAL.value]
+                ),
+            }
         )
 
-    pivoted = (
-        log.pivot(
-            index=["query_id", "query_text_id"],
-            columns="event_type",
-            values="rel_time_s",
-        )
-        .rename_axis(columns=None)
-        .reset_index()
-    )
+        if drop_incomplete:
+            result = result.dropna(
+                subset=["arrival_s", "completion_s"]
+            ).reset_index(drop=True)
 
-    for col in (EventType.ARRIVAL.value, EventType.COMPLETION.value):
-        if col not in pivoted.columns:
-            pivoted[col] = float("nan")
-
-    result = pd.DataFrame(
-        {
-            "query_id": pivoted["query_id"],
-            "query_text_id": pivoted["query_text_id"].astype(str),
-            "arrival_s": pivoted[EventType.ARRIVAL.value],
-            "completion_s": pivoted[EventType.COMPLETION.value],
-            "latency_s": (
-                pivoted[EventType.COMPLETION.value] - pivoted[EventType.ARRIVAL.value]
-            ),
-        }
-    )
-
-    if drop_incomplete:
-        result = result.dropna(subset=["arrival_s", "completion_s"]).reset_index(drop=True)
-
-    return result
+        return result

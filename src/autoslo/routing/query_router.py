@@ -8,8 +8,8 @@ import pandas as pd
 
 from autoslo.clusters.cluster import ClusterView, cluster_cost_until_drained
 from autoslo.config.component_configs import QueryRouterConfig
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
+from autoslo.filesystem.structured_log import emit_structured
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset

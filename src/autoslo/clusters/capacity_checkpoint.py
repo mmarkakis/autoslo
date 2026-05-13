@@ -5,8 +5,8 @@ from typing import Callable, Iterable
 
 from autoslo.clusters.actions import SpinUpAction
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.filesystem.structured_log import emit_structured
 
 
 @dataclass(frozen=True)

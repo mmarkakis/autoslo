@@ -16,7 +16,6 @@ from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.execution_config import ExecutionConfig
 from autoslo.config.utils import make_run_id, parse_params
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.path_utils import append_to_run_log
 from autoslo.filesystem.structured_events import (
     BaseStructuredEvent,
@@ -24,6 +23,7 @@ from autoslo.filesystem.structured_events import (
     QueryRelatedEvent,
     wall_clock_utc,
 )
+from autoslo.filesystem.structured_log import emit_structured
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.routing.wrapper import route_and_update_bookkeeping
 from autoslo.workload_definition.query import Query, QueryTextId

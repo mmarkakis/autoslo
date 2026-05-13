@@ -7,7 +7,7 @@ Every structured log emission constructs a :class:`BaseStructuredEvent`
 (or :class:`QueryRelatedEvent` for query-scoped events), passing in an
 :class:`EventType` enum member.  ``BaseStructuredEvent.to_dict()``
 serialises the event to a flat ``dict`` that the
-:class:`~autoslo.utils.logging.StructuredLogHandler` can persist to
+:class:`~autoslo.utils.structured_log.StructuredLogHandler` can persist to
 Parquet.
 """
 

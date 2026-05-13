@@ -20,8 +20,11 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
     WorkloadRunnerConfig,
 )
-from autoslo.filesystem.logging import StructuredLogHandler, setup_run_logging
 from autoslo.filesystem.structured_events import wall_clock_utc
+from autoslo.filesystem.structured_log import (
+    StructuredLogHandler,
+    setup_run_logging,
+)
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective

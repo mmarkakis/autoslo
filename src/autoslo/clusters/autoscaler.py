@@ -14,8 +14,8 @@ from autoslo.clusters.cluster import (
     cluster_cost_until_drained,
 )
 from autoslo.config.component_configs import AutoscalerConfig
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.filesystem.structured_log import emit_structured
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
 from autoslo.slo.slo_metric import LatencySlo

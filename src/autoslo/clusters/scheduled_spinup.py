@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from autoslo.clusters.actions import SpinUpAction
-from autoslo.filesystem.logging import emit_structured
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.filesystem.structured_log import emit_structured
 
 
 @dataclass(frozen=True)
@@ -30,8 +30,7 @@ class ScheduledSpinUp:
     @staticmethod
     def from_config(cfg: dict) -> list["ScheduledSpinUp"]:
         return [
-            ScheduledSpinUp(**su)
-            for su in cfg.get("scheduled_spinups", [])
+            ScheduledSpinUp(**su) for su in cfg.get("scheduled_spinups", [])
         ]
 
     def execute(
