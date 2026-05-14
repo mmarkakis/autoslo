@@ -18,7 +18,7 @@ def _install_dummy_trace(
         def __init__(self, run_id: str) -> None:
             payload = runs[run_id]
             self.latencies_s = payload["latencies"]
-            self.tpcds_temp_and_q_idxs = payload["pairs"]
+            self.query_text_ids = payload["pairs"]
 
         @staticmethod
         def extract_temp_and_q_idxs(query_text: Any) -> Any:

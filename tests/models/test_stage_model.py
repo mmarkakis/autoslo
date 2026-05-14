@@ -255,10 +255,6 @@ def test_stage_model_end_to_end_with_real_models(
         @staticmethod
         def load(_: str) -> "SimpleFeaturizer":
             return SimpleFeaturizer()
-
-        def featurize(self, query_text: str) -> list[float]:
-            template = xgb_module.Trace.extract_temp_and_q_idxs(query_text)
-            return self._featurize_template(template)
         
         def featurize_from_tpcds_temp_and_q_idx(
             self, template: str

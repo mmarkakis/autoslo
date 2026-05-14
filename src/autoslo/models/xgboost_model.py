@@ -9,6 +9,7 @@ import yaml
 from xgboost import XGBRegressor
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.workload_definition.query import QueryTextId
@@ -101,31 +102,6 @@ class XGBoostModel:
 
         self._only_non_overlapping_queries = False
         self._ignore_cluster_size = ignore_cluster_size
-
-    def predict(
-        self,
-        query_texts: dict[str, str],
-        cluster_rpu: int,
-        schema_name: str,
-    ) -> dict[str, ModelPrediction]:
-        """
-        Predicts the runtime of the given query texts.
-
-        Parameters:
-            query_texts: The query texts to predict the runtime of, as a
-                dictionary mapping query ids to query texts.
-            cluster_rpu: The RPU size of the target cluster.
-            schema_name: The name of the schema the queries belong to.
-
-        Returns:
-            A dictionary mapping query ids to ModelPrediction instances,
-                where each element is in seconds.
-        """
-        query_text_ids = {
-            query_id: Trace.extract_query_text_id(query_text, schema_name)
-            for query_id, query_text in query_texts.items()
-        }
-        return self.predict_from_query_text_id(query_text_ids, cluster_rpu)
 
     def predict_from_query_text_id(
         self,
@@ -236,7 +212,7 @@ class XGBoostModel:
             for query_id in featurizations.keys():
                 if (
                     only_non_overlapping_queries
-                    and not query_is_non_overlapping[query_id]  # type: ignore
+                    and not query_is_non_overlapping[query_id]
                 ):
                     continue
 
@@ -244,8 +220,7 @@ class XGBoostModel:
                 latency = latencies[query_id]
                 if featurization is None or len(featurization) == 0:
                     continue
-                cluster_name = trace.cluster_name_from_query_id(query_id)
-                from autoslo.clusters.cluster import Cluster
+                cluster_name = trace.cluster_for(query_id)
 
                 cluster_rpu = (
                     0

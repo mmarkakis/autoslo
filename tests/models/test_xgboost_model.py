@@ -80,9 +80,6 @@ def test_xgboost_model_predict_uses_featurizer(
     )
 
     class FeaturizerStub:
-        def featurize(self, query_text: str) -> list[float]:
-            return [1.0, 2.0]
-
         def featurize_trace(self, trace: Any) -> dict[str, list[float]]:
             return {}
 
@@ -129,9 +126,6 @@ async def test_xgboost_model_train_prepares_fit(
     monkeypatch.setattr(xgb_module, "Trace", DummyTrace)
 
     class TraceFeaturizerStub:
-        def featurize(self, query_text: str) -> list[float]:
-            return [0.0]
-
         def featurize_trace(self, trace: DummyTrace) -> dict[str, list[float]]:
             return {
                 "q1": [0.1],
@@ -227,10 +221,6 @@ async def test_xgboost_model_with_real_trace(
         return [float(template_id), float(query_idx)]
 
     class SimpleFeaturizer:
-        def featurize(self, query_text: str) -> list[float]:
-            template = xgb_module.Trace.extract_temp_and_q_idxs(query_text)
-            return to_features(template)
-
         def featurize_trace(self, trace: Any) -> dict[str, list[float]]:
             return {
                 query_id: to_features(template)

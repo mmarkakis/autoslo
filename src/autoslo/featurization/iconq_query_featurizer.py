@@ -6,7 +6,7 @@ import os
 import pickle
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Optional, TypeAlias, cast
+from typing import Optional, TypeAlias, cast
 
 import numpy as np
 import pandas as pd
@@ -14,7 +14,7 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.workload_definition.query import QueryTextId
+from autoslo.workload_definition.query import QueryTextId, RunAwareQueryId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -41,9 +41,8 @@ class IconqQueryFeaturizer:
         precomputed_top_operators: Optional[list[str]] = None,
         precomputed_top_tables: Optional[list[tuple[str, int]]] = None,
         precomputed_featurization_cache: Optional[
-            dict[str, IconqQueryFeaturization]
+            dict[QueryTextId, IconqQueryFeaturization]
         ] = None,
-        from_sys_query_explain: bool = False,
     ) -> None:
         """
         Initializes the IconqQueryFeaturizer.
@@ -66,9 +65,6 @@ class IconqQueryFeaturizer:
             precomputed_top_tables: If provided, the top N tables to use.
             precomputed_featurization_cache: If provided, a cache mapping
                 query text IDs to their featurizations.
-            from_sys_query_explain: Whether the featurizer should operate based
-                on sys_query_explain data (newer version), instead of parsed
-                query plans (older version).
         """
         self._schema_name = schema_name
         self._run_ids = run_ids
@@ -81,7 +77,6 @@ class IconqQueryFeaturizer:
         self._use_true_card = use_true_card
         self._use_table_selectivity = use_table_selectivity
         self._use_log = use_log
-        self._from_sys_query_explain = from_sys_query_explain
 
         self._featurization_cache: dict[
             QueryTextId, IconqQueryFeaturizer.IconqQueryFeaturization
@@ -108,22 +103,12 @@ class IconqQueryFeaturizer:
         else:
             print("Featurizing queries...")
 
-            feat_func = (
-                self.featurize_plan
-                if not self._from_sys_query_explain
-                else self.featurize_plan_from_sys_query_explain_rows
-            )
-
             for run_id in tqdm(run_ids):
                 trace = Trace(run_id)
                 query_text_ids = trace.query_text_ids
                 was_aborted = trace.was_aborted()
 
-                info = (
-                    trace.query_plans()
-                    if not self._from_sys_query_explain
-                    else trace.sys_query_explain_rows_per_query()
-                )
+                explain_rows = trace.sys_query_explain_rows_per_query()
 
                 for query_id, aborted in was_aborted.items():
                     if aborted:
@@ -135,64 +120,17 @@ class IconqQueryFeaturizer:
 
                     if query_text_id in self._featurization_cache:
                         continue
-                    if (query_id not in info) or (info[query_id] is None):
+                    if (query_id not in explain_rows) or (
+                        explain_rows[query_id] is None
+                    ):
                         self._featurization_cache[query_text_id] = []
                         continue
-                    featurization = feat_func(info[query_id])  # type: ignore
+                    featurization = (
+                        self.featurize_plan_from_sys_query_explain_rows(
+                            explain_rows[query_id]
+                        )
+                    )
                     self._featurization_cache[query_text_id] = featurization
-
-    def extend_featurization_cache_from_runs(
-        self, run_ids: list[str], write_out: bool = True
-    ) -> None:
-        """
-        Extends the featurization cache by featurizing queries from additional
-        runs. This can be used to featurize queries that were not in the
-        original runs used to initialize the featurizer.
-
-        Parameters:
-            run_ids: The run IDs to featurize and add to the cache.
-            write_out: Whether to save the featurizer after extending the cache.
-        """
-
-        feat_func = (
-            self.featurize_plan
-            if not self._from_sys_query_explain
-            else self.featurize_plan_from_sys_query_explain_rows
-        )
-        additional = 0
-        print(f"Initially, cache has {len(self._featurization_cache)} entries.")
-
-        for run_id in tqdm(run_ids):
-            trace = Trace(run_id)
-            query_text_ids = trace.query_text_ids
-            was_aborted = trace.was_aborted()
-
-            info = (
-                trace.query_plans()
-                if not self._from_sys_query_explain
-                else trace.sys_query_explain_rows_per_query()
-            )
-
-            for query_id, aborted in was_aborted.items():
-                if aborted:
-                    # Ignore aborted queries for accurate featurization.
-                    continue
-
-                query_id = cast(str, query_id)
-                query_text_id = query_text_ids[query_id]
-
-                if query_text_id in self._featurization_cache:
-                    continue
-                if (query_id not in info) or (info[query_id] is None):
-                    self._featurization_cache[query_text_id] = []
-                    continue
-                featurization = feat_func(info[query_id])  # type: ignore
-                self._featurization_cache[query_text_id] = featurization
-                additional += 1
-        print(f"Added featurizations for {additional} queries to the cache.")
-
-        if write_out:
-            self.save()
 
     @property
     def num_dims(self) -> int:
@@ -225,41 +163,9 @@ class IconqQueryFeaturizer:
         """
         return self._n
 
-    @property
-    def num_operators(self) -> int:
-        """
-        Returns the number of operators (M) that this featurizer considers.
-
-        Returns:
-            The number of operators (M) that this featurizer considers.
-        """
-        return self._m
-
-    @property
-    def top_table_names(self) -> list[str]:
-        """
-        Returns the names of the top N tables in the database.
-
-        Returns:
-            The names of the top N tables in the database.
-        """
-        return [table_name for (table_name, _) in self._top_tables]
-
-    @property
-    def run_ids(self) -> list[str]:
-        """
-        Returns the run IDs used to train this featurizer.
-
-        Returns:
-            The run IDs used to train this featurizer.
-        """
-        return self._run_ids
-
     def _find_top_operators(self, run_ids: list[str]) -> list[str]:
         """
-        Finds the top M operators across the given runs. Based on the setting
-        of self._from_sys_query_explain, either uses parsed query plans, or
-        sys_query_explain data.
+        Finds the top M operators across the given runs.
 
         Parameters:
             run_ids: The run IDs to use to find the top M operators.
@@ -270,39 +176,24 @@ class IconqQueryFeaturizer:
         # Find all of the operators across queries and their counts.
         all_operators: dict[str, int] = defaultdict(int)
 
-        if self._from_sys_query_explain:
-            print("`from_sys_query_explain` is True; using sys_query_explain.")
-            for run_id in tqdm(run_ids):
-                trace = Trace(run_id)
-                sys_query_explain_rows_per_query = (
-                    trace.sys_query_explain_rows_per_query()
-                )
-                was_aborted = trace.was_aborted()
-                for query_id, aborted in was_aborted.items():
-                    if aborted:
-                        # Ignore aborted queries for accurate operator counts.
-                        continue
-                    query_id = cast(str, query_id)  # Make mypy happy
-                    sub_df = sys_query_explain_rows_per_query[query_id]
-                    for node in sub_df["plan_node"].values:
-                        operator_name = (
-                            self._process_one_sys_query_explain_plan_node(node)[
-                                0
-                            ]
-                        )
-                        all_operators[operator_name] += 1
-        else:
-            print("`from_sys_query_explain` is False; using query plans.")
-            query_plans = {}
-            for run_id in tqdm(run_ids):
-                trace = Trace(run_id)
-                plans = trace.query_plans()
-                query_plans.update(plans)
-            for plan in tqdm(query_plans.values()):
-                if plan is not None:
-                    IconqQueryFeaturizer._dfs_count_operators(
-                        plan, all_operators
+        for run_id in tqdm(run_ids):
+            trace = Trace(run_id)
+            sys_query_explain_rows_per_query = (
+                trace.sys_query_explain_rows_per_query()
+            )
+            was_aborted = trace.was_aborted()
+            for query_id, aborted in was_aborted.items():
+                if aborted:
+                    # Ignore aborted queries for accurate operator counts.
+                    continue
+                query_id = cast(str, query_id)  # Make mypy happy
+                sub_df = sys_query_explain_rows_per_query[query_id]
+                for node in sub_df["plan_node"].values:
+                    operator_name = (
+                        self._process_one_sys_query_explain_plan_node(node)[0]
                     )
+                    all_operators[operator_name] += 1
+
         op_names = list(all_operators.keys())
         op_counts = list(all_operators.values())
         total_ops = sum(op_counts)
@@ -377,8 +268,7 @@ class IconqQueryFeaturizer:
         return table_names_and_sizes[: self._n]
 
     def featurize_from_query_text_id(
-        self,
-        query_text_id: QueryTextId | str
+        self, query_text_id: QueryTextId | str
     ) -> IconqQueryFeaturization:
         """
         Converts the query identified by *query_text_id* into a vectorized
@@ -461,36 +351,9 @@ class IconqQueryFeaturizer:
             # This call populates _np_featurization_cache.
             _ = self.featurize_from_query_text_id_as_numpy(query_text_id)
 
-    def featurize(
-        self,
-        query_text: str,
-    ) -> IconqQueryFeaturization:
-        """
-        Converts the given query text into a vectorized representation.
-
-        Parameters:
-            query_text: The text of the query to convert.
-
-        Returns:
-            The vectorized representation of the query text.
-
-        Raises:
-            ValueError: If the TPC-DS query ID cannot be extracted from the
-                query text, or if there is no cached featurization for the
-                extracted TPC-DS query ID.
-        """
-
-        query_text_id = Trace.extract_query_text_id(query_text, self._schema_name)
-        if query_text_id is None:
-            raise ValueError(
-                "Could not extract query text ID from query text."
-            )
-
-        return self.featurize_from_query_text_id(query_text_id)
-
     def featurize_trace(
         self, trace: Trace
-    ) -> dict[str, IconqQueryFeaturization]:
+    ) -> dict[RunAwareQueryId, IconqQueryFeaturization]:
         """
         Featurizes all queries in the given trace.
 
@@ -501,108 +364,16 @@ class IconqQueryFeaturizer:
             A dictionary mapping query IDs to their vectorized representations.
         """
         featurizations: dict[
-            str, IconqQueryFeaturizer.IconqQueryFeaturization
+            RunAwareQueryId, IconqQueryFeaturizer.IconqQueryFeaturization
         ] = {}
         query_text_ids = trace.query_text_ids
 
         for query_id, query_text_id in query_text_ids.items():
-            query_id = cast(str, query_id)
+            query_id = cast(RunAwareQueryId, query_id)
             featurization = self.featurize_from_query_text_id(query_text_id)
             featurizations[query_id] = featurization
 
         return featurizations
-
-    def dump_featurization(
-        self, query_text: str, out_dir: Optional[str] = None
-    ) -> None:
-        """
-        Dumps the featurization of the given query text to a file.
-
-        Parameters:
-            query_text: The text of the query to dump.
-            out_dir: The directory to write the featurization to. If None, the
-                featurization is written to a file in the current directory.
-        """
-        d: dict[str, Any] = {}
-        d["query_text"] = query_text
-        query_text_id = Trace.extract_query_text_id(query_text, self._schema_name)
-        d["query_text_id"] = query_text_id
-        d["featurization"] = self.featurize_from_query_text_id(
-            query_text_id
-        )
-
-        d["human_readable_featurization"] = []
-        for i, feature in enumerate(d["featurization"]):
-            if i < 2 * self._m and i % 2 == 0:
-                op_idx = i // 2
-                operator_name = (
-                    self._top_operators[op_idx]
-                    if op_idx < len(self._top_operators)
-                    else "None"
-                )
-                d["human_readable_featurization"].append(
-                    {
-                        "type": "operator_count",
-                        "operator": operator_name,
-                        "value": feature,
-                    }
-                )
-            elif i < 2 * self._m and i % 2 == 1:
-                op_idx = i // 2
-                operator_name = (
-                    self._top_operators[op_idx]
-                    if op_idx < len(self._top_operators)
-                    else "None"
-                )
-                d["human_readable_featurization"].append(
-                    {
-                        "type": "operator_cardinality",
-                        "operator": operator_name,
-                        "value": feature,
-                    }
-                )
-            else:
-                d["human_readable_featurization"].append(
-                    {
-                        "type": "table_cardinality",
-                        "table": self.top_table_names[i - 2 * self._m],
-                        "value": feature,
-                    }
-                )
-
-        if out_dir is None:
-            out_dir = "."
-        os.makedirs(out_dir, exist_ok=True)
-        out_file_path = os.path.join(
-            out_dir, f'featurization_{d["query_text_id"]}.yml'
-        )
-        with open(out_file_path, "w") as f:
-            yaml.dump(d, f, sort_keys=False)
-
-    def featurize_plan(
-        self,
-        query_plan: dict,
-    ) -> IconqQueryFeaturization:
-        """
-        Converts the given query plan into a vectorized representation.
-
-        Parameters:
-            query_plan: The query plan to convert.
-
-        Returns:
-            The vectorized representation of the query plan.
-
-        """
-        # Compute the features of the query plan.
-        features = [0.0] * self.num_dims
-        self._dfs_compute_features(
-            query_plan,
-            features,
-        )
-
-        # Transform cardinality features, if needed.
-        features = self._transform_card_if_needed(features)
-        return features
 
     def _transform_card_if_needed(
         self, features: IconqQueryFeaturization
@@ -750,7 +521,10 @@ class IconqQueryFeaturizer:
         cache_path = os.path.join(save_dir, "featurizations.yml")
         with open(cache_path, "w") as f:
             l = []
-            for query_text_id, featurization in self._featurization_cache.items():
+            for (
+                query_text_id,
+                featurization,
+            ) in self._featurization_cache.items():
                 l.append(
                     {
                         "query_text_id": query_text_id,
@@ -900,10 +674,13 @@ class IconqQueryFeaturizer:
                 features[features_idx_card] += float(cardinality)
 
             # Update table-related features.
+            top_table_names = [
+                table_name for (table_name, _) in self._top_tables
+            ]
             if (base_table_name is not None) and (
-                base_table_name in self.top_table_names
+                base_table_name in top_table_names
             ):
-                table_idx = self.top_table_names.index(base_table_name)
+                table_idx = top_table_names.index(base_table_name)
                 feature_idx = 2 * self._m + table_idx
                 features[feature_idx] += float(cardinality)
 

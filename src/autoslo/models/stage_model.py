@@ -90,31 +90,6 @@ class StageModel:
             tuple[QueryTextId, int], ModelPrediction
         ] = {}
 
-    def predict(
-        self,
-        query_texts: dict[str, str],
-        cluster_rpu: int,
-        schema_name: str,
-    ) -> dict[str, ModelPrediction]:
-        """
-        Predicts the runtime of the given query texts.
-
-        Parameters:
-            query_texts: The query texts to predict the runtime of, as a
-                dictionary mapping query ids to query texts.
-            cluster_rpu: The RPU size of the target cluster.
-            schema_name: The name of the schema the queries belong to.
-
-        Returns:
-            A dictionary mapping query ids to ModelPrediction instances,
-                where each element is in seconds.
-        """
-        query_text_ids = {
-            query_id: Trace.extract_query_text_id(query_text, schema_name)
-            for query_id, query_text in query_texts.items()
-        }
-        return self.predict_from_query_text_id(query_text_ids, cluster_rpu)
-
     def predict_from_query_text_id(
         self, query_text_ids: dict[str, QueryTextId], cluster_rpu: int
     ) -> dict[str, ModelPrediction]:
