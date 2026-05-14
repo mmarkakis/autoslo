@@ -18,7 +18,7 @@ def build_dataset_from_trace(
     use_fixed_window_max_neighbors_per_side: Optional[int] = None,
 ) -> ConcurrentQueryDataset:
     """Build a ConcurrentQueryDataset from a Trace for IconqModel training."""
-    run_aware_query_ids = trace.run_aware_query_ids
+    cluster_aware_query_ids = trace.cluster_aware_query_ids
     query_text_ids = trace.query_text_ids
     arrival_times = trace.arrival_times()
     completion_times = trace.completion_times()
@@ -28,7 +28,7 @@ def build_dataset_from_trace(
     interaction_featurizer = iconq_model.iconq_interaction_featurizer
     stage_model = iconq_model.stage_model
 
-    if not run_aware_query_ids:
+    if not cluster_aware_query_ids:
         return ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=interaction_featurizer,
             cluster_to_base_to_neighbors={},
@@ -36,7 +36,7 @@ def build_dataset_from_trace(
 
     # Normalize timestamps relative to the earliest arrival.
     reference_timestamp = min(
-        arrival_times[qid].timestamp() for qid in run_aware_query_ids
+        arrival_times[qid].timestamp() for qid in cluster_aware_query_ids
     )
 
     # Build one IntervalTree per cluster. Each interval's data payload is the
@@ -44,20 +44,20 @@ def build_dataset_from_trace(
     # objects directly without a second lookup.
     interval_trees: dict[str, IntervalTree] = defaultdict(IntervalTree)
 
-    for run_aware_query_id in run_aware_query_ids:
-        cluster_name = trace.cluster_for(run_aware_query_id)
-        query_text_id = query_text_ids[run_aware_query_id]
+    for cluster_aware_query_id in cluster_aware_query_ids:
+        cluster_name = cluster_aware_query_id.cluster_name
+        query_text_id = query_text_ids[cluster_aware_query_id]
         start_s = (
-            arrival_times[run_aware_query_id].timestamp() - reference_timestamp
+            arrival_times[cluster_aware_query_id].timestamp()
+            - reference_timestamp
         )
         end_s = (
-            completion_times[run_aware_query_id].timestamp()
+            completion_times[cluster_aware_query_id].timestamp()
             - reference_timestamp
         )
         query = Query(
-            query_id=run_aware_query_id.query_id, 
+            query_id=cluster_aware_query_id.query_id,
             query_text_id=query_text_id,
-            run_id=run_aware_query_id.run_id,
             rel_start_time_s=start_s,
             featurization=query_featurizer.featurize_from_query_text_id(
                 query_text_id
@@ -67,8 +67,8 @@ def build_dataset_from_trace(
             stage_predictions_per_rpu={
                 rpu: float(
                     stage_model.predict_from_query_text_id(
-                        {run_aware_query_id: query_text_id}, cluster_rpu=rpu
-                    )[run_aware_query_id].overall_mean_s()
+                        {cluster_aware_query_id: query_text_id}, cluster_rpu=rpu
+                    )[cluster_aware_query_id].overall_mean_s()
                 )
                 for rpu in Cluster.ALL_ALLOWED_RPU_SIZES
             },
@@ -85,10 +85,10 @@ def build_dataset_from_trace(
     # (their recorded latency is a lower bound on the true latency).
     targets: dict[str, float] = {
         qid: (completion_times[qid] - arrival_times[qid]).total_seconds()
-        for qid in run_aware_query_ids
+        for qid in cluster_aware_query_ids
     }
     is_lower_bound: dict[str, bool] = {
-        qid: bool(was_aborted[qid]) for qid in run_aware_query_ids
+        qid: bool(was_aborted[qid]) for qid in cluster_aware_query_ids
     }
 
     return ConcurrentQueryDataset.build_from_query_groups(

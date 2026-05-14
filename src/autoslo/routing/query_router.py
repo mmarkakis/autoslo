@@ -17,7 +17,7 @@ from autoslo.routing.query_router_policy import QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import ClusterAwareQueryId, Query
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -164,15 +164,15 @@ class QueryRouter:
         )
         iconq_predictions = self._iconq_model.predict_from_dataset(dataset)
         iconq_predicted_latencies: dict[str, dict[str, float]] = {}
-        for cluster_name in iconq_predictions.keys():
-            iconq_predicted_latencies[cluster_name] = {}
-            for query_id, pred in iconq_predictions[cluster_name].items():
-                iconq_predicted_latencies[cluster_name][query_id] = max(
-                    pred.overall_mean_s(),
-                    snapshot[cluster_name].predicted_latencies.get(
-                        query_id, 0.0
-                    ),
-                )
+        for cluster_aware_query_id, pred in iconq_predictions.items():
+            cluster_name = cluster_aware_query_id.cluster_name
+            if cluster_name not in iconq_predicted_latencies:
+                iconq_predicted_latencies[cluster_name] = {}
+            query_id = cluster_aware_query_id.query_id
+            iconq_predicted_latencies[cluster_name][query_id] = max(
+                pred.overall_mean_s(),
+                snapshot[cluster_name].predicted_latencies.get(query_id, 0.0),
+            )
         # Retrieve the appropriate forecasted query vecs for this time.
         forecasted_table_vecs: Optional[np.ndarray] = None
         if self._routing_policy == QueryRouterPolicy.CACHE_AWARE:

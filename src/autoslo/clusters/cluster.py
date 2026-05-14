@@ -80,6 +80,9 @@ class Cluster:
 
     Use :meth:`clone` to obtain a deep copy for counterfactual replay or
     safe exposure across thread boundaries.
+
+    We assume that cluster names are GLOBALLY UNIQUE, across all runs of any
+    workload.
     """
 
     # --- Class-level constants -------------------------------------------
@@ -344,6 +347,20 @@ class Cluster:
                 pass
         raise ValueError(
             f"Cannot parse RPU from cluster name: {cluster_name!r}"
+        )
+
+    @staticmethod
+    def run_id_for_cluster_name(cluster_name: str) -> str:
+        """Parse run ID from a cluster name.
+
+        Supports the naming convention
+        ``"autoslo-{rpu}-{timestamp}-{counter}"``.
+        """
+        parts = cluster_name.split("-")
+        if len(parts) >= 3:
+            return parts[2]
+        raise ValueError(
+            f"Cannot parse run ID from cluster name: {cluster_name!r}"
         )
 
     @staticmethod

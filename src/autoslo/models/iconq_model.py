@@ -1,7 +1,6 @@
 import logging
 import os
 import pickle
-from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
@@ -16,6 +15,7 @@ from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
 from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
@@ -34,7 +34,7 @@ from autoslo.nn.loss_functions import (
     sensitive_q_error_loss,
 )
 from autoslo.nn.runtime_net import RuntimeNet
-from autoslo.workload_definition.query import RunAwareQueryId
+from autoslo.workload_definition.query import ClusterAwareQueryId
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ class IconqModel:
             )
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
                 self._init_config.schema_name,
-                init_config.iconq_query_featurizer_id
+                init_config.iconq_query_featurizer_id,
             )
         self._iconq_interaction_featurizer = IconqInteractionFeaturizer(
             schema_name=init_config.schema_name,
@@ -340,7 +340,7 @@ class IconqModel:
         self,
         dataset: ConcurrentQueryDataset,
         inference_batch_size: int = 512,
-    ) -> dict[str, dict[str, ModelPrediction]]:
+    ) -> dict[ClusterAwareQueryId, ModelPrediction]:
         """
         Predicts the runtimes for the queries in the given dataset.
 
@@ -351,10 +351,11 @@ class IconqModel:
                 datasets in one shot while remaining memory-safe.
 
         Returns:
-            A dictionary mapping (run_id, query_id) tuples to their predicted ModelPrediction.
+            A flat dictionary mapping each query's :class:`ClusterAwareQueryId`
+            to its :class:`ModelPrediction`.
         """
 
-        predictions: dict[str, dict[str, ModelPrediction]] = defaultdict(dict)
+        predictions: dict[ClusterAwareQueryId, ModelPrediction] = {}
         n = len(dataset)
         if n == 0:
             return predictions
@@ -371,8 +372,7 @@ class IconqModel:
                 batch = ConcurrentQueryDataset.collate_and_pad(
                     [dataset[i] for i in range(start, end)]
                 )
-                for prediction, run_id, query_id in self._infer_batch(batch):
-                    predictions[run_id][query_id] = prediction
+                predictions.update(self._infer_batch(batch))
 
         return predictions
 
@@ -381,7 +381,7 @@ class IconqModel:
         i: int,
         x: torch.Tensor,
         pinch_points: torch.Tensor,
-        run_aware_query_ids: list[RunAwareQueryId],
+        cluster_aware_query_ids: list[ClusterAwareQueryId],
         query_text_ids: list,
         y_is_lower_bound: torch.Tensor,
     ) -> ModelPrediction:
@@ -393,18 +393,20 @@ class IconqModel:
             self._iconq_interaction_featurizer.rpu_dim_idx
         ].item()
         pred = self.stage_model.predict_from_query_text_id(
-            {run_aware_query_ids[i]: query_text_ids[i]},
+            {cluster_aware_query_ids[i]: query_text_ids[i]},
             cluster_rpu=int(rpu),
-        )[run_aware_query_ids[i]]
+        )[cluster_aware_query_ids[i]]
         return ModelPrediction(
             mean_s=pred.mean_s,
             std_dev_s=pred.std_dev_s,
             mix_coeffs=pred.mix_coeffs,
             metadata={
                 "num_other_concurrent_queries": 0,
-                "run_id": run_aware_query_ids[i].run_id,
+                "run_id": Cluster.run_id_for_cluster_name(
+                    cluster_aware_query_ids[i].cluster_name
+                ),
                 "query_text_id": query_text_ids[i],
-                "query_id": run_aware_query_ids[i].query_id,
+                "query_id": cluster_aware_query_ids[i].query_id,
                 "target_is_lower_bound": y_is_lower_bound[i].item(),
                 "loss": 0.0,
             },
@@ -416,14 +418,15 @@ class IconqModel:
         y_pred_logvar: torch.Tensor,
         y_pred_mix: torch.Tensor,
         x_len: torch.Tensor,
-        run_aware_query_ids: list[RunAwareQueryId],
+        cluster_aware_query_ids: list[ClusterAwareQueryId],
         query_text_ids: list,
         y_is_lower_bound: torch.Tensor,
         per_item_losses: Optional[np.ndarray] = None,
-    ) -> list[tuple[ModelPrediction, str, str]]:
+    ) -> dict[ClusterAwareQueryId, ModelPrediction]:
         """
-        Convert NN output tensors into a list of (ModelPrediction, run_id, query_id)
-        tuples. Handles all three loss types.
+        Convert NN output tensors into a dict mapping each
+        :class:`ClusterAwareQueryId` to its :class:`ModelPrediction`.
+        Handles all three loss types.
 
         Parameters:
             per_item_losses: Per-sample loss values (only used for
@@ -442,7 +445,7 @@ class IconqModel:
             if y_pred_mix is not None
             else None
         )
-        result: list[tuple[ModelPrediction, str, str]] = []
+        result: dict[ClusterAwareQueryId, ModelPrediction] = {}
 
         if self._loss_type == LossType.MDN_NLL:
             for i, (m, le, mix, q, t) in enumerate(
@@ -450,51 +453,43 @@ class IconqModel:
                     mean_np,
                     x_len_np,
                     mix_np,
-                    run_aware_query_ids,
+                    cluster_aware_query_ids,
                     query_text_ids,
                 )
             ):
-                result.append(
-                    (
-                        ModelPrediction(
-                            mean_s=m,
-                            std_dev_s=stddev_np[i],
-                            mix_coeffs=mix,
-                            metadata={
-                                "num_other_concurrent_queries": int(le) - 1,
-                                "run_id": q.run_id,
-                                "query_text_id": t,
-                                "query_id": q.query_id,
-                            },
+                result[q] = ModelPrediction(
+                    mean_s=m,
+                    std_dev_s=stddev_np[i],
+                    mix_coeffs=mix,
+                    metadata={
+                        "num_other_concurrent_queries": int(le) - 1,
+                        "run_id": Cluster.run_id_for_cluster_name(
+                            q.cluster_name
                         ),
-                        q.run_id,
-                        q.query_id,
-                    )
+                        "query_text_id": t,
+                        "query_id": q.query_id,
+                    },
                 )
         elif self._loss_type == LossType.NLL:
             for i, (m, le, q, t) in enumerate(
                 zip(
                     mean_np,
                     x_len_np,
-                    run_aware_query_ids,
+                    cluster_aware_query_ids,
                     query_text_ids,
                 )
             ):
-                result.append(
-                    (
-                        ModelPrediction(
-                            mean_s=m,
-                            std_dev_s=stddev_np[i],
-                            metadata={
-                                "num_other_concurrent_queries": int(le) - 1,
-                                "run_id": q.run_id,
-                                "query_text_id": t,
-                                "query_id": q.query_id,
-                            },
+                result[q] = ModelPrediction(
+                    mean_s=m,
+                    std_dev_s=stddev_np[i],
+                    metadata={
+                        "num_other_concurrent_queries": int(le) - 1,
+                        "run_id": Cluster.run_id_for_cluster_name(
+                            q.cluster_name
                         ),
-                        q.run_id,
-                        q.query_id,
-                    )
+                        "query_text_id": t,
+                        "query_id": q.query_id,
+                    },
                 )
         else:  # LossType.SENSITIVE_Q_ERROR
             losses: list | np.ndarray = (
@@ -505,27 +500,23 @@ class IconqModel:
             for m, le, q, t, yislb, loss_val in zip(
                 mean_np,
                 x_len_np,
-                run_aware_query_ids,
+                cluster_aware_query_ids,
                 query_text_ids,
                 y_is_lower_bound_np,
                 losses,
             ):
-                result.append(
-                    (
-                        ModelPrediction(
-                            mean_s=m,
-                            metadata={
-                                "num_other_concurrent_queries": int(le) - 1,
-                                "run_id": q.run_id,
-                                "query_text_id": t,
-                                "query_id": q.query_id,
-                                "target_is_lower_bound": yislb,
-                                "loss": loss_val,
-                            },
+                result[q] = ModelPrediction(
+                    mean_s=m,
+                    metadata={
+                        "num_other_concurrent_queries": int(le) - 1,
+                        "run_id": Cluster.run_id_for_cluster_name(
+                            q.cluster_name
                         ),
-                        q.run_id,
-                        q.query_id,
-                    )
+                        "query_text_id": t,
+                        "query_id": q.query_id,
+                        "target_is_lower_bound": yislb,
+                        "loss": loss_val,
+                    },
                 )
 
         return result
@@ -533,10 +524,11 @@ class IconqModel:
     def _infer_batch(
         self,
         batch: tuple,
-    ) -> list[tuple["ModelPrediction", str, str]]:
+    ) -> dict[ClusterAwareQueryId, "ModelPrediction"]:
         """
         Runs a single forward pass on a pre-collated batch without computing
-        any loss. Returns a list of (ModelPrediction, run_id, query_id) tuples.
+        any loss. Returns a dict mapping each :class:`ClusterAwareQueryId` to its
+        :class:`ModelPrediction`.
 
         This is faster than ``_process_batch(..., derive_individual_predictions=True)``
         because it skips the loss computation entirely.
@@ -547,13 +539,13 @@ class IconqModel:
             x_len,
             pinch_points,
             y,
-            run_aware_query_ids,
+            cluster_aware_query_ids,
             query_text_ids,
             y_is_lower_bound,
         ) = batch
 
         train_config = self._train_config_sequence[-1]
-        result: list[tuple[ModelPrediction, str, str]] = []
+        result: dict[ClusterAwareQueryId, ModelPrediction] = {}
 
         # Handle isolated queries via the stage model when configured.
         # Batch the length check with a single CPU conversion instead of per-item .item() calls.
@@ -575,17 +567,11 @@ class IconqModel:
                     i,
                     x,
                     pinch_points,
-                    run_aware_query_ids,
+                    cluster_aware_query_ids,
                     query_text_ids,
                     y_is_lower_bound,
                 )
-                result.append(
-                    (
-                        pred,
-                        run_aware_query_ids[i].run_id,
-                        run_aware_query_ids[i].query_id,
-                    )
-                )
+                result[cluster_aware_query_ids[i]] = pred
 
             if not non_isolated_indices:
                 return result
@@ -593,8 +579,8 @@ class IconqModel:
             x = x[non_isolated_indices]
             x_len = x_len[non_isolated_indices]
             pinch_points = pinch_points[non_isolated_indices]
-            run_aware_query_ids = [
-                run_aware_query_ids[i] for i in non_isolated_indices
+            cluster_aware_query_ids = [
+                cluster_aware_query_ids[i] for i in non_isolated_indices
             ]
             query_text_ids = [query_text_ids[i] for i in non_isolated_indices]
             y_is_lower_bound = y_is_lower_bound[non_isolated_indices]
@@ -614,13 +600,13 @@ class IconqModel:
             y_pred_mean = torch.exp(y_pred_mean)
             y_pred_logvar = torch.exp(y_pred_logvar)
 
-        result.extend(
+        result.update(
             self._build_predictions_from_nn_output(
                 y_pred_mean,
                 y_pred_logvar,
                 y_pred_mix,
                 x_len,
-                run_aware_query_ids,
+                cluster_aware_query_ids,
                 query_text_ids,
                 y_is_lower_bound,
             )
@@ -773,13 +759,22 @@ class IconqModel:
             train_indices = []
             val_indices = []
             test_indices = []
-            for i, run_id in enumerate(dataset.run_ids):
+            for i, cluster_aware_query_id in enumerate(
+                dataset.cluster_aware_query_ids
+            ):
+                cluster_name = cluster_aware_query_id.cluster_name
+                run_id = Cluster.run_id_for_cluster_name(cluster_name)
                 if run_id in train_run_ids:
                     train_indices.append(i)
                 elif run_id in val_run_ids:
                     val_indices.append(i)
                 elif run_id in test_run_ids:
                     test_indices.append(i)
+                else:
+                    raise ValueError(
+                        f"Query with run ID {run_id} not found in any explicit "
+                        f"run ID split list."
+                    )
 
             train_dataset = Subset(dataset, train_indices)
             val_dataset = Subset(dataset, val_indices)
@@ -1100,7 +1095,7 @@ class IconqModel:
 
         # Calculate error metrics
         errors: dict[str, float] = {}
-        # (ModelPrediction, true_runtime, run_aware_query_id, query_text_id)
+        # (ModelPrediction, true_runtime, cluster_aware_query_id, query_text_id)
         abs_error = [
             abs(pred.overall_mean_s() - true)
             for pred, true, _, _ in all_pred_v_true
@@ -1143,8 +1138,8 @@ class IconqModel:
         if training_dir is not None:
             val_df = pd.DataFrame()
             val_df["query_id"] = [
-                run_aware_query_id.query_id
-                for _, _, run_aware_query_id, _ in all_pred_v_true
+                cluster_aware_query_id.query_id
+                for _, _, cluster_aware_query_id, _ in all_pred_v_true
             ]
             val_df["num_other_concurrent_queries"] = [
                 pred.metadata["num_other_concurrent_queries"]
@@ -1184,13 +1179,13 @@ class IconqModel:
             x_len,
             pinch_points,
             y,
-            run_aware_query_ids,
+            cluster_aware_query_ids,
             query_text_ids,
             y_is_lower_bound,
         ) = batch
 
         batch_pred_v_true = []
-        # List of (ModelPrediction, true_runtime, run_aware_query_id, query_text_id)
+        # List of (ModelPrediction, true_runtime, cluster_aware_query_id, query_text_id)
         # tuples for the batch.
 
         if train_config.use_stage_for_isolated_queries:
@@ -1206,7 +1201,7 @@ class IconqModel:
                         i,
                         x,
                         pinch_points,
-                        run_aware_query_ids,
+                        cluster_aware_query_ids,
                         query_text_ids,
                         y_is_lower_bound,
                     )
@@ -1214,7 +1209,7 @@ class IconqModel:
                         (
                             pred,
                             y[i],
-                            run_aware_query_ids[i],
+                            cluster_aware_query_ids[i],
                             query_text_ids[i],
                         )
                     )
@@ -1267,20 +1262,20 @@ class IconqModel:
             else:
                 batch_loss = loss.mean()
                 y_np = y.detach().cpu().numpy()
-                for (pred, r, q), y_, t in zip(
+                for (caqid, pred), y_, t in zip(
                     self._build_predictions_from_nn_output(
                         y_pred_mean,
                         y_pred_logvar,
                         y_pred_mix,
                         x_len,
-                        run_aware_query_ids,
+                        cluster_aware_query_ids,
                         query_text_ids,
                         y_is_lower_bound,
-                    ),
+                    ).items(),
                     y_np,
                     query_text_ids,
                 ):
-                    batch_pred_v_true.append((pred, y_, q, t, r))
+                    batch_pred_v_true.append((pred, y_, caqid, t))
         elif self._loss_type == LossType.NLL:
             loss = negative_log_likelihood_loss(
                 y_pred_mean,
@@ -1295,20 +1290,20 @@ class IconqModel:
             else:
                 batch_loss = loss.mean()
                 y_np = y.detach().cpu().numpy()
-                for (pred, r, q), y_, t in zip(
+                for (caqid, pred), y_, t in zip(
                     self._build_predictions_from_nn_output(
                         y_pred_mean,
                         y_pred_logvar,
                         y_pred_mix,
                         x_len,
-                        run_aware_query_ids,
+                        cluster_aware_query_ids,
                         query_text_ids,
                         y_is_lower_bound,
-                    ),
+                    ).items(),
                     y_np,
                     query_text_ids,
                 ):
-                    batch_pred_v_true.append((pred, y_, q, t, r))
+                    batch_pred_v_true.append((pred, y_, caqid, t))
         else:
             min_val: float | torch.Tensor = 0.001
             if train_config.penalize_based_on_overlap:
@@ -1329,21 +1324,21 @@ class IconqModel:
             else:
                 batch_loss = loss.mean()
                 y_np = y.detach().cpu().numpy()
-                for (pred, r, q), y_, t in zip(
+                for (caqid, pred), y_, t in zip(
                     self._build_predictions_from_nn_output(
                         y_pred_mean,
                         y_pred_logvar,
                         y_pred_mix,
                         x_len,
-                        run_aware_query_ids,
+                        cluster_aware_query_ids,
                         query_text_ids,
                         y_is_lower_bound,
                         per_item_losses=loss.detach().cpu().numpy(),
-                    ),
+                    ).items(),
                     y_np,
                     query_text_ids,
                 ):
-                    batch_pred_v_true.append((pred, y_, q, t, r))
+                    batch_pred_v_true.append((pred, y_, caqid, t))
 
         return (
             batch_loss,

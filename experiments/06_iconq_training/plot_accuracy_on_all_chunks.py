@@ -126,9 +126,8 @@ def main(iconq_model_id: str, use_stage_for_isolated_queries: bool):
                 )
                 raw = model.predict_from_dataset(dataset)
                 predictions = {
-                    qid: pred.overall_mean_s()
-                    for run_preds in raw.values()
-                    for qid, pred in run_preds.items()
+                    caqid.query_id: pred.overall_mean_s()
+                    for caqid, pred in raw.items()
                 }
 
                 true_y = trace.latencies_s

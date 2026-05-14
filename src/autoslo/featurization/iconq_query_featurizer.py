@@ -14,7 +14,7 @@ import yaml
 from tqdm.auto import tqdm
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.workload_definition.query import QueryTextId, RunAwareQueryId
+from autoslo.workload_definition.query import ClusterAwareQueryId, QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -353,7 +353,7 @@ class IconqQueryFeaturizer:
 
     def featurize_trace(
         self, trace: Trace
-    ) -> dict[RunAwareQueryId, IconqQueryFeaturization]:
+    ) -> dict[ClusterAwareQueryId, IconqQueryFeaturization]:
         """
         Featurizes all queries in the given trace.
 
@@ -361,17 +361,20 @@ class IconqQueryFeaturizer:
             trace: The Trace object containing the queries to featurize.
 
         Returns:
-            A dictionary mapping query IDs to their vectorized representations.
+            A dictionary mapping cluster-aware query IDs to their vectorized 
+            representations.
         """
         featurizations: dict[
-            RunAwareQueryId, IconqQueryFeaturizer.IconqQueryFeaturization
+            ClusterAwareQueryId, IconqQueryFeaturizer.IconqQueryFeaturization
         ] = {}
         query_text_ids = trace.query_text_ids
 
-        for query_id, query_text_id in query_text_ids.items():
-            query_id = cast(RunAwareQueryId, query_id)
+        for cluster_aware_query_id, query_text_id in query_text_ids.items():
+            cluster_aware_query_id = cast(
+                ClusterAwareQueryId, cluster_aware_query_id
+            )
             featurization = self.featurize_from_query_text_id(query_text_id)
-            featurizations[query_id] = featurization
+            featurizations[cluster_aware_query_id] = featurization
 
         return featurizations
 

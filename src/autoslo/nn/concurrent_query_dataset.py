@@ -8,9 +8,9 @@ from autoslo.featurization.iconq_interaction_featurizer import (
     IconqInteractionFeaturizer,
 )
 from autoslo.workload_definition.query import (
+    ClusterAwareQueryId,
     Query,
     QueryTextId,
-    RunAwareQueryId,
 )
 
 
@@ -23,7 +23,7 @@ class ConcurrentQueryDataset(Dataset):
             The list length is batch_size.
         - pinch_point is the pinch points tensor, of shape (1,).
         - y is the target tensor, of shape (1,).
-        - run_aware_query_ids is the list of run-aware query IDs.
+        - cluster_aware_query_ids is the list of cluster-aware query IDs.
         - query_text_id is the query text ID.
         - y_is_lower_bound is a tensor indicating if the target is a lower
             bound, of shape (1,).
@@ -34,20 +34,16 @@ class ConcurrentQueryDataset(Dataset):
         x: list[torch.Tensor],
         pinch_points: torch.Tensor,
         y: torch.Tensor,
-        run_aware_query_ids: list[RunAwareQueryId],
+        cluster_aware_query_ids: list[ClusterAwareQueryId],
         query_text_id: list[QueryTextId],
         y_is_lower_bound: torch.Tensor,
     ):
         self.x = x
         self.pinch_points = pinch_points
         self.y = y
-        self.run_aware_query_ids = run_aware_query_ids
+        self.cluster_aware_query_ids = cluster_aware_query_ids
         self.query_text_id = query_text_id
         self.y_is_lower_bound = y_is_lower_bound
-
-    @property
-    def run_ids(self) -> list[str]:
-        return [raqid.run_id for raqid in self.run_aware_query_ids]
 
     def __len__(self) -> int:
         return len(self.y)
@@ -56,7 +52,7 @@ class ConcurrentQueryDataset(Dataset):
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
-        RunAwareQueryId,
+        ClusterAwareQueryId,
         QueryTextId,
         torch.Tensor,
     ]:
@@ -64,7 +60,7 @@ class ConcurrentQueryDataset(Dataset):
             self.x[idx],
             self.pinch_points[idx],
             self.y[idx],
-            self.run_aware_query_ids[idx],
+            self.cluster_aware_query_ids[idx],
             self.query_text_id[idx],
             self.y_is_lower_bound[idx],
         )
@@ -86,9 +82,9 @@ class ConcurrentQueryDataset(Dataset):
             [dataset.pinch_points for dataset in datasets], dim=0
         )
         new_y = torch.cat([dataset.y for dataset in datasets], dim=0)
-        new_run_aware_query_ids = []
+        new_cluster_aware_query_ids = []
         for dataset in datasets:
-            new_run_aware_query_ids.extend(dataset.run_aware_query_ids)
+            new_cluster_aware_query_ids.extend(dataset.cluster_aware_query_ids)
         new_query_text_id = []
         for dataset in datasets:
             new_query_text_id.extend(dataset.query_text_id)
@@ -100,7 +96,7 @@ class ConcurrentQueryDataset(Dataset):
             x=new_x,
             pinch_points=new_pinch_points,
             y=new_y,
-            run_aware_query_ids=new_run_aware_query_ids,
+            cluster_aware_query_ids=new_cluster_aware_query_ids,
             query_text_id=new_query_text_id,
             y_is_lower_bound=new_y_is_lower_bound,
         )
@@ -112,7 +108,7 @@ class ConcurrentQueryDataset(Dataset):
                 torch.Tensor,
                 torch.Tensor,
                 torch.Tensor,
-                RunAwareQueryId,
+                ClusterAwareQueryId,
                 QueryTextId,
                 torch.Tensor,
             ]
@@ -122,7 +118,7 @@ class ConcurrentQueryDataset(Dataset):
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
-        list[RunAwareQueryId],
+        list[ClusterAwareQueryId],
         list[QueryTextId],
         torch.Tensor,
     ]:
@@ -142,7 +138,8 @@ class ConcurrentQueryDataset(Dataset):
             pinch_points: The indices of the pinch points in each of the
                 sequences in the batch. This tensor has shape (batch_size,).
             y: The target tensor, of shape (batch_size,).
-            run_aware_query_ids: The list of run-aware query IDs, of shape (batch_size,).
+            cluster_aware_query_ids: The list of cluster-aware query IDs, of
+                shape (batch_size,).
             query_text_id: The list of QueryTextId objects,
                 of shape (batch_size,).
             y_is_lower_bound: The tensor indicating if the target is a lower
@@ -152,7 +149,7 @@ class ConcurrentQueryDataset(Dataset):
             x,
             pinch_points,
             y,
-            run_aware_query_ids,
+            cluster_aware_query_ids,
             query_text_id,
             y_is_lower_bound,
         ) = zip(*batch)
@@ -168,8 +165,8 @@ class ConcurrentQueryDataset(Dataset):
             sort_idx
         ]
         y_out = torch.tensor(y, dtype=torch.float)[sort_idx]
-        run_aware_query_ids_out: list[RunAwareQueryId] = [
-            run_aware_query_ids[i] for i in sort_idx
+        cluster_aware_query_ids_out: list[ClusterAwareQueryId] = [
+            cluster_aware_query_ids[i] for i in sort_idx
         ]
         query_text_id_out: list[QueryTextId] = [
             query_text_id[i] for i in sort_idx
@@ -185,7 +182,7 @@ class ConcurrentQueryDataset(Dataset):
             x_len_out,
             pinch_points_out,
             y_out,
-            run_aware_query_ids_out,
+            cluster_aware_query_ids_out,
             query_text_id_out,
             y_is_lower_bound_out,
         )
@@ -202,7 +199,7 @@ class ConcurrentQueryDataset(Dataset):
                 "x": self.x,
                 "pinch_points": self.pinch_points,
                 "y": self.y,
-                "run_aware_query_ids": self.run_aware_query_ids,
+                "cluster_aware_query_ids": self.cluster_aware_query_ids,
                 "query_text_id": self.query_text_id,
                 "y_is_lower_bound": self.y_is_lower_bound,
             },
@@ -225,8 +222,8 @@ class ConcurrentQueryDataset(Dataset):
             x=data["x"],
             pinch_points=data["pinch_points"],
             y=data["y"],
-            run_aware_query_ids=[
-                RunAwareQueryId(q) for q in data["run_aware_query_ids"]
+            cluster_aware_query_ids=[
+                ClusterAwareQueryId(q) for q in data["cluster_aware_query_ids"]
             ],
             query_text_id=data["query_text_id"],
             y_is_lower_bound=data["y_is_lower_bound"],
@@ -243,8 +240,6 @@ class ConcurrentQueryDataset(Dataset):
         """
         Build a dataset from base queries and their pre-computed neighbors.
 
-        This method constructs interaction features between a base query and its neighbors,
-        all assumed to be on the same cluster.
 
         Parameters:
             iconq_interaction_featurizer: The featurizer to use for constructing
@@ -269,7 +264,7 @@ class ConcurrentQueryDataset(Dataset):
                 x=[],
                 pinch_points=torch.tensor([], dtype=torch.int8),
                 y=torch.tensor([], dtype=torch.float32),
-                run_aware_query_ids=[],
+                cluster_aware_query_ids=[],
                 query_text_id=[],
                 y_is_lower_bound=torch.tensor([], dtype=torch.bool),
             )
@@ -278,7 +273,7 @@ class ConcurrentQueryDataset(Dataset):
         x = []
         y = []
         pinch_points = []
-        run_aware_query_ids_out: list[RunAwareQueryId] = []
+        cluster_aware_query_ids_out: list[ClusterAwareQueryId] = []
         query_text_id_out = []
         y_is_lower_bound_out = []
 
@@ -292,7 +287,6 @@ class ConcurrentQueryDataset(Dataset):
             def _stage_pred(q: Query) -> float:
                 return q.stage_predictions_per_rpu.get(rpu, -1.0)
 
-            # General path: distinct neighbor lists per base query.
             for base_query in base_to_neighbors.keys():
 
                 # Build qb_entries: self-interaction first, then neighbors.
@@ -317,7 +311,7 @@ class ConcurrentQueryDataset(Dataset):
 
                 arr, pinch_idx = (
                     iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
-                        cluster_name=cluster_name,
+                        rpu=rpu,
                         qa_query_text_id=base_query.query_text_id,
                         qa_start_time_s=base_query.rel_start_time_s,
                         qa_latency_prediction=_stage_pred(base_query),
@@ -336,7 +330,9 @@ class ConcurrentQueryDataset(Dataset):
                 else:
                     y.append(0.0)  # Placeholder if latency is not available
                 pinch_points.append(pinch_idx)
-                run_aware_query_ids_out.append(base_query.run_aware_query_id)
+                cluster_aware_query_ids_out.append(
+                    ClusterAwareQueryId.for_query(cluster_name, base_query)
+                )
                 query_text_id_out.append(base_query.query_text_id)
                 lb = (
                     is_lower_bound.get(base_query.query_id, False)
@@ -357,7 +353,7 @@ class ConcurrentQueryDataset(Dataset):
             x=x_tensorized,
             pinch_points=pinch_points_tensorized,
             y=y_tensorized,
-            run_aware_query_ids=run_aware_query_ids_out,
+            cluster_aware_query_ids=cluster_aware_query_ids_out,
             query_text_id=query_text_id_out,
             y_is_lower_bound=y_is_lower_bound_tensorized,
         )

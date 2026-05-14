@@ -2,7 +2,6 @@ from typing import Any, Optional
 
 import numpy as np
 
-from autoslo.clusters.cluster import Cluster
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.workload_definition.query import QueryTextId
 
@@ -109,7 +108,7 @@ class IconqInteractionFeaturizer:
 
     def featurize_one_vs_many_to_numpy(
         self,
-        cluster_name: str,
+        rpu: int,
         qa_query_text_id: QueryTextId,
         qa_start_time_s: float,
         qa_latency_prediction: float,
@@ -123,7 +122,7 @@ class IconqInteractionFeaturizer:
 
 
         Parameters:
-            cluster_name: The cluster on which all queries execute.
+            rpu: The RPU of the cluster on which the queries ran.
             qa_query_text_id: Query text ID of the base query.
             qa_start_time_s: Start time of the base query (seconds).
             qa_latency_prediction: Stage-model latency prediction for qa.
@@ -140,12 +139,6 @@ class IconqInteractionFeaturizer:
         """
         q_dim = self._iconq_query_featurizer.num_dims
         feat_dim = self.num_dims
-
-        rpu = (
-            0.0
-            if self._ignore_cluster_size
-            else Cluster.rpu_for_cluster_name(cluster_name)
-        )
 
         # Sort by qb start time once.
         qb_entries_sorted = sorted(qb_entries, key=lambda e: e[0])

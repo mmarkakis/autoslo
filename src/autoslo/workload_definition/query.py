@@ -28,29 +28,47 @@ class QueryTextId(str):
         return self.split("#")[2]
 
 
-class RunAwareQueryId(str):
-    """Stable identifier for a query that also carries a run context.
-
-    Used only whenever we call into models for training/inference, to allow
-    multi-run training sets without query ID collisions.
+class ClusterAwareQueryId(str):
+    """
+    A query identifier that also carries information about the cluster the query
+    was assigned to.
     """
 
     @classmethod
-    def make(cls, run_id: str, query_id: str) -> "RunAwareQueryId":
-        """Construct a RunAwareQueryId from a run ID and a query ID."""
-        return cls(f"{run_id}#{query_id}")
+    def make(cls, cluster_name: str, query_id: str) -> "ClusterAwareQueryId":
+        """
+        Construct a ClusterAwareQueryId from a cluster name and a query ID.
+        """
+        return cls(f"{cluster_name}#{query_id}")
+
+    @classmethod
+    def for_query(
+        cls, cluster_name: str, query: "Query"
+    ) -> "ClusterAwareQueryId":
+        """
+        Convenience: construct a ClusterAwareQueryId for a single Query.
+        """
+        return cls.make(cluster_name, query.query_id)
+
+    @classmethod
+    def for_queries(
+        cls, cluster_name: str, queries: "list[Query]"
+    ) -> "list[ClusterAwareQueryId]":
+        """
+        Convenience: construct a list of ClusterAwareQueryIds for a list of
+        Queries.
+        """
+        return [cls.make(cluster_name, q.query_id) for q in queries]
 
     @property
-    def run_id(self) -> str:
-        """The run ID embedded in this identifier (potentially empty)."""
-        parts = self.split("#")
-        return parts[0]
+    def cluster_name(self) -> str:
+        """The cluster name embedded in this identifier."""
+        return self.split("#")[0]
 
     @property
     def query_id(self) -> str:
         """The workload-level query ID (e.g. ``"query_42"``)."""
-        parts = self.split("#")
-        return parts[1]
+        return self.split("#")[1]
 
 
 @dataclass(frozen=True, eq=False)
@@ -65,7 +83,6 @@ class Query:
 
     query_id: str
     query_text_id: QueryTextId
-    run_id: str = ""  # Used for disambiguation in model training; can be empty.
 
     featurization: QueryFeaturization = field(default_factory=list)
 
@@ -113,12 +130,3 @@ class Query:
                 "rel_start_time_s",
                 self.abs_start_time.timestamp(),
             )
-
-    @property
-    def run_aware_query_id(self) -> "RunAwareQueryId":
-        """Return the :class:`RunAwareQueryId` for this query.
-
-        When a run context is present the format is ``run_id#query_id``;
-        otherwise the plain ``query_id`` is wrapped unchanged.
-        """
-        return RunAwareQueryId.make(self.run_id, self.query_id)

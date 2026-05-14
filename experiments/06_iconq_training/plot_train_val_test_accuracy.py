@@ -349,9 +349,8 @@ def main(iconq_model_id: str, hide_plot_title: bool):
             dataset=split_dataset,
         )
         flattened = {
-            query_id: pred
-            for run_preds in predictions_per_run.values()
-            for query_id, pred in run_preds.items()
+            caqid.query_id: pred
+            for caqid, pred in predictions_per_run.items()
         }
 
         split_predicted_y[split] = flattened
