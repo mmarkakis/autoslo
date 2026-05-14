@@ -12,34 +12,8 @@ import autoslo.filesystem.path_utils as pu
 import autoslo.tuner.parallelism as plu
 from autoslo.clusters.cluster import Cluster
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
-from autoslo.workload_definition.query import QueryTextId
+from autoslo.workload_definition.query import QueryTextId, RunAwareQueryId
 from autoslo.workload_definition.query_plan_registry import QueryPlanRegistry
-
-
-class TraceQueryId(str):
-    """Stable identifier for a query recorded in a Trace.
-
-    Format:  ``"{run_id}#{cluster_name}#{redshift_int}"``
-    Example: ``"run20260512#cluster_a#812345"``
-
-    A ``str`` subclass — call sites that only need a plain string work
-    without modification.  Distinct from the workload query ID carried by
-    :class:`~autoslo.workload_definition.query.Query` in routing and
-    simulation; use :meth:`Trace.workload_query_id_mapping` to cross
-    between the two spaces.
-    """
-
-    @property
-    def run_id(self) -> str:
-        return self.split("#")[0]
-
-    @property
-    def cluster_name(self) -> str:
-        return self.split("#")[1]
-
-    @property
-    def redshift_query_id(self) -> str:
-        return self.split("#")[2]
 
 
 class Trace:
@@ -102,7 +76,7 @@ class Trace:
         self._run_id = run_id
 
         # For caching.
-        self._query_ids: list[TraceQueryId] = []
+        self._run_aware_query_ids: list[RunAwareQueryId] = []
 
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
@@ -112,6 +86,37 @@ class Trace:
         pq_filenames = [
             f for f in os.listdir(run_dir) if f.endswith(".parquet")
         ]
+
+        # Pass 1: build (cluster_name, raw_redshift_id) → RunAwareQueryId
+        # and the reverse cluster lookup by parsing the WorkloadRunner SQL
+        # comment (``--{run_id}/{query_id}\n{sql}``) from every
+        # sys_query_history file.
+        self._redshift_to_run_aware: dict[tuple[str, str], RunAwareQueryId] = {}
+        self._run_aware_to_cluster: dict[str, str] = {}
+        for filename in pq_filenames:
+            parts = filename.split(".")[0].split("+")
+            if len(parts) != 2 or parts[0] != "sys_query_history":
+                continue
+            cluster_name = parts[1]
+            df_ids = pd.read_parquet(
+                os.path.join(run_dir, filename),
+                columns=["query_id", "query_text"],
+            )
+            if len(df_ids) == 0:
+                continue
+            wq_ids = df_ids["query_text"].apply(
+                lambda t: t.split("\\n")[0].split("/")[1]
+            )
+            for raw_id, wq_id in zip(df_ids["query_id"].astype(str), wq_ids):
+                run_aware_id = RunAwareQueryId.make(self._run_id, wq_id)
+                self._redshift_to_run_aware[(cluster_name, raw_id)] = (
+                    run_aware_id
+                )
+                self._run_aware_to_cluster[str(run_aware_id)] = cluster_name
+
+        # Pass 2: load all required parquet files.  For files that carry a
+        # query_id column the raw Redshift integer is replaced with the
+        # corresponding RunAwareQueryId from the mapping built in pass 1.
         for filename in pq_filenames:
             parts = filename.split(".")[0].split("+")
             if parts[0] in Trace.REQUIRED_COLUMNS.keys():
@@ -124,16 +129,17 @@ class Trace:
                     continue
 
                 if "query_id" in df.columns:
-                    df["query_id"] = df["query_id"].apply(
-                        lambda raw_id: TraceQueryId(
-                            f"{self._run_id}#{cluster_name}#{raw_id}"
+                    df["run_aware_query_id"] = df["query_id"].apply(
+                        lambda raw_id, cn=cluster_name: (
+                            self._redshift_to_run_aware[(cn, str(raw_id))]
                         )
                     )
+                    df = df.rename(columns={"query_id": "redshift_query_id"})
 
                 if table_name == "sys_query_explain":
                     df = (
                         df[df["plan_node"].str.contains("XN")]
-                        .sort_values(["query_id", "plan_node_id"])
+                        .sort_values(["run_aware_query_id", "plan_node_id"])
                         .reset_index(drop=True)
                     )
 
@@ -151,10 +157,9 @@ class Trace:
         """
         return self._run_id
 
-    @staticmethod
-    def cluster_name_from_query_id(query_id: str) -> str:
-        """Extract the cluster name from a :class:`TraceQueryId`."""
-        return TraceQueryId(query_id).cluster_name
+    def cluster_for(self, run_aware_query_id: RunAwareQueryId) -> str:
+        """Return the cluster name for the given :class:`RunAwareQueryId`."""
+        return self._run_aware_to_cluster[str(run_aware_query_id)]
 
     @staticmethod
     def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
@@ -215,12 +220,14 @@ class Trace:
         series = []
         for df in self._dfs["sys_query_history"].values():
             s = (
-                df.set_index("query_id")["elapsed_time"].astype("float")
+                df.set_index("run_aware_query_id")["elapsed_time"].astype(
+                    "float"
+                )
                 * conversion_factor
             )
             series.append(s)
 
-        return pd.concat(series).reindex(self.query_ids)
+        return pd.concat(series).reindex(self.run_aware_query_ids)
 
     @property
     def costs(self) -> list[float]:
@@ -270,18 +277,20 @@ class Trace:
         return charged_seconds / 3600 * Cluster.US_EAST_1_COST_PER_RPU_HOUR
 
     @property
-    def query_ids(self) -> list[TraceQueryId]:
+    def run_aware_query_ids(self) -> list[RunAwareQueryId]:
         """
-        Get the query IDs of the queries in the trace.
+        Get the run-aware query IDs of the queries in the trace.
 
         Returns:
-            A pandas Series containing the query IDs.
+            A list of run-aware query IDs.
         """
-        if len(self._query_ids) == 0:
+        if len(self._run_aware_query_ids) == 0:
             for df in self._dfs["sys_query_history"].values():
-                self._query_ids.extend(list(df["query_id"].unique()))
+                self._run_aware_query_ids.extend(
+                    list(df["run_aware_query_id"].unique())
+                )
 
-        return self._query_ids
+        return self._run_aware_query_ids
 
     @property
     def seq_nums(self) -> pd.Series:
@@ -293,40 +302,12 @@ class Trace:
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["query_text"].apply(
+            s = df.set_index("run_aware_query_id")["query_text"].apply(
                 lambda x: int(x.split("\\n")[0].split("/")[1])
             )
             series.append(s)
 
-        return pd.concat(series).reindex(self.query_ids)
-
-    @property
-    def workload_query_id_mapping(self) -> pd.Series:
-        """Map each :class:`TraceQueryId` to the workload query ID embedded in
-        the SQL comment by :class:`~...workload_runner.WorkloadRunner`::
-
-            --{run_id}/{workload_query_id}\\n{sql}
-
-        This is the canonical bridge from :class:`TraceQueryId` space into the
-        workload query ID space used by routing and simulation.  Returns
-        ``None`` for entries whose SQL was not submitted via
-        :class:`WorkloadRunner`.
-
-        Returns:
-            A Series indexed by :class:`TraceQueryId` with string values.
-        """
-        series = []
-        for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["query_text"].apply(
-                lambda x: x.split("\\n")[0].split("/")[1]
-            )
-            series.append(s)
-
-        return (
-            pd.concat(series)
-            .reindex(self.query_ids)
-            .rename("workload_query_id")
-        )
+        return pd.concat(series).reindex(self.run_aware_query_ids)
 
     @staticmethod
     def extract_query_text_id(
@@ -422,11 +403,11 @@ class Trace:
             )
             # Invalidate caches written by older formats:
             #   - bare "template_index"  →  0 '#' in the index
-            #   - old "cluster_name_int#uuid4"  →  1 '#' in the index
-            # New format "run_id#cluster_name#int" has exactly 2 '#'.
+            #   - old "run_id#cluster_name#int"  →  2 '#' in the index
+            # New format "run_id#workload_query_id" has exactly 1 '#'.
             if (
                 not concatenated.empty
-                and str(concatenated.index[0]).count("#") != 2
+                and str(concatenated.index[0]).count("#") != 1
             ):
                 os.remove(cache_path)
             else:
@@ -444,8 +425,8 @@ class Trace:
             df_with_query_text["query_id"] = df_with_query_text[
                 "query_id"
             ].apply(
-                lambda raw_id: TraceQueryId(
-                    f"{self._run_id}#{cluster_name}#{raw_id}"
+                lambda raw_id, cn=cluster_name: (
+                    self._redshift_to_run_aware[(cn, str(raw_id))]
                 )
             )
             df_with_query_text["query_text_id"] = df_with_query_text[
@@ -454,7 +435,7 @@ class Trace:
             s = df_with_query_text.set_index("query_id")["query_text_id"]
             series.append(s)
 
-        concatenated = pd.concat(series).reindex(self.query_ids)
+        concatenated = pd.concat(series).reindex(self.run_aware_query_ids)
         concatenated.to_frame().to_parquet(cache_path, index=True)
         return concatenated.map(QueryTextId)
 
@@ -468,8 +449,12 @@ class Trace:
         for df in self._dfs["sys_query_history"].values():
             events = []
             for _, row in df.iterrows():
-                events.append((row["start_time"], "start", row["query_id"]))
-                events.append((row["end_time"], "end", row["query_id"]))
+                events.append(
+                    (row["start_time"], "start", row["run_aware_query_id"])
+                )
+                events.append(
+                    (row["end_time"], "end", row["run_aware_query_id"])
+                )
 
             # Sort events by time, with 'end' events before 'start' events at
             # the same time.
@@ -488,7 +473,7 @@ class Trace:
                 elif event_type == "end":
                     active_queries.remove(query_id)
 
-        return pd.Series(non_overlapping_dict).reindex(self.query_ids)
+        return pd.Series(non_overlapping_dict).reindex(self.run_aware_query_ids)
 
     def arrival_times(self) -> pd.Series:
         """
@@ -496,15 +481,15 @@ class Trace:
         the arrival times (start times in SYS_QUERY_HISTORY) of each query.
 
         The order of the query IDs in the Series matches the order of the query
-        IDs provided by the `query_ids` property.
+        IDs provided by the `run_aware_query_ids` property.
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["start_time"]
+            s = df.set_index("run_aware_query_id")["start_time"]
             s = pd.to_datetime(s)
             series.append(s)
 
-        return pd.concat(series).reindex(self.query_ids)
+        return pd.concat(series).reindex(self.run_aware_query_ids)
 
     def completion_times(self) -> pd.Series:
         """
@@ -512,15 +497,15 @@ class Trace:
         the completion times (end times in SYS_QUERY_HISTORY) of each query.
 
         The order of the query IDs in the Series matches the order of the query
-        IDs provided by the `query_ids` property.
+        IDs provided by the `run_aware_query_ids` property.
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["end_time"]
+            s = df.set_index("run_aware_query_id")["end_time"]
             s = pd.to_datetime(s)
             series.append(s)
 
-        return pd.concat(series).reindex(self.query_ids)
+        return pd.concat(series).reindex(self.run_aware_query_ids)
 
     def query_plans(self, ignore_caching: bool = False) -> dict[str, Any]:
         """
@@ -555,7 +540,7 @@ class Trace:
             if cached_plan is not None:
                 d[query_id] = cached_plan
             else:
-                cluster = TraceQueryId(query_id).cluster_name
+                cluster = self.cluster_for(query_id)
                 query_ids_to_parse_per_cluster[cluster].append(
                     (query_id, query_text_id)
                 )
@@ -568,7 +553,9 @@ class Trace:
             explain_df = self._dfs["sys_query_explain"][cluster_name]
 
             for query_id, query_text_id in query_ids:
-                query_df = explain_df[explain_df["query_id"] == query_id]
+                query_df = explain_df[
+                    explain_df["run_aware_query_id"] == query_id
+                ]
                 if len(query_df) == 0:
                     continue
                 plan_steps = query_df.sort_values("plan_node_id")[
@@ -610,10 +597,12 @@ class Trace:
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
-            s = ~df.set_index("query_id")["status"].str.contains("success")
+            s = ~df.set_index("run_aware_query_id")["status"].str.contains(
+                "success"
+            )
             series.append(s)
 
-        return pd.concat(series).reindex(self.query_ids)
+        return pd.concat(series).reindex(self.run_aware_query_ids)
 
     def error_messages(self) -> pd.Series:
         """
@@ -622,9 +611,9 @@ class Trace:
         """
         series = []
         for df in self._dfs["sys_query_history"].values():
-            s = df.set_index("query_id")["error_message"]
+            s = df.set_index("run_aware_query_id")["error_message"]
             series.append(s)
-        return pd.concat(series).reindex(self.query_ids).str.strip()
+        return pd.concat(series).reindex(self.run_aware_query_ids).str.strip()
 
     def sys_query_explain_rows_per_query(self) -> dict[str, pd.DataFrame]:
         """
@@ -637,14 +626,15 @@ class Trace:
 
         for df in self._dfs["sys_query_explain"].values():
 
-            for query_id, query_df in df.groupby("query_id"):
-                query_id = cast(str, query_id)  # Make mypy happy
-                if query_id not in self.query_ids:
+            for run_aware_query_id, query_df in df.groupby(
+                "run_aware_query_id"
+            ):
+                if run_aware_query_id not in self.run_aware_query_ids:
                     continue
 
                 # If the error message specifies a preempted child query, skip
                 # the rows for that child query.
-                error_message = error_messages[query_id].strip()
+                error_message = error_messages[run_aware_query_id].strip()
                 if (
                     len(error_message) > 0
                     and ("child_sequence:" in error_message)
@@ -658,7 +648,7 @@ class Trace:
                     ]
 
                 # Sort by child query sequence and plan node ID.
-                d[query_id] = (
+                d[run_aware_query_id] = (
                     query_df.sort_values(
                         ["child_query_sequence", "plan_node_id"]
                     )

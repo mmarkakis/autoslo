@@ -28,6 +28,31 @@ class QueryTextId(str):
         return self.split("#")[2]
 
 
+class RunAwareQueryId(str):
+    """Stable identifier for a query that also carries a run context.
+
+    Used only whenever we call into models for training/inference, to allow
+    multi-run training sets without query ID collisions.
+    """
+
+    @classmethod
+    def make(cls, run_id: str, query_id: str) -> "RunAwareQueryId":
+        """Construct a RunAwareQueryId from a run ID and a query ID."""
+        return cls(f"{run_id}#{query_id}")
+
+    @property
+    def run_id(self) -> str:
+        """The run ID embedded in this identifier (potentially empty)."""
+        parts = self.split("#")
+        return parts[0]
+
+    @property
+    def query_id(self) -> str:
+        """The workload-level query ID (e.g. ``"query_42"``)."""
+        parts = self.split("#")
+        return parts[1]
+
+
 @dataclass(frozen=True, eq=False)
 class Query:
     """Immutable identity + precomputed features for a single query.
@@ -40,6 +65,7 @@ class Query:
 
     query_id: str
     query_text_id: QueryTextId
+    run_id: str = ""  # Used for disambiguation in model training; can be empty.
 
     featurization: QueryFeaturization = field(default_factory=list)
 
@@ -87,3 +113,12 @@ class Query:
                 "rel_start_time_s",
                 self.abs_start_time.timestamp(),
             )
+
+    @property
+    def run_aware_query_id(self) -> "RunAwareQueryId":
+        """Return the :class:`RunAwareQueryId` for this query.
+
+        When a run context is present the format is ``run_id#query_id``;
+        otherwise the plain ``query_id`` is wrapped unchanged.
+        """
+        return RunAwareQueryId.make(self.run_id, self.query_id)
