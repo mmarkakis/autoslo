@@ -98,7 +98,9 @@ class ExecutionConfig:
 
         # Parse remaining configs
         provisioner_config = ProvisionerConfig.from_config(
-            cfg, cluster_cache_state_dim=cluster_cache_state_dim
+            cfg,
+            cluster_cache_state_dim=cluster_cache_state_dim,
+            run_id=run_id,
         )
         managed_cluster_pool_config = ManagedClusterPoolConfig.from_config(
             cfg, num_reserved_clusters=num_reserved_clusters

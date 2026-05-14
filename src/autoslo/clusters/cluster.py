@@ -187,8 +187,6 @@ class Cluster:
         c.predicted_latencies = dict(self.predicted_latencies)
         return c
 
-
-
     # --- Derived properties ----------------------------------------------
 
     @property
@@ -337,7 +335,7 @@ class Cluster:
         """Parse RPU from a cluster name.
 
         Supports the naming convention
-        ``"autoslo-{rpu}-{timestamp}-{counter}"``.
+        ``"autoslo-{rpu}-{run_id}-{counter}"``.
         """
         parts = cluster_name.split("-")
         if len(parts) >= 2:
@@ -354,7 +352,7 @@ class Cluster:
         """Parse run ID from a cluster name.
 
         Supports the naming convention
-        ``"autoslo-{rpu}-{timestamp}-{counter}"``.
+        ``"autoslo-{rpu}-{run_id}-{counter}"``.
         """
         parts = cluster_name.split("-")
         if len(parts) >= 3:
@@ -427,8 +425,6 @@ class ClusterView:
     @property
     def cost_per_second(self) -> float:
         return Cluster.cost_per_second_for_rpu(self.rpu, self.cost_per_rpu_hour)
-
-
 
     def hypothetical_neighbors_with(
         self, query: "Query"

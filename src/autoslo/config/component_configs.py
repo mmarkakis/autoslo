@@ -302,6 +302,7 @@ class ProvisionerConfig(_PartialConfig):
 
     aws_config_path: str
     cluster_cache_state_dim: int
+    run_id: str
     spin_up_delay_s: float = 300.0
 
 

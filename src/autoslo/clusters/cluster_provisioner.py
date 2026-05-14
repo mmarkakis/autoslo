@@ -9,6 +9,7 @@ creating or destroying a cluster.
 
 from __future__ import annotations
 
+import itertools
 import logging
 from abc import ABC, abstractmethod
 
@@ -90,6 +91,7 @@ class SimulatedProvisioner(ClusterProvisioner):
 
     def __init__(self, config: ProvisionerConfig) -> None:
         self._config = config
+        self._seq_counter = itertools.count()
 
     @property
     def spin_up_delay_s(self) -> float:
@@ -104,12 +106,15 @@ class SimulatedProvisioner(ClusterProvisioner):
         A new ``Cluster`` with auto-generated name and no connection info.
         """
 
+        seq = next(self._seq_counter)
+        name = f"autoslo-{rpu}-{self._config.run_id}-{seq}"
         cluster = Cluster(
             rpu=rpu,
             creation_time_s=rel_time_s,
             cache_state=np.zeros(
                 self._config.cluster_cache_state_dim, dtype=np.float32
             ),
+            name=name,
         )
         emit_structured(
             BaseStructuredEvent(

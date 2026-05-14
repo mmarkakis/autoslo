@@ -509,13 +509,13 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
     # ------------------------------------------------------------------
 
     def _workgroup_and_namespace_names(
-        self, rpu: int, ts: int
+        self, rpu: int
     ) -> tuple[str, str]:
         """Generate a DNS-compatible, globally unique workgroup name."""
         seq = next(self._seq_counter)
 
-        wg_name = f"autoslo-{rpu}-{ts}-{seq}"
-        ns_name = f"autoslo-{rpu}-{ts}-{seq}-ns"
+        wg_name = f"autoslo-{rpu}-{self._config.run_id}-{seq}"
+        ns_name = f"autoslo-{rpu}-{self._config.run_id}-{seq}-ns"
         return wg_name, ns_name
 
     def _best_effort_cleanup(
@@ -570,9 +570,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             If any provisioning step fails.
         """
         spin_up_start = wall_clock_utc()
-        wg_name, ns_name = self._workgroup_and_namespace_names(
-            rpu, int(spin_up_start)
-        )
+        wg_name, ns_name = self._workgroup_and_namespace_names(rpu)
 
         logger.info("Spinning up workgroup %s with %d RPU ...", wg_name, rpu)
         emit_structured(
