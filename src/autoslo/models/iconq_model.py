@@ -34,6 +34,7 @@ from autoslo.nn.loss_functions import (
     sensitive_q_error_loss,
 )
 from autoslo.nn.runtime_net import RuntimeNet
+from autoslo.workload_definition.query import RunAwareQueryId
 
 logger = logging.getLogger(__name__)
 
@@ -380,9 +381,8 @@ class IconqModel:
         i: int,
         x: torch.Tensor,
         pinch_points: torch.Tensor,
-        query_ids: list[str],
+        run_aware_query_ids: list[RunAwareQueryId],
         query_text_ids: list,
-        run_ids: list[str],
         y_is_lower_bound: torch.Tensor,
     ) -> ModelPrediction:
         """
@@ -393,18 +393,18 @@ class IconqModel:
             self._iconq_interaction_featurizer.rpu_dim_idx
         ].item()
         pred = self.stage_model.predict_from_query_text_id(
-            {query_ids[i]: query_text_ids[i]},
+            {run_aware_query_ids[i]: query_text_ids[i]},
             cluster_rpu=int(rpu),
-        )[query_ids[i]]
+        )[run_aware_query_ids[i]]
         return ModelPrediction(
             mean_s=pred.mean_s,
             std_dev_s=pred.std_dev_s,
             mix_coeffs=pred.mix_coeffs,
             metadata={
                 "num_other_concurrent_queries": 0,
-                "run_id": run_ids[i],
+                "run_id": run_aware_query_ids[i].run_id,
                 "query_text_id": query_text_ids[i],
-                "query_id": query_ids[i],
+                "query_id": run_aware_query_ids[i].query_id,
                 "target_is_lower_bound": y_is_lower_bound[i].item(),
                 "loss": 0.0,
             },
@@ -416,9 +416,8 @@ class IconqModel:
         y_pred_logvar: torch.Tensor,
         y_pred_mix: torch.Tensor,
         x_len: torch.Tensor,
-        query_ids: list[str],
+        run_aware_query_ids: list[RunAwareQueryId],
         query_text_ids: list,
-        run_ids: list[str],
         y_is_lower_bound: torch.Tensor,
         per_item_losses: Optional[np.ndarray] = None,
     ) -> list[tuple[ModelPrediction, str, str]]:
@@ -438,72 +437,96 @@ class IconqModel:
         logvar_np = y_pred_logvar.detach().cpu().numpy()
         # Vectorize logvar->stddev conversion (exp(logvar/2)) instead of per-item list comprehension.
         stddev_np = np.exp(logvar_np / 2)
-        mix_np = y_pred_mix.detach().cpu().numpy() if y_pred_mix is not None else None
+        mix_np = (
+            y_pred_mix.detach().cpu().numpy()
+            if y_pred_mix is not None
+            else None
+        )
         result: list[tuple[ModelPrediction, str, str]] = []
 
         if self._loss_type == LossType.MDN_NLL:
-            for i, (m, le, mix, q, t, r) in enumerate(zip(
-                mean_np, x_len_np, mix_np,
-                query_ids, query_text_ids, run_ids,
-            )):
-                result.append((
-                    ModelPrediction(
-                        mean_s=m,
-                        std_dev_s=stddev_np[i],
-                        mix_coeffs=mix,
-                        metadata={
-                            "num_other_concurrent_queries": int(le) - 1,
-                            "run_id": r,
-                            "query_text_id": t,
-                            "query_id": q,
-                        },
-                    ),
-                    r,
-                    q,
-                ))
+            for i, (m, le, mix, q, t) in enumerate(
+                zip(
+                    mean_np,
+                    x_len_np,
+                    mix_np,
+                    run_aware_query_ids,
+                    query_text_ids,
+                )
+            ):
+                result.append(
+                    (
+                        ModelPrediction(
+                            mean_s=m,
+                            std_dev_s=stddev_np[i],
+                            mix_coeffs=mix,
+                            metadata={
+                                "num_other_concurrent_queries": int(le) - 1,
+                                "run_id": q.run_id,
+                                "query_text_id": t,
+                                "query_id": q.query_id,
+                            },
+                        ),
+                        q.run_id,
+                        q.query_id,
+                    )
+                )
         elif self._loss_type == LossType.NLL:
-            for i, (m, le, q, t, r) in enumerate(zip(
-                mean_np, x_len_np,
-                query_ids, query_text_ids, run_ids,
-            )):
-                result.append((
-                    ModelPrediction(
-                        mean_s=m,
-                        std_dev_s=stddev_np[i],
-                        metadata={
-                            "num_other_concurrent_queries": int(le) - 1,
-                            "run_id": r,
-                            "query_text_id": t,
-                            "query_id": q,
-                        },
-                    ),
-                    r,
-                    q,
-                ))
+            for i, (m, le, q, t) in enumerate(
+                zip(
+                    mean_np,
+                    x_len_np,
+                    run_aware_query_ids,
+                    query_text_ids,
+                )
+            ):
+                result.append(
+                    (
+                        ModelPrediction(
+                            mean_s=m,
+                            std_dev_s=stddev_np[i],
+                            metadata={
+                                "num_other_concurrent_queries": int(le) - 1,
+                                "run_id": q.run_id,
+                                "query_text_id": t,
+                                "query_id": q.query_id,
+                            },
+                        ),
+                        q.run_id,
+                        q.query_id,
+                    )
+                )
         else:  # LossType.SENSITIVE_Q_ERROR
             losses: list | np.ndarray = (
-                per_item_losses if per_item_losses is not None
+                per_item_losses
+                if per_item_losses is not None
                 else [0.0] * len(mean_np)
             )
-            for m, le, q, t, r, yislb, loss_val in zip(
-                mean_np, x_len_np, query_ids, query_text_ids, run_ids,
-                y_is_lower_bound_np, losses,
+            for m, le, q, t, yislb, loss_val in zip(
+                mean_np,
+                x_len_np,
+                run_aware_query_ids,
+                query_text_ids,
+                y_is_lower_bound_np,
+                losses,
             ):
-                result.append((
-                    ModelPrediction(
-                        mean_s=m,
-                        metadata={
-                            "num_other_concurrent_queries": int(le) - 1,
-                            "run_id": r,
-                            "query_text_id": t,
-                            "query_id": q,
-                            "target_is_lower_bound": yislb,
-                            "loss": loss_val,
-                        },
-                    ),
-                    r,
-                    q,
-                ))
+                result.append(
+                    (
+                        ModelPrediction(
+                            mean_s=m,
+                            metadata={
+                                "num_other_concurrent_queries": int(le) - 1,
+                                "run_id": q.run_id,
+                                "query_text_id": t,
+                                "query_id": q.query_id,
+                                "target_is_lower_bound": yislb,
+                                "loss": loss_val,
+                            },
+                        ),
+                        q.run_id,
+                        q.query_id,
+                    )
+                )
 
         return result
 
@@ -524,9 +547,8 @@ class IconqModel:
             x_len,
             pinch_points,
             y,
-            query_ids,
+            run_aware_query_ids,
             query_text_ids,
-            run_ids,
             y_is_lower_bound,
         ) = batch
 
@@ -536,16 +558,34 @@ class IconqModel:
         # Handle isolated queries via the stage model when configured.
         # Batch the length check with a single CPU conversion instead of per-item .item() calls.
         if train_config.use_stage_for_isolated_queries:
-            x_len_np = x_len.cpu().numpy() if isinstance(x_len, torch.Tensor) else x_len
-            non_isolated_indices = cast(list[int], np.where(x_len_np > 1)[0].tolist())
-            isolated_indices = cast(list[int], np.where(x_len_np <= 1)[0].tolist())
-            
+            x_len_np = (
+                x_len.cpu().numpy()
+                if isinstance(x_len, torch.Tensor)
+                else x_len
+            )
+            non_isolated_indices = cast(
+                list[int], np.where(x_len_np > 1)[0].tolist()
+            )
+            isolated_indices = cast(
+                list[int], np.where(x_len_np <= 1)[0].tolist()
+            )
+
             for i in isolated_indices:
                 pred = self._predict_isolated_query(
-                    i, x, pinch_points, query_ids, query_text_ids,
-                    run_ids, y_is_lower_bound,
+                    i,
+                    x,
+                    pinch_points,
+                    run_aware_query_ids,
+                    query_text_ids,
+                    y_is_lower_bound,
                 )
-                result.append((pred, run_ids[i], query_ids[i]))
+                result.append(
+                    (
+                        pred,
+                        run_aware_query_ids[i].run_id,
+                        run_aware_query_ids[i].query_id,
+                    )
+                )
 
             if not non_isolated_indices:
                 return result
@@ -553,9 +593,10 @@ class IconqModel:
             x = x[non_isolated_indices]
             x_len = x_len[non_isolated_indices]
             pinch_points = pinch_points[non_isolated_indices]
-            query_ids = [query_ids[i] for i in non_isolated_indices]
+            run_aware_query_ids = [
+                run_aware_query_ids[i] for i in non_isolated_indices
+            ]
             query_text_ids = [query_text_ids[i] for i in non_isolated_indices]
-            run_ids = [run_ids[i] for i in non_isolated_indices]
             y_is_lower_bound = y_is_lower_bound[non_isolated_indices]
 
         # Move tensors to device once at the start, not multiple times in the forward call.
@@ -573,10 +614,17 @@ class IconqModel:
             y_pred_mean = torch.exp(y_pred_mean)
             y_pred_logvar = torch.exp(y_pred_logvar)
 
-        result.extend(self._build_predictions_from_nn_output(
-            y_pred_mean, y_pred_logvar, y_pred_mix,
-            x_len, query_ids, query_text_ids, run_ids, y_is_lower_bound,
-        ))
+        result.extend(
+            self._build_predictions_from_nn_output(
+                y_pred_mean,
+                y_pred_logvar,
+                y_pred_mix,
+                x_len,
+                run_aware_query_ids,
+                query_text_ids,
+                y_is_lower_bound,
+            )
+        )
         return result
 
     def save(self) -> str:
@@ -722,22 +770,16 @@ class IconqModel:
             train_run_ids = explicit_run_ids_per_split.get("train", [])
             val_run_ids = explicit_run_ids_per_split.get("val", [])
             test_run_ids = explicit_run_ids_per_split.get("test", [])
-
-            train_indices = [
-                i
-                for i in range(len(dataset))
-                if dataset.run_ids[i] in train_run_ids
-            ]
-            val_indices = [
-                i
-                for i in range(len(dataset))
-                if dataset.run_ids[i] in val_run_ids
-            ]
-            test_indices = [
-                i
-                for i in range(len(dataset))
-                if dataset.run_ids[i] in test_run_ids
-            ]
+            train_indices = []
+            val_indices = []
+            test_indices = []
+            for i, run_id in enumerate(dataset.run_ids):
+                if run_id in train_run_ids:
+                    train_indices.append(i)
+                elif run_id in val_run_ids:
+                    val_indices.append(i)
+                elif run_id in test_run_ids:
+                    test_indices.append(i)
 
             train_dataset = Subset(dataset, train_indices)
             val_dataset = Subset(dataset, val_indices)
@@ -888,7 +930,7 @@ class IconqModel:
 
             for batch in tqdm(train_dataloader):
                 optimizer.zero_grad()
-                (batch_loss, _) = self._process_batch(
+                batch_loss, _ = self._process_batch(
                     batch=batch,
                     train_config=train_config,
                     derive_individual_predictions=False,
@@ -1046,7 +1088,7 @@ class IconqModel:
         self._nn.eval()
         with torch.no_grad():
             for batch in val_dataloader:
-                (batch_loss, batch_pred_v_true) = self._process_batch(
+                batch_loss, batch_pred_v_true = self._process_batch(
                     batch=batch,
                     train_config=train_config,
                     derive_individual_predictions=True,
@@ -1058,19 +1100,18 @@ class IconqModel:
 
         # Calculate error metrics
         errors: dict[str, float] = {}
-
-        # (ModelPrediction, true_runtime, query_id, query_text_id, run_id)
+        # (ModelPrediction, true_runtime, run_aware_query_id, query_text_id)
         abs_error = [
             abs(pred.overall_mean_s() - true)
-            for pred, true, _, _, _ in all_pred_v_true
+            for pred, true, _, _ in all_pred_v_true
         ]
         q_error = [
             max(pred.overall_mean_s() / true, true / pred.overall_mean_s())
-            for pred, true, _, _, _ in all_pred_v_true
+            for pred, true, _, _ in all_pred_v_true
         ]
         was_aborted = [
             pred.metadata.get("target_is_lower_bound", False)
-            for pred, _, _, _, _ in all_pred_v_true
+            for pred, _, _, _ in all_pred_v_true
         ]
 
         for aborted in [True, False]:
@@ -1102,30 +1143,28 @@ class IconqModel:
         if training_dir is not None:
             val_df = pd.DataFrame()
             val_df["query_id"] = [
-                query_id for _, _, query_id, _, _ in all_pred_v_true
+                run_aware_query_id.query_id
+                for _, _, run_aware_query_id, _ in all_pred_v_true
             ]
             val_df["num_other_concurrent_queries"] = [
                 pred.metadata["num_other_concurrent_queries"]
-                for pred, _, _, _, _ in all_pred_v_true
+                for pred, _, _, _ in all_pred_v_true
             ]
-            val_df["y"] = [true for _, true, _, _, _ in all_pred_v_true]
-            val_df["y_pred"] = [pred for pred, _, _, _, _ in all_pred_v_true]
+            val_df["y"] = [true for _, true, _, _ in all_pred_v_true]
+            val_df["y_pred"] = [pred for pred, _, _, _ in all_pred_v_true]
             val_df["target_is_lower_bound"] = [
                 pred.metadata["target_is_lower_bound"]
-                for pred, _, _, _, _ in all_pred_v_true
+                for pred, _, _, _ in all_pred_v_true
             ]
-            val_df["query_text_id"] = [
-                t for _, _, _, t, _ in all_pred_v_true
-            ]
+            val_df["query_text_id"] = [t for _, _, _, t in all_pred_v_true]
             val_df["abs_error"] = abs_error
             val_df["q_error"] = q_error
             val_df["run_id"] = [
-                pred.metadata["run_id"] for pred, _, _, _, _ in all_pred_v_true
+                pred.metadata["run_id"] for pred, _, _, _ in all_pred_v_true
             ]
             if "loss" in all_pred_v_true[0][0].metadata:
                 val_df["individual_loss"] = [
-                    pred.metadata["loss"]
-                    for pred, _, _, _, _ in all_pred_v_true
+                    pred.metadata["loss"] for pred, _, _, _ in all_pred_v_true
                 ]
 
             val_df.sort_values("y", inplace=True, ascending=False)
@@ -1145,14 +1184,13 @@ class IconqModel:
             x_len,
             pinch_points,
             y,
-            query_ids,
+            run_aware_query_ids,
             query_text_ids,
-            run_ids,
             y_is_lower_bound,
         ) = batch
 
         batch_pred_v_true = []
-        # List of (ModelPrediction, true_runtime, query_id, query_text_id, run_id)
+        # List of (ModelPrediction, true_runtime, run_aware_query_id, query_text_id)
         # tuples for the batch.
 
         if train_config.use_stage_for_isolated_queries:
@@ -1165,12 +1203,21 @@ class IconqModel:
                     non_isolated_indices.append(i)
                 else:
                     pred = self._predict_isolated_query(
-                        i, x, pinch_points, query_ids, query_text_ids,
-                        run_ids, y_is_lower_bound,
+                        i,
+                        x,
+                        pinch_points,
+                        run_aware_query_ids,
+                        query_text_ids,
+                        y_is_lower_bound,
                     )
-                    batch_pred_v_true.append((
-                        pred, y[i], query_ids[i], query_text_ids[i], run_ids[i],
-                    ))
+                    batch_pred_v_true.append(
+                        (
+                            pred,
+                            y[i],
+                            run_aware_query_ids[i],
+                            query_text_ids[i],
+                        )
+                    )
 
             if len(non_isolated_indices) == 0:
                 # All queries were isolated; nothing more to do.
@@ -1222,8 +1269,13 @@ class IconqModel:
                 y_np = y.detach().cpu().numpy()
                 for (pred, r, q), y_, t in zip(
                     self._build_predictions_from_nn_output(
-                        y_pred_mean, y_pred_logvar, y_pred_mix,
-                        x_len, query_ids, query_text_ids, run_ids, y_is_lower_bound,
+                        y_pred_mean,
+                        y_pred_logvar,
+                        y_pred_mix,
+                        x_len,
+                        run_aware_query_ids,
+                        query_text_ids,
+                        y_is_lower_bound,
                     ),
                     y_np,
                     query_text_ids,
@@ -1245,8 +1297,13 @@ class IconqModel:
                 y_np = y.detach().cpu().numpy()
                 for (pred, r, q), y_, t in zip(
                     self._build_predictions_from_nn_output(
-                        y_pred_mean, y_pred_logvar, y_pred_mix,
-                        x_len, query_ids, query_text_ids, run_ids, y_is_lower_bound,
+                        y_pred_mean,
+                        y_pred_logvar,
+                        y_pred_mix,
+                        x_len,
+                        run_aware_query_ids,
+                        query_text_ids,
+                        y_is_lower_bound,
                     ),
                     y_np,
                     query_text_ids,
@@ -1274,8 +1331,13 @@ class IconqModel:
                 y_np = y.detach().cpu().numpy()
                 for (pred, r, q), y_, t in zip(
                     self._build_predictions_from_nn_output(
-                        y_pred_mean, y_pred_logvar, y_pred_mix,
-                        x_len, query_ids, query_text_ids, run_ids, y_is_lower_bound,
+                        y_pred_mean,
+                        y_pred_logvar,
+                        y_pred_mix,
+                        x_len,
+                        run_aware_query_ids,
+                        query_text_ids,
+                        y_is_lower_bound,
                         per_item_losses=loss.detach().cpu().numpy(),
                     ),
                     y_np,
