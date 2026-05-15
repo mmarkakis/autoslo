@@ -23,7 +23,7 @@ from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_runner import WorkloadRunner
 
 NUM_TEMPLATES_OPTIONS = [66, 99]
-NUM_QUERY_TEXTS_PER_TEMPLATE_OPTIONS = [1, 3]
+NUM_QUERY_TEXTS_PER_TEMPLATE_OPTIONS = [2, 3]
 NUM_QUERIES_PER_QUERY_TEXT_OPTIONS = [1]
 POISSON_LAMBDA_OPTIONS = [0.1, 0.05]
 SEED = 42
