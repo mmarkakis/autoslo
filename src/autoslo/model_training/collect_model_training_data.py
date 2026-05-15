@@ -14,7 +14,12 @@ from autoslo.config.utils import (
     make_run_id,
     parse_params,
 )
-from autoslo.filesystem.path_utils import append_to_run_log
+from autoslo.filesystem.path_utils import (
+    append_to_run_log,
+    find_most_recent_live_run_id,
+    get_runs_path,
+    is_up_to_date,
+)
 from autoslo.filesystem.yaml_helpers import load_yaml_with_params
 from autoslo.workload_definition.poisson_workload_creator import (
     PoissonWorkloadCreator,
@@ -102,19 +107,33 @@ def sequentially_execute_training_workloads(
     workload_configs: list[WorkloadConfig],
     execution_config_path: str | Path,
     params: list[str],
+    force: bool = False,
 ) -> None:
     """Execute each workload config sequentially against live clusters."""
     exec_cfg_path = Path(execution_config_path)
     parsed_params = parse_params(params)
+    runs_path = Path(get_runs_path())
 
     t_start = time.monotonic()
     total = len(workload_configs)
     for i, workload_config in enumerate(workload_configs, start=1):
+        config_id = make_run_id([exec_cfg_path.stem], parsed_params)
+        wid = workload_config.id()
+
+        if not force:
+            recent_run_id = find_most_recent_live_run_id(config_id, wid)
+            if recent_run_id is not None and is_up_to_date(
+                runs_path / recent_run_id / "execution_config.yml", exec_cfg_path
+            ):
+                print(
+                    f"[dim]Skipping '{workload_config.workload_name}' (up to date)[/]"
+                )
+                continue
+
         cfg = load_yaml_with_params(exec_cfg_path, parsed_params)
         cfg = copy_and_apply_overrides(
             cfg, {"workload_config": workload_config.to_dict()}
         )
-        config_id = make_run_id([exec_cfg_path.stem], parsed_params)
         print(
             f"\n[bold cyan]── Workload {i}/{total}: '{workload_config.workload_name}' ──[/]"
         )
@@ -122,7 +141,7 @@ def sequentially_execute_training_workloads(
         append_to_run_log(
             run_id=runner.run_id,
             config_id=config_id,
-            workload_id=workload_config.id(),
+            workload_id=wid,
         )
         asyncio.run(runner.run())
 
@@ -162,6 +181,11 @@ if __name__ == "__main__":
             "May be repeated: --param TARGET_DATE=2024-05-27."
         ),
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run workloads even if an up-to-date run already exists.",
+    )
     args = parser.parse_args()
 
     # Create workloads if needed.
@@ -191,4 +215,5 @@ if __name__ == "__main__":
             workload_configs=workload_configs,
             execution_config_path=args.execution_config,
             params=args.param,
+            force=args.force,
         )
