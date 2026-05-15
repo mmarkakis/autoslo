@@ -76,7 +76,7 @@ def test_latency_and_counts_and_quantile_behavior():
     tr = _trace_from_df(df)
     assert tr.num_queries == 3
     # count queries over 1.5s -> should be the two with 2s and 4s
-    latencies = tr.latencies_s
+    latencies = tr.server_side_latencies_s
     assert sum(1 for l in latencies if l > 1.5) == 2
     # 50th percentile should be 2.0 seconds
     median = pd.Series(latencies).quantile(0.5)

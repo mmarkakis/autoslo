@@ -10,7 +10,7 @@ import yaml
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.models.model_prediction import ModelPrediction
-from autoslo.workload_definition.query import QueryTextId
+from autoslo.workload_definition.query import ClusterAwareQueryId, QueryTextId
 from autoslo.workload_execution.trace import Trace
 
 
@@ -87,8 +87,8 @@ class CacheModel:
             cluster_rpu: The RPU size of the target cluster.
 
         Returns:
-            A dictionary mapping query ids to ModelPrediction instances,
-                where each element is in seconds.
+            A dictionary mapping cluster aware query ids to ModelPrediction
+                instances, where each element is in seconds.
         """
         predictions: dict[str, Optional[ModelPrediction]] = {}
 
@@ -141,6 +141,7 @@ class CacheModel:
         run_ids: list[str],
         from_scratch: bool = False,
         only_non_overlapping_queries: bool = False,
+        use_client_side_latencies: bool = False,
     ) -> None:
         """
         Trains the model on the given run IDs.
@@ -151,6 +152,8 @@ class CacheModel:
                 continue training from the existing model.
             only_non_overlapping_queries: Whether to only use train on queries
                 that do not overlap with any other queries in the trace.
+            use_client_side_latencies: Use client-side latencies from the
+                structured log instead of Redshift server-side elapsed_time.
         """
 
         # If retraining from scratch, reset the cache.
@@ -164,20 +167,26 @@ class CacheModel:
 
         for run_id in run_ids:
             trace = Trace(run_id)
-            latencies = trace.latencies_s
+            latencies = (
+                trace.client_side_latencies_s
+                if use_client_side_latencies
+                else trace.server_side_latencies_s
+            )
             query_text_ids = trace.query_text_ids
             query_is_non_overlapping = trace.query_is_non_overlapping()
 
-            for (query_id, latency), query_text_id in zip(
+            for (cluster_aware_query_id, latency), query_text_id in zip(
                 latencies.items(), query_text_ids
             ):
                 if (
                     only_non_overlapping_queries
-                    and not query_is_non_overlapping[query_id]
+                    and not query_is_non_overlapping[cluster_aware_query_id]
                 ):
                     continue
 
-                cluster_name = trace.cluster_for(query_id)
+                cluster_name = ClusterAwareQueryId(
+                    cluster_aware_query_id
+                ).cluster_name
 
                 cluster_rpu = (
                     0

@@ -168,6 +168,11 @@ class NNModelTrainConfig:
         1  # The version of the sensitive Q-error loss to use.
     )
 
+    use_client_side_latencies: bool = (
+        False  # When True, build_dataset_from_trace uses client-side latencies
+        # from the structured log as training targets and for timing windows.
+    )
+
 
 class IconqModel:
     """

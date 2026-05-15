@@ -115,7 +115,7 @@ async def test_xgboost_model_train_prepares_fit(
 
     class DummyTrace:
         def __init__(self, run_id: str) -> None:
-            self.latencies_s = pd.Series(
+            self.server_side_latencies_s = pd.Series(
                 [1.0, 2.0, 3.0], index=["q1", "q2", "q3"]
             )
             self.tpcds_temp_and_q_idxs = pd.Series(

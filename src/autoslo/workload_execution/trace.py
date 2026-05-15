@@ -1,6 +1,8 @@
 import os
+import warnings
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional, cast
 
 import pandas as pd
@@ -11,6 +13,7 @@ import yaml
 import autoslo.filesystem.path_utils as pu
 import autoslo.tuner.parallelism as plu
 from autoslo.clusters.cluster import Cluster
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.query_plans.parse_plan import parse_one_plan, plan_summary
 from autoslo.workload_definition.query import ClusterAwareQueryId, QueryTextId
 from autoslo.workload_definition.query_plan_registry import QueryPlanRegistry
@@ -208,17 +211,9 @@ class Trace:
         return total_queries
 
     @property
-    def latencies_s(self) -> pd.Series:
-        """
-        Get the latencies of the queries in the trace, in seconds.
-
-        The order of the query IDs in the Series matches the order of the query
-        IDs provided by the `query_ids` property.
-
-        Returns:
-            A pandas Series where the index is the query IDs and the values are
-                the latencies in seconds.
-        """
+    def server_side_latencies_s(self) -> pd.Series:
+        """Redshift server-side latencies (elapsed_time), indexed by
+        ClusterAwareQueryId."""
         conversion_factor = pd.Timedelta(
             1, Trace.REDSHIFT_ELAPSED_TIME_UNIT  # type: ignore
         ).total_seconds()
@@ -234,6 +229,69 @@ class Trace:
             series.append(s)
 
         return pd.concat(series).reindex(self.cluster_aware_query_ids)
+
+    @property
+    def structured_log(self) -> Optional[StructuredLog]:
+        """Lazily loaded StructuredLog for this run, or None if absent."""
+        if not hasattr(self, "_structured_log"):
+            path = (
+                Path(pu.get_runs_path())
+                / self._run_id
+                / "structured_log.parquet"
+            )
+            self._structured_log: Optional[StructuredLog] = (
+                StructuredLog.load(path) if path.exists() else None
+            )
+        return self._structured_log
+
+    def _client_side_index(self) -> dict[str, ClusterAwareQueryId]:
+        """Map workload query_id string -> ClusterAwareQueryId."""
+        return {caqid.query_id: caqid for caqid in self.cluster_aware_query_ids}
+
+    @property
+    def client_side_latencies_s(self) -> pd.Series:
+        """Client-side latencies (COMPLETION - ARRIVAL) from the structured log.
+
+        Raises ValueError if no structured log is present.
+        """
+        if self.structured_log is None:
+            raise ValueError(
+                f"No structured_log.parquet for run {self._run_id!r}"
+            )
+        idx = self._client_side_index()
+        df = self.structured_log.query_latencies()
+        s = df.set_index("query_id")["latency_s"].rename(index=idx)
+        return s.reindex(self.cluster_aware_query_ids)
+
+    @property
+    def client_side_arrival_times_s(self) -> pd.Series:
+        """Client-side arrival timestamps (seconds relative to run start).
+
+        Raises ValueError if no structured log is present.
+        """
+        if self.structured_log is None:
+            raise ValueError(
+                f"No structured_log.parquet for run {self._run_id!r}"
+            )
+        idx = self._client_side_index()
+        df = self.structured_log.query_latencies()
+        s = df.set_index("query_id")["arrival_s"].rename(index=idx)
+        return s.reindex(self.cluster_aware_query_ids)
+
+    @property
+    def client_side_completion_times_s(self) -> pd.Series:
+        """Client-side completion timestamps (seconds relative to run start).
+
+        Raises ValueError if no structured log is present.
+        """
+        if self.structured_log is None:
+            raise ValueError(
+                f"No structured_log.parquet for run {self._run_id!r}"
+            )
+        idx = self._client_side_index()
+        df = self.structured_log.query_latencies()
+        s = df.set_index("query_id")["completion_s"].rename(index=idx)
+        return s.reindex(self.cluster_aware_query_ids)
 
     @property
     def costs(self) -> list[float]:

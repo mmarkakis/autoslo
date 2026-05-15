@@ -6,7 +6,7 @@ from intervaltree import Interval, IntervalTree  # type: ignore[import]
 from autoslo.clusters.cluster import Cluster
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import ClusterAwareQueryId, Query
 from autoslo.workload_execution.trace import Trace
 
 
@@ -14,15 +14,18 @@ def build_dataset_from_trace(
     trace: Trace,
     iconq_model: IconqModel,
     use_log_runtime: bool = False,
+    use_client_side_latencies: bool = False,
     use_fixed_window_radius_s: Optional[float] = None,
     use_fixed_window_max_neighbors_per_side: Optional[int] = None,
 ) -> ConcurrentQueryDataset:
-    """Build a ConcurrentQueryDataset from a Trace for IconqModel training."""
+    """Build a ConcurrentQueryDataset from a Trace for IconqModel training.
+
+    When use_client_side_latencies=True, timing windows, latency targets, and
+    is_lower_bound are sourced from the structured log.  Raises ValueError if
+    no structured_log.parquet is present for the run.
+    """
     cluster_aware_query_ids = trace.cluster_aware_query_ids
     query_text_ids = trace.query_text_ids
-    arrival_times = trace.arrival_times()
-    completion_times = trace.completion_times()
-    was_aborted = trace.was_aborted()
 
     query_featurizer = iconq_model.iconq_query_featurizer
     interaction_featurizer = iconq_model.iconq_interaction_featurizer
@@ -34,10 +37,44 @@ def build_dataset_from_trace(
             cluster_to_base_to_neighbors={},
         )
 
-    # Normalize timestamps relative to the earliest arrival.
-    reference_timestamp = min(
-        arrival_times[qid].timestamp() for qid in cluster_aware_query_ids
-    )
+    if use_client_side_latencies:
+        arrival_s = trace.client_side_arrival_times_s
+        completion_s = trace.client_side_completion_times_s
+        latencies = trace.client_side_latencies_s
+        query_success = trace.structured_log.query_success()  # type: ignore[union-attr]
+        reference_s = float(arrival_s.min())
+
+        def _start(qid: ClusterAwareQueryId) -> float:
+            return float(arrival_s[qid]) - reference_s
+
+        def _end(qid: ClusterAwareQueryId) -> float:
+            return float(completion_s[qid]) - reference_s
+
+        def _latency(qid: ClusterAwareQueryId) -> float:
+            return float(latencies[qid])
+
+        def _is_lb(qid: ClusterAwareQueryId) -> bool:
+            return not bool(query_success.get(qid.query_id, False))
+
+    else:
+        arrival_times = trace.arrival_times()
+        completion_times = trace.completion_times()
+        was_aborted = trace.was_aborted()
+        reference_ts = min(
+            arrival_times[qid].timestamp() for qid in cluster_aware_query_ids
+        )
+
+        def _start(qid: ClusterAwareQueryId) -> float:  # type: ignore[misc]
+            return arrival_times[qid].timestamp() - reference_ts
+
+        def _end(qid: ClusterAwareQueryId) -> float:  # type: ignore[misc]
+            return completion_times[qid].timestamp() - reference_ts
+
+        def _latency(qid: ClusterAwareQueryId) -> float:  # type: ignore[misc]
+            return (completion_times[qid] - arrival_times[qid]).total_seconds()
+
+        def _is_lb(qid: ClusterAwareQueryId) -> bool:  # type: ignore[misc]
+            return bool(was_aborted[qid])
 
     # Build one IntervalTree per cluster. Each interval's data payload is the
     # fully-featurized Query object, so _find_neighbors can return Query
@@ -47,14 +84,8 @@ def build_dataset_from_trace(
     for cluster_aware_query_id in cluster_aware_query_ids:
         cluster_name = cluster_aware_query_id.cluster_name
         query_text_id = query_text_ids[cluster_aware_query_id]
-        start_s = (
-            arrival_times[cluster_aware_query_id].timestamp()
-            - reference_timestamp
-        )
-        end_s = (
-            completion_times[cluster_aware_query_id].timestamp()
-            - reference_timestamp
-        )
+        start_s = _start(cluster_aware_query_id)
+        end_s = _end(cluster_aware_query_id)
         query = Query(
             query_id=cluster_aware_query_id.query_id,
             query_text_id=query_text_id,
@@ -81,14 +112,11 @@ def build_dataset_from_trace(
         use_fixed_window_max_neighbors_per_side,
     )
 
-    # Targets are actual observed latencies; aborted queries are censored
-    # (their recorded latency is a lower bound on the true latency).
     targets: dict[str, float] = {
-        qid: (completion_times[qid] - arrival_times[qid]).total_seconds()
-        for qid in cluster_aware_query_ids
+        qid: _latency(qid) for qid in cluster_aware_query_ids
     }
     is_lower_bound: dict[str, bool] = {
-        qid: bool(was_aborted[qid]) for qid in cluster_aware_query_ids
+        qid: _is_lb(qid) for qid in cluster_aware_query_ids
     }
 
     return ConcurrentQueryDataset.build_from_query_groups(

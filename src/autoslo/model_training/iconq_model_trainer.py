@@ -43,6 +43,7 @@ def iconq_model_trainer(  # pylint: disable=arguments-differ,too-many-locals
             trace=trace,
             iconq_model=iconq_model,
             use_log_runtime=iconq_model.trained_on_log_runtime,
+            use_client_side_latencies=train_config.use_client_side_latencies,
             use_fixed_window_radius_s=use_fixed_window_radius_s,
             use_fixed_window_max_neighbors_per_side=(
                 use_fixed_window_max_neighbors_per_side

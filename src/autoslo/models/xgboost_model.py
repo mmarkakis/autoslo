@@ -150,6 +150,7 @@ class XGBoostModel:
         run_ids: list[str],
         parent_save_dir: Optional[str] = None,
         only_non_overlapping_queries: bool = False,
+        use_client_side_latencies: bool = False,
     ) -> tuple[float, float]:
         """
         Trains the model on the given run IDs.
@@ -160,6 +161,8 @@ class XGBoostModel:
                 stored. If None, defaults to `data/xgboost_models/`.
             only_non_overlapping_queries: Whether to only use train on queries
                 that do not overlap with any other queries in the trace.
+            use_client_side_latencies: Use client-side latencies from the
+                structured log instead of Redshift server-side elapsed_time.
 
         Returns:
             A tuple containing the final training and validation loss.
@@ -205,22 +208,26 @@ class XGBoostModel:
         for run_id in run_ids:
             trace = Trace(run_id)
             featurizations = self._iconq_query_featurizer.featurize_trace(trace)
-            latencies = trace.latencies_s
+            latencies = (
+                trace.client_side_latencies_s
+                if use_client_side_latencies
+                else trace.server_side_latencies_s
+            )
             query_is_non_overlapping = trace.query_is_non_overlapping()
             new_items = []
 
-            for query_id in featurizations.keys():
+            for cluster_aware_query_id in featurizations.keys():
                 if (
                     only_non_overlapping_queries
-                    and not query_is_non_overlapping[query_id]
+                    and not query_is_non_overlapping[cluster_aware_query_id]
                 ):
                     continue
 
-                featurization = featurizations[query_id].copy()
-                latency = latencies[query_id]
+                featurization = featurizations[cluster_aware_query_id].copy()
+                latency = latencies[cluster_aware_query_id]
                 if featurization is None or len(featurization) == 0:
                     continue
-                cluster_name = trace.cluster_for(query_id)
+                cluster_name = cluster_aware_query_id.cluster_name
 
                 cluster_rpu = (
                     0
@@ -230,7 +237,7 @@ class XGBoostModel:
                 featurization.append(cluster_rpu)
                 new_items.append(
                     {
-                        "query_id": query_id,
+                        "query_id": cluster_aware_query_id.query_id,
                         "query_featurization": featurization,
                         "runtime_s": latency,
                     }

@@ -99,7 +99,6 @@ def set_up_featurizer(run_ids: list[str], from_sys_query_explain: bool) -> str:
     featurizer = IconqQueryFeaturizer(
         schema_name="tpcds1000",
         run_ids=run_ids,
-        from_sys_query_explain=from_sys_query_explain,
     )
     return featurizer.save()
 
@@ -108,6 +107,7 @@ def train_cache_model(
     run_ids: list[str],
     only_non_overlapping_queries: bool,
     ignore_cluster_size: bool = False,
+    use_client_side_latencies: bool = False,
 ) -> str:
     """Trains a CacheModel and returns its ID."""
 
@@ -120,6 +120,7 @@ def train_cache_model(
         run_ids=run_ids,
         from_scratch=True,
         only_non_overlapping_queries=only_non_overlapping_queries,
+        use_client_side_latencies=use_client_side_latencies,
     )
     cache_model_id = cache_model.save()
     return cache_model_id
@@ -130,6 +131,7 @@ def train_xgboost_model(
     run_ids: list[str],
     only_non_overlapping_queries: bool,
     ignore_cluster_size: bool = False,
+    use_client_side_latencies: bool = False,
 ) -> str:
     """Trains an XGBoostModel and returns its ID."""
     xgboost_model = XGBoostModel(
@@ -141,6 +143,7 @@ def train_xgboost_model(
     xgboost_model.train(
         run_ids=run_ids,
         only_non_overlapping_queries=only_non_overlapping_queries,
+        use_client_side_latencies=use_client_side_latencies,
     )
     xgboost_model_id = xgboost_model.save()
     return xgboost_model_id
@@ -157,6 +160,7 @@ def initialize_stage_model(
 
 
 def train_iconq_model(
+    schema_name: str,
     iconq_query_featurizer_id: str,
     stage_model_id: str,
     run_ids: list[str],
@@ -165,9 +169,11 @@ def train_iconq_model(
     penalize_based_on_overlap: bool = False,
     sensitive_q_error_loss_version: int = 1,
     ignore_cluster_size: bool = False,
+    use_client_side_latencies: bool = False,
 ) -> str:
     """Trains an IconqModel and returns its ID."""
     iconq_model_init_config = IconqModelInitConfig(
+        schema_name=schema_name,
         iconq_query_featurizer_id=iconq_query_featurizer_id,
         stage_model_id=stage_model_id,
         is_bayesian=False,
@@ -185,10 +191,9 @@ def train_iconq_model(
         penalize_based_on_overlap=penalize_based_on_overlap,
         learning_rate=1e-3,
         sensitive_q_error_loss_version=sensitive_q_error_loss_version,
+        use_client_side_latencies=use_client_side_latencies,
     )
-    iconq_model = IconqModel(
-        init_config=iconq_model_init_config,
-    )
+    iconq_model = IconqModel(init_config=iconq_model_init_config)
     iconq_model_trainer(
         iconq_model=iconq_model,
         train_config=nn_model_train_config,
@@ -241,6 +246,12 @@ if __name__ == "__main__":
         "--ignore_cluster_size",
         action="store_true",
         help="Whether to ignore the cluster size when training models.",
+    )
+    parser.add_argument(
+        "--use_client_side_latencies",
+        action="store_true",
+        help="Train all models on client-side latencies from the structured log. "
+        "Every run must have a structured_log.parquet.",
     )
     args = parser.parse_args()
     print(
@@ -313,6 +324,7 @@ if __name__ == "__main__":
             train_val_run_ids if args.use_explicit_run_ids else run_ids,
             only_non_overlapping_queries=args.only_non_overlapping_queries,
             ignore_cluster_size=args.ignore_cluster_size,
+            use_client_side_latencies=args.use_client_side_latencies,
         )
         cached_progress["cache_model_id"] = cache_model_id
         with open(progress_cache_path, "w") as f:
@@ -329,6 +341,7 @@ if __name__ == "__main__":
             run_ids=train_val_run_ids if args.use_explicit_run_ids else run_ids,
             only_non_overlapping_queries=args.only_non_overlapping_queries,
             ignore_cluster_size=args.ignore_cluster_size,
+            use_client_side_latencies=args.use_client_side_latencies,
         )
         cached_progress["xgboost_model_id"] = xgboost_model_id
         with open(progress_cache_path, "w") as f:
@@ -359,6 +372,7 @@ if __name__ == "__main__":
             "train_val_test_assignments"
         ]
     iconq_model_id = train_iconq_model(
+        schema_name="ext_tpcds1000",
         iconq_query_featurizer_id=featurizer_id,
         stage_model_id=stage_model_id,
         run_ids=run_ids,
@@ -367,4 +381,5 @@ if __name__ == "__main__":
         penalize_based_on_overlap=args.penalize_based_on_overlap,
         sensitive_q_error_loss_version=args.sensitive_q_error_loss_version,
         ignore_cluster_size=args.ignore_cluster_size,
+        use_client_side_latencies=args.use_client_side_latencies,
     )

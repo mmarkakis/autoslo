@@ -17,7 +17,7 @@ def _install_dummy_trace(
     class DummyTrace:
         def __init__(self, run_id: str) -> None:
             payload = runs[run_id]
-            self.latencies_s = payload["latencies"]
+            self.server_side_latencies_s = payload["latencies"]
             self.query_text_ids = payload["pairs"]
 
         @staticmethod
