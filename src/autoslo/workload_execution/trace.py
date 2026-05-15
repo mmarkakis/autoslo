@@ -374,26 +374,15 @@ class Trace:
         return pd.concat(series).reindex(self.cluster_aware_query_ids)
 
     @staticmethod
-    def extract_query_text_id(
-        query_text: str,
-        schema_name: str,
-        has_prepended_run_information: bool = True,
-    ) -> QueryTextId:
+    def _get_query_text_id(query_text: str) -> QueryTextId:
         """
         Extract the query text ID from the given TPC-DS query text.
 
-        The ID is encoded in the SQL comment prepended by the TPC-DS query
-        generator (e.g. ``"42_001"``).  The returned :class:`QueryTextId`
-        combines *schema_name* with the extracted template/index pair in the
-        canonical ``"schema#template#index"`` format.
+        The start of the querytext is assumed to look like:
+        --1778822203993/query_1\n-- ext_tpcds1000#028#002\n\n...
 
         Parameters:
             query_text: The text of the query.
-            schema_name: The schema the query belongs to (e.g.
-                ``"ext_tpcds1000"``).  Used to construct the full
-                :class:`QueryTextId`.
-            has_prepended_run_information: Whether the query text has prepended
-                run information.
 
         Returns:
             The :class:`QueryTextId` for the query.
@@ -403,18 +392,8 @@ class Trace:
                 query text ID following the required format.
         """
         try:
-            idx = 1 if has_prepended_run_information else 0
-            raw_id = query_text.split("\\n")[idx][3:].strip()
-
-            if raw_id.startswith("Filename"):
-                # We are in one of the old traces where the line was:
-                # -- Filename: query086_003.sql
-                raw_id = raw_id.split()[-1][5:-4]
-                template_id, query_index = raw_id.split("_")
-                raw_id = f"{schema_name}#{template_id}#{query_index}"
-
+            raw_id = query_text.split("\\n")[1][3:].strip()
             return QueryTextId(raw_id)
-
         except Exception as e:
             raise ValueError(
                 "Query text does not contain a valid TPC-DS query text ID "
@@ -424,84 +403,53 @@ class Trace:
     @property
     def query_text_ids(self) -> pd.Series:
         """
-        Return a Series where the index is the query IDs and the values are
-        :class:`~autoslo.workload_definition.query.QueryTextId` objects
-        associated with each query.
+        Return a Series where the index is the cluster-awarequery IDs and the
+        values are :class:`~autoslo.workload_definition.query.QueryTextId`
+        objects associated with each query.
 
         The order of the query IDs in the Series matches the order of the query
         IDs provided by the ``query_ids`` property.
-
-        The cache file stores the ``.value`` strings in the canonical
-        ``"schema#template#index"`` format.  Old cache files that used the
-        bare ``"template_index"`` format are detected and invalidated
-        automatically.
         """
         run_dir = os.path.join(pu.get_runs_path(), self.run_id)
         cache_path = os.path.join(run_dir, "query_text_ids.parquet")
 
-        # Read schema_name — try run_params.yml (simulator convention),
-        # then runner_config.yml (runner convention).  schema_name is
-        # passed to extract_query_text_id but is not actually used when
-        # the comment already embeds the full schema#template#index
-        # format (as in runner runs).
-        run_params_path = os.path.join(run_dir, "run_params.yml")
-        if os.path.exists(run_params_path):
-            with open(run_params_path, "r") as f:
-                run_params = yaml.safe_load(f)
-            schema_name = run_params["schema_name"]
-        else:
-            config_path = os.path.join(run_dir, "runner_config.yml")
-            if os.path.exists(config_path):
-                with open(config_path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                schema_name = cfg.get("basic_config", {}).get(
-                    "schema_name", ""
-                )  # FIXME
-            else:
-                schema_name = ""
-
         if os.path.exists(cache_path):
             concatenated = cast(
                 pd.Series,
-                pd.read_parquet(cache_path).squeeze("columns"),
+                pd.read_parquet(cache_path).squeeze("columns").map(QueryTextId),
             )
             # Invalidate caches written by older formats:
-            #   - bare "template_index"  →  0 '#' in the index
-            #   - old "run_id#cluster_name#int"  →  2 '#' in the index
-            # New format "run_id#workload_query_id" has exactly 1 '#'.
             if (
                 not concatenated.empty
-                and str(concatenated.index[0]).count("#") != 1
+                and concatenated.index.name != "cluster_aware_query_id"
             ):
                 os.remove(cache_path)
             else:
-                return concatenated.map(QueryTextId)
+                return concatenated
 
         # Compute query text IDs from the raw query texts.
         series = []
-        for cluster_name, df in self._dfs["sys_query_history"].items():
-            df_with_query_text = pd.read_parquet(
+        for cluster_name in self.seen_clusters:
+            df = pd.read_parquet(
                 os.path.join(
                     run_dir, f"sys_query_history+{cluster_name}.parquet"
                 ),
                 columns=["query_id", "query_text"],
             )
-            df_with_query_text["query_id"] = df_with_query_text[
-                "query_id"
-            ].apply(
-                lambda raw_id, cn=cluster_name: (
-                    self._redshift_to_cluster_aware[str(raw_id)]
-                )
+            df["cluster_aware_query_id"] = df["query_id"].apply(
+                lambda raw_id: (self._redshift_to_cluster_aware[str(raw_id)])
             )
-            df_with_query_text["query_text_id"] = df_with_query_text[
-                "query_text"
-            ].apply(lambda t: Trace.extract_query_text_id(t, schema_name))
-            s = df_with_query_text.set_index("query_id")["query_text_id"]
+            df["query_text_id"] = df["query_text"].map(Trace._get_query_text_id)
+            s = df.set_index("cluster_aware_query_id")["query_text_id"]
             series.append(s)
 
-        concatenated = pd.concat(series).reindex(self.cluster_aware_query_ids)
+        concatenated = (
+            pd.concat(series)
+            .reindex(self.cluster_aware_query_ids)
+            .map(QueryTextId)
+        )
         concatenated.to_frame().to_parquet(cache_path, index=True)
-        return concatenated.map(QueryTextId)
+        return concatenated
 
     def query_is_non_overlapping(self) -> pd.Series:
         """
