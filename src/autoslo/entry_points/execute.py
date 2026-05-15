@@ -50,7 +50,9 @@ def _print_summary(records: list[_RunRecord], wall_elapsed_s: float) -> None:
         except Exception:
             pass
 
-    table = Table(title="Execution Summary", show_header=False, box=None, padding=(0, 2))
+    table = Table(
+        title="Execution Summary", show_header=False, box=None, padding=(0, 2)
+    )
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
     table.add_row("Wall-clock time", f"{wall_elapsed_s:.1f} s")
@@ -90,7 +92,31 @@ def main():
             "Commands that don't manage a run directory ignore this flag."
         ),
     )
+    parser.add_argument(
+        "--splits",
+        type=int,
+        default=1,
+        help=(
+            "Total number of parallel splits. Use with --split-index. Only "
+            "used for live runs."
+        ),
+    )
+    parser.add_argument(
+        "--split-index",
+        type=int,
+        default=0,
+        help=(
+            "Zero-based index of the split this process should run "
+            "(0 <= K < --splits). Only used for live runs."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.splits < 1:
+        parser.error("--splits must be >= 1")
+    if not (0 <= args.split_index < args.splits):
+        parser.error("--split-index must satisfy 0 <= split-index < splits")
+
 
     manifest_path = Path(args.execution_manifest_path)
     if not manifest_path.is_absolute():
@@ -110,7 +136,18 @@ def main():
     if not args.live:
         records = _run_simulator(entries, data_path, force=args.force)
     else:
-        records = _run_live(entries, force=args.force)
+        split_entries = [
+            e
+            for i, e in enumerate(entries)
+            if i % args.splits == args.split_index
+        ]
+        if args.splits > 1:
+            console.print(
+                f"[bold]Split {args.split_index} of {args.splits}:[/] "
+                f"{len(split_entries)} of {len(entries)} entries assigned to "
+                f"this split."
+            )
+        records = _run_live(split_entries, force=args.force)
 
     console.print("\n[bold green]Execution complete.[/]")
     _print_summary(records, wall_elapsed_s=time.monotonic() - t_start)
@@ -143,7 +180,9 @@ def _run_simulator(
             console.print(
                 f"[dim]Skipping '{config_label}' for '{wid}' (up to date)[/]"
             )
-            records.append(_RunRecord(config_label, wid, out_dir, was_run=False))
+            records.append(
+                _RunRecord(config_label, wid, out_dir, was_run=False)
+            )
             continue
 
         if out_dir.exists():
@@ -219,7 +258,9 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
         )
         asyncio.run(runner.run())
         records.append(
-            _RunRecord(config_label, wid, runs_path / runner.run_id, was_run=True)
+            _RunRecord(
+                config_label, wid, runs_path / runner.run_id, was_run=True
+            )
         )
 
     return records

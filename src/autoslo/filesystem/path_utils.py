@@ -1,5 +1,6 @@
 import argparse
 import csv
+import fcntl
 import os
 from datetime import datetime
 from pathlib import Path
@@ -122,12 +123,16 @@ def append_to_run_log(
     started_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     os.makedirs(get_runs_path(), exist_ok=True)
     with open(log_path, "a", newline="") as f:
-        writer = csv.writer(f)
-        if write_header:
-            writer.writerow(
-                ["run_id", "config_id", "workload_id", "started_at"]
-            )
-        writer.writerow([run_id, config_id, workload_id, started_at])
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(
+                    ["run_id", "config_id", "workload_id", "started_at"]
+                )
+            writer.writerow([run_id, config_id, workload_id, started_at])
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def find_most_recent_live_run_id(
