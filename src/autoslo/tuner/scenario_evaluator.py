@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import logging
 import os
-import sys
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from multiprocessing import Manager, get_context
 from pathlib import Path
@@ -74,8 +74,6 @@ def _run_one_combination(
     # still capture useful data to disk (the structured logger has
     # propagate=False and its own level, so it is unaffected by the root
     # logger level change below).
-    sys.stdout = open(os.devnull, "w")
-    sys.stderr = open(os.devnull, "w")
     logging.getLogger().setLevel(logging.CRITICAL)
 
     # Restrict internal parallelism (PyTorch, BLAS, etc.) so that
@@ -99,8 +97,15 @@ def _run_one_combination(
     def _progress_cb(current: int, total: int) -> None:
         progress_dict[combination_idx] = (current, total)
 
-    sim = WorkloadSimulator(config, out_dir=sim_out_dir, write_text_log=False)
-    result = sim.run(progress_callback=_progress_cb, render_log=render_log)
+    with (
+        open(os.devnull, "w") as _devnull,
+        contextlib.redirect_stdout(_devnull),
+        contextlib.redirect_stderr(_devnull),
+    ):
+        sim = WorkloadSimulator(
+            config, out_dir=sim_out_dir, write_text_log=False
+        )
+        result = sim.run(progress_callback=_progress_cb, render_log=render_log)
     return result
 
 

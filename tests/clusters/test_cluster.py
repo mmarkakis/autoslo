@@ -84,6 +84,7 @@ class TestCluster:
                 name="invalid_name",
                 creation_time_s=0.0,
                 rpu=10,
+                cache_state=np.zeros(1),
                 conn_info=self.get_conn_info(),
             )
             rpu = (10,)
@@ -97,6 +98,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
             state=ClusterState.READY,
             billing_window_start_s=1234567800.0,
@@ -155,6 +157,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
         )
         cluster.update_state(ClusterState.READY)
@@ -174,6 +177,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
         )
         with pytest.raises(ValueError):
@@ -192,6 +196,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
         )
         q1 = Query(
@@ -215,6 +220,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
         )
         q1 = Query(
@@ -246,6 +252,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
         )
         q1 = Query(
@@ -270,6 +277,7 @@ class TestCluster:
             name="autoslo-10-1234567890",
             creation_time_s=0.0,
             rpu=10,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
         )
         q1 = Query(
@@ -305,6 +313,7 @@ class TestCluster:
             name=f"autoslo-{rpu}-1234567890",
             creation_time_s=0.0,
             rpu=rpu,
+            cache_state=np.zeros(1),
             conn_info=self.get_conn_info(),
             cost_per_rpu_hour=cost_per_rpu_hour,
         )

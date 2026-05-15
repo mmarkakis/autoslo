@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from autoslo.clusters.autoscaler import Autoscaler
@@ -41,6 +42,7 @@ def _ready_cluster(
         creation_time_s=creation_time_s,
         rpu=rpu,
         name=name,
+        cache_state=np.zeros(1),
     )
     cluster.state = ClusterState.READY
     return cluster

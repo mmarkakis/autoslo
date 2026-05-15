@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import itertools
+import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Any, ClassVar, Optional
 
@@ -11,6 +10,9 @@ import numpy as np
 from autoslo.clusters.billing import Billing, BillingInterval
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_definition.query import Query
+
+# Cluster names must match "autoslo-{rpu}-{suffix}" where rpu is a positive integer.
+_CLUSTER_NAME_RE = re.compile(r"^autoslo-(\d+)-.+$")
 
 _VALID_CLUSTER_STATE_TRANSITIONS = {
     "pending": {"ready"},
@@ -92,8 +94,6 @@ class Cluster:
     ALL_ALLOWED_RPU_SIZES: ClassVar[list[int]] = UP_TO_32_RPU_SIZES
     DEFAULT_SPIN_UP_DELAY_S: ClassVar[int] = 300
 
-    _new_counter: ClassVar[itertools.count] = itertools.count()
-
     # --- Identity (set once) ---------------------------------------------
     creation_time_s: float
     rpu: int
@@ -123,7 +123,7 @@ class Cluster:
         creation_time_s: float,
         rpu: int,
         cache_state: np.ndarray,
-        name: str | None = None,
+        name: str,
         conn_info: Optional[ClusterConnInfo] = None,
         cost_per_rpu_hour: float = US_EAST_1_COST_PER_RPU_HOUR,
         state: ClusterState = ClusterState.PENDING,
@@ -133,14 +133,14 @@ class Cluster:
     ) -> None:
         """Create a fresh cluster with no active queries.
 
-        The name must start with "autoslo-{rpu}-".
+        The name must match the pattern ``autoslo-{rpu}-<suffix>`` where
+        ``{rpu}`` matches the *rpu* argument and ``<suffix>`` is any
+        non-empty string.
         """
-        if name is None:
-            seq = next(Cluster._new_counter)
-            name = f"autoslo-{rpu}-{int(datetime.now().timestamp())}-{seq}"
-        elif not name.startswith(f"autoslo-{rpu}-"):
+        m = _CLUSTER_NAME_RE.fullmatch(name)
+        if m is None or int(m.group(1)) != rpu:
             raise ValueError(
-                f"Cluster name {name!r} must start with 'autoslo-{rpu}-'."
+                f"Cluster name {name!r} must match 'autoslo-{rpu}-<suffix>'."
             )
         self.creation_time_s = creation_time_s
         self.rpu = rpu

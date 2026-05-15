@@ -4,6 +4,7 @@ Tests for :mod:`autoslo.capacity.cluster_provisioner`.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from autoslo.clusters.cluster import Cluster
@@ -152,5 +153,5 @@ class TestClusterFrozen:
             user="admin",
             password="pw",
         )
-        c = Cluster(rpu=8, name="autoslo-8-0-0", conn_info=info)
+        c = Cluster(rpu=8, name="autoslo-8-0-0", cache_state=np.zeros(1), conn_info=info)
         assert c.conn_info is info

@@ -43,10 +43,6 @@ logger = logging.getLogger(__name__)
 
 # Default constants (match workgroup_creation_benchmarking.py)
 _DEFAULT_AWS_REGION = "us-east-1"
-_DEFAULT_ADMIN_USERNAME = "admin"
-_DEFAULT_ADMIN_PASSWORD = "Password123"
-_DEFAULT_DATASHARE_ACCOUNT_ID = "147854383891"
-_DEFAULT_DATASHARE_NAMESPACE_ID = "1015d398-b04c-40d0-bb67-257e0956c96d"
 _DEFAULT_SCHEMA_SCALES = [1, 10, 100, 1000, 3000, 10000]
 _DEFAULT_DB_NAME = "dev"
 _DEFAULT_PORT = 5439
@@ -90,18 +86,10 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         self._aws_account_id = cfg["aws_account_id"]
         self._aws_region = cfg.get("aws_region", _DEFAULT_AWS_REGION)
-        self._admin_username = cfg.get(
-            "admin_username", _DEFAULT_ADMIN_USERNAME
-        )
-        self._admin_password = cfg.get(
-            "admin_password", _DEFAULT_ADMIN_PASSWORD
-        )
-        self._datashare_account_id = cfg.get(
-            "datashare_account_id", _DEFAULT_DATASHARE_ACCOUNT_ID
-        )
-        self._datashare_namespace_id = cfg.get(
-            "datashare_namespace_id", _DEFAULT_DATASHARE_NAMESPACE_ID
-        )
+        self._admin_username = cfg.get("admin_username")
+        self._admin_password = cfg.get("admin_password")
+        self._datashare_account_id = cfg.get("datashare_account_id")
+        self._datashare_namespace_id = cfg.get("datashare_namespace_id")
         self._schema_scales = cfg.get("schema_scales", _DEFAULT_SCHEMA_SCALES)
         self._db_name = cfg.get("db_name", _DEFAULT_DB_NAME)
         self._port = cfg.get("port", _DEFAULT_PORT)
