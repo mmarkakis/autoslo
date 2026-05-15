@@ -32,5 +32,6 @@ run_id,config_id,workload_id,started_at
 1778845494039,model_training__RPU=32,poisson_99_3_1_0.05_42__target__rf1.000,2026-05-15T11:44:54Z
 1778846572149,model_training__RPU=4,poisson_99_2_1_0.1_42__target__rf1.000,2026-05-15T12:02:52Z
 1778850918197,model_training__RPU=8,poisson_99_3_1_0.05_42__target__rf1.000,2026-05-15T13:15:18Z
+1778852891136,model_training__RPU=4,poisson_99_2_1_0.05_42__target__rf1.000,2026-05-15T13:48:11Z
 1778861305520,model_training__RPU=4,poisson_99_3_1_0.1_42__target__rf1.000,2026-05-15T16:08:26Z
 1778868881242,model_training__RPU=4,poisson_99_3_1_0.05_42__target__rf1.000,2026-05-15T18:14:41Z

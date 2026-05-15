@@ -361,31 +361,49 @@ class ManagedClusterPool:
             and self._run_id is not None
             and self._out_dir is not None
         ):
-            try:
-                logger.info(
-                    "Waiting 60s before collecting stats for cluster %s "
-                    "to allow system tables to flush.",
-                    cluster_name,
-                )
-                time.sleep(60)
-                RedshiftRunStatsCollector.collect_cluster_stats(
-                    cluster_name,
-                    cluster.conn_info,
-                    self._run_id,
-                    self._out_dir,
-                )
-                emit_structured(
-                    BaseStructuredEvent(
-                        rel_time_s=rel_time_s,
-                        event_type=EventType.STATS_COLLECTED,
-                        source="ManagedClusterPool",
-                        cluster_name=cluster_name,
+            _STATS_RETRY_DELAYS_S = [60, 60, 120]
+            for attempt, delay in enumerate(_STATS_RETRY_DELAYS_S):
+                try:
+                    logger.info(
+                        "Waiting %ds before collecting stats for cluster %s "
+                        "to allow system tables to flush (attempt %d/%d)",
+                        delay,
+                        cluster_name,
+                        attempt + 1,
+                        len(_STATS_RETRY_DELAYS_S),
                     )
-                )
-            except Exception:
-                logger.exception(
-                    "Stats collection failed for cluster %s", cluster_name
-                )
+                    time.sleep(delay)
+                    RedshiftRunStatsCollector.collect_cluster_stats(
+                        cluster_name,
+                        cluster.conn_info,
+                        self._run_id,
+                        self._out_dir,
+                    )
+                    emit_structured(
+                        BaseStructuredEvent(
+                            rel_time_s=rel_time_s,
+                            event_type=EventType.STATS_COLLECTED,
+                            source="ManagedClusterPool",
+                            cluster_name=cluster_name,
+                        )
+                    )
+                    break
+                except Exception:
+                    if attempt < len(_STATS_RETRY_DELAYS_S) - 1:
+                        logger.warning(
+                            "Stats collection failed for cluster %s "
+                            "(attempt %d/%d), will retry.",
+                            cluster_name,
+                            attempt + 1,
+                            len(_STATS_RETRY_DELAYS_S),
+                        )
+                    else:
+                        logger.exception(
+                            "Stats collection failed for cluster %s after "
+                            "%d attempts, giving up.",
+                            cluster_name,
+                            len(_STATS_RETRY_DELAYS_S),
+                        )
 
         # Destroy connection pool.
         if self._conn_pools.get(cluster_name) is not None:
