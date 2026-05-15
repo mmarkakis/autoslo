@@ -3,7 +3,6 @@ Some code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
 import os
-import pickle
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional, TypeAlias, cast
@@ -361,7 +360,7 @@ class IconqQueryFeaturizer:
             trace: The Trace object containing the queries to featurize.
 
         Returns:
-            A dictionary mapping cluster-aware query IDs to their vectorized 
+            A dictionary mapping cluster-aware query IDs to their vectorized
             representations.
         """
         featurizations: dict[
@@ -536,11 +535,6 @@ class IconqQueryFeaturizer:
                 )
             yaml.safe_dump(l, f, sort_keys=False)
 
-        # Also save it as a pickle for easier loading.
-        pickle_path = os.path.join(save_dir, "featurizations.pkl")
-        with open(pickle_path, "wb") as f:
-            pickle.dump(self._featurization_cache, f)
-
         # Return the full featurizer ID: "<schema_name>/<timestamp>".
         return self._schema_name, timestamp
 
@@ -567,9 +561,13 @@ class IconqQueryFeaturizer:
             params = yaml.safe_load(f)
 
         # Load featurization cache.
-        cache_path = os.path.join(load_dir, "featurizations.pkl")
-        with open(cache_path, "rb") as f:
-            precomputed_featurization_cache = pickle.load(f)
+        cache_path = os.path.join(load_dir, "featurizations.yml")
+        with open(cache_path, "r") as f:
+            cache_list = yaml.safe_load(f)
+        precomputed_featurization_cache = {
+            QueryTextId(item["query_text_id"]): item["featurization"]
+            for item in cache_list
+        }
 
         featurizer = IconqQueryFeaturizer(
             schema_name=params["schema_name"],
@@ -584,9 +582,6 @@ class IconqQueryFeaturizer:
             precomputed_top_tables=params["top_tables"],
             precomputed_featurization_cache=precomputed_featurization_cache,
         )
-
-        if not os.path.exists(cache_path):
-            featurizer.save(timestamp)  # Save to pickle for future use.
 
         return featurizer
 

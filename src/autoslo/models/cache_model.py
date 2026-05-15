@@ -1,5 +1,4 @@
 import os
-import pickle
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional
@@ -281,9 +280,6 @@ class CacheModel:
             )
 
         # Save the model itself
-        cache_pkl_path = os.path.join(save_dir, "model.pkl")
-        with open(cache_pkl_path, "wb") as f:
-            pickle.dump(self._cache, f)
         cache_yml_path = os.path.join(save_dir, "model.yml")
         with open(cache_yml_path, "w") as f:
             yaml.safe_dump(self._cache, f)
@@ -331,8 +327,8 @@ class CacheModel:
         model._std_runtime_s_for_rpu = params["std_runtime_s_for_rpu"]
 
         # Load the model itself
-        cache_pkl_path = os.path.join(load_dir, "model.pkl")
-        with open(cache_pkl_path, "rb") as f:
-            model._cache = pickle.load(f)
+        cache_yml_path = os.path.join(load_dir, "model.yml")
+        with open(cache_yml_path, "r") as f:
+            model._cache = yaml.safe_load(f)
 
         return model

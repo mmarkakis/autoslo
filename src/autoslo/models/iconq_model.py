@@ -1,6 +1,6 @@
+import json
 import logging
 import os
-import pickle
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Optional, cast
@@ -788,17 +788,17 @@ class IconqModel:
         if save_dataset:
             dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
             with open(
-                os.path.join(self._save_dir, "train_indices.pkl"), "wb"
+                os.path.join(self._save_dir, "train_indices.json"), "w"
             ) as f:
-                pickle.dump(train_indices, f)
+                json.dump(train_indices, f)
             with open(
-                os.path.join(self._save_dir, "val_indices.pkl"), "wb"
+                os.path.join(self._save_dir, "val_indices.json"), "w"
             ) as f:
-                pickle.dump(val_indices, f)
+                json.dump(val_indices, f)
             with open(
-                os.path.join(self._save_dir, "test_indices.pkl"), "wb"
+                os.path.join(self._save_dir, "test_indices.json"), "w"
             ) as f:
-                pickle.dump(test_indices, f)
+                json.dump(test_indices, f)
 
         train_generator = torch.Generator()
         train_generator.manual_seed(
