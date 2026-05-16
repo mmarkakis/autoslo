@@ -7,14 +7,17 @@ import yaml
 import autoslo.filesystem.path_utils as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.cache_model import CacheModel
-from autoslo.models.iconq_model import (
-    IconqModel,
+from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
+from autoslo.models.iconq_model import IconqModel
+from autoslo.models.iconq_model_config import (
     IconqModelInitConfig,
     NNModelTrainConfig,
 )
-from autoslo.model_training.iconq_model_trainer import iconq_model_trainer
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.nn.runtime_net import RuntimeNet
+from autoslo.workload_execution.trace import Trace
 
 
 def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
@@ -168,6 +171,7 @@ def train_iconq_model(
 ) -> str:
     """Trains an IconqModel and returns its ID."""
     iconq_model_init_config = IconqModelInitConfig(
+        schema_name="ext_tpcds1000",
         iconq_query_featurizer_id=iconq_query_featurizer_id,
         stage_model_id=stage_model_id,
         is_bayesian=False,
@@ -186,15 +190,35 @@ def train_iconq_model(
         learning_rate=1e-3,
         sensitive_q_error_loss_version=sensitive_q_error_loss_version,
     )
-    iconq_model = IconqModel(
-        init_config=iconq_model_init_config,
+    iconq_model = IconqModel(init_config=iconq_model_init_config)
+
+    iconq_model._train_config_sequence = []
+    iconq_model._nn = RuntimeNet(**iconq_model._nn_args).to(iconq_model._device)  # type: ignore
+    iconq_model._train_config_sequence.append(nn_model_train_config)
+    iconq_model._save_params()
+
+    datasets = [
+        build_dataset_from_trace(
+            trace=Trace(run_id),
+            iconq_model=iconq_model,
+            use_log_runtime=iconq_model.trained_on_log_runtime,
+            use_client_side_latencies=nn_model_train_config.use_client_side_latencies,
+            use_fixed_window_radius_s=iconq_model_init_config.use_fixed_window_radius_s,
+            use_fixed_window_max_neighbors_per_side=iconq_model_init_config.use_fixed_window_max_neighbors_per_side,
+        )
+        for run_id in nn_model_train_config.run_ids
+    ]
+    overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
+
+    train_dataloader, val_dataloader = iconq_model._get_dataloaders(
+        overall_dataset, nn_model_train_config, split=True, save_dataset=True
     )
-    iconq_model_trainer(
-        iconq_model=iconq_model,
-        train_config=nn_model_train_config,
+    assert val_dataloader is not None
+    iconq_model._run_training_loop(
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
     )
-    iconq_model_id = iconq_model.save()
-    return iconq_model_id
+    return iconq_model.save()
 
 
 if __name__ == "__main__":
