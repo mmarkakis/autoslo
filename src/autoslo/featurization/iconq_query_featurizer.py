@@ -9,10 +9,10 @@ from typing import Optional, TypeAlias, cast
 
 import numpy as np
 import pandas as pd
-import yaml
 from tqdm.auto import tqdm
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.workload_definition.query import ClusterAwareQueryId, QueryTextId
 from autoslo.workload_execution.trace import Trace
 
@@ -109,24 +109,24 @@ class IconqQueryFeaturizer:
 
                 explain_rows = trace.sys_query_explain_rows_per_query()
 
-                for query_id, aborted in was_aborted.items():
+                for cluster_aware_query_id, aborted in was_aborted.items():
                     if aborted:
                         # Ignore aborted queries for accurate featurization.
                         continue
 
-                    query_id = cast(str, query_id)
-                    query_text_id = query_text_ids[query_id]
+                    cluster_aware_query_id = cast(str, cluster_aware_query_id)
+                    query_text_id = query_text_ids[cluster_aware_query_id]
 
                     if query_text_id in self._featurization_cache:
                         continue
-                    if (query_id not in explain_rows) or (
-                        explain_rows[query_id] is None
+                    if (cluster_aware_query_id not in explain_rows) or (
+                        explain_rows[cluster_aware_query_id] is None
                     ):
                         self._featurization_cache[query_text_id] = []
                         continue
                     featurization = (
                         self.featurize_plan_from_sys_query_explain_rows(
-                            explain_rows[query_id]
+                            explain_rows[cluster_aware_query_id]
                         )
                     )
                     self._featurization_cache[query_text_id] = featurization
@@ -252,8 +252,7 @@ class IconqQueryFeaturizer:
             "db_stats",
             f"cluster_32_{self._schema_name}.yml",
         )
-        with open(statistics_path, "r", encoding="utf-8") as f:
-            stats = yaml.safe_load(f)
+        stats = load_yaml(statistics_path)
 
         # Get tables in descending order by size.
         table_names_and_sizes: list[tuple[str, int]] = [
@@ -369,11 +368,10 @@ class IconqQueryFeaturizer:
         query_text_ids = trace.query_text_ids
 
         for cluster_aware_query_id, query_text_id in query_text_ids.items():
-            cluster_aware_query_id = cast(
-                ClusterAwareQueryId, cluster_aware_query_id
-            )
             featurization = self.featurize_from_query_text_id(query_text_id)
-            featurizations[cluster_aware_query_id] = featurization
+            featurizations[ClusterAwareQueryId(cluster_aware_query_id)] = (
+                featurization
+            )
 
         return featurizations
 
@@ -502,38 +500,33 @@ class IconqQueryFeaturizer:
 
         # Save featurizer parameters.
         param_path = os.path.join(save_dir, "params.yml")
-        with open(param_path, "w") as f:
-            yaml.safe_dump(
-                {
-                    "m": self._m,
-                    "n": self._n,
-                    "use_size": self._use_size,
-                    "use_true_card": self._use_true_card,
-                    "use_table_selectivity": self._use_table_selectivity,
-                    "use_log": self._use_log,
-                    "schema_name": self._schema_name,
-                    "run_ids": self._run_ids,
-                    "top_operators": self._top_operators,
-                    "top_tables": self._top_tables,
-                },
-                f,
-            )
+        dump_yaml(
+            {
+                "m": self._m,
+                "n": self._n,
+                "use_size": self._use_size,
+                "use_true_card": self._use_true_card,
+                "use_table_selectivity": self._use_table_selectivity,
+                "use_log": self._use_log,
+                "schema_name": self._schema_name,
+                "run_ids": self._run_ids,
+                "top_operators": self._top_operators,
+                "top_tables": self._top_tables,
+            },
+            param_path,
+        )
 
         # Save featurzation cache.
         cache_path = os.path.join(save_dir, "featurizations.yml")
-        with open(cache_path, "w") as f:
-            l = []
-            for (
-                query_text_id,
-                featurization,
-            ) in self._featurization_cache.items():
-                l.append(
-                    {
-                        "query_text_id": query_text_id,
-                        "featurization": featurization,
-                    }
-                )
-            yaml.safe_dump(l, f, sort_keys=False)
+        l = []
+        for query_text_id, featurization in self._featurization_cache.items():
+            l.append(
+                {
+                    "query_text_id": query_text_id,
+                    "featurization": featurization,
+                }
+            )
+        dump_yaml(l, cache_path)
 
         return iconq_query_featurizer_id
 
@@ -558,13 +551,12 @@ class IconqQueryFeaturizer:
             iconq_query_featurizer_id,
         )
         param_path = os.path.join(load_dir, "params.yml")
-        with open(param_path, "r") as f:
-            params = yaml.safe_load(f)
+        params = load_yaml(param_path)
 
         # Load featurization cache.
         cache_path = os.path.join(load_dir, "featurizations.yml")
-        with open(cache_path, "r") as f:
-            cache_list = yaml.safe_load(f)
+        cache_list = load_yaml(cache_path)
+
         precomputed_featurization_cache = {
             QueryTextId(item["query_text_id"]): item["featurization"]
             for item in cache_list
@@ -640,7 +632,10 @@ class IconqQueryFeaturizer:
         Raises:
             ValueError: If the rows don't all correspond to the same query.
         """
-        if len(sys_query_explain_sub_df["query_id"].unique()) != 1:
+        if (
+            len(sys_query_explain_sub_df["cluster_aware_query_id"].unique())
+            != 1
+        ):
             raise ValueError(
                 "The provided sys_query_explain rows do not all correspond to "
                 "the same query."

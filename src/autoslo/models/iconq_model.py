@@ -640,20 +640,20 @@ class IconqModel:
             val_dataset = Subset(dataset, val_indices)
             test_dataset = Subset(dataset, test_indices)
 
-        if save_dataset:
-            dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
-            with open(
-                os.path.join(self._save_dir, "train_indices.json"), "w"
-            ) as f:
-                json.dump(train_indices, f)
-            with open(
-                os.path.join(self._save_dir, "val_indices.json"), "w"
-            ) as f:
-                json.dump(val_indices, f)
-            with open(
-                os.path.join(self._save_dir, "test_indices.json"), "w"
-            ) as f:
-                json.dump(test_indices, f)
+            if save_dataset:
+                dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
+                with open(
+                    os.path.join(self._save_dir, "train_indices.json"), "w"
+                ) as f:
+                    json.dump(train_indices, f)
+                with open(
+                    os.path.join(self._save_dir, "val_indices.json"), "w"
+                ) as f:
+                    json.dump(val_indices, f)
+                with open(
+                    os.path.join(self._save_dir, "test_indices.json"), "w"
+                ) as f:
+                    json.dump(test_indices, f)
 
         train_generator = torch.Generator()
         train_generator.manual_seed(
@@ -804,15 +804,15 @@ class IconqModel:
             train_loss_trajectory[epoch] = (
                 total_train_batch_loss / total_train_batches
             )
-            val_loss_trajectory[epoch], errors = self._validate(
-                val_dataloader=val_dataloader,
+            val_loss_trajectory[epoch], val_errors = self._validate(
+                dataloader=val_dataloader,
                 var_reg_weight=train_config.var_reg_weight,
                 training_dir=self._save_dir,
                 epoch=epoch,
                 train_config=train_config,
             )
             _, train_errors = self._validate(
-                val_dataloader=train_dataloader,
+                dataloader=train_dataloader,
                 var_reg_weight=train_config.var_reg_weight,
                 training_dir=None,
                 epoch=None,
@@ -836,7 +836,7 @@ class IconqModel:
                 f"""Learning rate: {lr_trajectory[epoch]}\n"""
             )
             for set_name, errs in zip(
-                ["training", "Validation"], [train_errors, errors]
+                ["training", "Validation"], [train_errors, val_errors]
             ):
                 for suffix in ["normal", "aborted"]:
                     s += (
@@ -912,7 +912,7 @@ class IconqModel:
 
     def _validate(
         self,
-        val_dataloader: DataLoader,
+        dataloader: DataLoader,
         train_config: IconqModelTrainConfig,
         var_reg_weight: float = 0.0,
         training_dir: Optional[str] = None,
@@ -922,7 +922,7 @@ class IconqModel:
         Evaluates the model on the validation set.
 
         Parameters:
-            val_dataloader: The DataLoader for the validation set.
+            dataloader: The DataLoader to validate on.
             var_reg_weight: The weight for the variance regularization term for the negative
                 log likelihood loss.
             training_dir: The directory where the training artifacts are saved.
@@ -937,21 +937,21 @@ class IconqModel:
                 validation set. The exact metrics depend on the loss type.
         """
 
-        total_val_batches = len(val_dataloader)
-        total_val_batch_loss = 0.0
+        total_batches = len(dataloader)
+        total_batch_loss = 0.0
         all_pred_v_true = []
         self._nn.eval()
         with torch.no_grad():
-            for batch in val_dataloader:
+            for batch in dataloader:
                 batch_loss, batch_pred_v_true = self._process_batch(
                     batch=batch,
                     train_config=train_config,
                     derive_individual_predictions=True,
                 )
                 all_pred_v_true.extend(batch_pred_v_true)
-                total_val_batch_loss += batch_loss.item()
+                total_batch_loss += batch_loss.item()
 
-        mean_val_batch_loss = total_val_batch_loss / total_val_batches
+        mean_val_batch_loss = total_batch_loss / total_batches
 
         # Calculate error metrics
         errors: dict[str, float] = {}

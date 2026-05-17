@@ -113,10 +113,10 @@ def build_dataset_from_trace(
     )
 
     targets: dict[str, float] = {
-        qid: _latency(qid) for qid in cluster_aware_query_ids
+        qid.query_id: _latency(qid) for qid in cluster_aware_query_ids
     }
     is_lower_bound: dict[str, bool] = {
-        qid: _is_lb(qid) for qid in cluster_aware_query_ids
+        qid.query_id: _is_lb(qid) for qid in cluster_aware_query_ids
     }
 
     return ConcurrentQueryDataset.build_from_query_groups(

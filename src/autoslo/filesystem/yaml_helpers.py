@@ -40,10 +40,17 @@ def _dataclass_using_asdict(
 ) -> yaml.MappingNode:
     if is_dataclass(data) and not isinstance(data, type):
         return dumper.represent_dict(asdict(data))
-    return dumper.represent_data(data)
+    raise yaml.representer.RepresenterError(
+        f"_QuotingSafeDumper cannot represent an arbitrary Python object: {data!r}"
+    )
 
 
 _QuotingSafeDumper.add_representer(str, _quote_ambiguous_str)
+# Catches str subclasses (e.g. QueryTextId) that do not match the exact str
+# representer above, coercing them to plain str before serializing.
+_QuotingSafeDumper.add_multi_representer(
+    str, lambda d, v: _quote_ambiguous_str(d, str(v))
+)
 _QuotingSafeDumper.add_multi_representer(Path, _posix_path_as_str)
 _QuotingSafeDumper.add_multi_representer(object, _dataclass_using_asdict)
 

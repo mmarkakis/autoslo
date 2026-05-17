@@ -1,6 +1,6 @@
 import argparse
 import os
-from datetime import datetime
+import shutil
 from pathlib import Path
 
 import autoslo.filesystem.path_utils as pu
@@ -35,32 +35,20 @@ parser.add_argument(
 args = parser.parse_args()
 
 cfg = load_yaml(args.train_config_path)
-progress_cache_path = os.path.join(
-    pu.AUTOSLO_ROOT,
-    "experiments",
-    "06_iconq_training",
-    "progress_cache.yml",
+iconq_model_id = Path(args.train_config_path).stem
+iconq_model_dir = os.path.join(
+    pu.get_data_path(), "iconq_models", iconq_model_id
 )
+if os.path.exists(iconq_model_dir) and args.force:
+    print(f"Forcing re-training. Deleting {iconq_model_dir}...")
+    shutil.rmtree(iconq_model_dir)
+
+os.makedirs(iconq_model_dir, exist_ok=True)
+progress_cache_path = os.path.join(iconq_model_dir, "progress_cache.yml")
 cached_progress: dict = {}
 
 if os.path.exists(progress_cache_path):
-    if args.force:
-        ts = str(int(datetime.now().timestamp()))
-        print(
-            f"Forcing re-training. Moving old cached progress to "
-            f"progress_cache_{ts}.yml"
-        )
-        os.rename(
-            progress_cache_path,
-            os.path.join(
-                pu.AUTOSLO_ROOT,
-                "experiments",
-                "06_iconq_training",
-                f"progress_cache_{ts}.yml",
-            ),
-        )
-    else:
-        cached_progress = load_yaml(progress_cache_path)
+    cached_progress = load_yaml(progress_cache_path)
 
 iconq_model_init_config_dict = cfg.get("iconq_model_init_config", {})
 iconq_model_train_config_dict = cfg.get("iconq_model_train_config", {})
@@ -174,7 +162,6 @@ else:
 ###########
 
 print("Step 6: Training IconqModel...")
-iconq_model_id = Path(args.train_config_path).stem
 iconq_model_init_config_dict["iconq_query_featurizer_id"] = featurizer_id
 iconq_model_init_config_dict["stage_model_id"] = stage_model_id
 iconq_model_init_config = IconqModelInitConfig(**iconq_model_init_config_dict)
