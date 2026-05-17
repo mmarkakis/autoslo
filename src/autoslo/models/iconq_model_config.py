@@ -53,7 +53,7 @@ class IconqModelInitConfig:
 
 
 @dataclass
-class NNModelTrainConfig:
+class IconqModelTrainConfig:
     """
     A dataclass for the configuration of the NN-based models at training.
     """
@@ -131,4 +131,12 @@ class NNModelTrainConfig:
 
     sensitive_q_error_loss_version: int = (
         1  # The version of the sensitive Q-error loss to use.
+    )
+
+    train_stage_only_on_isolated_queries: bool = (
+        False  # Whether to train stage only on isolated queries.
+    )
+
+    use_client_side_latencies: bool = (
+        False  # Whether to use client-side latencies instead of server-side.
     )

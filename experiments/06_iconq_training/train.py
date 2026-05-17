@@ -11,7 +11,7 @@ from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.iconq_model_config import (
     IconqModelInitConfig,
-    NNModelTrainConfig,
+    IconqModelTrainConfig,
 )
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
@@ -181,7 +181,7 @@ def train_iconq_model(
         use_fixed_window_max_neighbors_per_side=None,
         ignore_cluster_size=ignore_cluster_size,
     )
-    nn_model_train_config = NNModelTrainConfig(
+    nn_model_train_config = IconqModelTrainConfig(
         run_ids=run_ids,
         use_stage_for_isolated_queries=use_stage_for_isolated_queries,
         explicit_run_ids_per_split=explicit_run_ids_per_split,

@@ -1,385 +1,213 @@
 import argparse
 import os
 from datetime import datetime
-
-import yaml
+from pathlib import Path
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.models.cache_model import CacheModel
-from autoslo.models.iconq_model import (
-    IconqModel,
+from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
+from autoslo.models.iconq_model import IconqModel
+from autoslo.models.iconq_model_config import (
     IconqModelInitConfig,
-    NNModelTrainConfig,
+    IconqModelTrainConfig,
 )
-from autoslo.model_training.iconq_model_trainer import iconq_model_trainer
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.workload_execution.trace import Trace
 
+parser = argparse.ArgumentParser(
+    description="Trains an IconqModel step-by-step, caching progress."
+)
+parser.add_argument(
+    "--force",
+    action="store_true",
+    help="Force re-training even if cached progress exists.",
+)
+parser.add_argument(
+    "--train_config_path",
+    required=True,
+    help="Path to the training config YAML (data/model_training_configs/).",
+)
 
-def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
-    """Finds all relevant run IDs for training IconQ models."""
+args = parser.parse_args()
 
-    df = pu.RunLocator.get_runs_df()
-    pct_heavy_options = [0, 10, 25, 50]
-    mean_interarrival_options = [10, 30, 60, 120]
-    rpus = [4, 8, 16, 32]
+cfg = load_yaml(args.train_config_path)
+progress_cache_path = os.path.join(
+    pu.AUTOSLO_ROOT,
+    "experiments",
+    "06_iconq_training",
+    "progress_cache.yml",
+)
+cached_progress: dict = {}
 
-    run_ids = []
+if os.path.exists(progress_cache_path):
+    if args.force:
+        ts = str(int(datetime.now().timestamp()))
+        print(
+            f"Forcing re-training. Moving old cached progress to "
+            f"progress_cache_{ts}.yml"
+        )
+        os.rename(
+            progress_cache_path,
+            os.path.join(
+                pu.AUTOSLO_ROOT,
+                "experiments",
+                "06_iconq_training",
+                f"progress_cache_{ts}.yml",
+            ),
+        )
+    else:
+        cached_progress = load_yaml(progress_cache_path)
 
-    val_index_combinations = [
-        (0, 0, 0),
-        (1, 1, 1),
-        (2, 2, 2),
-        (3, 3, 3),
-        (0, 1, 2),
-        (1, 2, 3),
-        (2, 3, 0),
-        (3, 0, 1),
-        (0, 2, 1),
-        (1, 3, 2),
-        (2, 0, 3),
-        (3, 1, 0),
-    ]
-    test_idx_combinations = [
-        (0, 1, 1),
-        (1, 2, 2),
-        (2, 3, 3),
-        (3, 0, 0),
-        (0, 2, 3),
-        (1, 3, 0),
-        (2, 0, 1),
-        (3, 1, 2),
-        (0, 3, 2),
-        (1, 0, 3),
-        (2, 1, 0),
-        (3, 2, 1),
-    ]
-    train_val_test_assignments: dict[str, list[str]] = {
-        "train": [],
-        "val": [],
-        "test": [],
-    }
+iconq_model_init_config_dict = cfg.get("iconq_model_init_config", {})
+iconq_model_train_config_dict = cfg.get("iconq_model_train_config", {})
 
-    # Most recent chunk runs.
-    for i, pct_heavy in enumerate(pct_heavy_options):
-        for j, mean_interarrival in enumerate(mean_interarrival_options):
-            for k, rpu in enumerate(rpus):
-                this_workload_run_ids = pu.RunLocator.get_run_ids(
-                    schema_name="ext_tpcds1000",
-                    workload_name=f"tpcds_99templates_{pct_heavy:02d}pctheavy_{mean_interarrival}meaninterarrivals",
-                    blueprint_name=f"single_{rpu}",
-                )
-                if len(this_workload_run_ids) > 0:
-                    run_ids.append(max(this_workload_run_ids))
-                    if (i, j, k) in val_index_combinations:
-                        train_val_test_assignments["val"].append(
-                            max(this_workload_run_ids)
-                        )
-                    elif (i, j, k) in test_idx_combinations:
-                        train_val_test_assignments["test"].append(
-                            max(this_workload_run_ids)
-                        )
-                    else:
-                        train_val_test_assignments["train"].append(
-                            max(this_workload_run_ids)
-                        )
+ignore_cluster_size: bool = iconq_model_init_config_dict.get(
+    "ignore_cluster_size", False
+)
+train_stage_only_on_isolated_queries: bool = iconq_model_train_config_dict.get(
+    "train_stage_only_on_isolated_queries", False
+)
+use_client_side_latencies: bool = iconq_model_train_config_dict.get(
+    "use_client_side_latencies", False
+)
 
-    # Benchmarking workload runs.
-    # benchmark_runs = df[
-    #     df["workload_name"] == "benchmarking_workload_99_3_3_shuffled_42"
-    # ]
-    # run_ids.extend(benchmark_runs["run_id"].to_list())
-    return run_ids, train_val_test_assignments
+#########
+## Step 1: Read run IDs from config.
+#########
 
+print("Step 1: Reading run IDs from config...")
+train_val_run_ids = iconq_model_train_config_dict["run_ids"]
 
-def set_up_featurizer(run_ids: list[str], from_sys_query_explain: bool) -> str:
-    """Sets up the IconQ query featurizer and returns its ID."""
+#########
+## Step 2: Setting up featurizer.
+#########
 
+print("Step 2: Setting up featurizer...")
+if "featurizer_id" not in cached_progress:
+    print("\tFeaturizer not cached. Computing...")
     featurizer = IconqQueryFeaturizer(
-        schema_name="tpcds1000",
-        run_ids=run_ids,
+        schema_name=iconq_model_init_config_dict["schema_name"],
+        run_ids=train_val_run_ids,
     )
-    return featurizer.save()
+    featurizer_id = featurizer.save()
+    cached_progress["featurizer_id"] = featurizer_id
+    dump_yaml(cached_progress, progress_cache_path)
+else:
+    print("\tUsing cached featurizer ID.")
+    featurizer_id = cached_progress["featurizer_id"]
 
+##########
+## Step 3: Train CacheModel.
+##########
 
-def train_cache_model(
-    run_ids: list[str],
-    only_non_overlapping_queries: bool,
-    ignore_cluster_size: bool = False,
-    use_client_side_latencies: bool = False,
-) -> str:
-    """Trains a CacheModel and returns its ID."""
-
+print("Step 3: Training CacheModel...")
+if "cache_model_id" not in cached_progress:
+    print("\tCacheModel not cached. Training...")
     cache_model = CacheModel(
         enable_template_cache=False,
         best_effort=False,
         ignore_cluster_size=ignore_cluster_size,
     )
     cache_model.train(
-        run_ids=run_ids,
+        run_ids=train_val_run_ids,
         from_scratch=True,
-        only_non_overlapping_queries=only_non_overlapping_queries,
+        only_non_overlapping_queries=train_stage_only_on_isolated_queries,
         use_client_side_latencies=use_client_side_latencies,
     )
     cache_model_id = cache_model.save()
-    return cache_model_id
+    cached_progress["cache_model_id"] = cache_model_id
+    dump_yaml(cached_progress, progress_cache_path)
+else:
+    print("\tUsing cached CacheModel ID.")
+    cache_model_id = cached_progress["cache_model_id"]
 
+###########
+## Step 4: Train XGBoostModel.
+###########
 
-def train_xgboost_model(
-    iconq_query_featurizer_id: str,
-    run_ids: list[str],
-    only_non_overlapping_queries: bool,
-    ignore_cluster_size: bool = False,
-    use_client_side_latencies: bool = False,
-) -> str:
-    """Trains an XGBoostModel and returns its ID."""
+print("Step 4: Training XGBoostModel...")
+if "xgboost_model_id" not in cached_progress:
+    print("\tXGBoostModel not cached. Training...")
     xgboost_model = XGBoostModel(
         train_on_log_runtime=True,
         n_estimators=100,
-        iconq_query_featurizer_id=iconq_query_featurizer_id,
+        iconq_query_featurizer_id=featurizer_id,
         ignore_cluster_size=ignore_cluster_size,
     )
     xgboost_model.train(
-        run_ids=run_ids,
-        only_non_overlapping_queries=only_non_overlapping_queries,
+        run_ids=train_val_run_ids,
+        only_non_overlapping_queries=train_stage_only_on_isolated_queries,
         use_client_side_latencies=use_client_side_latencies,
     )
     xgboost_model_id = xgboost_model.save()
-    return xgboost_model_id
+    cached_progress["xgboost_model_id"] = xgboost_model_id
+    dump_yaml(cached_progress, progress_cache_path)
+else:
+    print("\tUsing cached XGBoostModel ID.")
+    xgboost_model_id = cached_progress["xgboost_model_id"]
 
+###########
+## Step 5: Initialize StageModel.
+###########
 
-def initialize_stage_model(
-    cache_model_id: str, xgboost_model_id: str
-) -> StageModel:
-    """Initializes a StageModel."""
+print("Step 5: Initializing StageModel...")
+if "stage_model_id" not in cached_progress:
+    print("\tStageModel not cached. Initializing...")
     stage_model = StageModel(
-        cache_model_id=cache_model_id, xgboost_model_id=xgboost_model_id
+        cache_model_id=cache_model_id,
+        xgboost_model_id=xgboost_model_id,
     )
-    return stage_model
+    stage_model_id = stage_model.save()
+    cached_progress["stage_model_id"] = stage_model_id
+    dump_yaml(cached_progress, progress_cache_path)
+else:
+    print("\tUsing cached StageModel ID.")
+    stage_model_id = cached_progress["stage_model_id"]
 
+###########
+## Step 6: Train IconqModel.
+###########
 
-def train_iconq_model(
-    schema_name: str,
-    iconq_query_featurizer_id: str,
-    stage_model_id: str,
-    run_ids: list[str],
-    use_stage_for_isolated_queries: bool,
-    explicit_run_ids_per_split: dict[str, list[str]] | None = None,
-    penalize_based_on_overlap: bool = False,
-    sensitive_q_error_loss_version: int = 1,
-    ignore_cluster_size: bool = False,
-    use_client_side_latencies: bool = False,
-) -> str:
-    """Trains an IconqModel and returns its ID."""
-    iconq_model_init_config = IconqModelInitConfig(
-        schema_name=schema_name,
-        iconq_query_featurizer_id=iconq_query_featurizer_id,
-        stage_model_id=stage_model_id,
-        is_bayesian=False,
-        is_mdn=False,
-        train_on_log_runtime=True,
-        use_fixed_window_radius_s=None,
-        use_fixed_window_max_neighbors_per_side=None,
-        ignore_cluster_size=ignore_cluster_size,
-    )
-    nn_model_train_config = NNModelTrainConfig(
-        run_ids=run_ids,
-        use_stage_for_isolated_queries=use_stage_for_isolated_queries,
-        explicit_run_ids_per_split=explicit_run_ids_per_split,
-        sensitive_q_error_loss_small_val=5.0,
-        penalize_based_on_overlap=penalize_based_on_overlap,
-        learning_rate=1e-3,
-        sensitive_q_error_loss_version=sensitive_q_error_loss_version,
-        use_client_side_latencies=use_client_side_latencies,
-    )
-    iconq_model = IconqModel(init_config=iconq_model_init_config)
-    iconq_model_trainer(
+print("Step 6: Training IconqModel...")
+iconq_model_id = Path(args.train_config_path).stem
+iconq_model_init_config_dict["iconq_query_featurizer_id"] = featurizer_id
+iconq_model_init_config_dict["stage_model_id"] = stage_model_id
+iconq_model_init_config = IconqModelInitConfig(**iconq_model_init_config_dict)
+iconq_model_train_config = IconqModelTrainConfig(
+    **iconq_model_train_config_dict
+)
+
+iconq_model = IconqModel(
+    init_config=iconq_model_init_config,
+    train_config_sequence=[iconq_model_train_config],
+    model_id=iconq_model_id,
+)
+
+datasets = [
+    build_dataset_from_trace(
+        trace=Trace(run_id),
         iconq_model=iconq_model,
-        train_config=nn_model_train_config,
+        use_log_runtime=iconq_model.trained_on_log_runtime,
+        use_client_side_latencies=use_client_side_latencies,
+        use_fixed_window_radius_s=iconq_model_init_config.use_fixed_window_radius_s,
+        use_fixed_window_max_neighbors_per_side=iconq_model_init_config.use_fixed_window_max_neighbors_per_side,
     )
-    iconq_model_id = iconq_model.save()
-    return iconq_model_id
+    for run_id in train_val_run_ids
+]
+overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Trains an IconqModel step-by-step, caching progress."
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Whether to force re-training even if cached progress exists.",
-    )
-    parser.add_argument(
-        "--only_non_overlapping_queries",
-        action="store_true",
-        help="Whether to only train the cache and XGBoost models on queries that do not overlap with any other queries in the trace.",
-    )
-    parser.add_argument(
-        "--use_stage_for_isolated_queries",
-        action="store_true",
-        help="Whether to use the StageModel to generate predictions for isolated queries when training the IconQ model.",
-    )
-    parser.add_argument(
-        "--use_explicit_run_ids",
-        action="store_true",
-        help="If set, use explicitly provided run IDs for each data splti for the Iconq model.",
-    )
-    parser.add_argument(
-        "--penalize_based_on_overlap",
-        action="store_true",
-        help="Whether to penalize based on overlap in the sensitive Q-error loss.",
-    )
-    parser.add_argument(
-        "--from_sys_query_explain",
-        action="store_true",
-        help="Whether to derive features from sys_query_explain table.",
-    )
-    parser.add_argument(
-        "--sensitive_q_error_loss_version",
-        type=int,
-        default=1,
-        help="The version of the sensitive Q-error loss to use (1 or 2).",
-    )
-    parser.add_argument(
-        "--ignore_cluster_size",
-        action="store_true",
-        help="Whether to ignore the cluster size when training models.",
-    )
-    parser.add_argument(
-        "--use_client_side_latencies",
-        action="store_true",
-        help="Train all models on client-side latencies from the structured log. "
-        "Every run must have a structured_log.parquet.",
-    )
-    args = parser.parse_args()
-    print(
-        f"Value of only_non_overlapping_queries: {args.only_non_overlapping_queries}"
-    )
-
-    progress_cache_path = os.path.join(
-        pu.AUTOSLO_ROOT,
-        "experiments",
-        "06_iconq_training",
-        "progress_cache.yml",
-    )
-
-    cached_progress = {}
-
-    if os.path.exists(progress_cache_path):
-        if args.force:
-            ts_for_old_filename = str(int(datetime.now().timestamp()))
-            print(
-                f"Forcing re-training. Moving old cached progress to progress_cache_{ts_for_old_filename}.yml"
-            )
-            os.rename(
-                progress_cache_path,
-                os.path.join(
-                    pu.AUTOSLO_ROOT,
-                    "experiments",
-                    "06_iconq_training",
-                    f"progress_cache_{ts_for_old_filename}.yml",
-                ),
-            )
-        else:
-            with open(progress_cache_path, "r") as f:
-                cached_progress = yaml.safe_load(f)
-
-    print("Step 1: Finding run IDs...")
-    if "run_ids" not in cached_progress:
-        print("\tRun IDs not cached. Computing...")
-        run_ids, train_val_test_assignments = find_run_ids()
-        cached_progress["run_ids"] = run_ids
-        cached_progress["train_val_test_assignments"] = (
-            train_val_test_assignments
-        )
-        with open(progress_cache_path, "w") as f:
-            yaml.safe_dump(cached_progress, f)
-    else:
-        print("\tUsing cached run IDs.")
-        run_ids = cached_progress["run_ids"]
-
-    print("Step 2: Setting up featurizer...")
-    if "featurizer_id" not in cached_progress:
-        print("\tFeaturizer not cached. Computing...")
-        run_ids = cached_progress["run_ids"]
-        featurizer_id = set_up_featurizer(run_ids, args.from_sys_query_explain)
-        cached_progress["featurizer_id"] = featurizer_id
-        with open(progress_cache_path, "w") as f:
-            yaml.safe_dump(cached_progress, f)
-    else:
-        print("\tUsing cached featurizer ID.")
-        featurizer_id = cached_progress["featurizer_id"]
-
-    train_val_run_ids = (
-        cached_progress["train_val_test_assignments"]["train"]
-        + cached_progress["train_val_test_assignments"]["val"]
-    )
-
-    print("Step 3: Training CacheModel...")
-    if "cache_model_id" not in cached_progress:
-        print("\tCacheModel not cached. Training...")
-        cache_model_id = train_cache_model(
-            train_val_run_ids if args.use_explicit_run_ids else run_ids,
-            only_non_overlapping_queries=args.only_non_overlapping_queries,
-            ignore_cluster_size=args.ignore_cluster_size,
-            use_client_side_latencies=args.use_client_side_latencies,
-        )
-        cached_progress["cache_model_id"] = cache_model_id
-        with open(progress_cache_path, "w") as f:
-            yaml.safe_dump(cached_progress, f)
-    else:
-        print("\tUsing cached CacheModel ID.")
-        cache_model_id = cached_progress["cache_model_id"]
-
-    print("Step 4: Training XGBoostModel...")
-    if "xgboost_model_id" not in cached_progress:
-        print("\tXGBoostModel not cached. Training...")
-        xgboost_model_id = train_xgboost_model(
-            iconq_query_featurizer_id=featurizer_id,
-            run_ids=train_val_run_ids if args.use_explicit_run_ids else run_ids,
-            only_non_overlapping_queries=args.only_non_overlapping_queries,
-            ignore_cluster_size=args.ignore_cluster_size,
-            use_client_side_latencies=args.use_client_side_latencies,
-        )
-        cached_progress["xgboost_model_id"] = xgboost_model_id
-        with open(progress_cache_path, "w") as f:
-            yaml.safe_dump(cached_progress, f)
-    else:
-        print("\tUsing cached XGBoostModel ID.")
-        xgboost_model_id = cached_progress["xgboost_model_id"]
-
-    print("Step 5: Initializing StageModel...")
-    if "stage_model_id" not in cached_progress:
-        print("\tStageModel not cached. Initializing...")
-        stage_model = initialize_stage_model(
-            cache_model_id=cache_model_id,
-            xgboost_model_id=xgboost_model_id,
-        )
-        stage_model_id = stage_model.save()
-        cached_progress["stage_model_id"] = stage_model_id
-        with open(progress_cache_path, "w") as f:
-            yaml.safe_dump(cached_progress, f)
-    else:
-        print("\tUsing cached StageModel ID.")
-        stage_model_id = cached_progress["stage_model_id"]
-
-    print("Step 6: Training IconqModel...")
-    explicit_run_ids_per_split = None
-    if args.use_explicit_run_ids:
-        explicit_run_ids_per_split = cached_progress[
-            "train_val_test_assignments"
-        ]
-    iconq_model_id = train_iconq_model(
-        schema_name="ext_tpcds1000",
-        iconq_query_featurizer_id=featurizer_id,
-        stage_model_id=stage_model_id,
-        run_ids=run_ids,
-        use_stage_for_isolated_queries=args.use_stage_for_isolated_queries,
-        explicit_run_ids_per_split=explicit_run_ids_per_split,
-        penalize_based_on_overlap=args.penalize_based_on_overlap,
-        sensitive_q_error_loss_version=args.sensitive_q_error_loss_version,
-        ignore_cluster_size=args.ignore_cluster_size,
-        use_client_side_latencies=args.use_client_side_latencies,
-    )
+train_dataloader, val_dataloader = iconq_model._get_dataloaders(
+    overall_dataset, iconq_model_train_config, split=True, save_dataset=True
+)
+assert val_dataloader is not None
+iconq_model._run_training_loop(
+    train_dataloader=train_dataloader,
+    val_dataloader=val_dataloader,
+)
+iconq_model_id_readout = iconq_model.save()
+assert iconq_model_id_readout == iconq_model_id
+print(f"Done. IconqModel ID: {iconq_model_id}")

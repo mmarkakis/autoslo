@@ -26,7 +26,7 @@ from autoslo.model_training.iconq_model_training_checkpoint import (
 )
 from autoslo.models.iconq_model_config import (
     IconqModelInitConfig,
-    NNModelTrainConfig,
+    IconqModelTrainConfig,
 )
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.models.stage_model import StageModel
@@ -52,7 +52,7 @@ class IconqModel:
     def __init__(
         self,
         init_config: IconqModelInitConfig,
-        train_config_sequence: Optional[list[NNModelTrainConfig]] = None,
+        train_config_sequence: Optional[list[IconqModelTrainConfig]] = None,
         device: torch.device = torch.device("cpu"),
         parent_save_dir: Optional[str] = None,
         model_id: Optional[str] = None,
@@ -72,7 +72,7 @@ class IconqModel:
         """
         self._device = device
         self._init_config = init_config
-        self._train_config_sequence: list[NNModelTrainConfig] = (
+        self._train_config_sequence: list[IconqModelTrainConfig] = (
             [] if train_config_sequence is None else train_config_sequence
         )
 
@@ -545,7 +545,7 @@ class IconqModel:
         model = IconqModel(
             init_config=IconqModelInitConfig(**params["init_config"]),
             train_config_sequence=[
-                NNModelTrainConfig(**tc_dict)
+                IconqModelTrainConfig(**tc_dict)
                 for tc_dict in params["train_config_sequence"]
             ],
             device=torch.device(params["device"]),
@@ -575,7 +575,7 @@ class IconqModel:
     def _get_dataloaders(  # pylint: disable=too-many-locals
         self,
         dataset: ConcurrentQueryDataset,
-        train_config: NNModelTrainConfig,
+        train_config: IconqModelTrainConfig,
         split: bool = True,
         save_dataset: bool = False,
     ) -> tuple[DataLoader, Optional[DataLoader]]:
@@ -678,7 +678,7 @@ class IconqModel:
     def _get_data_splits(  # pylint: disable=too-many-arguments
         self,
         data_size: int,
-        train_config: NNModelTrainConfig,
+        train_config: IconqModelTrainConfig,
     ) -> tuple[list[int], list[int], list[int]]:
         """
         Splits the data into training, validation, and testing sets.
@@ -913,7 +913,7 @@ class IconqModel:
     def _validate(
         self,
         val_dataloader: DataLoader,
-        train_config: NNModelTrainConfig,
+        train_config: IconqModelTrainConfig,
         var_reg_weight: float = 0.0,
         training_dir: Optional[str] = None,
         epoch: Optional[int] = None,
