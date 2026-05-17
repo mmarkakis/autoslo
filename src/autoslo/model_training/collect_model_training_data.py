@@ -1,6 +1,9 @@
 import argparse
 import asyncio
+import csv
 import itertools
+import os
+import re
 import time
 from pathlib import Path
 
@@ -123,7 +126,8 @@ def sequentially_execute_training_workloads(
         if not force:
             recent_run_id = find_most_recent_live_run_id(config_id, wid)
             if recent_run_id is not None and is_up_to_date(
-                runs_path / recent_run_id / "execution_config.yml", exec_cfg_path
+                runs_path / recent_run_id / "execution_config.yml",
+                exec_cfg_path,
             ):
                 print(
                     f"[dim]Skipping '{workload_config.workload_name}' (up to date)[/]"
@@ -154,21 +158,82 @@ def sequentially_execute_training_workloads(
     print(timing_table)
 
 
+def print_run_status_table() -> None:
+    """Print a table showing the most recent run_id per RPU size for every combo."""
+    _RPU_RE = re.compile(r"RPU=(\d+)")
+
+    # workload_id → combo tuple, preserving _COMBOS order.
+    wid_to_combo = {
+        WorkloadConfig(
+            workload_name=PoissonWorkloadCreator.name_from_params(
+                num_templates=t,
+                num_query_texts_per_template=q,
+                num_queries_per_query_text=n,
+                poisson_lambda=lam,
+                seed=SEED,
+            )
+        ).id(): (t, q, n, lam)
+        for t, q, n, lam in _COMBOS
+    }
+
+    # (workload_id, rpu) → best run_id
+    best: dict[tuple[str, int], str] = {}
+    log_path = os.path.join(get_runs_path(), "run_log.csv")
+    if os.path.exists(log_path):
+        with open(log_path, newline="") as f:
+            for row in csv.DictReader(f):
+                if (
+                    not (wid := row.get("workload_id", ""))
+                    or wid not in wid_to_combo
+                ):
+                    continue
+                if not (m := _RPU_RE.search(row["config_id"])):
+                    continue
+                rpu, rid = int(m.group(1)), row["run_id"]
+                key = (wid, rpu)
+                if key not in best or int(rid) > int(best[key]):
+                    best[key] = rid
+
+    sorted_rpus = sorted({rpu for _, rpu in best})
+
+    table = Table(title="Model Training Run Status")
+    for col in ("num_templates", "num_qtpt", "num_qpqt", "poisson_lambda"):
+        table.add_column(col, justify="right")
+    for rpu in sorted_rpus:
+        table.add_column(f"RPU={rpu}", justify="left")
+
+    for wid, (t, q, n, lam) in wid_to_combo.items():
+        cells = [
+            (
+                f"[green]{best[(wid, rpu)]}[/]"
+                if (wid, rpu) in best
+                else "[dim]not run yet[/]"
+            )
+            for rpu in sorted_rpus
+        ]
+        table.add_row(str(t), str(q), str(n), str(lam), *cells)
+
+    print(table)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Create and/or execute model training workloads."
     )
     parser.add_argument(
         "--mode",
-        choices=["create", "execute", "both"],
+        choices=["create", "execute", "status", "all"],
         default="create",
-        help="Whether to create workloads, execute them, or both.",
+        help=(
+            "Whether to create workloads, execute them, print the run status "
+            "table, or all of the above. "
+        ),
     )
     parser.add_argument(
         "--execution_config",
         help=(
             "Path to the YAML execution config file. "
-            "Required when --mode is 'execute' or 'both'."
+            "Required when --mode is 'execute' or 'all'."
         ),
     )
     parser.add_argument(
@@ -189,15 +254,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Create workloads if needed.
-    if args.mode == "create" or args.mode == "both":
+    if args.mode == "create" or args.mode == "all":
         create_training_workloads()
 
     # Execute workloads if needed.
-    if args.mode == "execute" or args.mode == "both":
+    if args.mode == "execute" or args.mode == "all":
         if not args.execution_config:
             parser.error(
                 "--execution_config is required when --mode is 'execute' or "
-                "'both'."
+                "'all'."
             )
         workload_configs = [
             WorkloadConfig(
@@ -217,3 +282,7 @@ if __name__ == "__main__":
             params=args.param,
             force=args.force,
         )
+
+    # Print status table if requested.
+    if args.mode == "status" or args.mode == "all":
+        print_run_status_table()
