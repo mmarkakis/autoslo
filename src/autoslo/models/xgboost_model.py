@@ -31,7 +31,8 @@ class XGBoostModel:
         eval_metric: str = "mae",
         early_stopping_rounds: int = 100,
         random_seed: int = 42,
-        iconq_query_featurizer_id: Optional[tuple[str, str]] = None,
+        schema_name: str = "ext_tpcds1000",
+        iconq_query_featurizer_id: Optional[str] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
         ignore_cluster_size: bool = False,
     ):
@@ -49,6 +50,7 @@ class XGBoostModel:
             early_stopping_rounds: The number of rounds with no improvement to
                 wait before stopping.
             random_seed: The random seed to use for training.
+            schema_name: The schema name.
             iconq_query_featurizer_id: The identifier of the
                 IconqQueryFeaturizer to use for featurizing queries. If not
                 provided, must provide iconq_query_featurizer_init_params, with
@@ -80,8 +82,7 @@ class XGBoostModel:
         else:
             self._iconq_query_featurizer_id = iconq_query_featurizer_id
             self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                schema_name="ext_tpcds1000",  # TODO: pass schema_name in as a parameter instead of hardcoding
-                timestamp=iconq_query_featurizer_id,
+                schema_name, iconq_query_featurizer_id
             )
 
         self._train_on_log_runtime = train_on_log_runtime

@@ -135,6 +135,7 @@ if "xgboost_model_id" not in cached_progress:
     xgboost_model = XGBoostModel(
         train_on_log_runtime=True,
         n_estimators=100,
+        schema_name=iconq_model_init_config_dict["schema_name"],
         iconq_query_featurizer_id=featurizer_id,
         ignore_cluster_size=ignore_cluster_size,
     )

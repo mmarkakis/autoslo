@@ -10,7 +10,7 @@ class IconqModelInitConfig:
 
     schema_name: str  # The schema name.
 
-    iconq_query_featurizer_id: Optional[tuple[str, str]] = None
+    iconq_query_featurizer_id: Optional[str] = None
     iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None
     featurizer_num_operators: int = (
         10  # The number of operators to consider in the query featurizer.

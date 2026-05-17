@@ -481,24 +481,24 @@ class IconqQueryFeaturizer:
                     features,
                 )
 
-    def save(self, timestamp: Optional[str] = None) -> tuple[str, str]:
+    def save(self, iconq_query_featurizer_id: Optional[str] = None) -> str:
         """
         Saves the IconqQueryFeaturizer.
 
         Returns:
-            A tuple of (schema_name, timestamp) that uniquely identifies the
-            saved featurizer.
+            An iconq_query_featurizer_id that uniquely identifies the saved
+            featurizer (within its schema).
         """
         # Create directory.
-        if timestamp is None:
-            timestamp = str(int(datetime.now().timestamp()))
+        if iconq_query_featurizer_id is None:
+            iconq_query_featurizer_id = str(int(datetime.now().timestamp()))
         save_dir = os.path.join(
             pu.get_data_path(),
             "__query_featurizations",
             self._schema_name,
-            timestamp,
+            iconq_query_featurizer_id,
         )
-        os.makedirs(save_dir, exist_ok=(timestamp is not None))
+        os.makedirs(save_dir, exist_ok=(iconq_query_featurizer_id is not None))
 
         # Save featurizer parameters.
         param_path = os.path.join(save_dir, "params.yml")
@@ -535,18 +535,19 @@ class IconqQueryFeaturizer:
                 )
             yaml.safe_dump(l, f, sort_keys=False)
 
-        # Return the full featurizer ID: "<schema_name>/<timestamp>".
-        return self._schema_name, timestamp
+        return iconq_query_featurizer_id
 
     @staticmethod
-    def load(schema_name: str, timestamp: str) -> "IconqQueryFeaturizer":
+    def load(
+        schema_name: str, iconq_query_featurizer_id: str
+    ) -> "IconqQueryFeaturizer":
         """
         Loads a IconqQueryFeaturizer from a directory.
 
         Parameters:
             schema_name: The schema the featurizer was trained for.
-            timestamp: The timestamp of the directory to load the
-                IconqQueryFeaturizer from.
+            iconq_query_featurizer_id: The identifier of the directory to load
+            the IconqQueryFeaturizer from.
         """
 
         # Load parameters.
@@ -554,7 +555,7 @@ class IconqQueryFeaturizer:
             pu.get_data_path(),
             "__query_featurizations",
             schema_name,
-            timestamp,
+            iconq_query_featurizer_id,
         )
         param_path = os.path.join(load_dir, "params.yml")
         with open(param_path, "r") as f:
