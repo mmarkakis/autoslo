@@ -8,16 +8,16 @@ locals:
     target_date: "2026-01-01"
     rescale_factor: 1
   set1: &set1
-    KAPPA: 4.0
+    KAPPA: 4
     SECOND_CLUSTER_RPUS: 32
   set2: &set2
-    KAPPA: 4.0
+    KAPPA: 4
     SECOND_CLUSTER_RPUS: 16
   set3: &set3
-    KAPPA: 2.0
+    KAPPA: 2
     SECOND_CLUSTER_RPUS: 32
   set4: &set4
-    KAPPA: 2.0
+    KAPPA: 2
     SECOND_CLUSTER_RPUS: 16
   arrow: &arrow
     base_label: "Round Robin"
