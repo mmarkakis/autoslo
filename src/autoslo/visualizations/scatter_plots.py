@@ -203,14 +203,12 @@ def cost_vs_compliance_scatter(
 
     # Maybe add legend.
     if show_legend:
-        ax.legend(loc="lower right")
+        ax.legend(loc="center right")
 
     # Relative padding around x data.
     xvals = [pt.x for pt in points]
     left, right = (
-        existing_xlims
-        if existing_xlims
-        else ((min(xvals), max(xvals)))
+        existing_xlims if existing_xlims else ((min(xvals), max(xvals)))
     )
     if x_scale == "linear" and len(points) > 0:
         additional = (max(xvals) - min(xvals)) * x_pad
@@ -253,20 +251,33 @@ def cost_vs_compliance_scatter(
                 zorder=-10,
             )
             parts: list[str] = []
+            is_regression = False
             if base.x != 0:
-                x_change = (target.x - base.x) / abs(base.x)
+                x_change = target.x - base.x
+                x_change_rel = x_change / abs(base.x)
                 direction = "←" if x_change < 0 else "→"
-                parts.append(f"Violation {direction} {abs(x_change):.1%}")
+                is_regression = (x_change > 0) or is_regression
+                parts.append(
+                    f"Violation {direction} {abs(x_change_rel):.1%} "
+                    f"({abs(x_change):.2f})"
+                )
             if base.y != 0:
-                y_change = (target.y - base.y) / abs(base.y)
+                y_change = target.y - base.y
+                y_change_rel = y_change / abs(base.y)
                 direction = "↓" if y_change < 0 else "↑"
-                parts.append(f"Cost {direction} {abs(y_change):.1%}")
+                is_regression = (y_change > 0) or is_regression
+                parts.append(
+                    f"Cost {direction} {abs(y_change_rel):.1%} "
+                    f"(${abs(y_change):.2f})"
+                )
             if parts:
                 ax.text(
-                    0.1,
-                    0.1,
+                    0.05,
+                    0.05,
                     "\n".join(parts),
-                    color=Palette.gray,
+                    color=(
+                        Palette.gray if not is_regression else Palette.dark_red
+                    ),
                     ha="left",
                     va="bottom",
                     transform=ax.transAxes,

@@ -15,7 +15,10 @@ from autoslo.config.component_configs import (
 )
 from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
-from autoslo.filesystem.path_utils import is_up_to_date
+from autoslo.filesystem.path_utils import (
+    find_most_recent_live_run_id,
+    is_up_to_date,
+)
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
@@ -46,15 +49,25 @@ def _plot_is_up_to_date(
     plot_path: Path,
     all_points_specs: list[list[dict]],
     sim_runs_dir: Path,
+    live: bool = False,
 ) -> bool:
     inputs = [manifest_path]
+    runs_dir = Path(pu.get_runs_path())
     for points_spec in all_points_specs:
         for point in points_spec:
             workload_config = WorkloadConfig.from_config(point)
             exec_cfg_path = resolve_config(point["execution_config"])
             params = point.get("params", {})
             config_label = make_run_id([exec_cfg_path.stem], params)
-            run_dir = sim_runs_dir / workload_config.id() / config_label
+            if live:
+                run_id = find_most_recent_live_run_id(
+                    config_label, workload_config.id()
+                )
+                if run_id is None:
+                    continue
+                run_dir = runs_dir / run_id
+            else:
+                run_dir = sim_runs_dir / workload_config.id() / config_label
             inputs.append(run_dir / "execution_config.yml")
     return is_up_to_date(plot_path, *inputs)
 
@@ -64,20 +77,35 @@ def _load_scatter_points(
     slo_obj: SloObjective,
     slo_resolver: SloResolver,
     sim_runs_dir: Path,
+    live: bool = False,
 ) -> list[ScatterPoint]:
     scatter_points: list[ScatterPoint] = []
+    runs_dir = Path(pu.get_runs_path())
     for point in points_spec:
         workload_config = WorkloadConfig.from_config(point)
         exec_cfg_path = resolve_config(point["execution_config"])
         params = point.get("params", {})
         config_label = make_run_id([exec_cfg_path.stem], params)
-        run_dir = sim_runs_dir / workload_config.id() / config_label
-        if not (run_dir / "execution_config.yml").exists():
-            console.print(
-                f"[yellow]Warning: simulation run not found at {run_dir} "
-                f"— skipping point '{point['label']}'.[/]"
+        if live:
+            run_id = find_most_recent_live_run_id(
+                config_label, workload_config.id()
             )
-            continue
+            if run_id is None:
+                console.print(
+                    f"[yellow]Warning: no live run found for workload "
+                    f"'{workload_config.id()}' / config '{config_label}' "
+                    f"— skipping point '{point['label']}'.[/]"
+                )
+                continue
+            run_dir = runs_dir / run_id
+        else:
+            run_dir = sim_runs_dir / workload_config.id() / config_label
+            if not (run_dir / "execution_config.yml").exists():
+                console.print(
+                    f"[yellow]Warning: simulation run not found at {run_dir} "
+                    f"— skipping point '{point['label']}'.[/]"
+                )
+                continue
         result = ExecutionResult.load(run_dir, slo_resolver=slo_resolver)
         scatter_points.append(
             ScatterPoint(
@@ -103,7 +131,7 @@ def _generate_single_panel_plot(
     points_spec: list[dict] = content["points"]
 
     if not force and _plot_is_up_to_date(
-        manifest_path, plot_path, [points_spec], sim_runs_dir
+        manifest_path, plot_path, [points_spec], sim_runs_dir, live=live
     ):
         console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
         return
@@ -124,7 +152,7 @@ def _generate_single_panel_plot(
     )
 
     scatter_points = _load_scatter_points(
-        points_spec, slo_obj, slo_resolver, sim_runs_dir
+        points_spec, slo_obj, slo_resolver, sim_runs_dir, live=live
     )
 
     if not scatter_points:
@@ -144,9 +172,14 @@ def _generate_single_panel_plot(
     )
     if not live:
         ax.text(
-            0.98, 0.98, "[Simulated]",
+            0.98,
+            0.98,
+            "[Simulated]",
             transform=ax.transAxes,
-            color="red", ha="right", va="top", fontsize=9,
+            color="red",
+            ha="right",
+            va="top",
+            fontsize=9,
         )
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -193,7 +226,7 @@ def _generate_multi_panel_plot(
     # Up-to-date check across all panels.
     all_points_specs = [p["points"] for p in panels_spec]
     if not force and _plot_is_up_to_date(
-        manifest_path, plot_path, all_points_specs, sim_runs_dir
+        manifest_path, plot_path, all_points_specs, sim_runs_dir, live=live
     ):
         console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
         return
@@ -231,7 +264,7 @@ def _generate_multi_panel_plot(
         )
 
         scatter_points = _load_scatter_points(
-            points_spec, slo_obj, slo_resolver, sim_runs_dir
+            points_spec, slo_obj, slo_resolver, sim_runs_dir, live=live
         )
 
         if not scatter_points:
@@ -260,9 +293,14 @@ def _generate_multi_panel_plot(
         )
         if not live:
             ax.text(
-                0.98, 0.98, "[Simulated]",
+                0.98,
+                0.98,
+                "[Simulated]",
                 transform=ax.transAxes,
-                color="red", ha="right", va="top", fontsize=9,
+                color="red",
+                ha="right",
+                va="top",
+                fontsize=9,
             )
         rendered_xlims.append(xlims)
         rendered_ylims.append(ylims)
@@ -300,7 +338,9 @@ def _generate_multi_panel_plot(
         console.print(f"[green]Saved:[/] {legend_path}")
 
 
-def _generate_plot(manifest_path: Path, force: bool, live: bool = False) -> None:
+def _generate_plot(
+    manifest_path: Path, force: bool, live: bool = False
+) -> None:
     manifest = load_yaml(manifest_path)
     plot_name = manifest_path.stem
 

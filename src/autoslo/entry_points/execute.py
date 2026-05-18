@@ -102,7 +102,7 @@ def main():
         ),
     )
     parser.add_argument(
-        "--split-index",
+        "--split_index",
         type=int,
         default=0,
         help=(

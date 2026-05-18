@@ -21,7 +21,7 @@ locals:
     SECOND_CLUSTER_RPUS: 16
   arrow: &arrow
     base_label: "Round Robin"
-    target_label: "Iconq"
+    target_label: "Iconq + Cost.Opt."
 
 
 main_content:
@@ -45,7 +45,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k4.yml"
+      slo_dict_filename: "1778469201294_p100_k4.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -55,14 +55,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set1
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set1
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
@@ -79,7 +79,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k4.yml"
+      slo_dict_filename: "1778469201294_p100_k4.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -89,14 +89,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set2
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set2
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
@@ -113,7 +113,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k2.yml"
+      slo_dict_filename: "1778469201294_p100_k2.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -123,14 +123,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set3
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set3
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
@@ -147,7 +147,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k2.yml"
+      slo_dict_filename: "1778469201294_p100_k2.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -157,14 +157,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set4
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set4
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval.yml
@@ -181,7 +181,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k4.yml"
+      slo_dict_filename: "1778469201294_p100_k4.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -191,14 +191,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set1
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set1
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
@@ -215,7 +215,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k4.yml"
+      slo_dict_filename: "1778469201294_p100_k4.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -225,14 +225,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set2
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set2
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
@@ -249,7 +249,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k2.yml"
+      slo_dict_filename: "1778469201294_p100_k2.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -259,14 +259,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set3
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set3
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
@@ -283,7 +283,7 @@ main_content:
       slo_threshold: 0.05
     slo_resolver_config:
       slo_s: 30.0
-      slo_dict_filename: "1778469201294_p50_k2.yml"
+      slo_dict_filename: "1778469201294_p100_k2.yml"
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
@@ -293,14 +293,14 @@ main_content:
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set4
-      - label: "Stage"
+      - label: "Stage + Cost.Opt."
         formatting_id: stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set4
-      - label: "Iconq"
+      - label: "Iconq + Cost.Opt."
         formatting_id: iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval.yml
