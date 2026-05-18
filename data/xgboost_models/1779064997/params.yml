@@ -1,0 +1,10 @@
+early_stopping_rounds: 100
+eta: 0.2
+eval_metric: mae
+iconq_query_featurizer_id: '1779064992'
+ignore_cluster_size: false
+max_depth: 8
+n_estimators: 100
+only_non_overlapping_queries: true
+random_seed: 42
+train_on_log_runtime: true

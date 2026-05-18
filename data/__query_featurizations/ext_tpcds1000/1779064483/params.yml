@@ -1,0 +1,81 @@
+m: 15
+n: 20
+use_size: true
+use_true_card: false
+use_table_selectivity: false
+use_log: true
+schema_name: ext_tpcds1000
+run_ids:
+- '1778822197626'
+- '1778822203993'
+- '1778821888613'
+- '1778822227786'
+- '1778827732917'
+- '1778824254808'
+- '1778823665762'
+- '1778824038818'
+- '1778833176612'
+- '1778827275022'
+- '1778826668997'
+- '1778827099259'
+- '1778839357246'
+- '1778830455527'
+- '1778829317324'
+- '1778829721533'
+top_operators:
+- XN Seq Scan
+- XN Hash
+- XN Hash Join DS_DIST_ALL_NONE
+- XN Subquery Scan
+- XN HashAggregate
+- XN Hash Join DS_BCAST_INNER
+- XN Network
+- XN Sort
+- XN Merge
+- XN Limit
+- XN Hash Join DS_DIST_INNER
+- XN Result
+- XN Hash Join DS_DIST_OUTER
+- XN Append
+- XN Window
+top_tables:
+- - store_sales
+  - 2879987999
+- - catalog_sales
+  - 1439980416
+- - inventory
+  - 783000000
+- - web_sales
+  - 720000376
+- - store_returns
+  - 287999764
+- - catalog_returns
+  - 143996756
+- - web_returns
+  - 71997522
+- - customer
+  - 12000000
+- - customer_address
+  - 6000000
+- - customer_demographics
+  - 1920800
+- - item
+  - 300000
+- - time_dim
+  - 86400
+- - date_dim
+  - 73049
+- - catalog_page
+  - 30000
+- - household_demographics
+  - 7200
+- - web_page
+  - 3000
+- - promotion
+  - 1500
+- - store
+  - 1002
+- - reason
+  - 65
+- - web_site
+  - 54

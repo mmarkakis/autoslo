@@ -4,7 +4,7 @@ init_config:
   embedding_size: 64
   featurizer_num_operators: 10
   featurizer_num_tables: 10
-  iconq_query_featurizer_id: '1778981596'
+  iconq_query_featurizer_id: '1779064755'
   iconq_query_featurizer_init_params: null
   ignore_cluster_size: false
   is_bayesian: false
@@ -14,7 +14,7 @@ init_config:
   lstm_num_layers: 1
   mdn_num_gaussians: 3
   schema_name: ext_tpcds1000
-  stage_model_id: /home/markakis/chunkbench/data/stage_models/1778981600
+  stage_model_id: /home/markakis/chunkbench/data/stage_models/1779064760
   stage_model_init_params: null
   train_on_log_runtime: true
   use_fixed_window_max_neighbors_per_side: null
@@ -25,6 +25,7 @@ train_config_sequence:
 - batch_size: 32
   explicit_run_ids_per_split: null
   grad_clip_max_norm: 2.0
+  ignore_aborted_queries: true
   learning_rate: 0.001
   learning_rate_gamma: 0.9
   mdn_mix_softmax_temperature: 1.0
