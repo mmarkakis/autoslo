@@ -18,7 +18,7 @@ from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.workload_definition.query import QueryTextId
 
-_DEFAULT_PERCENTILES = [50, 100]
+_DEFAULT_PERCENTILES = [-1, 50, 100]
 _DEFAULT_MULTIPLIERS = [1, 2, 3, 4, 5, 8, 10]
 
 
@@ -71,25 +71,29 @@ def generate_slo_tables(
     os.makedirs(slo_dir, exist_ok=True)
 
     for p in baseline_percentiles:
-        baseline = df.groupby("template_id")["latency_s"].quantile(p / 100.0)
+        mid_part = f"p{int(p)}" if p != -1 else "mean"
+        if p == -1:
+            baseline = df.groupby("template_id")["latency_s"].mean()
+        else:
+            baseline = df.groupby("template_id")["latency_s"].quantile(p / 100.0)
         for k in multipliers:
             slo_dict = {
                 str(t): round(float(v * k), 3) for t, v in baseline.items()
             }
             out_path = os.path.join(
-                slo_dir, f"{run_id}_p{int(p)}_k{int(k)}.yml"
+                slo_dir, f"{run_id}_{mid_part}_k{int(k)}.yml"
             )
             dump_yaml(
                 {
                     "run_id": run_id,
-                    "baseline_percentile": p,
+                    "agg_method": mid_part,
                     "multiplier": k,
                     "num_templates": len(slo_dict),
                     "slo_dict": slo_dict,
                 },
                 out_path,
             )
-            print(f"  Wrote SLO table  p={p}  k={k}  → {out_path}")
+            print(f"  Wrote SLO table  agg_method={mid_part}  k={k}  → {out_path}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 run_id: '1778469201294'
-baseline_percentile: 100
+agg_method: p100
 multiplier: 5
 num_templates: 99
 slo_dict:
