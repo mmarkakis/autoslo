@@ -9,7 +9,10 @@ from typing import Optional, TypeAlias, cast
 
 import numpy as np
 import pandas as pd
+from rich.console import Console
 from tqdm.auto import tqdm
+
+_console = Console()
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
@@ -103,11 +106,17 @@ class IconqQueryFeaturizer:
             print("Featurizing queries...")
 
             for run_id in tqdm(run_ids):
-                trace = Trace(run_id)
-                query_text_ids = trace.query_text_ids
-                was_aborted = trace.was_aborted()
-
-                explain_rows = trace.sys_query_explain_rows_per_query()
+                try:
+                    trace = Trace(run_id)
+                    query_text_ids = trace.query_text_ids
+                    was_aborted = trace.was_aborted()
+                    explain_rows = trace.sys_query_explain_rows_per_query()
+                except Exception as exc:
+                    _console.print(
+                        f"[yellow]Warning:[/] skipping run [bold]{run_id}[/] while "
+                        f"featurizing queries ({type(exc).__name__}: {exc})"
+                    )
+                    continue
 
                 for cluster_aware_query_id, aborted in was_aborted.items():
                     if aborted:
@@ -176,11 +185,18 @@ class IconqQueryFeaturizer:
         all_operators: dict[str, int] = defaultdict(int)
 
         for run_id in tqdm(run_ids):
-            trace = Trace(run_id)
-            sys_query_explain_rows_per_query = (
-                trace.sys_query_explain_rows_per_query()
-            )
-            was_aborted = trace.was_aborted()
+            try:
+                trace = Trace(run_id)
+                sys_query_explain_rows_per_query = (
+                    trace.sys_query_explain_rows_per_query()
+                )
+                was_aborted = trace.was_aborted()
+            except Exception as exc:
+                _console.print(
+                    f"[yellow]Warning:[/] skipping run [bold]{run_id}[/] while "
+                    f"finding top operators ({type(exc).__name__}: {exc})"
+                )
+                continue
             for query_id, aborted in was_aborted.items():
                 if aborted:
                     # Ignore aborted queries for accurate operator counts.

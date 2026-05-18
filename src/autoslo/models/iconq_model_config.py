@@ -140,3 +140,11 @@ class IconqModelTrainConfig:
     use_client_side_latencies: bool = (
         False  # Whether to use client-side latencies instead of server-side.
     )
+
+    ignore_aborted_queries: bool = (
+        False  # Whether to exclude aborted queries as training targets.
+        # When True, aborted queries are removed from the base-query set
+        # (and thus from the dataset / model training) but are still kept
+        # as *neighbors* of other queries in the IconqModel dataset.
+        # The same flag is forwarded to the CacheModel and XGBoostModel.
+    )

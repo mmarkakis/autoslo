@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Optional
+from typing import Callable, Optional
 
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
 
@@ -17,6 +17,7 @@ def build_dataset_from_trace(
     use_client_side_latencies: bool = False,
     use_fixed_window_radius_s: Optional[float] = None,
     use_fixed_window_max_neighbors_per_side: Optional[int] = None,
+    ignore_aborted_queries: bool = False,
 ) -> ConcurrentQueryDataset:
     """Build a ConcurrentQueryDataset from a Trace for IconqModel training.
 
@@ -110,14 +111,17 @@ def build_dataset_from_trace(
         interval_trees,
         use_fixed_window_radius_s,
         use_fixed_window_max_neighbors_per_side,
+        _is_lb if ignore_aborted_queries else lambda qid: False,
     )
 
-    targets: dict[str, float] = {
-        qid.query_id: _latency(qid) for qid in cluster_aware_query_ids
-    }
-    is_lower_bound: dict[str, bool] = {
-        qid.query_id: _is_lb(qid) for qid in cluster_aware_query_ids
-    }
+    targets: dict[ClusterAwareQueryId, float] = {}
+    is_lower_bound: dict[ClusterAwareQueryId, bool] = {}
+    for qid in cluster_aware_query_ids:
+        is_lb = _is_lb(qid)
+        if ignore_aborted_queries and is_lb:
+            continue
+        targets[qid] = _latency(qid)
+        is_lower_bound[qid] = is_lb
 
     return ConcurrentQueryDataset.build_from_query_groups(
         iconq_interaction_featurizer=interaction_featurizer,
@@ -132,6 +136,7 @@ def _find_neighbors(
     interval_trees: dict[str, IntervalTree],
     use_fixed_window_radius_s: Optional[float],
     use_fixed_window_max_neighbors_per_side: Optional[int],
+    ignore_as_base: Callable[[ClusterAwareQueryId], bool],
 ) -> dict[str, dict[Query, list[Query]]]:
     """For each cluster, map every query to its ordered list of neighbors.
 
@@ -141,6 +146,9 @@ def _find_neighbors(
     - Fixed-window: neighbors are queries whose *start time* falls within
       ±use_fixed_window_radius_s of the base query's start time, optionally
       capped to use_fixed_window_max_neighbors_per_side on each side.
+
+    Queries for which ignore_as_base returns True are excluded from the
+    base-query set but are still kept as neighbors of other queries.
     """
     result: dict[str, dict[Query, list[Query]]] = {}
 
@@ -149,6 +157,11 @@ def _find_neighbors(
 
         for iv in sorted(tree, key=lambda x: x.begin):
             neighbor_ivs: list[Interval] = []
+
+            if ignore_as_base(
+                ClusterAwareQueryId.make(cluster_name, iv.data.query_id)
+            ):
+                continue
 
             if use_fixed_window_radius_s is None:
                 # Overlap-based: any interval that shares time with [begin, end).

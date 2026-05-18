@@ -443,6 +443,8 @@ class Trace:
             s = df.set_index("cluster_aware_query_id")["query_text_id"]
             series.append(s)
 
+        if not series:
+            return pd.Series(dtype=object)
         concatenated = (
             pd.concat(series)
             .reindex(self.cluster_aware_query_ids)
@@ -622,6 +624,8 @@ class Trace:
             )
             series.append(s)
 
+        if not series:
+            return pd.Series(dtype=bool)
         return pd.concat(series).reindex(self.cluster_aware_query_ids)
 
     def error_messages(self) -> pd.Series:
@@ -633,6 +637,8 @@ class Trace:
         for df in self._dfs["sys_query_history"].values():
             s = df.set_index("cluster_aware_query_id")["error_message"]
             series.append(s)
+        if not series:
+            return pd.Series(dtype=object)
         return (
             pd.concat(series).reindex(self.cluster_aware_query_ids).str.strip()
         )

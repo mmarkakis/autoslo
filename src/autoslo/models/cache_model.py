@@ -141,6 +141,7 @@ class CacheModel:
         from_scratch: bool = False,
         only_non_overlapping_queries: bool = False,
         use_client_side_latencies: bool = False,
+        ignore_aborted_queries: bool = False,
     ) -> None:
         """
         Trains the model on the given run IDs.
@@ -153,6 +154,8 @@ class CacheModel:
                 that do not overlap with any other queries in the trace.
             use_client_side_latencies: Use client-side latencies from the
                 structured log instead of Redshift server-side elapsed_time.
+            ignore_aborted_queries: Whether to exclude aborted queries from
+                training.
         """
 
         # If retraining from scratch, reset the cache.
@@ -173,6 +176,7 @@ class CacheModel:
             )
             query_text_ids = trace.query_text_ids
             query_is_non_overlapping = trace.query_is_non_overlapping()
+            was_aborted = trace.was_aborted() if ignore_aborted_queries else {}
 
             for (cluster_aware_query_id, latency), query_text_id in zip(
                 latencies.items(), query_text_ids
@@ -180,6 +184,10 @@ class CacheModel:
                 if (
                     only_non_overlapping_queries
                     and not query_is_non_overlapping[cluster_aware_query_id]
+                ):
+                    continue
+                if ignore_aborted_queries and was_aborted.get(
+                    cluster_aware_query_id, False
                 ):
                     continue
 

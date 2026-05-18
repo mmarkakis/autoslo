@@ -233,8 +233,8 @@ class ConcurrentQueryDataset(Dataset):
     def build_from_query_groups(
         iconq_interaction_featurizer: IconqInteractionFeaturizer,
         cluster_to_base_to_neighbors: dict[str, dict[Query, list[Query]]],
-        targets: dict[str, float] | None = None,
-        is_lower_bound: dict[str, bool] | None = None,
+        targets: dict[ClusterAwareQueryId, float] | None = None,
+        is_lower_bound: dict[ClusterAwareQueryId, bool] | None = None,
         use_log_runtime: bool = True,
     ) -> "ConcurrentQueryDataset":
         """
@@ -247,11 +247,11 @@ class ConcurrentQueryDataset(Dataset):
             cluster_to_base_to_neighbors: A dictionary mapping cluster names to
                 dictionaries that map base queries to their list of neighboring
                 queries.
-            targets: Optional mapping of query_id → actual latency (the *y*
-                value).  When *None* (inference), *y* defaults to 0.0.
-            is_lower_bound: Optional mapping of query_id → whether the target
-                is a censored (lower-bound) observation.  When *None*, defaults
-                to False.
+            targets: Optional mapping of ClusterAwareQueryId → actual latency.
+                When *None* (inference), *y* defaults to 0.0.
+            is_lower_bound: Optional mapping of ClusterAwareQueryId → whether
+                the target is a censored (lower-bound) observation.  When
+                *None*, defaults to False.
             use_log_runtime: Whether to use log(runtime) as the target variable.
 
         Returns:
@@ -319,8 +319,14 @@ class ConcurrentQueryDataset(Dataset):
                     )
                 )
                 x.append(torch.from_numpy(arr))
-                if targets is not None and base_query.query_id in targets:
-                    latency = targets[base_query.query_id]
+                base_cluster_aware_query_id = ClusterAwareQueryId.for_query(
+                    cluster_name, base_query
+                )
+                if (
+                    targets is not None
+                    and base_cluster_aware_query_id in targets
+                ):
+                    latency = targets[base_cluster_aware_query_id]
                     floored_latency = max(latency, 0.001)
                     y.append(
                         floored_latency
@@ -330,12 +336,10 @@ class ConcurrentQueryDataset(Dataset):
                 else:
                     y.append(0.0)  # Placeholder if latency is not available
                 pinch_points.append(pinch_idx)
-                cluster_aware_query_ids_out.append(
-                    ClusterAwareQueryId.for_query(cluster_name, base_query)
-                )
+                cluster_aware_query_ids_out.append(base_cluster_aware_query_id)
                 query_text_id_out.append(base_query.query_text_id)
                 lb = (
-                    is_lower_bound.get(base_query.query_id, False)
+                    is_lower_bound.get(base_cluster_aware_query_id, False)
                     if is_lower_bound is not None
                     else False
                 )

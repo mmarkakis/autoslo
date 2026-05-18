@@ -152,6 +152,7 @@ class XGBoostModel:
         parent_save_dir: Optional[str] = None,
         only_non_overlapping_queries: bool = False,
         use_client_side_latencies: bool = False,
+        ignore_aborted_queries: bool = False,
     ) -> tuple[float, float]:
         """
         Trains the model on the given run IDs.
@@ -164,6 +165,8 @@ class XGBoostModel:
                 that do not overlap with any other queries in the trace.
             use_client_side_latencies: Use client-side latencies from the
                 structured log instead of Redshift server-side elapsed_time.
+            ignore_aborted_queries: Whether to exclude aborted queries from
+                training.
 
         Returns:
             A tuple containing the final training and validation loss.
@@ -215,12 +218,17 @@ class XGBoostModel:
                 else trace.server_side_latencies_s
             )
             query_is_non_overlapping = trace.query_is_non_overlapping()
+            was_aborted = trace.was_aborted() if ignore_aborted_queries else {}
             new_items = []
 
             for cluster_aware_query_id in featurizations.keys():
                 if (
                     only_non_overlapping_queries
                     and not query_is_non_overlapping[cluster_aware_query_id]
+                ):
+                    continue
+                if ignore_aborted_queries and was_aborted.get(
+                    cluster_aware_query_id, False
                 ):
                     continue
 

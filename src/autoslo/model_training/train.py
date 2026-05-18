@@ -62,6 +62,9 @@ train_stage_only_on_isolated_queries: bool = iconq_model_train_config_dict.get(
 use_client_side_latencies: bool = iconq_model_train_config_dict.get(
     "use_client_side_latencies", False
 )
+ignore_aborted_queries: bool = iconq_model_train_config_dict.get(
+    "ignore_aborted_queries", False
+)
 
 #########
 ## Step 1: Read run IDs from config.
@@ -105,6 +108,7 @@ if "cache_model_id" not in cached_progress:
         from_scratch=True,
         only_non_overlapping_queries=train_stage_only_on_isolated_queries,
         use_client_side_latencies=use_client_side_latencies,
+        ignore_aborted_queries=ignore_aborted_queries,
     )
     cache_model_id = cache_model.save()
     cached_progress["cache_model_id"] = cache_model_id
@@ -131,6 +135,7 @@ if "xgboost_model_id" not in cached_progress:
         run_ids=train_val_run_ids,
         only_non_overlapping_queries=train_stage_only_on_isolated_queries,
         use_client_side_latencies=use_client_side_latencies,
+        ignore_aborted_queries=ignore_aborted_queries,
     )
     xgboost_model_id = xgboost_model.save()
     cached_progress["xgboost_model_id"] = xgboost_model_id
@@ -183,18 +188,22 @@ datasets = [
         use_client_side_latencies=use_client_side_latencies,
         use_fixed_window_radius_s=iconq_model_init_config.use_fixed_window_radius_s,
         use_fixed_window_max_neighbors_per_side=iconq_model_init_config.use_fixed_window_max_neighbors_per_side,
+        ignore_aborted_queries=ignore_aborted_queries,
     )
     for run_id in train_val_run_ids
 ]
 overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
 
-train_dataloader, val_dataloader = iconq_model._get_dataloaders(
-    overall_dataset, iconq_model_train_config, split=True, save_dataset=True
+train_dataloader, val_dataloader, test_dataloader = (
+    iconq_model._get_dataloaders(
+        overall_dataset, iconq_model_train_config, split=True, save_dataset=True
+    )
 )
 assert val_dataloader is not None
 iconq_model._run_training_loop(
     train_dataloader=train_dataloader,
     val_dataloader=val_dataloader,
+    test_dataloader=test_dataloader,
 )
 iconq_model_id_readout = iconq_model.save()
 assert iconq_model_id_readout == iconq_model_id

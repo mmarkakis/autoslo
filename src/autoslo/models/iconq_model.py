@@ -9,10 +9,82 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.rule import Rule
+from rich.table import Table
 from torch import nn, optim
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader, Subset
-from tqdm.auto import tqdm
+
+_console = Console()
+
+
+def _print_errors_table(
+    title: str,
+    sets: list[tuple[str, dict[str, float]]],
+) -> None:
+    """Print a Rich Table of per-set error metrics.
+
+    Groups within the same split are separated by a single horizontal line.
+    Groups from different splits are separated by a double horizontal line
+    (implemented as an empty spacer row each marked end_section=True).
+    """
+    table = Table(show_header=True, header_style="bold", show_lines=False)
+    table.add_column("set / queries", no_wrap=True)
+    table.add_column("metric", no_wrap=True)
+    for col in ("mean", "p50", "p90", "p95"):
+        table.add_column(col, justify="right")
+
+    _EMPTY_ROW = ("", "", "", "", "", "")
+    n_sets = len(sets)
+    for set_idx, (set_name, errs) in enumerate(sets):
+        is_last_set = set_idx == n_sets - 1
+        for suffix in ["normal", "aborted", "all"]:
+
+            def _f(k: str, _e: dict = errs) -> str:  # default arg captures errs
+                v = _e.get(k)
+                return f"{v:.4f}" if v is not None else "-"
+
+            n = int(errs.get(f"n_{suffix}", 0))
+            if n == 0:
+                continue
+            label = f"{set_name} / {suffix} (N={n})"
+            table.add_row(
+                label,
+                "q-error",
+                _f(f"mean_q_error_{suffix}"),
+                _f(f"p50_q_error_{suffix}"),
+                _f(f"p90_q_error_{suffix}"),
+                _f(f"p95_q_error_{suffix}"),
+                style="white",
+            )
+            table.add_row(
+                "",
+                "abs error",
+                _f(f"mean_abs_error_{suffix}"),
+                _f(f"p50_abs_error_{suffix}"),
+                _f(f"p90_abs_error_{suffix}"),
+                _f(f"p95_abs_error_{suffix}"),
+                style="dim",
+                end_section=True,
+            )
+        # Double horizontal line between splits: the abs-error row above already
+        # added one rule via end_section; a blank spacer row with end_section
+        # adds a second immediately adjacent rule.
+        if not is_last_set:
+            table.add_row(*_EMPTY_ROW, end_section=True)
+
+    _console.print(Rule(title))
+    _console.print(table)
+
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster import Cluster
@@ -572,15 +644,90 @@ class IconqModel:
 
         return model
 
+    @staticmethod
+    def print_performance_tables(
+        model_ids: list[str],
+        parent_load_dir: Optional[str] = None,
+    ) -> None:
+        """Print train / val / test performance tables for one or more saved models.
+
+        Each model must have been trained with ``save_dataset=True`` so that
+        ``dataset.pkl``, ``train_indices.json``, ``val_indices.json``, and
+        ``test_indices.json`` are present in its model directory.
+
+        Parameters:
+            model_ids: Identifiers of the models to evaluate.
+            parent_load_dir: Parent directory that contains the model
+                subdirectories.  Defaults to ``data/iconq_models/``.
+        """
+        for model_id in model_ids:
+            model = IconqModel.load(model_id, parent_load_dir)
+            save_dir = model._save_dir
+            train_config = model._train_config_sequence[-1]
+
+            required = {
+                "dataset.pkl": os.path.join(save_dir, "dataset.pkl"),
+                "train_indices.json": os.path.join(
+                    save_dir, "train_indices.json"
+                ),
+                "val_indices.json": os.path.join(save_dir, "val_indices.json"),
+                "test_indices.json": os.path.join(
+                    save_dir, "test_indices.json"
+                ),
+            }
+            missing = [
+                name
+                for name, path in required.items()
+                if not os.path.exists(path)
+            ]
+            if missing:
+                raise FileNotFoundError(
+                    f"Model '{model_id}' is missing: {', '.join(missing)}. "
+                    "Re-train with save_dataset=True to enable performance tables."
+                )
+
+            dataset = ConcurrentQueryDataset.load_from(required["dataset.pkl"])
+            with open(required["train_indices.json"]) as f:
+                train_indices: list[int] = json.load(f)
+            with open(required["val_indices.json"]) as f:
+                val_indices: list[int] = json.load(f)
+            with open(required["test_indices.json"]) as f:
+                test_indices: list[int] = json.load(f)
+
+            batch_size = train_config.batch_size
+            make_dl = lambda idxs: DataLoader(
+                Subset(dataset, idxs),
+                batch_size=batch_size,
+                shuffle=False,
+                collate_fn=ConcurrentQueryDataset.collate_and_pad,
+            )
+            _, train_errors = model._validate(
+                make_dl(train_indices), train_config
+            )
+            _, val_errors = model._validate(make_dl(val_indices), train_config)
+            _, test_errors = model._validate(
+                make_dl(test_indices), train_config
+            )
+
+            _print_errors_table(
+                title=f"[bold]{model_id}[/]",
+                sets=[
+                    ("train", train_errors),
+                    ("val", val_errors),
+                    ("test", test_errors),
+                ],
+            )
+
     def _get_dataloaders(  # pylint: disable=too-many-locals
         self,
         dataset: ConcurrentQueryDataset,
         train_config: IconqModelTrainConfig,
         split: bool = True,
         save_dataset: bool = False,
-    ) -> tuple[DataLoader, Optional[DataLoader]]:
+    ) -> tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
         """
-        Converts the given dataset into DataLoaders for training and validation.
+        Converts the given dataset into DataLoaders for training, validation,
+        and testing.
 
         Parameters:
             dataset: The dataset to convert.
@@ -593,6 +740,8 @@ class IconqModel:
                 dataloader if split is False.
             val_dataloader: The DataLoader for the validation set, or None if
                 split is False.
+            test_dataloader: The DataLoader for the test set, or None if
+                split is False.
         """
 
         if not split:
@@ -602,7 +751,7 @@ class IconqModel:
                 shuffle=False,
                 collate_fn=ConcurrentQueryDataset.collate_and_pad,
             )
-            return dataloader, None
+            return dataloader, None, None
 
         if train_config.explicit_run_ids_per_split is None:
             train_idxs, val_idxs, test_idxs = self._get_data_splits(
@@ -672,8 +821,14 @@ class IconqModel:
             shuffle=False,
             collate_fn=ConcurrentQueryDataset.collate_and_pad,
         )
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=train_config.batch_size,
+            shuffle=False,
+            collate_fn=ConcurrentQueryDataset.collate_and_pad,
+        )
 
-        return train_dataloader, val_dataloader
+        return train_dataloader, val_dataloader, test_dataloader
 
     def _get_data_splits(  # pylint: disable=too-many-arguments
         self,
@@ -742,6 +897,7 @@ class IconqModel:
         self,
         train_dataloader: DataLoader,
         val_dataloader: DataLoader,
+        test_dataloader: Optional[DataLoader] = None,
     ) -> tuple[float, float]:
         """
         Runs the training loop for the model and returns the final training and
@@ -750,6 +906,9 @@ class IconqModel:
         Parameters:
             train_dataloader: The DataLoader for the training set.
             val_dataloader: The DataLoader for the validation set.
+            test_dataloader: Optional DataLoader for the held-out test set.
+                If provided, the best checkpoint is reloaded at the end and
+                evaluated; results are printed as a summary table.
         Returns:
             final_train_loss: The final training loss.
             final_val_loss: The final validation loss.
@@ -779,24 +938,33 @@ class IconqModel:
         for epoch in range(1, train_config.num_epochs + 1):
             total_train_batch_loss = 0.0
 
-            s = f"""******** Starting Epoch {epoch}/{train_config.num_epochs} ********"""
-            print(s)
-            logger.info(s)
+            _console.print(Rule(f"Epoch {epoch}/{train_config.num_epochs}"))
+            logger.info("Starting Epoch %d/%d", epoch, train_config.num_epochs)
 
-            for batch in tqdm(train_dataloader):
-                optimizer.zero_grad()
-                batch_loss, _ = self._process_batch(
-                    batch=batch,
-                    train_config=train_config,
-                    derive_individual_predictions=False,
-                )
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=_console,
+            ) as progress:
+                task = progress.add_task("Training", total=total_train_batches)
+                for batch in train_dataloader:
+                    optimizer.zero_grad()
+                    batch_loss, _ = self._process_batch(
+                        batch=batch,
+                        train_config=train_config,
+                        derive_individual_predictions=False,
+                    )
 
-                batch_loss.backward()
-                nn.utils.clip_grad_norm_(
-                    self._nn.parameters(), train_config.grad_clip_max_norm
-                )
-                optimizer.step()
-                total_train_batch_loss += batch_loss.item()
+                    batch_loss.backward()
+                    nn.utils.clip_grad_norm_(
+                        self._nn.parameters(), train_config.grad_clip_max_norm
+                    )
+                    optimizer.step()
+                    total_train_batch_loss += batch_loss.item()
+                    progress.advance(task)
 
             # Update bookkeeping
             lr_trajectory[epoch] = optimizer.param_groups[0]["lr"]
@@ -830,29 +998,32 @@ class IconqModel:
             self._nn.train()
 
             # Print out progress
-            s = (
-                f"""Mean train batch loss: {train_loss_trajectory[epoch]}, """
-                f"""Mean val batch loss: {val_loss_trajectory[epoch]}, """
-                f"""Learning rate: {lr_trajectory[epoch]}\n"""
+            train_loss = train_loss_trajectory[epoch]
+            val_loss = val_loss_trajectory[epoch]
+            lr = lr_trajectory[epoch]
+            _console.print(
+                f"train loss [bold]{train_loss:.6f}[/]  "
+                f"val loss [bold]{val_loss:.6f}[/]  "
+                f"lr [bold]{lr:.2e}[/]"
             )
-            for set_name, errs in zip(
-                ["training", "Validation"], [train_errors, val_errors]
-            ):
-                for suffix in ["normal", "aborted"]:
-                    s += (
-                        f"""On the {set_name} set, {suffix} queries:\n"""
-                        f"""\tMean abs error: {errs[f"mean_abs_error_{suffix}"]}, """
-                        f"""Mean q error: {errs[f"mean_q_error_{suffix}"]}\n"""
-                        f"""\tp50 abs error: {errs[f"p50_abs_error_{suffix}"]}, """
-                        f"""p50 q error: {errs[f"p50_q_error_{suffix}"]}\n"""
-                        f"""\tp90 abs error: {errs[f"p90_abs_error_{suffix}"]}, """
-                        f"""p90 q error: {errs[f"p90_q_error_{suffix}"]}\n"""
-                        f"""\tp95 abs error: {errs[f"p95_abs_error_{suffix}"]}, """
-                        f"""p95 q error: {errs[f"p95_q_error_{suffix}"]}\n"""
-                    )
+            logger.info(
+                "train loss %.6f  val loss %.6f  lr %.2e",
+                train_loss,
+                val_loss,
+                lr,
+            )
 
-            print(s)
-            logger.info(s)
+            _print_errors_table(
+                title=f"Epoch {epoch} — errors",
+                sets=[("train", train_errors), ("val", val_errors)],
+            )
+            logger.info(
+                "errors: %s",
+                {
+                    k: f"{v:.4f}"
+                    for k, v in {**train_errors, **val_errors}.items()
+                },
+            )
 
             # Check for early stopping
             if val_loss_trajectory[epoch] > (
@@ -862,12 +1033,12 @@ class IconqModel:
                 if epochs_without_improvement < train_config.patience:
                     continue
                 else:
-                    s = (
+                    msg = (
                         f"Early stopping at epoch {epoch} after {train_config.patience} "
                         "epochs with no validation loss improvement."
                     )
-                    print(s)
-                    logger.info(s)
+                    _console.print(f"[yellow]{msg}[/]")
+                    logger.info(msg)
                     update_plots(
                         self._save_dir,
                         best_val_loss["epoch"],
@@ -881,9 +1052,8 @@ class IconqModel:
             epochs_without_improvement = 0
 
             # Save model.
-            s = """Saving model... """
-            print(s)
-            logger.info(s)
+            _console.print("Saving model...")
+            logger.info("Saving model...")
 
             update_checkpoint(
                 self._nn,
@@ -907,6 +1077,56 @@ class IconqModel:
             self._loss_type,
             mark_prev_checkpoint=True,
         )
+
+        # ── Final evaluation on all sets (best checkpoint) ────────────────────
+        if test_dataloader is not None and len(test_dataloader) > 0:
+            # Reload best checkpoint so we score the saved model, not the
+            # last in-memory weights (which may be from a post-best epoch).
+            checkpoint_files = [
+                f
+                for f in os.listdir(self._save_dir)
+                if f.startswith("model_") and f.endswith(".pth")
+            ]
+            if checkpoint_files:
+                checkpoint_path = os.path.join(
+                    self._save_dir, checkpoint_files[0]
+                )
+                self._nn.load_state_dict(
+                    torch.load(
+                        checkpoint_path,
+                        map_location=self._device,
+                        weights_only=True,
+                    )
+                )
+            _, final_train_errors = self._validate(
+                dataloader=train_dataloader,
+                var_reg_weight=train_config.var_reg_weight,
+                training_dir=None,
+                epoch=None,
+                train_config=train_config,
+            )
+            _, final_val_errors = self._validate(
+                dataloader=val_dataloader,
+                var_reg_weight=train_config.var_reg_weight,
+                training_dir=None,
+                epoch=None,
+                train_config=train_config,
+            )
+            _, test_errors = self._validate(
+                dataloader=test_dataloader,
+                var_reg_weight=train_config.var_reg_weight,
+                training_dir=None,
+                epoch=None,
+                train_config=train_config,
+            )
+            _print_errors_table(
+                title="[bold cyan]Final evaluation — best checkpoint[/]",
+                sets=[
+                    ("train", final_train_errors),
+                    ("val", final_val_errors),
+                    ("test", test_errors),
+                ],
+            )
 
         return final_train_loss, final_val_loss
 
@@ -969,18 +1189,18 @@ class IconqModel:
             for pred, _, _, _ in all_pred_v_true
         ]
 
-        for aborted in [True, False]:
-            suffix = "aborted" if aborted else "normal"
+        for suffix, condition in [
+            ("normal", lambda ab: not ab),
+            ("aborted", lambda ab: ab),
+            ("all", lambda ab: True),
+        ]:
             filtered_abs_error = [
-                abs_err
-                for abs_err, was_ab in zip(abs_error, was_aborted)
-                if was_ab == aborted
+                ae for ae, ab in zip(abs_error, was_aborted) if condition(ab)
             ]
             filtered_q_error = [
-                q_err
-                for q_err, was_ab in zip(q_error, was_aborted)
-                if was_ab == aborted
+                qe for qe, ab in zip(q_error, was_aborted) if condition(ab)
             ]
+            errors[f"n_{suffix}"] = len(filtered_abs_error)
             if not filtered_abs_error:
                 continue
 
