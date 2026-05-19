@@ -211,6 +211,15 @@ class AutoscalerConfig(_PartialConfig):
     # disables reactive autoscaling and fires a single forced decision after 
     # this fraction of the workload's queries have been routed.
 
+    num_post_spinup_eval_windows: int = 2
+
+    def __post_init__(self) -> None:
+        if self.num_post_spinup_eval_windows < 1:
+            raise ValueError(
+                f"num_post_spinup_eval_windows must be >= 1, "
+                f"got {self.num_post_spinup_eval_windows}"
+            )
+
 
 @dataclass(frozen=True)
 class QueryRouterConfig(_PartialConfig):

@@ -13,7 +13,7 @@ from autoslo.clusters.cluster import (
     ClusterView,
     cluster_cost_until_drained,
 )
-from autoslo.config.component_configs import AutoscalerConfig
+from autoslo.config.component_configs import AutoscalerConfig, ProvisionerConfig
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
 from autoslo.filesystem.structured_log import emit_structured
 from autoslo.models.iconq_model import IconqModel
@@ -37,7 +37,7 @@ class Autoscaler:
         slo_resolver: SloResolver,
         slo_objective: SloObjective,
         iconq_model: IconqModel,
-        cluster_cache_state_dim: int,
+        provisioner_config: ProvisionerConfig,
         query_router_config: QueryRouterConfig,
         autoscaler_config: AutoscalerConfig,
         out_dir: str | Path,
@@ -58,7 +58,9 @@ class Autoscaler:
             autoscaler_config.min_observations_to_act
         )
         self._slo_tightening_factor = autoscaler_config.slo_tightening_factor
-        self._cluster_cache_state_dim = cluster_cache_state_dim
+        self._cluster_cache_state_dim = (
+            provisioner_config.cluster_cache_state_dim
+        )
         self._autoscaling_policy = AutoscalingPolicy(
             autoscaler_config.autoscaling_policy
         )
@@ -66,6 +68,10 @@ class Autoscaler:
             slo_resolver.tightened(autoscaler_config.slo_tightening_factor)
             if autoscaler_config.slo_tightening_factor != 1.0
             else slo_resolver
+        )
+        self._spin_up_delay_s = provisioner_config.spin_up_delay_s
+        self._num_post_spinup_eval_windows = (
+            autoscaler_config.num_post_spinup_eval_windows
         )
 
         # Internal mutable state (guarded by _lock)
@@ -300,9 +306,9 @@ class Autoscaler:
 
         best_rpu = self._select_rpu(rel_time_s)
         deferred_teardowns: tuple[str, ...] = ()
-        if (
-            self._autoscaling_policy
-            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
+        if self._autoscaling_policy in (
+            AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST,
+            AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD,
         ):
             deferred_teardowns = tuple(
                 cluster_name

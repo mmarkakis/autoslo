@@ -136,9 +136,9 @@ class ExecutionConfig:
             slo_resolver=slo_resolver,
             slo_objective=slo_objective,
             iconq_model=iconq_model,
+            provisioner_config=provisioner_config,
             query_router_config=query_router_config,
             autoscaler_config=autoscaler_config,
-            cluster_cache_state_dim=cluster_cache_state_dim,
             out_dir=out_dir,
             force_one_decision_after_query_count=(
                 int(

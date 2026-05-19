@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TypeAlias
 
@@ -130,3 +130,22 @@ class Query:
                 "rel_start_time_s",
                 self.abs_start_time.timestamp(),
             )
+
+    def copy_with_new_info(
+        self, new_query_id_prefix: str, new_rel_start_time_s: float
+    ) -> "Query":
+        """Return a copy with a prefixed query_id and shifted arrival time.
+
+        Used by the forward-looking counterfactual replay to produce
+        per-copy instances of window queries with non-colliding ids.
+        Both ``rel_start_time_s`` and ``abs_start_time`` are updated
+        consistently.
+        """
+        return replace(
+            self,
+            query_id=f"{new_query_id_prefix}{self.query_id}",
+            rel_start_time_s=new_rel_start_time_s,
+            abs_start_time=datetime.fromtimestamp(
+                new_rel_start_time_s, tz=timezone.utc
+            ),
+        )
