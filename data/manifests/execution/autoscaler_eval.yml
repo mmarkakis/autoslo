@@ -193,3 +193,88 @@ main_content:
       AUTOSCALING_POLICY:  noop
       <<: *set4
 
+
+  # add_single_best_forward runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set1
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set2
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set3
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set4
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set1
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set2
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set3
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  add_single_best_forward
+      <<: *set4
+
+  
+  # replace_with_single_best_forward runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set1
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set2
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set3
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set4
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set1
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set2
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set3
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval.yml
+    params:
+      AUTOSCALING_POLICY:  replace_with_single_best_forward
+      <<: *set4

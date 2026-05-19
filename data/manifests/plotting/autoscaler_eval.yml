@@ -64,6 +64,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set1
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set1
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point1
@@ -77,6 +84,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set1
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set1
 
   - row: 0
@@ -106,6 +120,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set2
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set2
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point1
@@ -119,6 +140,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set2
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set2
 
   - row: 1
@@ -148,6 +176,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set3
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set3
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point1
@@ -161,6 +196,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set3
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set3
 
   - row: 1
@@ -190,6 +232,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set4
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set4
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point1
@@ -203,6 +252,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set4
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set4
 
   - row: 2
@@ -232,6 +288,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set1
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set1
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point2
@@ -245,6 +308,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set1
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set1
 
   - row: 2
@@ -274,6 +344,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set2
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set2
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point2
@@ -287,6 +364,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set2
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set2
 
   - row: 3
@@ -316,6 +400,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set3
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set3
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point2
@@ -329,6 +420,13 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set3
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set3
 
   - row: 3
@@ -358,6 +456,13 @@ main_content:
         params:
           AUTOSCALING_POLICY: replace_with_single_best
           <<: *set4
+      - label: "Replace w/ Single Best (Forward)"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set4
       - label: "Duplicate"
         formatting_id: autoscaler_duplicate_largest
         workload_config: *lambda_point2
@@ -371,4 +476,11 @@ main_content:
         execution_config: exec:handmade/autoscaler_eval.yml
         params:
           AUTOSCALING_POLICY: add_single_best
+          <<: *set4
+      - label: "Ours (Forward)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
           <<: *set4
