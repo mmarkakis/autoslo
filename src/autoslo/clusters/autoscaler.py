@@ -1,4 +1,5 @@
 import logging
+import math
 import threading
 from pathlib import Path
 from typing import Optional
@@ -70,9 +71,6 @@ class Autoscaler:
             else slo_resolver
         )
         self._spin_up_delay_s = provisioner_config.spin_up_delay_s
-        self._num_post_spinup_eval_windows = (
-            autoscaler_config.num_post_spinup_eval_windows
-        )
 
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
@@ -304,7 +302,10 @@ class Autoscaler:
 
         # Find the best size to spin up.
 
-        best_rpu = self._select_rpu(rel_time_s)
+        best_rpu = self._select_rpu(
+            rel_time_s,
+            pool_snapshot_with_current_query,
+        )
         deferred_teardowns: tuple[str, ...] = ()
         if self._autoscaling_policy in (
             AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST,
@@ -390,7 +391,11 @@ class Autoscaler:
 
         return tear_down_actions
 
-    def _select_rpu(self, rel_time_s: float) -> int:
+    def _select_rpu(
+        self,
+        rel_time_s: float,
+        pool_snapshot_with_current_query: dict[str, ClusterView],
+    ) -> int:
         """
         Select the RPU size for a new cluster based on the current window.
         """
@@ -408,7 +413,9 @@ class Autoscaler:
         viol_and_costs: list[ViolationCost] = []
 
         for rpu in self._allowed_rpu_sizes:
-            slo_viol_and_cost = self._counterfactual_replay(rpu, rel_time_s)
+            slo_viol_and_cost = self._counterfactual_replay(
+                rpu, rel_time_s, pool_snapshot_with_current_query
+            )
             viol_and_costs.append(slo_viol_and_cost)
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
@@ -453,32 +460,72 @@ class Autoscaler:
         self,
         candidate_rpu: int,
         rel_time_s: float,
+        pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> ViolationCost:
-        """Replay the routing window with a hypothetical new cluster of
+        """Replay the appropriate window with a hypothetical new cluster of
         *candidate_rpu* and return the aggregate SLO-violation metric and cost.
+
+        For backward-looking policies (ADD_SINGLE_BEST, REPLACE_WITH_SINGLE_BEST):
+
+        * Replays ``self._window_queries`` once, starting from the
+          window-start pool snapshot.  The hypothetical cluster is READY from
+          the start, and all completions are scored.
+
+        For forward-looking policies (ADD_SINGLE_BEST_FORWARD,
+        REPLACE_WITH_SINGLE_BEST_FORWARD):
+
+        * Starts from the current (backlogged) pool state and loops the window,
+          shifting query arrival times to cover the spin-up delay and
+          the post-spinup evaluation period.
+        * The hypothetical cluster starts PENDING and becomes READY after
+          ``spin_up_delay_s`` seconds; the REPLACE variant transitions existing
+          READY clusters to DRAINING at that point.
+        * Only Phase-2 completions (after spinup) are scored.
         """
         assert self._snapshot_at_window_start is not None
         assert self._window_start_time_s is not None
 
-        # Build a fully mutable local snapshot for replay from the frozen views.
-        # REPLACE policy evaluates each candidate RPU in isolation (no existing
-        # clusters), since it models replacing the entire pool with one cluster.
-        if (
-            self._autoscaling_policy
-            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
-        ):
-            local_cluster_pool: dict[str, Cluster] = {}
-        else:
+        is_forward = self._autoscaling_policy in (
+            AutoscalingPolicy.ADD_SINGLE_BEST_FORWARD,
+            AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD,
+        )
+
+        replay_start_rel_time_s: float
+        replay_end_rel_time_s: float
+        new_cluster_state_at_creation: ClusterState
+        local_cluster_pool: dict[str, Cluster]
+
+        if is_forward:
+            replay_start_rel_time_s = rel_time_s
+            replay_end_rel_time_s = (
+                rel_time_s + self._spin_up_delay_s + self._observation_window_s
+            )
+            new_cluster_state_at_creation = ClusterState.PENDING
             local_cluster_pool = {
-                cluster_name: cluster_view.to_cluster()
-                for cluster_name, cluster_view in self._snapshot_at_window_start.items()
+                name: view.to_cluster()
+                for name, view in pool_snapshot_with_current_query.items()
             }
+        else:
+            replay_start_rel_time_s = self._window_start_time_s
+            replay_end_rel_time_s = rel_time_s
+            new_cluster_state_at_creation = ClusterState.READY
+            if (
+                self._autoscaling_policy
+                == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
+            ):
+                local_cluster_pool = {}
+            else:
+                local_cluster_pool = {
+                    name: view.to_cluster()
+                    for name, view in self._snapshot_at_window_start.items()
+                }
         hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
         local_cluster_pool[hyp_cluster_name] = Cluster(
-            creation_time_s=self._window_start_time_s,
+            creation_time_s=replay_start_rel_time_s,
             rpu=candidate_rpu,
             name=hyp_cluster_name,
             cache_state=np.zeros(self._cluster_cache_state_dim, dtype=float),
+            state=new_cluster_state_at_creation,
         )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
@@ -490,40 +537,85 @@ class Autoscaler:
         )
 
         # Sequential replay.
-        lat_and_slos = []
-        for query in self._window_queries:
-            time_s = query.rel_start_time_s
+        lat_and_slos: list[LatencySlo] = []
+        actual_observed_window_length_s = rel_time_s - self._window_start_time_s
+        num_window_copies_to_replay = math.ceil(
+            (replay_end_rel_time_s - replay_start_rel_time_s)
+            / actual_observed_window_length_s
+        )
+        for copy_idx in range(num_window_copies_to_replay):
+            for query in self._window_queries:
+                time_s = query.rel_start_time_s
+                routed_query = query
+                if is_forward:
+                    time_s = (
+                        query.rel_start_time_s
+                        - self._window_start_time_s
+                        + rel_time_s
+                        + copy_idx * actual_observed_window_length_s
+                    )
+                    routed_query = query.copy_with_new_info(
+                        f"fwd-{copy_idx}:", time_s
+                    )
 
-            # Expire any finished queries.
-            for cluster_name, cluster in local_cluster_pool.items():
-                qs_and_latencies = cluster.finish_queries_until(
+                # Phase transition: activate hyp cluster once the spin-up
+                # delay has elapsed.
+                if local_cluster_pool[
+                    hyp_cluster_name
+                ].state == ClusterState.PENDING and (
+                    time_s >= rel_time_s + self._spin_up_delay_s
+                ):
+                    local_cluster_pool[hyp_cluster_name].update_state(
+                        ClusterState.READY
+                    )
+                    if (
+                        self._autoscaling_policy
+                        == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD
+                    ):
+                        for name, c in local_cluster_pool.items():
+                            if (
+                                name != hyp_cluster_name
+                                and c.state == ClusterState.READY
+                            ):
+                                c.update_state(ClusterState.DRAINING)
+
+                # Expire any finished queries. Only count if after spinup.
+                for cluster_name, cluster in local_cluster_pool.items():
+                    qs_and_latencies = cluster.finish_queries_until(
+                        rel_time_s=time_s,
+                    )
+                    if len(qs_and_latencies) > 0:
+                        for q, latency_s in qs_and_latencies:
+                            if (
+                                local_cluster_pool[hyp_cluster_name].state
+                                == ClusterState.READY
+                            ):
+                                slo = self._slo_resolver.resolve(
+                                    q.query_text_id
+                                )
+                                lat_and_slos.append(LatencySlo(latency_s, slo))
+
+                # Route and update state for the incoming query.
+                # Wrap as ClusterViews for the router
+                snapshot_for_routing = {
+                    cluster_name: ClusterView(cluster)
+                    for cluster_name, cluster in local_cluster_pool.items()
+                    if cluster.state == ClusterState.READY
+                }
+                (
+                    selected_cluster_name,
+                    new_predicted_latencies_for_cluster,
+                    new_cache_state,
+                ) = router.route_query(
+                    query=routed_query,
+                    snapshot=snapshot_for_routing,
                     rel_time_s=time_s,
                 )
-                if len(qs_and_latencies) > 0:
-                    for q, latency_s in qs_and_latencies:
-                        slo = self._slo_resolver.resolve(q.query_text_id)
-                        lat_and_slos.append(LatencySlo(latency_s, slo))
-
-            # Route and update state for the incoming query.
-            # Wrap as ClusterViews for the router
-            snapshot_for_routing = {
-                cluster_name: ClusterView(cluster)
-                for cluster_name, cluster in local_cluster_pool.items()
-            }
-            (
-                selected_cluster_name,
-                new_predicted_latencies_for_cluster,
-                new_cache_state,
-            ) = router.route_query(
-                query=query,
-                snapshot=snapshot_for_routing,
-                rel_time_s=time_s,
-            )
-            local_cluster_pool[selected_cluster_name].add_query(
-                query,
-                new_predicted_latencies_for_cluster,
-                new_cache_state,
-            )
+                local_cluster_pool[selected_cluster_name].add_query(
+                    routed_query,
+                    new_predicted_latencies_for_cluster,
+                    new_cache_state,
+                )
 
         # Also add the lat and slo from any queries still active at the end of
         # the window, and compute cost directly from the replay cluster state
@@ -540,7 +632,7 @@ class Autoscaler:
                 past_billing_intervals=cluster.past_billing_intervals,
                 billing_window_start_s=cluster.billing_window_start_s,
                 cost_per_second=cluster.cost_per_second,
-                current_rel_time_s=rel_time_s,
+                current_rel_time_s=replay_end_rel_time_s,
             )
 
             lat_and_slos.extend(active_pairs)
