@@ -226,7 +226,9 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
             recent_run_id = find_most_recent_live_run_id(config_label, wid)
             if (
                 recent_run_id is not None
-                and (runs_path / recent_run_id / "config.yml").exists()
+                and (
+                    runs_path / recent_run_id / "execution_config.yml"
+                ).exists()
             ):
                 console.print(
                     f"[dim]Skipping '{config_label}' for '{wid}' (exists)[/]"
