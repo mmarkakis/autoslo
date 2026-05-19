@@ -17,7 +17,7 @@ from autoslo.routing.query_router_policy import QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.workload_definition.query import ClusterAwareQueryId, Query
+from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ class QueryRouter:
         query_router_config: QueryRouterConfig,
         iconq_model: IconqModel,
         out_dir: str | Path,
+        source_for_log_records: str = "QueryRouter",
     ):
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
@@ -40,6 +41,7 @@ class QueryRouter:
         self._iconq_model = iconq_model
         self._round_robin_idx = 0
         self._query_router_config = query_router_config
+        self._source_for_log_records = source_for_log_records
         self._rel_time_s_to_forecasted_table_vecs = (
             self._read_or_derive_rel_time_s_to_forecasted_table_vecs(out_dir)
         )
@@ -252,7 +254,7 @@ class QueryRouter:
                 QueryRelatedEvent(
                     rel_time_s=rel_time_s,
                     event_type=EventType.ROUTING_SCORE,
-                    source="QueryRouter",
+                    source=self._source_for_log_records,
                     cluster_name=candidate_name,
                     details={
                         "latency_s_for_routing": latency_s,
@@ -281,7 +283,7 @@ class QueryRouter:
             QueryRelatedEvent(
                 rel_time_s=rel_time_s,
                 event_type=EventType.ROUTING,
-                source="QueryRouter",
+                source=self._source_for_log_records,
                 cluster_name=selected_cluster_name,
                 details={
                     "latency_s_for_routing": selected_latency,

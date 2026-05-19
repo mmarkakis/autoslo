@@ -486,6 +486,7 @@ class Autoscaler:
             query_router_config=self._query_router_config,
             iconq_model=self._iconq_model,
             out_dir=self._out_dir,
+            source_for_log_records="Autoscaler.QueryRouter",
         )
 
         # Sequential replay.
@@ -528,7 +529,7 @@ class Autoscaler:
         # the window, and compute cost directly from the replay cluster state
         # using the same model as QueryRouter.
         total_cost = 0.0
-        for cluster_name, cluster in local_cluster_pool.items():
+        for cluster in local_cluster_pool.values():
             active_pairs = router._collect_cluster_pairs(
                 queries=cluster.active_queries,
                 predicted_latencies=cluster.predicted_latencies,
