@@ -1,9 +1,7 @@
-import argparse
 import csv
 import fcntl
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Union
 
 import pandas as pd
@@ -77,19 +75,6 @@ def get_runs_path() -> str:
     Useful for API routes that need to expose this to the UI.
     """
     return os.path.join(get_data_path(), "runs")
-
-
-def is_up_to_date(output: Path, *inputs: Path) -> bool:
-    """Return True iff *output* exists and is not older than any of *inputs*.
-
-    A missing input path is ignored — it cannot be newer than anything.
-    Intended for mtime-based incremental skipping: if this returns True the
-    caller can safely skip recomputing *output*.
-    """
-    if not output.exists():
-        return False
-    out_mtime = output.stat().st_mtime
-    return all(not p.exists() or p.stat().st_mtime <= out_mtime for p in inputs)
 
 
 def append_to_run_log(
@@ -450,4 +435,3 @@ class RunLocator:
         run_summary.to_parquet(run_summary_path, index=False)
 
         return last_run_id, run_summary_cols
-

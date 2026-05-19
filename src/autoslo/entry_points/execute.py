@@ -18,7 +18,6 @@ from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import (
     append_to_run_log,
     find_most_recent_live_run_id,
-    is_up_to_date,
 )
 from autoslo.filesystem.yaml_helpers import load_yaml, load_yaml_with_params
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
@@ -117,7 +116,6 @@ def main():
     if not (0 <= args.split_index < args.splits):
         parser.error("--split-index must satisfy 0 <= split-index < splits")
 
-
     manifest_path = Path(args.execution_manifest_path)
     if not manifest_path.is_absolute():
         manifest_path = (
@@ -174,11 +172,9 @@ def _run_simulator(
         wid = workload_config.id()
 
         out_dir = sim_runs_dir / wid / config_label
-        if not force and is_up_to_date(
-            out_dir / "execution_config.yml", exec_cfg_path
-        ):
+        if not force and (out_dir / "execution_config.yml").exists():
             console.print(
-                f"[dim]Skipping '{config_label}' for '{wid}' (up to date)[/]"
+                f"[dim]Skipping '{config_label}' for '{wid}' (exists)[/]"
             )
             records.append(
                 _RunRecord(config_label, wid, out_dir, was_run=False)
@@ -228,11 +224,12 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
 
         if not force:
             recent_run_id = find_most_recent_live_run_id(config_label, wid)
-            if recent_run_id is not None and is_up_to_date(
-                runs_path / recent_run_id / "config.yml", exec_cfg_path
+            if (
+                recent_run_id is not None
+                and (runs_path / recent_run_id / "config.yml").exists()
             ):
                 console.print(
-                    f"[dim]Skipping '{config_label}' for '{wid}' (up to date)[/]"
+                    f"[dim]Skipping '{config_label}' for '{wid}' (exists)[/]"
                 )
                 records.append(
                     _RunRecord(

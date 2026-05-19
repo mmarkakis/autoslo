@@ -21,7 +21,6 @@ from autoslo.filesystem.path_utils import (
     append_to_run_log,
     find_most_recent_live_run_id,
     get_runs_path,
-    is_up_to_date,
 )
 from autoslo.filesystem.yaml_helpers import load_yaml_with_params
 from autoslo.workload_definition.poisson_workload_creator import (
@@ -125,10 +124,7 @@ def sequentially_execute_training_workloads(
 
         if not force:
             recent_run_id = find_most_recent_live_run_id(config_id, wid)
-            if recent_run_id is not None and is_up_to_date(
-                runs_path / recent_run_id / "execution_config.yml",
-                exec_cfg_path,
-            ):
+            if recent_run_id is not None:
                 print(
                     f"[dim]Skipping '{workload_config.workload_name}' (up to date)[/]"
                 )

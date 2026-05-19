@@ -20,7 +20,6 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
 )
 from autoslo.config.utils import copy_and_apply_overrides, make_run_id
-from autoslo.filesystem.path_utils import is_up_to_date
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml_with_params
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
@@ -88,15 +87,10 @@ class PolicyTuner:
             self._run_id + ".yml",
         )
 
-        # Without --force, skip if the published tuned config already exists
-        # and is not older than both input configs (i.e. it is up to date).
-        if not force and is_up_to_date(
-            Path(self._publication_path),
-            Path(initial_execution_config_path),
-            Path(tuner_config_path),
-        ):
+        # Without --force, skip if the published tuned config already exists.
+        if not force and os.path.exists(self._publication_path):
             raise AlreadyCompleteError(
-                f"Tuned config '{self._publication_path}' is up to date; "
+                f"Tuned config '{self._publication_path}' already exists; "
                 f"skipping. Pass --force to re-run regardless."
             )
 

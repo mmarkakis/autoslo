@@ -17,7 +17,6 @@ from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import (
     find_most_recent_live_run_id,
-    is_up_to_date,
 )
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import SloMetric
@@ -44,32 +43,7 @@ def _x_value(result: ExecutionResult, metric: SloMetric) -> float:
     raise ValueError(f"Unsupported SloMetric for plotting: {metric}")
 
 
-def _plot_is_up_to_date(
-    manifest_path: Path,
-    plot_path: Path,
-    all_points_specs: list[list[dict]],
-    sim_runs_dir: Path,
-    live: bool = False,
-) -> bool:
-    inputs = [manifest_path]
-    runs_dir = Path(pu.get_runs_path())
-    for points_spec in all_points_specs:
-        for point in points_spec:
-            workload_config = WorkloadConfig.from_config(point)
-            exec_cfg_path = resolve_config(point["execution_config"])
-            params = point.get("params", {})
-            config_label = make_run_id([exec_cfg_path.stem], params)
-            if live:
-                run_id = find_most_recent_live_run_id(
-                    config_label, workload_config.id()
-                )
-                if run_id is None:
-                    continue
-                run_dir = runs_dir / run_id
-            else:
-                run_dir = sim_runs_dir / workload_config.id() / config_label
-            inputs.append(run_dir / "execution_config.yml")
-    return is_up_to_date(plot_path, *inputs)
+
 
 
 def _load_scatter_points(
@@ -139,10 +113,8 @@ def _generate_single_panel_plot(
 ) -> None:
     points_spec: list[dict] = content["points"]
 
-    if not force and _plot_is_up_to_date(
-        manifest_path, plot_path, [points_spec], sim_runs_dir, live=live
-    ):
-        console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
+    if not force and plot_path.exists():
+        console.print(f"[dim]Skipping '{plot_name}' (exists)[/]")
         return
 
     slo_obj = SloObjective(SloObjectiveConfig.from_config(content))
@@ -245,10 +217,8 @@ def _generate_multi_panel_plot(
 
     # Up-to-date check across all panels.
     all_points_specs = [p["points"] for p in panels_spec]
-    if not force and _plot_is_up_to_date(
-        manifest_path, plot_path, all_points_specs, sim_runs_dir, live=live
-    ):
-        console.print(f"[dim]Skipping '{plot_name}' (up to date)[/]")
+    if not force and plot_path.exists():
+        console.print(f"[dim]Skipping '{plot_name}' (exists)[/]")
         return
 
     figsize: tuple[float, float] = tuple(
