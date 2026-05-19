@@ -57,6 +57,10 @@ FORMATTING = {
     "round_robin": (Palette.light_orange, "s"),
     "stage": (Palette.light_blue, "^"),
     "iconq": (Palette.light_green, "o"),
+    "autoscaler_noop": (Palette.light_gray, "s"),
+    "autoscaler_replace_with_single_best": (Palette.light_orange, "D"),
+    "autoscaler_duplicate_largest": (Palette.light_blue, "^"),
+    "autoscaler_ours": (Palette.light_green, "o"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
@@ -166,16 +170,16 @@ def cost_vs_compliance_scatter(
         )
 
         # Add a textbox at the top of the span with the threshold value.
-        ax.text(
-            x_threshold,
-            0.95,
-            f"SLO Objective",
-            color=Palette.dark_green,
-            rotation=90,
-            ha="right",
-            va="top",
-            transform=ax.get_xaxis_transform(),
-        )
+        # ax.text(
+        #     x_threshold,
+        #     0.95,
+        #     f"SLO Objective",
+        #     color=Palette.dark_green,
+        #     rotation=90,
+        #     ha="right",
+        #     va="top",
+        #     transform=ax.get_xaxis_transform(),
+        # )
 
     # Plot points.
     for pt in points:
@@ -191,8 +195,12 @@ def cost_vs_compliance_scatter(
     ax.set_ylabel("Cost ($)")
 
     yvals = [pt.y for pt in points]
-    bottom, top = existing_ylims if existing_ylims else (0, max(yvals))
-    top = max(top, max(yvals) * 1.1)
+    bottom, top = (
+        existing_ylims
+        if existing_ylims
+        else (0, max(yvals) if len(yvals) > 0 else 0.1)
+    )
+    top = max(top, (max(yvals) * 1.1) if len(yvals) > 0 else 0.1)
     ax.set_ylim(bottom=bottom, top=top)
 
     if x_scale is None:
@@ -202,19 +210,21 @@ def cost_vs_compliance_scatter(
         ax.set_title(title)
 
     # Maybe add legend.
-    if show_legend:
-        ax.legend(loc="center right")
+    if show_legend and len(points) > 0:
+        ax.legend(loc="upper right")
 
     # Relative padding around x data.
     xvals = [pt.x for pt in points]
     left, right = (
-        existing_xlims if existing_xlims else ((min(xvals), max(xvals)))
+        existing_xlims
+        if existing_xlims
+        else ((min(xvals), max(xvals)) if len(xvals) > 0 else (0, 0.1))
     )
     if x_scale == "linear" and len(points) > 0:
         additional = (max(xvals) - min(xvals)) * x_pad
         left = 0
         right = max(right, max(xvals) + additional)
-    elif x_scale == "log":
+    elif x_scale == "log" and len(points) > 0:
         factor = (max(xvals) / min(xvals)) ** x_pad
         left = min(left, min(xvals) / factor)
         right = max(right, max(xvals) * factor)
@@ -265,7 +275,6 @@ def cost_vs_compliance_scatter(
                 y_change = target.y - base.y
                 y_change_rel = y_change / abs(base.y)
                 direction = "↓" if y_change < 0 else "↑"
-                is_regression = (y_change > 0) or is_regression
                 parts.append(
                     f"Cost {direction} {abs(y_change_rel):.1%} "
                     f"(${abs(y_change):.2f})"

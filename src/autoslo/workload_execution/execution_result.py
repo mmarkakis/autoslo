@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -61,11 +62,13 @@ class ExecutionResult:
     total_cost: float
     num_queries: int
     total_rel_time_s: float
+    tail_fraction: float
 
     @staticmethod
     def load(
         execution_dir: str | Path,
         slo_resolver: Optional[SloResolver] = None,
+        tail_fraction: float = 1.0,
     ) -> ExecutionResult:
         """
         Load an :class:`ExecutionResult` from a run output directory.
@@ -80,6 +83,10 @@ class ExecutionResult:
         slo_resolver :
             Optional pre-built resolver.  When omitted, one is constructed
             from ``execution_config.yml`` in *execution_dir*.
+        tail_fraction :
+            Violation metrics are computed only over the last
+            ``tail_fraction`` fraction of queries (ordered by arrival time).
+            Must be in (0, 1].  Default uses all queries.
         """
         execution_dir = Path(execution_dir)
         is_live = False
@@ -116,6 +123,9 @@ class ExecutionResult:
             latencies_df = StructuredLog.load(log_path).query_latencies(
                 drop_incomplete=True
             )
+            if tail_fraction < 1.0 and not latencies_df.empty:
+                n = max(1, math.ceil(len(latencies_df) * tail_fraction))
+                latencies_df = latencies_df.sort_values("arrival_s").iloc[-n:]
             if not latencies_df.empty:
                 num_queries = len(latencies_df)
                 per_row_slo = (
@@ -155,4 +165,5 @@ class ExecutionResult:
             total_cost=total_cost,
             num_queries=num_queries,
             total_rel_time_s=total_rel_time_s,
+            tail_fraction=tail_fraction,
         )

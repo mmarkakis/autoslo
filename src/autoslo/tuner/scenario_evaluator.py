@@ -270,10 +270,10 @@ class ScenarioEvaluator:
                 )
                 per_config_tasks = {
                     config_idx: progress.add_task(
-                        f"  [bold]config {config_idx}[/bold]",
+                        f"  [bold]{config_label}[/bold]",
                         total=num_workloads,
                     )
-                    for config_idx in range(len(configs))
+                    for config_idx, config_label in enumerate(config_labels)
                 }
                 sub_tasks: dict[int, int] = {}
                 pending = set(futures.keys())

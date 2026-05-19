@@ -78,6 +78,7 @@ def _load_scatter_points(
     slo_resolver: SloResolver,
     sim_runs_dir: Path,
     live: bool = False,
+    tail_fraction: float = 1.0,
 ) -> list[ScatterPoint]:
     scatter_points: list[ScatterPoint] = []
     runs_dir = Path(pu.get_runs_path())
@@ -98,6 +99,12 @@ def _load_scatter_points(
                 )
                 continue
             run_dir = runs_dir / run_id
+            if not (run_dir / "structured_log.parquet").exists():
+                console.print(
+                    f"[yellow]Warning: execution directory has no structured log "
+                    f"for live run '{run_id}' — skipping point '{point['label']}'.[/]"
+                )
+                continue
         else:
             run_dir = sim_runs_dir / workload_config.id() / config_label
             if not (run_dir / "execution_config.yml").exists():
@@ -106,7 +113,9 @@ def _load_scatter_points(
                     f"— skipping point '{point['label']}'.[/]"
                 )
                 continue
-        result = ExecutionResult.load(run_dir, slo_resolver=slo_resolver)
+        result = ExecutionResult.load(
+            run_dir, slo_resolver=slo_resolver, tail_fraction=tail_fraction
+        )
         scatter_points.append(
             ScatterPoint(
                 formatting_id=point["formatting_id"],
@@ -140,6 +149,7 @@ def _generate_single_panel_plot(
     slo_resolver = SloResolver(SloResolverConfig.from_config(content))
 
     show_target_region: bool = content.get("show_target_region", False)
+    tail_fraction: float = content.get("tail_fraction", 1.0)
 
     improvement_arrow_spec = content.get("improvement_arrow")
     improvement_arrow = (
@@ -152,7 +162,12 @@ def _generate_single_panel_plot(
     )
 
     scatter_points = _load_scatter_points(
-        points_spec, slo_obj, slo_resolver, sim_runs_dir, live=live
+        points_spec,
+        slo_obj,
+        slo_resolver,
+        sim_runs_dir,
+        live=live,
+        tail_fraction=tail_fraction,
     )
 
     if not scatter_points:
@@ -170,15 +185,20 @@ def _generate_single_panel_plot(
         show_legend=content.get("show_legend", False),
         improvement_arrow=improvement_arrow,
     )
+    _ann_lines = []
     if not live:
+        _ann_lines.append("[Simulated]")
+    if tail_fraction < 1.0:
+        _ann_lines.append(f"[Viol. over last {tail_fraction * 100:.0f}%]")
+    if _ann_lines:
         ax.text(
             0.98,
-            0.98,
-            "[Simulated]",
+            0.02,
+            "\n".join(_ann_lines),
             transform=ax.transAxes,
             color="red",
             ha="right",
-            va="top",
+            va="bottom",
             fontsize=9,
         )
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
@@ -263,17 +283,23 @@ def _generate_multi_panel_plot(
             else None
         )
 
+        tail_fraction: float = panel.get("tail_fraction", 1.0)
         scatter_points = _load_scatter_points(
-            points_spec, slo_obj, slo_resolver, sim_runs_dir, live=live
+            points_spec,
+            slo_obj,
+            slo_resolver,
+            sim_runs_dir,
+            live=live,
+            tail_fraction=tail_fraction,
         )
 
-        if not scatter_points:
-            console.print(
-                f"[yellow]No data points found for panel ({row}, {col}) "
-                f"in '{plot_name}' — leaving panel blank.[/]"
-            )
-            ax.set_visible(False)
-            continue
+        # if not scatter_points:
+        #     console.print(
+        #         f"[yellow]No data points found for panel ({row}, {col}) "
+        #         f"in '{plot_name}' — leaving panel blank.[/]"
+        #     )
+        #     ax.set_visible(False)
+        #     continue
 
         title: str | None = panel.get("title") or None
         _, _, xlims, ylims = cost_vs_compliance_scatter(
@@ -291,15 +317,20 @@ def _generate_multi_panel_plot(
             show_legend=show_legend or panel.get("show_legend", False),
             improvement_arrow=improvement_arrow,
         )
+        _ann_lines = []
         if not live:
+            _ann_lines.append("[Simulated]")
+        if tail_fraction < 1.0:
+            _ann_lines.append(f"[Viol. over last {tail_fraction * 100:.0f}%]")
+        if _ann_lines:
             ax.text(
                 0.98,
-                0.98,
-                "[Simulated]",
+                0.02,
+                "\n".join(_ann_lines),
                 transform=ax.transAxes,
                 color="red",
                 ha="right",
-                va="top",
+                va="bottom",
                 fontsize=9,
             )
         rendered_xlims.append(xlims)

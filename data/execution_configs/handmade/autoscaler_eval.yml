@@ -1,11 +1,11 @@
 workload_config:
-  workload_name: redbench_provisioned_157_0
-  target_date: "<TARGET_DATE>"
-  rescale_factor: 0.16666667
+  workload_name: poisson_99_1_3_0.2_42
+  target_date: "2026-01-01"
+  rescale_factor: 1
 
 slo_resolver_config:
   slo_s: 30.0
-  slo_dict_filename: "1778469201294_p50_k<KAPPA>.yml"
+  slo_dict_filename: "1778469201294_p100_k<KAPPA>.yml"
 
 slo_objective_config:
   slo_metric: binary
@@ -22,7 +22,7 @@ workload_runner_config:
 
 managed_cluster_pool_config:
   maxconns: 1000
-  max_clusters: 15
+  max_clusters: 2
   initial_rpus:
     - <INITIAL_RPU>
 
@@ -30,7 +30,7 @@ scheduled_spinups: []
 
 query_router_config:
   routing_policy_name: use_iconq_model
-  iconq_model_id: "1771539369"
+  iconq_model_id: all_66_and_99_template_runs
 
 autoscaler_config:
   autoscaling_policy: <AUTOSCALING_POLICY>
@@ -40,7 +40,8 @@ autoscaler_config:
     - 16
     - 32
   min_cluster_lifetime_s: 1200.0
-  idle_time_before_tear_down_s: 300.0
-  observation_window_s: 300.0
+  idle_time_before_tear_down_s: 1200.0
+  observation_window_s: 360.0
   min_observations_to_act: 10
-  slo_tightening_factor: 0.8
+  slo_tightening_factor: 1.0
+  force_one_decision_after_query_fraction: 0.2

@@ -173,8 +173,7 @@ class Autoscaler:
 
         # Start new window if needed.
         if (self._window_start_time_s is None) or (
-            not self.forced_decision_mode
-            and (
+            (
                 (rel_time_s - self._window_start_time_s)
                 > self._observation_window_s
             )
