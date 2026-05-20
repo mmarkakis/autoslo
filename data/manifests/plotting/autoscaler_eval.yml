@@ -40,7 +40,7 @@ main_content:
   panels:
   - row: 0
     col: 0
-    title: "λ=0.1, κ=4, C = [8]"
+    title: "λ=0.1, κ=4, C=[8]"
     show_legend: false
     slo_objective_config:
       slo_metric: binary
@@ -96,7 +96,7 @@ main_content:
 
   - row: 0
     col: 1
-    title: "λ=0.1, κ=4, C = [16]"
+    title: "λ=0.1, κ=4, C=[16]"
     show_legend: true
     slo_objective_config:
       slo_metric: binary
@@ -152,7 +152,7 @@ main_content:
 
   - row: 1
     col: 0
-    title: "λ=0.1, κ=2, C = [8]"
+    title: "λ=0.1, κ=2, C=[8]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
@@ -208,7 +208,7 @@ main_content:
 
   - row: 1
     col: 1
-    title: "λ=0.1, κ=2, C = [16]"
+    title: "λ=0.1, κ=2, C=[16]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
@@ -264,7 +264,7 @@ main_content:
 
   - row: 2
     col: 0
-    title: "λ=0.2, κ=4, C = [8]"
+    title: "λ=0.2, κ=4, C=[8]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
@@ -320,7 +320,7 @@ main_content:
 
   - row: 2
     col: 1
-    title: "λ=0.2, κ=4, C = [16]"
+    title: "λ=0.2, κ=4, C=[16]"
     show_legend: false
     slo_objective_config:
       slo_metric: binary
@@ -376,7 +376,7 @@ main_content:
 
   - row: 3
     col: 0
-    title: "λ=0.2, κ=2, C = [8]"
+    title: "λ=0.2, κ=2, C=[8]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
@@ -432,7 +432,7 @@ main_content:
 
   - row: 3
     col: 1
-    title: "λ=0.2, κ=2, C = [16]"
+    title: "λ=0.2, κ=2, C=[16]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
