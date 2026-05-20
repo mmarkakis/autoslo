@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -134,6 +135,29 @@ def _load_panel_data(
     )
 
 
+def _save_points_csv(
+    csv_path: Path,
+    panels: list[tuple[int | None, int | None, _PanelData]],
+) -> None:
+    with csv_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["row", "col", "panel_title", "x_metric", "label", "x", "y"]
+        )
+        for row, col, panel_data in panels:
+            for point in panel_data.scatter_points:
+                writer.writerow([
+                    "" if row is None else row,
+                    "" if col is None else col,
+                    panel_data.title or "",
+                    panel_data.slo_obj.slo_metric.value,
+                    point.label,
+                    point.x,
+                    point.y,
+                ])
+    console.print(f"[green]Saved:[/] {csv_path}")
+
+
 def _annotate_ax(ax: Axes, panel_data: _PanelData, live: bool) -> None:
     lines = []
     if not live:
@@ -199,6 +223,7 @@ def _generate_single_panel_plot(
         return
 
     _render_and_save_figure(panel_data, plot_path, live)
+    _save_points_csv(plot_path.with_suffix(".csv"), [(None, None, panel_data)])
 
 
 def _generate_multi_panel_plot(
@@ -307,6 +332,13 @@ def _generate_multi_panel_plot(
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     console.print(f"[green]Saved:[/] {plot_path}")
+    _save_points_csv(
+        plot_path.with_suffix(".csv"),
+        [
+            (panel["row"], panel["col"], pd)
+            for panel, pd in zip(panels_spec, panel_data_list)
+        ],
+    )
 
     if show_legend:
         legend_path = plots_dir / f"{plot_name}_legend.png"

@@ -145,6 +145,10 @@ def _parse_log(
         et = row["event_type"]
         if et not in query_lifecycle_values and et not in routing_values:
             continue
+        # Skip events emitted by the autoscaler's internal counterfactual-replay
+        # router — those synthetic queries have no execution lifecycle events.
+        if row.get("source") == "Autoscaler.QueryRouter":
+            continue
         query_events[qid].append(
             {
                 "rel_time_s": float(row["rel_time_s"]),
