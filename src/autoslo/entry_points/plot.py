@@ -11,6 +11,7 @@ from matplotlib.axes import Axes
 from rich.console import Console
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import (
     SloObjectiveConfig,
     SloResolverConfig,
@@ -19,6 +20,7 @@ from autoslo.config.component_configs import (
 from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import find_most_recent_live_run_id
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -31,6 +33,28 @@ from autoslo.visualizations.scatter_plots import (
 from autoslo.workload_execution.execution_result import ExecutionResult
 
 console = Console()
+
+
+def _cluster_annotation(run_dir: Path) -> str | None:
+    """
+    Return the size of the index-1 cluster spun up.
+    """
+    log_path = run_dir / "structured_log.parquet"
+    if not log_path.exists():
+        return None
+    df = StructuredLog.load(log_path).df
+    if df.empty:
+        return None
+
+    unique_nonempty_cluster_names = df["cluster_name"].dropna().unique()
+    target_name = [
+        name for name in unique_nonempty_cluster_names if 
+        (name.strip() and (Cluster.counter_for_cluster_name(name) == 1))
+    ]
+    if len(target_name) != 1:
+        return None
+
+    return f"{Cluster.rpu_for_cluster_name(target_name[0])}"
 
 
 @dataclass
@@ -53,6 +77,7 @@ def _load_panel_data(
     *,
     layout_show_target_region: bool = False,
     layout_show_legend: bool = False,
+    layout_annotate_cluster_sizes: bool = False,
 ) -> _PanelData:
     """Parse a panel config dict into a fully-resolved _PanelData.
 
@@ -67,6 +92,9 @@ def _load_panel_data(
         "show_target_region", False
     )
     show_legend = layout_show_legend or panel.get("show_legend", False)
+    annotate_cluster_sizes: bool = layout_annotate_cluster_sizes or panel.get(
+        "annotate_with_cluster_sizes", False
+    )
 
     arrow_spec = panel.get("improvement_arrow")
     improvement_arrow = (
@@ -115,12 +143,16 @@ def _load_panel_data(
         result = ExecutionResult.load(
             run_dir, slo_resolver=slo_resolver, tail_fraction=tail_fraction
         )
+        annotation = (
+            _cluster_annotation(run_dir) if annotate_cluster_sizes else None
+        )
         scatter_points.append(
             ScatterPoint(
                 formatting_id=point["formatting_id"],
                 label=point["label"],
                 x=result.violation_for_metric(slo_obj.slo_metric),
                 y=result.total_cost,
+                annotation=annotation,
             )
         )
 
@@ -146,15 +178,17 @@ def _save_points_csv(
         )
         for row, col, panel_data in panels:
             for point in panel_data.scatter_points:
-                writer.writerow([
-                    "" if row is None else row,
-                    "" if col is None else col,
-                    panel_data.title or "",
-                    panel_data.slo_obj.slo_metric.value,
-                    point.label,
-                    point.x,
-                    point.y,
-                ])
+                writer.writerow(
+                    [
+                        "" if row is None else row,
+                        "" if col is None else col,
+                        panel_data.title or "",
+                        panel_data.slo_obj.slo_metric.value,
+                        point.label,
+                        point.x,
+                        point.y,
+                    ]
+                )
     console.print(f"[green]Saved:[/] {csv_path}")
 
 
@@ -173,7 +207,7 @@ def _annotate_ax(ax: Axes, panel_data: _PanelData, live: bool) -> None:
             color="red",
             ha="right",
             va="bottom",
-            fontsize=9,
+            fontsize=10,
         )
 
 
@@ -272,6 +306,9 @@ def _generate_multi_panel_plot(
     show_legend: bool = layout.get("show_legend", False)
     show_target_region: bool = layout.get("show_target_region", False)
     suppress_subplot_titles: bool = layout.get("suppress_subplot_titles", False)
+    annotate_cluster_sizes: bool = layout.get(
+        "annotate_with_cluster_sizes", False
+    )
 
     fig, axes_2d = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
 
@@ -288,6 +325,7 @@ def _generate_multi_panel_plot(
             live,
             layout_show_target_region=show_target_region,
             layout_show_legend=show_legend,
+            layout_annotate_cluster_sizes=annotate_cluster_sizes,
         )
         _, _, xlims, ylims = cost_vs_compliance_scatter(
             panel_data.scatter_points,

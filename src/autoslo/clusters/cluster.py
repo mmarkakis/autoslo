@@ -360,7 +360,22 @@ class Cluster:
         raise ValueError(
             f"Cannot parse run ID from cluster name: {cluster_name!r}"
         )
+    
+    @staticmethod
+    def counter_for_cluster_name(cluster_name: str) -> Optional[int]:
+        """Parse counter from a cluster name.
 
+        Supports the naming convention
+        ``"autoslo-{rpu}-{run_id}-{counter}"``.
+        """
+        parts = cluster_name.split("-")
+        if len(parts) >= 4:
+            try:
+                return int(parts[3])
+            except ValueError:
+                pass
+        return None
+          
     @staticmethod
     def cost_per_second_for_rpu(
         rpu: int,

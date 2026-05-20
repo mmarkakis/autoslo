@@ -28,6 +28,7 @@ class ScatterPoint:
     label: str
     x: float
     y: float
+    annotation: str | None = None
 
 
 @dataclass
@@ -192,6 +193,17 @@ def cost_vs_compliance_scatter(
             )
         color, marker = FORMATTING.get(pt.formatting_id, (Palette.gray, "o"))
         ax.scatter(pt.x, pt.y, label=pt.label, color=color, marker=marker, s=60)
+        if pt.annotation is not None:
+            ax.annotate(
+                pt.annotation,
+                xy=(pt.x, pt.y),
+                xytext=(6, 6),
+                textcoords="offset points",
+                fontsize=10,
+                color=color,
+                ha="left",
+                va="bottom",
+            )
 
     ax.set_xlabel(x_metric_asobj.to_plot_axis_label())
     ax.set_ylabel("Cost ($)")
@@ -292,6 +304,7 @@ def cost_vs_compliance_scatter(
                     ha="left",
                     va="bottom",
                     transform=ax.transAxes,
+                    fontsize=10
                 )
 
     fig.tight_layout()
