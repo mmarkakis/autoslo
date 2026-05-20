@@ -12,7 +12,7 @@ class SpinUpAction(ScalingAction):
     from_reserved_budget: bool = False  # Whether this spin-up should draw from
     # the reserved budget (e.g. for scheduled spin-ups) or the regular budget.
     deferred_teardowns: tuple[str, ...] = ()  # Cluster names to tear down once
-    # this cluster becomes READY (used by REPLACE_WITH_SINGLE_BEST policy).
+    # this cluster becomes READY (used by REPLACE_WITH_SINGLE_BEST_FORWARD policy).
 
 
 @dataclass(frozen=True)

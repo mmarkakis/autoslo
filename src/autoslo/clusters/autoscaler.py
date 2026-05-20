@@ -1,6 +1,7 @@
 import logging
 import math
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -74,9 +75,9 @@ class Autoscaler:
 
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
-        self._window_start_time_s: Optional[float] = None
-        self._snapshot_at_window_start: Optional[dict[str, ClusterView]] = None
-        self._window_queries: list[Query] = []
+        self._trailing_queries: deque[Query] = deque()
+        self._num_queries_since_last_cluster_ready: int = 0
+        self._known_ready_cluster_names: frozenset[str] = frozenset()
         self._spin_up_disabled: bool = False
 
         # Forced mode (set when force_one_decision_after_query_count is
@@ -133,16 +134,6 @@ class Autoscaler:
     # Public interface
     # ------------------------------------------------------------------
 
-    def _reset_window(
-        self,
-        window_start_time: float,
-        snapshot: dict[str, ClusterView],
-    ) -> None:
-        """Clear the routing window and all associated state."""
-        self._window_start_time_s = window_start_time
-        self._snapshot_at_window_start = snapshot
-        self._window_queries = []
-
     def disable_spin_up(self) -> None:
         """Permanently disable spin-up recommendations.
 
@@ -159,64 +150,45 @@ class Autoscaler:
         pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[ScalingAction]:
         with self._lock:
-            return self._inform_locked(
-                rel_time_s,
-                current_query,
-                pool_snapshot_with_current_query,
-            )
+            self._inform_count += 1
+            if self._autoscaling_policy == AutoscalingPolicy.NOOP:
+                return []
 
-    def _inform_locked(
-        self,
-        rel_time_s: float,
-        current_query: Query,
-        pool_snapshot_with_current_query: dict[str, ClusterView],
-    ) -> list[ScalingAction]:
-
-        self._inform_count += 1
-        actions: list[ScalingAction] = []
-
-        # Start new window if needed.
-        if (self._window_start_time_s is None) or (
-            (
-                (rel_time_s - self._window_start_time_s)
-                > self._observation_window_s
+            # Detect new-READY clusters and reset the post-spinup observation
+            # counter.
+            current_ready = frozenset(
+                name
+                for name, cluster in pool_snapshot_with_current_query.items()
+                if cluster.state == ClusterState.READY
             )
-        ):
-            self._reset_window(
-                rel_time_s,
-                pool_snapshot_with_current_query,
+            if current_ready - self._known_ready_cluster_names:
+                self._num_queries_since_last_cluster_ready = 0
+                self._known_ready_cluster_names = current_ready
+            self._num_queries_since_last_cluster_ready += 1
+
+            # Maintain the trailing window.
+            self._trailing_queries.append(current_query)
+            cutoff_s = rel_time_s - self._observation_window_s
+            while (
+                self._trailing_queries
+                and self._trailing_queries[0].rel_start_time_s < cutoff_s
+            ):
+                self._trailing_queries.popleft()
+
+            actions: list[ScalingAction] = []
+
+            # Determine whether to take any spinup actions.
+            spin_up_actions = self.consider_spin_up(
+                rel_time_s, pool_snapshot_with_current_query
             )
+            actions.extend(spin_up_actions)
+
+            # Determine whether to take any teardown actions.
+            tear_down_actions = self.consider_teardown(
+                rel_time_s, pool_snapshot_with_current_query
+            )
+            actions.extend(tear_down_actions)
             return actions
-
-        # Add the current query to the existing window.
-        self._window_queries.append(current_query)
-        if not self.forced_decision_mode and (
-            len(self._window_queries) < self._min_observations_to_act
-        ):
-            return actions
-
-        # Determine whether to take any spinup actions.
-        spin_up_actions = self.consider_spin_up(
-            rel_time_s,
-            pool_snapshot_with_current_query,
-        )
-        actions.extend(spin_up_actions)
-
-        # Determine whether to take any teardown actions.
-        tear_down_actions = self.consider_teardown(
-            rel_time_s, pool_snapshot_with_current_query
-        )
-        actions.extend(tear_down_actions)
-
-        # If acting, reset the window so that future decisions are based on
-        # post-action evidence.
-        if len(actions) > 0:
-            self._reset_window(
-                rel_time_s,
-                pool_snapshot_with_current_query,
-            )
-
-        return actions
 
     def consider_spin_up(
         self,
@@ -265,7 +237,10 @@ class Autoscaler:
             ### NOT IN FORCED MODE: CHECK CONDITIONS ###
 
             # Determine if we have enough observations to act.
-            if len(self._window_queries) < self._min_observations_to_act:
+            if (
+                self._num_queries_since_last_cluster_ready
+                < self._min_observations_to_act
+            ):
                 return []
 
             # Determine if there are ongoing spinups.
@@ -293,7 +268,8 @@ class Autoscaler:
                 return []
 
             reason = (
-                f"num_queries_in_window={len(self._window_queries)}, "
+                f"num_num_queries_since_last_cluster_ready="
+                f"{self._num_queries_since_last_cluster_ready}, "
                 f"slo_metric={self._slo_objective.slo_metric}, "
                 f"slo_metric_value={slo_metric_value:.4f}, "
                 f"slo_threshold={self._slo_objective.slo_threshold:.4f}, "
@@ -307,9 +283,9 @@ class Autoscaler:
             pool_snapshot_with_current_query,
         )
         deferred_teardowns: tuple[str, ...] = ()
-        if self._autoscaling_policy in (
-            AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST,
-            AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD,
+        if (
+            self._autoscaling_policy
+            == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD
         ):
             deferred_teardowns = tuple(
                 cluster_name
@@ -400,10 +376,9 @@ class Autoscaler:
         Select the RPU size for a new cluster based on the current window.
         """
         if self._autoscaling_policy == AutoscalingPolicy.DUPLICATE_LARGEST:
-            assert self._snapshot_at_window_start is not None
             ready_rpus = [
                 cluster_view.rpu
-                for cluster_view in self._snapshot_at_window_start.values()
+                for cluster_view in pool_snapshot_with_current_query.values()
                 if cluster_view.state == ClusterState.READY
             ]
             return (
@@ -462,70 +437,27 @@ class Autoscaler:
         rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> ViolationCost:
-        """Replay the appropriate window with a hypothetical new cluster of
-        *candidate_rpu* and return the aggregate SLO-violation metric and cost.
-
-        For backward-looking policies (ADD_SINGLE_BEST, REPLACE_WITH_SINGLE_BEST):
-
-        * Replays ``self._window_queries`` once, starting from the
-          window-start pool snapshot.  The hypothetical cluster is READY from
-          the start, and all completions are scored.
-
-        For forward-looking policies (ADD_SINGLE_BEST_FORWARD,
-        REPLACE_WITH_SINGLE_BEST_FORWARD):
-
-        * Starts from the current (backlogged) pool state and loops the window,
-          shifting query arrival times to cover the spin-up delay and
-          the post-spinup evaluation period.
-        * The hypothetical cluster starts PENDING and becomes READY after
-          ``spin_up_delay_s`` seconds; the REPLACE variant transitions existing
-          READY clusters to DRAINING at that point.
-        * Only Phase-2 completions (after spinup) are scored.
+        """Replay the trailing window with a hypothetical new cluster of
+        *candidate_rpu*.  The cluster starts PENDING and becomes READY after
+        ``spin_up_delay_s`` seconds; the REPLACE variant transitions existing
+        READY clusters to DRAINING at that point. Only query completions after
+        the new cluster is ready are counted.
         """
-        assert self._snapshot_at_window_start is not None
-        assert self._window_start_time_s is not None
-
-        is_forward = self._autoscaling_policy in (
-            AutoscalingPolicy.ADD_SINGLE_BEST_FORWARD,
-            AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD,
+        replay_start_rel_time_s = rel_time_s
+        replay_end_rel_time_s = (
+            rel_time_s + self._spin_up_delay_s + self._observation_window_s
         )
-
-        replay_start_rel_time_s: float
-        replay_end_rel_time_s: float
-        new_cluster_state_at_creation: ClusterState
-        local_cluster_pool: dict[str, Cluster]
-
-        if is_forward:
-            replay_start_rel_time_s = rel_time_s
-            replay_end_rel_time_s = (
-                rel_time_s + self._spin_up_delay_s + self._observation_window_s
-            )
-            new_cluster_state_at_creation = ClusterState.PENDING
-            local_cluster_pool = {
-                name: view.to_cluster()
-                for name, view in pool_snapshot_with_current_query.items()
-            }
-        else:
-            replay_start_rel_time_s = self._window_start_time_s
-            replay_end_rel_time_s = rel_time_s
-            new_cluster_state_at_creation = ClusterState.READY
-            if (
-                self._autoscaling_policy
-                == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST
-            ):
-                local_cluster_pool = {}
-            else:
-                local_cluster_pool = {
-                    name: view.to_cluster()
-                    for name, view in self._snapshot_at_window_start.items()
-                }
+        local_cluster_pool: dict[str, Cluster] = {
+            name: view.to_cluster()
+            for name, view in pool_snapshot_with_current_query.items()
+        }
         hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
         local_cluster_pool[hyp_cluster_name] = Cluster(
             creation_time_s=replay_start_rel_time_s,
             rpu=candidate_rpu,
             name=hyp_cluster_name,
             cache_state=np.zeros(self._cluster_cache_state_dim, dtype=float),
-            state=new_cluster_state_at_creation,
+            state=ClusterState.PENDING,
         )
         router = QueryRouter(
             slo_resolver=self._slo_resolver,
@@ -538,25 +470,24 @@ class Autoscaler:
 
         # Sequential replay.
         lat_and_slos: list[LatencySlo] = []
-        actual_observed_window_length_s = rel_time_s - self._window_start_time_s
+        actual_observed_window_length_s = (
+            rel_time_s - self._trailing_queries[0].rel_start_time_s
+        )
         num_window_copies_to_replay = math.ceil(
             (replay_end_rel_time_s - replay_start_rel_time_s)
             / actual_observed_window_length_s
         )
         for copy_idx in range(num_window_copies_to_replay):
-            for query in self._window_queries:
-                time_s = query.rel_start_time_s
-                routed_query = query
-                if is_forward:
-                    time_s = (
-                        query.rel_start_time_s
-                        - self._window_start_time_s
-                        + rel_time_s
-                        + copy_idx * actual_observed_window_length_s
-                    )
-                    routed_query = query.copy_with_new_info(
-                        f"fwd-{copy_idx}:", time_s
-                    )
+            for query in self._trailing_queries:
+                time_s = (
+                    query.rel_start_time_s
+                    - self._trailing_queries[0].rel_start_time_s
+                    + rel_time_s
+                    + copy_idx * actual_observed_window_length_s
+                )
+                routed_query = query.copy_with_new_info(
+                    f"fwd-{copy_idx}:", time_s
+                )
 
                 # Phase transition: activate hyp cluster once the spin-up
                 # delay has elapsed.
