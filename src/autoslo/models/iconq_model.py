@@ -115,6 +115,18 @@ from autoslo.workload_definition.query import ClusterAwareQueryId
 logger = logging.getLogger(__name__)
 
 
+def _load_train_config(params: dict) -> Optional[IconqModelTrainConfig]:
+    """
+    Resolve a train config from a params dict, handling the legacy
+    ``train_config_sequence`` list format produced by older saves.
+    """
+    if "train_config_sequence" in params:
+        tc_list = params["train_config_sequence"]
+        return IconqModelTrainConfig(**tc_list[-1]) if tc_list else None
+    raw = params.get("train_config")
+    return IconqModelTrainConfig(**raw) if raw is not None else None
+
+
 class IconqModel:
     """
     A query runtime model that uses an LSTM to predict query runtimes.
@@ -124,7 +136,7 @@ class IconqModel:
     def __init__(
         self,
         init_config: IconqModelInitConfig,
-        train_config_sequence: Optional[list[IconqModelTrainConfig]] = None,
+        train_config: Optional[IconqModelTrainConfig] = None,
         device: torch.device = torch.device("cpu"),
         parent_save_dir: Optional[str] = None,
         model_id: Optional[str] = None,
@@ -135,8 +147,7 @@ class IconqModel:
 
         Parameters:
             init_config: The configuration for the LSTM model.
-            train_config_sequence: The sequence of training configurations
-                that have been used to train the model so far.
+            train_config: The training configuration used to train the model.
             device: The device to use for training and prediction.
             parent_save_dir: The parent directory to save the model.
             model_id: The identifier of the model. If None, a new model ID
@@ -144,9 +155,7 @@ class IconqModel:
         """
         self._device = device
         self._init_config = init_config
-        self._train_config_sequence: list[IconqModelTrainConfig] = (
-            [] if train_config_sequence is None else train_config_sequence
-        )
+        self._train_config: Optional[IconqModelTrainConfig] = train_config
 
         # Create save directory and set model ID.
         if model_id is None:
@@ -477,7 +486,12 @@ class IconqModel:
             y_is_lower_bound,
         ) = batch
 
-        train_config = self._train_config_sequence[-1]
+        if self._train_config is None:
+            raise RuntimeError(
+                "No train_config set — cannot run inference without a " 
+                "train_config."
+            )
+        train_config = self._train_config
         result: dict[ClusterAwareQueryId, ModelPrediction] = {}
 
         # Handle isolated queries via the stage model when configured.
@@ -570,9 +584,11 @@ class IconqModel:
             yaml.safe_dump(
                 {
                     "init_config": asdict(self._init_config),
-                    "train_config_sequence": [
-                        asdict(tc) for tc in self._train_config_sequence
-                    ],
+                    "train_config": (
+                        asdict(self._train_config)
+                        if self._train_config is not None
+                        else None
+                    ),
                     "device": str(self._device),
                     "parent_save_dir": self._parent_save_dir,
                     "model_id": self._model_id,
@@ -616,10 +632,7 @@ class IconqModel:
 
         model = IconqModel(
             init_config=IconqModelInitConfig(**params["init_config"]),
-            train_config_sequence=[
-                IconqModelTrainConfig(**tc_dict)
-                for tc_dict in params["train_config_sequence"]
-            ],
+            train_config=_load_train_config(params),
             device=torch.device(params["device"]),
             parent_save_dir=parent_load_dir,
             model_id=model_id,
@@ -663,7 +676,12 @@ class IconqModel:
         for model_id in model_ids:
             model = IconqModel.load(model_id, parent_load_dir)
             save_dir = model._save_dir
-            train_config = model._train_config_sequence[-1]
+            if model._train_config is None:
+                raise RuntimeError(
+                    f"Model '{model_id}' has no train_config — cannot print "
+                    f"performance tables."
+                )
+            train_config = model._train_config
 
             required = {
                 "dataset.pkl": os.path.join(save_dir, "dataset.pkl"),
@@ -914,7 +932,12 @@ class IconqModel:
             final_val_loss: The final validation loss.
         """
         self._nn.train()
-        train_config = self._train_config_sequence[-1]
+        if self._train_config is None:
+            raise RuntimeError(
+                "No train_config set — cannot run training loop without a " \
+                "train_config."
+            )
+        train_config = self._train_config
 
         optimizer = optim.Adam(
             self._nn.parameters(),

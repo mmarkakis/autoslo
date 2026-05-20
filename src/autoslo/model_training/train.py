@@ -176,7 +176,7 @@ iconq_model_train_config = IconqModelTrainConfig(
 
 iconq_model = IconqModel(
     init_config=iconq_model_init_config,
-    train_config_sequence=[iconq_model_train_config],
+    train_config=iconq_model_train_config,
     model_id=iconq_model_id,
 )
 

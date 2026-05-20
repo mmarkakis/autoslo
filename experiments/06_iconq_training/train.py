@@ -190,11 +190,11 @@ def train_iconq_model(
         learning_rate=1e-3,
         sensitive_q_error_loss_version=sensitive_q_error_loss_version,
     )
-    iconq_model = IconqModel(init_config=iconq_model_init_config)
-
-    iconq_model._train_config_sequence = []
+    iconq_model = IconqModel(
+        init_config=iconq_model_init_config,
+        train_config=nn_model_train_config,
+    )
     iconq_model._nn = RuntimeNet(**iconq_model._nn_args).to(iconq_model._device)  # type: ignore
-    iconq_model._train_config_sequence.append(nn_model_train_config)
     iconq_model._save_params()
 
     datasets = [

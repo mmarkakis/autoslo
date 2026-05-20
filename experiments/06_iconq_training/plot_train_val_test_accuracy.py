@@ -304,9 +304,11 @@ def main(iconq_model_id: str, hide_plot_title: bool):
     model = IconqModel.load(
         model_id=iconq_model_id,
     )
-    use_stage_for_isolated_queries = model._train_config_sequence[
-        -1
-    ].use_stage_for_isolated_queries
+    use_stage_for_isolated_queries = (
+        model._train_config.use_stage_for_isolated_queries
+        if model._train_config is not None
+        else False
+    )
 
     trained_on_log_runtime = model.trained_on_log_runtime
 
