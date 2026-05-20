@@ -33,6 +33,7 @@ main_content:
     shared_xlim: true
     shared_ylim: true
     show_target_region: false
+    suppress_subplot_titles: true
 
 
   panels:

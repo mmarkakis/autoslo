@@ -64,6 +64,17 @@ class ExecutionResult:
     total_rel_time_s: float
     tail_fraction: float
 
+    def violation_for_metric(self, metric: SloMetric) -> float:
+        """Return the violation for the given metric."""
+        if metric == SloMetric.BINARY:
+            return self.violation_rate
+        elif metric == SloMetric.ABSOLUTE_S:
+            return self.violation_amount_s
+        elif metric in (SloMetric.RELATIVE, SloMetric.RELATIVE_UNCONSTRAINED):
+            return self.violation_relative_mean
+        else:
+            raise ValueError(f"Unsupported metric: {metric}")
+
     @staticmethod
     def load(
         execution_dir: str | Path,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -15,11 +17,8 @@ from autoslo.config.component_configs import (
 )
 from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
-from autoslo.filesystem.path_utils import (
-    find_most_recent_live_run_id,
-)
+from autoslo.filesystem.path_utils import find_most_recent_live_run_id
 from autoslo.filesystem.yaml_helpers import load_yaml
-from autoslo.slo.slo_metric import SloMetric
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.visualizations.scatter_plots import (
@@ -33,30 +32,54 @@ from autoslo.workload_execution.execution_result import ExecutionResult
 console = Console()
 
 
-def _x_value(result: ExecutionResult, metric: SloMetric) -> float:
-    if metric is SloMetric.BINARY:
-        return result.violation_rate
-    if metric is SloMetric.ABSOLUTE_S:
-        return result.violation_amount_s
-    if metric in (SloMetric.RELATIVE, SloMetric.RELATIVE_UNCONSTRAINED):
-        return result.violation_relative_mean
-    raise ValueError(f"Unsupported SloMetric for plotting: {metric}")
+@dataclass
+class _PanelData:
+    """All resolved, typed inputs needed to render one scatter panel."""
+
+    scatter_points: list[ScatterPoint]
+    slo_obj: SloObjective
+    x_threshold_objective: SloObjective | None
+    title: str | None
+    show_legend: bool
+    improvement_arrow: ImprovementArrow | None
+    tail_fraction: float
 
 
-
-
-
-def _load_scatter_points(
-    points_spec: list[dict],
-    slo_obj: SloObjective,
-    slo_resolver: SloResolver,
+def _load_panel_data(
+    panel: dict,
     sim_runs_dir: Path,
-    live: bool = False,
-    tail_fraction: float = 1.0,
-) -> list[ScatterPoint]:
+    live: bool,
+    *,
+    layout_show_target_region: bool = False,
+    layout_show_legend: bool = False,
+) -> _PanelData:
+    """Parse a panel config dict into a fully-resolved _PanelData.
+
+    This is the single place that knows the panel dict schema.  All
+    layout-level defaults are merged here so downstream rendering
+    functions operate purely on typed objects.
+    """
+    slo_obj = SloObjective(SloObjectiveConfig.from_config(panel))
+    slo_resolver = SloResolver(SloResolverConfig.from_config(panel))
+    tail_fraction: float = panel.get("tail_fraction", 1.0)
+    show_target_region = layout_show_target_region or panel.get(
+        "show_target_region", False
+    )
+    show_legend = layout_show_legend or panel.get("show_legend", False)
+
+    arrow_spec = panel.get("improvement_arrow")
+    improvement_arrow = (
+        ImprovementArrow(
+            base_label=arrow_spec["base_label"],
+            target_label=arrow_spec["target_label"],
+        )
+        if arrow_spec
+        else None
+    )
+
     scatter_points: list[ScatterPoint] = []
     runs_dir = Path(pu.get_runs_path())
-    for point in points_spec:
+    for point in panel["points"]:
         workload_config = WorkloadConfig.from_config(point)
         exec_cfg_path = resolve_config(point["execution_config"])
         params = point.get("params", {})
@@ -75,8 +98,9 @@ def _load_scatter_points(
             run_dir = runs_dir / run_id
             if not (run_dir / "structured_log.parquet").exists():
                 console.print(
-                    f"[yellow]Warning: execution directory has no structured log "
-                    f"for live run '{run_id}' — skipping point '{point['label']}'.[/]"
+                    f"[yellow]Warning: execution directory has no structured "
+                    f"log for live run '{run_id}' — skipping point "
+                    f"'{point['label']}'.[/]"
                 )
                 continue
         else:
@@ -94,102 +118,100 @@ def _load_scatter_points(
             ScatterPoint(
                 formatting_id=point["formatting_id"],
                 label=point["label"],
-                x=_x_value(result, slo_obj.slo_metric),
+                x=result.violation_for_metric(slo_obj.slo_metric),
                 y=result.total_cost,
             )
         )
-    return scatter_points
 
-
-def _generate_single_panel_plot(
-    content: dict,
-    manifest_path: Path,
-    plot_path: Path,
-    plot_name: str,
-    sim_runs_dir: Path,
-    plots_dir: Path,
-    force: bool,
-    live: bool = False,
-) -> None:
-    points_spec: list[dict] = content["points"]
-
-    if not force and plot_path.exists():
-        console.print(f"[dim]Skipping '{plot_name}' (exists)[/]")
-        return
-
-    slo_obj = SloObjective(SloObjectiveConfig.from_config(content))
-    slo_resolver = SloResolver(SloResolverConfig.from_config(content))
-
-    show_target_region: bool = content.get("show_target_region", False)
-    tail_fraction: float = content.get("tail_fraction", 1.0)
-
-    improvement_arrow_spec = content.get("improvement_arrow")
-    improvement_arrow = (
-        ImprovementArrow(
-            base_label=improvement_arrow_spec["base_label"],
-            target_label=improvement_arrow_spec["target_label"],
-        )
-        if improvement_arrow_spec
-        else None
-    )
-
-    scatter_points = _load_scatter_points(
-        points_spec,
-        slo_obj,
-        slo_resolver,
-        sim_runs_dir,
-        live=live,
+    return _PanelData(
+        scatter_points=scatter_points,
+        slo_obj=slo_obj,
+        x_threshold_objective=slo_obj if show_target_region else None,
+        title=panel.get("title") or None,
+        show_legend=show_legend,
+        improvement_arrow=improvement_arrow,
         tail_fraction=tail_fraction,
     )
 
-    if not scatter_points:
-        console.print(
-            f"[yellow]No data points found for '{plot_name}' — nothing to plot.[/]"
-        )
-        return
 
-    title: str | None = content.get("title") or None
-    fig, ax, _, _ = cost_vs_compliance_scatter(
-        scatter_points,
-        x_metric=slo_obj.slo_metric,
-        x_threshold_objective=slo_obj if show_target_region else None,
-        title=title,
-        show_legend=content.get("show_legend", False),
-        improvement_arrow=improvement_arrow,
-    )
-    _ann_lines = []
+def _annotate_ax(ax: Axes, panel_data: _PanelData, live: bool) -> None:
+    lines = []
     if not live:
-        _ann_lines.append("[Simulated]")
-    if tail_fraction < 1.0:
-        _ann_lines.append(f"[Viol. over last {tail_fraction * 100:.0f}%]")
-    if _ann_lines:
+        lines.append("[Simulated]")
+    if panel_data.tail_fraction < 1.0:
+        lines.append(f"[Viol. over last {panel_data.tail_fraction * 100:.0f}%]")
+    if lines:
         ax.text(
             0.98,
             0.02,
-            "\n".join(_ann_lines),
+            "\n".join(lines),
             transform=ax.transAxes,
             color="red",
             ha="right",
             va="bottom",
             fontsize=9,
         )
+
+
+def _render_and_save_figure(
+    panel_data: _PanelData,
+    plot_path: Path,
+    live: bool,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+) -> None:
+    """Render panel_data as a standalone figure and save it."""
+    fig, ax, _, _ = cost_vs_compliance_scatter(
+        panel_data.scatter_points,
+        x_metric=panel_data.slo_obj.slo_metric,
+        x_threshold_objective=panel_data.x_threshold_objective,
+        title=panel_data.title,
+        show_legend=panel_data.show_legend,
+        improvement_arrow=panel_data.improvement_arrow,
+    )
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    _annotate_ax(ax, panel_data, live)
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     console.print(f"[green]Saved:[/] {plot_path}")
 
 
+def _generate_single_panel_plot(
+    content: dict,
+    plot_path: Path,
+    sim_runs_dir: Path,
+    force: bool,
+    live: bool,
+) -> None:
+    if not force and plot_path.exists():
+        console.print(f"[dim]Skipping '{plot_path.stem}' (exists)[/]")
+        return
+
+    panel_data = _load_panel_data(content, sim_runs_dir, live)
+    if not panel_data.scatter_points:
+        console.print(
+            f"[yellow]No data points found for '{plot_path.stem}' — "
+            "nothing to plot.[/]"
+        )
+        return
+
+    _render_and_save_figure(panel_data, plot_path, live)
+
+
 def _generate_multi_panel_plot(
     manifest: dict,
-    manifest_path: Path,
     plot_path: Path,
-    plot_name: str,
     sim_runs_dir: Path,
     plots_dir: Path,
     force: bool,
-    live: bool = False,
+    live: bool,
 ) -> None:
     layout: dict = manifest.get("layout", {})
     panels_spec: list[dict] = manifest["panels"]
+    plot_name = plots_dir.name
 
     # Validate: no duplicate (row, col).
     seen_positions: set[tuple[int, int]] = set()
@@ -202,10 +224,8 @@ def _generate_multi_panel_plot(
         seen_positions.add(pos)
 
     # Infer grid dimensions from panel positions, allow explicit overrides.
-    max_row = max(p["row"] for p in panels_spec)
-    max_col = max(p["col"] for p in panels_spec)
-    rows: int = layout.get("rows", max_row + 1)
-    cols: int = layout.get("cols", max_col + 1)
+    rows: int = layout.get("rows", max(p["row"] for p in panels_spec) + 1)
+    cols: int = layout.get("cols", max(p["col"] for p in panels_spec) + 1)
 
     # Validate all panels are within bounds.
     for panel in panels_spec:
@@ -215,8 +235,6 @@ def _generate_multi_panel_plot(
                 f"for a {rows}x{cols} grid in manifest '{plot_name}'."
             )
 
-    # Up-to-date check across all panels.
-    all_points_specs = [p["points"] for p in panels_spec]
     if not force and plot_path.exists():
         console.print(f"[dim]Skipping '{plot_name}' (exists)[/]")
         return
@@ -228,99 +246,56 @@ def _generate_multi_panel_plot(
     shared_ylim: bool = layout.get("shared_ylim", False)
     show_legend: bool = layout.get("show_legend", False)
     show_target_region: bool = layout.get("show_target_region", False)
+    suppress_subplot_titles: bool = layout.get("suppress_subplot_titles", False)
 
     fig, axes_2d = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
 
+    rendered_axes: list[Axes] = []
     rendered_xlims: list[tuple[float, float]] = []
     rendered_ylims: list[tuple[float, float]] = []
-    rendered_axes: list[Axes] = []
+    panel_data_list: list[_PanelData] = []
 
     for panel in panels_spec:
-        row, col = panel["row"], panel["col"]
-        ax: Axes = axes_2d[row][col]
-
-        slo_obj = SloObjective(SloObjectiveConfig.from_config(panel))
-        slo_resolver = SloResolver(SloResolverConfig.from_config(panel))
-        points_spec: list[dict] = panel["points"]
-
-        improvement_arrow_spec = panel.get("improvement_arrow")
-        improvement_arrow = (
-            ImprovementArrow(
-                base_label=improvement_arrow_spec["base_label"],
-                target_label=improvement_arrow_spec["target_label"],
-            )
-            if improvement_arrow_spec
-            else None
-        )
-
-        tail_fraction: float = panel.get("tail_fraction", 1.0)
-        scatter_points = _load_scatter_points(
-            points_spec,
-            slo_obj,
-            slo_resolver,
+        ax: Axes = axes_2d[panel["row"]][panel["col"]]
+        panel_data = _load_panel_data(
+            panel,
             sim_runs_dir,
-            live=live,
-            tail_fraction=tail_fraction,
+            live,
+            layout_show_target_region=show_target_region,
+            layout_show_legend=show_legend,
         )
-
-        # if not scatter_points:
-        #     console.print(
-        #         f"[yellow]No data points found for panel ({row}, {col}) "
-        #         f"in '{plot_name}' — leaving panel blank.[/]"
-        #     )
-        #     ax.set_visible(False)
-        #     continue
-
-        title: str | None = panel.get("title") or None
         _, _, xlims, ylims = cost_vs_compliance_scatter(
-            scatter_points,
-            x_metric=slo_obj.slo_metric,
-            x_threshold_objective=(
-                slo_obj
-                if (
-                    show_target_region or panel.get("show_target_region", False)
-                )
-                else None
-            ),
-            title=title,
+            panel_data.scatter_points,
+            x_metric=panel_data.slo_obj.slo_metric,
+            x_threshold_objective=panel_data.x_threshold_objective,
+            title=panel_data.title,
             ax=ax,
-            show_legend=show_legend or panel.get("show_legend", False),
-            improvement_arrow=improvement_arrow,
+            show_legend=panel_data.show_legend,
+            improvement_arrow=panel_data.improvement_arrow,
         )
-        _ann_lines = []
-        if not live:
-            _ann_lines.append("[Simulated]")
-        if tail_fraction < 1.0:
-            _ann_lines.append(f"[Viol. over last {tail_fraction * 100:.0f}%]")
-        if _ann_lines:
-            ax.text(
-                0.98,
-                0.02,
-                "\n".join(_ann_lines),
-                transform=ax.transAxes,
-                color="red",
-                ha="right",
-                va="bottom",
-                fontsize=9,
-            )
+        _annotate_ax(ax, panel_data, live)
+        rendered_axes.append(ax)
         rendered_xlims.append(xlims)
         rendered_ylims.append(ylims)
-        rendered_axes.append(ax)
+        panel_data_list.append(panel_data)
 
     # Apply shared axis limits if requested.
     if shared_xlim and rendered_xlims:
-        unified_left = min(lims[0] for lims in rendered_xlims)
         unified_right = max(lims[1] for lims in rendered_xlims)
-        padding = (unified_right - unified_left) * 0.05
+        padding = (
+            unified_right - min(lims[0] for lims in rendered_xlims)
+        ) * 0.05
         for ax in rendered_axes:
             ax.set_xlim(0, unified_right + padding)
 
     if shared_ylim and rendered_ylims:
-        unified_bottom = min(lims[0] for lims in rendered_ylims)
         unified_top = max(lims[1] for lims in rendered_ylims)
-        padding = (unified_top - unified_bottom) * 0.05
+        padding = (unified_top - min(lims[0] for lims in rendered_ylims)) * 0.05
         for ax in rendered_axes:
             ax.set_ylim(0, unified_top + padding)
+
+    # Capture final axis limits after shared-limit adjustments.
+    final_limits = [(ax.get_xlim(), ax.get_ylim()) for ax in rendered_axes]
 
     # Hide unused axes.
     for r in range(rows):
@@ -338,6 +313,22 @@ def _generate_multi_panel_plot(
         plot_legend_to(legend_path)
         console.print(f"[green]Saved:[/] {legend_path}")
 
+    # Generate individual panel plots with the same axis limits as the multi-panel.
+    multi_stem = plot_path.stem
+    for panel_data, (final_xlim, final_ylim) in zip(
+        panel_data_list, final_limits
+    ):
+        export_data = (
+            replace(panel_data, title=None)
+            if suppress_subplot_titles
+            else panel_data
+        )
+        suffix = re.sub(r"\s+", "_", panel_data.title.lower()).strip("_")
+        panel_path = plots_dir / f"{multi_stem}#{suffix}.png"
+        _render_and_save_figure(
+            export_data, panel_path, live, xlim=final_xlim, ylim=final_ylim
+        )
+
 
 def _generate_plot(
     manifest_path: Path, force: bool, live: bool = False
@@ -347,37 +338,31 @@ def _generate_plot(
 
     data_path = Path(pu.get_data_path())
     sim_runs_dir = data_path / "simulator_runs"
-    plots_dir = data_path / "plots"
+    plots_dir = data_path / "plots" / plot_name
     plots_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{plot_name}_live" if live else plot_name
+    stem = f"{plot_name}#live" if live else plot_name
     plot_path = plots_dir / f"{stem}.png"
 
     if "panels" in manifest["main_content"]:
         _generate_multi_panel_plot(
             manifest["main_content"],
-            manifest_path,
             plot_path,
-            plot_name,
             sim_runs_dir,
             plots_dir,
             force,
-            live=live,
+            live,
         )
     else:
         _generate_single_panel_plot(
             manifest["main_content"],
-            manifest_path,
             plot_path,
-            plot_name,
             sim_runs_dir,
-            plots_dir,
             force,
-            live=live,
+            live,
         )
 
 
 def main() -> None:
-    # Argument parsing.
     description = "Generate a plot from a plot manifest."
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
