@@ -21,7 +21,7 @@ locals:
     INITIAL_RPU: 16
   arrow: &arrow
     base_label: "No-Op"
-    target_label: "Ours"
+    target_label: "Ours (Add Best)"
 
 
 main_content:
@@ -32,7 +32,7 @@ main_content:
     figsize: [8, 12]
     shared_xlim: true
     shared_ylim: true
-    show_target_region: true
+    show_target_region: false
     
 
 
@@ -57,14 +57,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set1
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set1
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set1
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -78,14 +78,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set1
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set1
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set1
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -95,7 +95,7 @@ main_content:
 
   - row: 0
     col: 1
-    title: "λ=0.1, κ=4, C=[16]"
+    title: "λ=0.1, κ=4, C = [16]"
     show_legend: true
     slo_objective_config:
       slo_metric: binary
@@ -113,14 +113,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set2
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set2
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set2
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -134,14 +134,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set2
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set2
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set2
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -169,14 +169,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set3
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set3
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set3
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -190,14 +190,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set3
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set3
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set3
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -207,7 +207,7 @@ main_content:
 
   - row: 1
     col: 1
-    title: "λ=0.1, κ=2, C=[16]"
+    title: "λ=0.1, κ=2, C = [16]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
@@ -225,14 +225,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set4
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set4
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set4
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -246,14 +246,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set4
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point1
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set4
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point1
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set4
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point1
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -281,14 +281,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set1
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set1
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set1
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -302,14 +302,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set1
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set1
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set1
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -319,7 +319,7 @@ main_content:
 
   - row: 2
     col: 1
-    title: "λ=0.2, κ=4, C=[16]"
+    title: "λ=0.2, κ=4, C = [16]"
     show_legend: false
     slo_objective_config:
       slo_metric: binary
@@ -337,14 +337,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set2
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set2
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set2
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -358,14 +358,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set2
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set2
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set2
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -393,14 +393,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set3
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set3
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set3
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -414,14 +414,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set3
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set3
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set3
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -431,7 +431,7 @@ main_content:
 
   - row: 3
     col: 1
-    title: "λ=0.2, κ=2, C=[16]"
+    title: "λ=0.2, κ=2, C = [16]"
     show_legend: False
     slo_objective_config:
       slo_metric: binary
@@ -449,14 +449,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: noop
           <<: *set4
-      - label: "Replace w/ Single Best"
-        formatting_id: autoscaler_replace_with_single_best
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: replace_with_single_best
-          <<: *set4
-      - label: "Replace w/ Single Best (Forward)"
+      # - label: "Replace w/ Best (Old)"
+      #   formatting_id: autoscaler_replace_with_single_best
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: replace_with_single_best
+      #     <<: *set4
+      - label: "Replace w/ Best"
         formatting_id: autoscaler_replace_with_single_best_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
@@ -470,14 +470,14 @@ main_content:
         params:
           AUTOSCALING_POLICY: duplicate_largest
           <<: *set4
-      - label: "Ours"
-        formatting_id: autoscaler_ours
-        workload_config: *lambda_point2
-        execution_config: exec:handmade/autoscaler_eval.yml
-        params:
-          AUTOSCALING_POLICY: add_single_best
-          <<: *set4
-      - label: "Ours (Forward)"
+      # - label: "Ours (Old)"
+      #   formatting_id: autoscaler_ours
+      #   workload_config: *lambda_point2
+      #   execution_config: exec:handmade/autoscaler_eval.yml
+      #   params:
+      #     AUTOSCALING_POLICY: add_single_best
+      #     <<: *set4
+      - label: "Ours (Add Best)"
         formatting_id: autoscaler_ours_forward
         workload_config: *lambda_point2
         execution_config: exec:handmade/autoscaler_eval.yml
