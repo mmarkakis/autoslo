@@ -1,0 +1,154 @@
+locals:
+  lambda_point2: &lambda_point2
+    workload_name: poisson_99_1_3_0.2_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  lambda_point1: &lambda_point1
+    workload_name: poisson_99_1_3_0.1_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  set1: &set1
+    KAPPA: 4
+    SECOND_CLUSTER_RPUS: 32
+  set2: &set2
+    KAPPA: 4
+    SECOND_CLUSTER_RPUS: 16
+  set3: &set3
+    KAPPA: 2
+    SECOND_CLUSTER_RPUS: 32
+  set4: &set4
+    KAPPA: 2
+    SECOND_CLUSTER_RPUS: 16
+
+
+main_content:
+  # Round-robin runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set1
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set2
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set3
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set4
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set1
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set2
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set3
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval.yml
+    params:
+      ROUTING_POLICY_NAME: round_robin
+      <<: *set4
+
+  # Stage runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set1
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set2
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set3
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set4
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set1
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set2
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set3
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_stage_model
+      <<: *set4
+
+  # Iconq runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set1
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set2
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set3
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set4
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set1
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set2
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set3
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/query_router_eval_v2.yml
+    params:
+      ROUTING_POLICY_NAME: use_iconq_model
+      <<: *set4
+
+
+
+
+
