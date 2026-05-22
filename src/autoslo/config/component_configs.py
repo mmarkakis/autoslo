@@ -207,6 +207,7 @@ class AutoscalerConfig(_PartialConfig):
     observation_window_s: float = 120.0
     min_observations_to_act: int = 5
     slo_tightening_factor: float = 1.0
+    min_finished_queries_in_counterfactual: int = 30
     force_one_decision_after_query_fraction: Optional[float] = None  # When set, 
     # disables reactive autoscaling and fires a single forced decision after 
     # this fraction of the workload's queries have been routed.

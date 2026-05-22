@@ -72,6 +72,9 @@ class Autoscaler:
             else slo_resolver
         )
         self._spin_up_delay_s = provisioner_config.spin_up_delay_s
+        self._min_finished_queries_in_counterfactual = (
+            autoscaler_config.min_finished_queries_in_counterfactual
+        )
 
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
@@ -268,7 +271,7 @@ class Autoscaler:
                 return []
 
             reason = (
-                f"num_num_queries_since_last_cluster_ready="
+                f"num_queries_since_last_cluster_ready="
                 f"{self._num_queries_since_last_cluster_ready}, "
                 f"slo_metric={self._slo_objective.slo_metric}, "
                 f"slo_metric_value={slo_metric_value:.4f}, "
@@ -438,15 +441,26 @@ class Autoscaler:
         pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> ViolationCost:
         """Replay the trailing window with a hypothetical new cluster of
-        *candidate_rpu*.  The cluster starts PENDING and becomes READY after
-        ``spin_up_delay_s`` seconds; the REPLACE variant transitions existing
-        READY clusters to DRAINING at that point. Only query completions after
-        the new cluster is ready are counted.
+        *candidate_rpu*.
+
+        Two-phase approach:
+
+        1. **Organic phase**: replay window copies with continuous arrivals
+           until ``_min_finished_queries_in_counterfactual`` queries that
+           both *started* and *finished* after ``hyp_ready_time_s`` have
+           completed organically.  A safety cap of ``max_copies`` prevents
+           runaway in degenerate inputs.
+
+        2. **Drain phase**: stop accepting new queries; compute cost from the
+           current active-query state; drain remaining in-flight queries via
+           ``finish_queries_until``; count drain completions (same
+           started-after-ready gate) toward the violation metric.
+
+        Only queries whose arrival time is >= ``hyp_ready_time_s`` are counted
+        toward violation in either phase.  Returns
+        ``ViolationCost(float('inf'), cost)`` if no such completions occur.
         """
         replay_start_rel_time_s = rel_time_s
-        replay_end_rel_time_s = (
-            rel_time_s + self._spin_up_delay_s + self._observation_window_s
-        )
         local_cluster_pool: dict[str, Cluster] = {
             name: view.to_cluster()
             for name, view in pool_snapshot_with_current_query.items()
@@ -470,14 +484,24 @@ class Autoscaler:
 
         # Sequential replay.
         lat_and_slos: list[LatencySlo] = []
+        hyp_ready_time_s: float | None = None
+        finished_after_ready: int = 0
+
         actual_observed_window_length_s = (
             rel_time_s - self._trailing_queries[0].rel_start_time_s
         )
-        num_window_copies_to_replay = math.ceil(
-            (replay_end_rel_time_s - replay_start_rel_time_s)
+        base_copies = math.ceil(
+            (self._spin_up_delay_s + self._observation_window_s)
             / actual_observed_window_length_s
         )
-        for copy_idx in range(num_window_copies_to_replay):
+        max_copies = max(base_copies * 10, 200)
+
+        # --- Organic phase ---
+        # Replay window copies with continuous arrivals until enough
+        # post-readiness completions have been collected.
+        organic_done = False
+        last_time_s = replay_start_rel_time_s
+        for copy_idx in range(max_copies):
             for query in self._trailing_queries:
                 time_s = (
                     query.rel_start_time_s
@@ -485,20 +509,21 @@ class Autoscaler:
                     + rel_time_s
                     + copy_idx * actual_observed_window_length_s
                 )
+                last_time_s = time_s
                 routed_query = query.copy_with_new_info(
                     f"fwd-{copy_idx}:", time_s
                 )
 
-                # Phase transition: activate hyp cluster once the spin-up
-                # delay has elapsed.
-                if local_cluster_pool[
-                    hyp_cluster_name
-                ].state == ClusterState.PENDING and (
-                    time_s >= rel_time_s + self._spin_up_delay_s
-                ):
+                # Phase transition: activate hyp cluster once spin-up delay
+                # has elapsed.
+                if (
+                    local_cluster_pool[hyp_cluster_name].state
+                    == ClusterState.PENDING
+                ) and (time_s >= rel_time_s + self._spin_up_delay_s):
                     local_cluster_pool[hyp_cluster_name].update_state(
                         ClusterState.READY
                     )
+                    hyp_ready_time_s = time_s
                     if (
                         self._autoscaling_policy
                         == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD
@@ -510,21 +535,26 @@ class Autoscaler:
                             ):
                                 c.update_state(ClusterState.DRAINING)
 
-                # Expire any finished queries. Only count if after spinup.
-                for cluster_name, cluster in local_cluster_pool.items():
-                    qs_and_latencies = cluster.finish_queries_until(
+                # Expire finished queries. Only count completions for queries
+                # that arrived after the hyp cluster became ready.
+                for cluster in local_cluster_pool.values():
+                    for q, latency_s in cluster.finish_queries_until(
                         rel_time_s=time_s,
-                    )
-                    if len(qs_and_latencies) > 0:
-                        for q, latency_s in qs_and_latencies:
-                            if (
-                                local_cluster_pool[hyp_cluster_name].state
-                                == ClusterState.READY
-                            ):
-                                slo = self._slo_resolver.resolve(
-                                    q.query_text_id
-                                )
-                                lat_and_slos.append(LatencySlo(latency_s, slo))
+                    ):
+                        if (
+                            hyp_ready_time_s is not None
+                            and q.rel_start_time_s >= hyp_ready_time_s
+                        ):
+                            slo = self._slo_resolver.resolve(q.query_text_id)
+                            lat_and_slos.append(LatencySlo(latency_s, slo))
+                            finished_after_ready += 1
+
+                if (
+                    finished_after_ready
+                    >= self._min_finished_queries_in_counterfactual
+                ):
+                    organic_done = True
+                    break
 
                 # Route and update state for the incoming query.
                 # Wrap as ClusterViews for the router
@@ -548,6 +578,10 @@ class Autoscaler:
                     new_cache_state,
                 )
 
+            if organic_done:
+                break
+
+        # --- Drain phase ---
         # Also add the lat and slo from any queries still active at the end of
         # the window, and compute cost directly from the replay cluster state
         # using the same model as QueryRouter.
@@ -563,7 +597,7 @@ class Autoscaler:
                 past_billing_intervals=cluster.past_billing_intervals,
                 billing_window_start_s=cluster.billing_window_start_s,
                 cost_per_second=cluster.cost_per_second,
-                current_rel_time_s=replay_end_rel_time_s,
+                current_rel_time_s=last_time_s,
             )
 
             lat_and_slos.extend(active_pairs)
