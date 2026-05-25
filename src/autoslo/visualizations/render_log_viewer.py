@@ -303,7 +303,7 @@ def _parse_log(
                 "rel_time_s": float(row["rel_time_s"]),
                 "cluster_name": row.get("cluster_name", ""),
                 "rpu": _safe_rpu(row.get("cluster_name", "")),
-                "latency_s": details.get("latency_s"),
+                "latency_s": details.get("latency_s_for_routing"),
                 "slo_violation": details.get("slo_violation"),
                 "cost": details.get("cost"),
             }
