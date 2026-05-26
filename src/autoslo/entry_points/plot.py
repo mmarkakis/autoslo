@@ -33,6 +33,7 @@ from autoslo.visualizations.scatter_plots import (
 from autoslo.workload_execution.execution_result import ExecutionResult
 
 console = Console()
+_TABLE_PANEL_RE = re.compile(r"λ=([^,]+),\s*κ=([^,]+),\s*C=(.+)")
 
 
 def _cluster_annotation(run_dir: Path) -> str | None:
@@ -192,6 +193,186 @@ def _save_points_csv(
     console.print(f"[green]Saved:[/] {csv_path}")
 
 
+def _table_parse_panel(key: str) -> tuple[str, str, str]:
+    """Split a panel title of the form 'λ=X, κ=Y, C=Z' into 3 parts."""
+    match = _TABLE_PANEL_RE.match(key)
+    if match:
+        return (
+            match.group(1).strip(),
+            match.group(2).strip(),
+            match.group(3).strip(),
+        )
+    return key, "", ""
+
+
+def _table_tex_escape(s: str) -> str:
+    """Escape special LaTeX characters in plain text."""
+    for char, repl in [
+        ("\\", r"\textbackslash{}"),
+        ("&", r"\&"),
+        ("#", r"\#"),
+        ("_", r"\_"),
+        ("{", r"\{"),
+        ("}", r"\}"),
+        ("~", r"\textasciitilde{}"),
+        ("^", r"\textasciicircum{}"),
+    ]:
+        s = s.replace(char, repl)
+    return s
+
+
+def _save_points_latex_table(
+    tex_path: Path,
+    panels: list[tuple[int | None, int | None, _PanelData]],
+    explicit_reference_label: str | None = None,
+) -> None:
+    """Write a publication-style LaTeX table for the plotted points."""
+    panel_entries: list[tuple[str, dict[str, tuple[float, float]]]] = []
+    method_order: list[str] = []
+    seen_methods: set[str] = set()
+
+    for row, col, panel_data in panels:
+        panel_key = panel_data.title or f"({row},{col})"
+        points_by_method: dict[str, tuple[float, float]] = {}
+        for point in panel_data.scatter_points:
+            points_by_method[point.label] = (point.x, point.y)
+            if point.label not in seen_methods:
+                method_order.append(point.label)
+                seen_methods.add(point.label)
+        panel_entries.append((panel_key, points_by_method))
+
+    if not panel_entries or not method_order:
+        return
+
+    reference_label = explicit_reference_label
+    if reference_label is None or reference_label not in seen_methods:
+        reference_label = method_order[0]
+
+    col_parts = ["c", "c", "c", "||"]
+    for i in range(len(method_order)):
+        if i < len(method_order) - 1:
+            col_parts += ["c", "c", "|"]
+        else:
+            col_parts += ["c", "c"]
+    col_spec = " ".join(col_parts)
+
+    lines: list[str] = [
+        r"\documentclass{article}",
+        r"\usepackage{booktabs}",
+        r"\usepackage{amsmath}",
+        r"\usepackage[landscape, margin=1cm]{geometry}",
+        r"\begin{document}",
+        r"\begin{table}[ht]",
+        r"\centering",
+        r"\resizebox{\columnwidth}{!}{",
+        r"\begin{tabular}{" + col_spec + r"}",
+        r"\toprule",
+    ]
+
+    top_header: list[str] = [r"$\lambda$", r"$\kappa$", "C"]
+    for i, method in enumerate(method_order):
+        mc_fmt = "c|" if i < len(method_order) - 1 else "c"
+        top_header.append(
+            rf"\multicolumn{{2}}{{{mc_fmt}}}{{{_table_tex_escape(method)}}}"
+        )
+    lines.append(" & ".join(top_header) + r" \\")
+
+    sub_header: list[str] = ["", "", ""]
+    for _ in method_order:
+        sub_header += ["VR", "Cost"]
+    lines.append(" & ".join(sub_header) + r" \\")
+    lines.append(r"\hline")
+
+    for panel_key, points_by_method in panel_entries:
+        lam, kap, c = _table_parse_panel(panel_key)
+        ranked = sorted(points_by_method.items(), key=lambda item: item[1])
+        best = ranked[0][0] if len(ranked) >= 1 else None
+        second = ranked[1][0] if len(ranked) >= 2 else None
+
+        cells: list[str] = [
+            _table_tex_escape(lam),
+            _table_tex_escape(kap),
+            _table_tex_escape(c),
+        ]
+        for method in method_order:
+            if method in points_by_method:
+                x, y = points_by_method[method]
+                vr_cell = f"{x:.4f}"
+                if method == best:
+                    vr_cell = rf"\textbf{{{vr_cell}}}"
+                elif method == second:
+                    vr_cell = rf"\underline{{{vr_cell}}}"
+                cells.append(vr_cell)
+                cells.append(rf"\${y:.2f}")
+            else:
+                cells += ["---", "---"]
+        lines.append(" & ".join(cells) + r" \\")
+
+    # Mean improvement row: relative to the reference method.
+    mean_vr: dict[str, float | None] = {}
+    mean_cost: dict[str, float | None] = {}
+    for method in method_order:
+        if method == reference_label:
+            mean_vr[method] = None
+            mean_cost[method] = None
+            continue
+
+        x_diffs: list[float] = []
+        y_diffs: list[float] = []
+        for _, points_by_method in panel_entries:
+            if reference_label not in points_by_method or method not in points_by_method:
+                continue
+            ref_x, ref_y = points_by_method[reference_label]
+            x, y = points_by_method[method]
+            if ref_x != 0:
+                x_diffs.append((x - ref_x) / ref_x * 100)
+            if ref_y != 0:
+                y_diffs.append((y - ref_y) / ref_y * 100)
+        mean_vr[method] = sum(x_diffs) / len(x_diffs) if x_diffs else None
+        mean_cost[method] = sum(y_diffs) / len(y_diffs) if y_diffs else None
+
+    ranked_mean_pairs: list[tuple[str, float]] = []
+    for method in method_order:
+        vr = mean_vr[method]
+        if method != reference_label and vr is not None:
+            ranked_mean_pairs.append((method, vr))
+    ranked_mean_pairs.sort(key=lambda pair: pair[1])
+    mean_best = ranked_mean_pairs[0][0] if len(ranked_mean_pairs) >= 1 else None
+    mean_second = (
+        ranked_mean_pairs[1][0] if len(ranked_mean_pairs) >= 2 else None
+    )
+
+    lines.append(r"\hline")
+    mean_cells: list[str] = [r"\multicolumn{3}{c||}{\textit{Mean~$\Delta$}}"]
+    for method in method_order:
+        if method == reference_label:
+            mean_cells += ["---", "---"]
+        else:
+            vr_val = mean_vr[method]
+            vr_str = rf"{vr_val:+.1f}\%" if vr_val is not None else "---"
+            if method == mean_best:
+                vr_str = rf"\textbf{{{vr_str}}}"
+            elif method == mean_second:
+                vr_str = rf"\underline{{{vr_str}}}"
+            cost_val = mean_cost[method]
+            cost_str = rf"{cost_val:+.1f}\%" if cost_val is not None else "---"
+            mean_cells.append(vr_str)
+            mean_cells.append(cost_str)
+    lines.append(" & ".join(mean_cells) + r" \\")
+
+    lines += [
+        r"\bottomrule",
+        r"\end{tabular}}",
+        rf"\caption{{Mean improvement is relative to {_table_tex_escape(reference_label)}.}}",
+        r"\label{tab:TODO}",
+        r"\end{table}",
+        r"\end{document}",
+    ]
+
+    tex_path.write_text("\n".join(lines) + "\n")
+    console.print(f"[green]Saved:[/] {tex_path}")
+
+
 def _annotate_ax(ax: Axes, panel_data: _PanelData, live: bool) -> None:
     lines = []
     if not live:
@@ -257,7 +438,15 @@ def _generate_single_panel_plot(
         return
 
     _render_and_save_figure(panel_data, plot_path, live)
-    _save_points_csv(plot_path.with_suffix(".csv"), [(None, None, panel_data)])
+    export_panels: list[tuple[int | None, int | None, _PanelData]] = [
+        (None, None, panel_data)
+    ]
+    _save_points_csv(plot_path.with_suffix(".csv"), export_panels)
+    _save_points_latex_table(
+        plot_path.with_suffix(".tex"),
+        export_panels,
+        explicit_reference_label=content.get("table_reference_label"),
+    )
 
 
 def _generate_multi_panel_plot(
@@ -377,6 +566,14 @@ def _generate_multi_panel_plot(
             for panel, pd in zip(panels_spec, panel_data_list)
         ],
     )
+    _save_points_latex_table(
+        plot_path.with_suffix(".tex"),
+        [
+            (panel["row"], panel["col"], pd)
+            for panel, pd in zip(panels_spec, panel_data_list)
+        ],
+        explicit_reference_label=layout.get("table_reference_label"),
+    )
 
     if show_legend:
         legend_path = plots_dir / f"{plot_name}_legend.png"
@@ -393,7 +590,8 @@ def _generate_multi_panel_plot(
             if suppress_subplot_titles
             else panel_data
         )
-        suffix = re.sub(r"\s+", "_", panel_data.title.lower()).strip("_")
+        title_for_suffix = panel_data.title or "panel"
+        suffix = re.sub(r"\s+", "_", title_for_suffix.lower()).strip("_")
         panel_path = plots_dir / f"{multi_stem}#{suffix}.png"
         _render_and_save_figure(
             export_data, panel_path, live, xlim=final_xlim, ylim=final_ylim
