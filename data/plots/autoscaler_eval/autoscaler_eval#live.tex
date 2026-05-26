@@ -1,0 +1,29 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[ht]
+\centering
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{c c c || c c | c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{No-Op} & \multicolumn{2}{c|}{Replace w/ Best} & \multicolumn{2}{c|}{Duplicate} & \multicolumn{2}{c}{Ours (Add Best)} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+0.1 & 4 & [8] & 0.9832 & \$4.71 & \underline{0.3408} & \$4.92 & 0.8603 & \$4.82 & \textbf{0.1676} & \$6.02 \\
+0.1 & 4 & [16] & 0.3575 & \$5.17 & 0.3631 & \$5.31 & \textbf{0.0279} & \$7.26 & \underline{0.1732} & \$6.16 \\
+0.1 & 2 & [8] & 0.9888 & \$4.65 & \underline{0.5196} & \$5.03 & 0.9330 & \$4.99 & \textbf{0.2737} & \$6.16 \\
+0.1 & 2 & [16] & 0.5475 & \$5.15 & 0.5251 & \$5.32 & \textbf{0.1285} & \$7.60 & \underline{0.3631} & \$6.00 \\
+0.2 & 4 & [8] & 1.0000 & \$4.30 & \textbf{0.0447} & \$5.02 & 0.9441 & \$4.63 & \underline{0.1453} & \$5.15 \\
+0.2 & 4 & [16] & 0.8156 & \$3.67 & \textbf{0.0447} & \$4.52 & 0.2011 & \$4.24 & \underline{0.0559} & \$5.75 \\
+0.2 & 2 & [8] & 1.0000 & \$4.20 & \underline{0.1955} & \$5.13 & 0.9721 & \$4.75 & \textbf{0.1844} & \$5.32 \\
+0.2 & 2 & [16] & 0.9665 & \$3.82 & \underline{0.2235} & \$4.76 & 0.5363 & \$4.37 & \textbf{0.0894} & \$5.93 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \underline{-57.8\%} & +13.1\% & -39.4\% & +18.5\% & \textbf{-73.9\%} & +31.8\% \\
+\bottomrule
+\end{tabular}}
+\caption{Mean improvement is relative to No-Op.}
+\label{tab:TODO}
+\end{table}
+\end{document}
