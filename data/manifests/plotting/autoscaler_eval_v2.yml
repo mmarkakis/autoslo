@@ -1,0 +1,375 @@
+locals:
+  lambda_point2: &lambda_point2
+    workload_name: poisson_99_1_3_0.2_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  lambda_point1: &lambda_point1
+    workload_name: poisson_99_1_3_0.1_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  set1: &set1
+    KAPPA: 4
+    INITIAL_RPU: 8
+  set2: &set2
+    KAPPA: 4
+    INITIAL_RPU: 16
+  set3: &set3
+    KAPPA: 2
+    INITIAL_RPU: 8
+  set4: &set4
+    KAPPA: 2
+    INITIAL_RPU: 16
+  arrow: &arrow
+    base_label: "No-Op"
+    target_label: "Ours (Add Best)"
+
+
+main_content:
+
+  layout:
+    rows: 4
+    cols: 2
+    figsize: [8, 12]
+    shared_xlim: true
+    shared_ylim: true
+    show_target_region: false
+    annotate_with_cluster_sizes: true
+
+
+
+  panels:
+  - row: 0
+    col: 0
+    title: "λ=0.1, κ=4, C=[8]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set1
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set1
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set1
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set1
+
+  - row: 0
+    col: 1
+    title: "λ=0.1, κ=4, C=[16]"
+    show_legend: true
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set2
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set2
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set2
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set2
+
+  - row: 1
+    col: 0
+    title: "λ=0.1, κ=2, C=[8]"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set3
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set3
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set3
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set3
+
+  - row: 1
+    col: 1
+    title: "λ=0.1, κ=2, C=[16]"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set4
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set4
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set4
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point1
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set4
+
+  - row: 2
+    col: 0
+    title: "λ=0.2, κ=4, C=[8]"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set1
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set1
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set1
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set1
+
+  - row: 2
+    col: 1
+    title: "λ=0.2, κ=4, C=[16]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set2
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set2
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set2
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set2
+
+  - row: 3
+    col: 0
+    title: "λ=0.2, κ=2, C=[8]"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set3
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set3
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set3
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set3
+
+  - row: 3
+    col: 1
+    title: "λ=0.2, κ=2, C=[16]"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+    tail_fraction: 0.6
+    points:
+      - label: "No-Op"
+        formatting_id: autoscaler_noop
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          <<: *set4
+      - label: "Replace w/ Best"
+        formatting_id: autoscaler_replace_with_single_best_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: replace_with_single_best_forward
+          <<: *set4
+      - label: "Duplicate"
+        formatting_id: autoscaler_duplicate_largest
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          <<: *set4
+      - label: "Ours (Add Best)"
+        formatting_id: autoscaler_ours_forward
+        workload_config: *lambda_point2
+        execution_config: exec:handmade/autoscaler_eval_v2.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          <<: *set4
