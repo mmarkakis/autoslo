@@ -128,6 +128,10 @@ class WorkloadRunner:
         def _on_spin_up_done(fut: concurrent.futures.Future) -> None:
             exc = fut.exception()
             if exc is not None:
+                # Provisioning failed; clear the in-flight flag so the
+                # autoscaler can attempt another spin-up on the next eligible
+                # query rather than being blocked permanently.
+                self._autoscaler.clear_spin_up_in_flight()
                 return
             cluster_name = fut.result()
             if cluster_name is None:

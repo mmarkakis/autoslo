@@ -98,6 +98,11 @@ class Autoscaler:
         self._num_queries_since_last_cluster_ready: int = 0
         self._known_ready_cluster_names: frozenset[str] = frozenset()
         self._spin_up_disabled: bool = False
+        # True from the moment a SpinUpAction is emitted until the new cluster
+        # first appears as READY in the pool.  Prevents duplicate spin-up
+        # recommendations during the provisioning window (which can be minutes
+        # in live mode, during which no PENDING cluster is visible in the pool).
+        self._spin_up_in_flight: bool = False
 
         # Forced mode (set when force_one_decision_after_query_count is
         # provided).
@@ -169,6 +174,17 @@ class Autoscaler:
         """
         with self._lock:
             self._spin_up_disabled = True
+            self._spin_up_in_flight = False
+
+    def clear_spin_up_in_flight(self) -> None:
+        """Clear the in-flight spin-up flag without disabling future spin-ups.
+
+        Called by the runner when a provisioning attempt fails with an
+        exception, so that the autoscaler can attempt another spin-up on the
+        next eligible query rather than being blocked permanently.
+        """
+        with self._lock:
+            self._spin_up_in_flight = False
 
     def inform(
         self,
@@ -182,7 +198,8 @@ class Autoscaler:
                 return []
 
             # Detect new-READY clusters and reset the post-spinup observation
-            # counter.
+            # counter.  Also clear _spin_up_in_flight: the cluster we were
+            # waiting for has arrived.
             current_ready = frozenset(
                 name
                 for name, cluster in pool_snapshot_with_current_query.items()
@@ -191,6 +208,7 @@ class Autoscaler:
             if current_ready - self._known_ready_cluster_names:
                 self._num_queries_since_last_cluster_ready = 0
                 self._known_ready_cluster_names = current_ready
+                self._spin_up_in_flight = False
             self._num_queries_since_last_cluster_ready += 1
 
             # Maintain the trailing window.
@@ -226,15 +244,22 @@ class Autoscaler:
         Recommend spinning up a cluster if both are true:
         1. The window has at least ``min_observations_to_act`` queries.
         2. The SloObjective is being violated on the current snapshot.
-        3. There are no other ongoing spinups.
+        3. No spin-up is currently in flight.
 
-        Use the window to determine the size of the window to spin up.
+        Use the window to determine the size of the cluster to spin up.
         """
 
         # Determine if we are disallowed from spinning up.
         if self._autoscaling_policy == AutoscalingPolicy.NOOP:
             return []
         if len(self.allowed_rpu_sizes) == 0 or self._spin_up_disabled:
+            return []
+
+        # Block if a spin-up is already in flight (not yet reflected in pool).
+        # This covers the live-runner case where the cluster goes directly from
+        # not-in-pool to READY without ever appearing as PENDING, making the
+        # pool-level PENDING check ineffective.
+        if self._spin_up_in_flight:
             return []
 
         if self.forced_decision_mode:
@@ -269,11 +294,6 @@ class Autoscaler:
                 < self._min_observations_to_act
             ):
                 return []
-
-            # Determine if there are ongoing spinups.
-            for cluster in pool_snapshot_with_current_query.values():
-                if cluster.state == ClusterState.PENDING:
-                    return []
 
             # Determine if the (possibly tightened) SLO objective is met.
             lat_and_slos = []
@@ -337,6 +357,7 @@ class Autoscaler:
                 },
             )
         )
+        self._spin_up_in_flight = True
         return [action]
 
     def consider_teardown(
