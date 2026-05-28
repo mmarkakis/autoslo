@@ -289,17 +289,26 @@ class WorkloadSimulator:
             )
         )
 
-        selected_cluster_name = route_and_update_bookkeeping(
-            source="WorkloadSimulator",
-            rel_time_s_getter=lambda: self._current_sim_time_s,
-            pool=self._pool,
-            router=self._router,
-            query=query,
-            autoscaler=self._autoscaler,
-            on_spin_up=self._on_sim_spin_up,
-            write_text_log=self._write_text_log,
-            simulator_pending_events_heap=self._pending_events,
+        selected_cluster_name, autoscaler_actions = (
+            route_and_update_bookkeeping(
+                source="WorkloadSimulator",
+                rel_time_s_getter=lambda: self._current_sim_time_s,
+                pool=self._pool,
+                router=self._router,
+                query=query,
+                autoscaler=self._autoscaler,
+                simulator_pending_events_heap=self._pending_events,
+            )
         )
+        for action in autoscaler_actions:
+            if isinstance(action, SpinUpAction):
+                self._on_sim_spin_up(action)
+            elif isinstance(action, TearDownAction):
+                self._pool.request_tear_down(action, self._current_sim_time_s)
+            elif self._write_text_log:
+                logging.warning(
+                    "Unknown autoscaling action type: %s", type(action)
+                )
         seq_num_to_cluster_name[index] = selected_cluster_name
 
         emit_structured(

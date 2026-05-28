@@ -1,9 +1,8 @@
 import heapq
 import logging
-from typing import Callable, Optional
+from typing import Callable, Optional, Protocol
 
-from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
-from autoslo.clusters.autoscaler import Autoscaler
+from autoslo.clusters.actions import ScalingAction
 from autoslo.clusters.cluster import ClusterView
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
@@ -18,17 +17,30 @@ from autoslo.workload_execution.simulator_event import (
 logger = logging.getLogger(__name__)
 
 
+class _AutoscalerLike(Protocol):
+    """Structural interface required by route_and_update_bookkeeping.
+
+    Only inform() is called; the concrete Autoscaler class satisfies this
+    protocol, as does any proxy that intercepts inform() calls.
+    """
+
+    def inform(
+        self,
+        rel_time_s: float,
+        current_query: Query,
+        pool_snapshot_with_current_query: dict[str, ClusterView],
+    ) -> list[ScalingAction]: ...
+
+
 def route_and_update_bookkeeping(
     source: str,
     rel_time_s_getter: Callable[[], float],
     pool: ManagedClusterPool,
     router: QueryRouter,
     query: Query,
-    autoscaler: Autoscaler,
-    on_spin_up: Callable[[SpinUpAction], None],
-    write_text_log: bool = False,
+    autoscaler: _AutoscalerLike,
     simulator_pending_events_heap: Optional[list[SimulatorEvent]] = None,
-) -> str:
+) -> tuple[str, list[ScalingAction]]:
 
     #  ── Route the query ────────────────────────────────────
     route_start_rel_s = rel_time_s_getter()
@@ -127,21 +139,13 @@ def route_and_update_bookkeeping(
         new_cluster_cache_state=new_cluster_cache_state,
     )
     post_snapshot = pool.snapshot(only_ready=False)
+    actions: list[ScalingAction] = []
     try:
-        autoscaler_suggested_actions: list[ScalingAction] = autoscaler.inform(
+        actions = autoscaler.inform(
             rel_time_s=rel_time_s_getter(),
             current_query=query,
             pool_snapshot_with_current_query=post_snapshot,
         )
-        for action in autoscaler_suggested_actions:
-            if isinstance(action, SpinUpAction):
-                on_spin_up(action)
-            elif isinstance(action, TearDownAction):
-                pool.request_tear_down(action, rel_time_s_getter())
-            elif write_text_log:
-                logger.warning(
-                    f"Unknown autoscaling action type: {type(action)}"
-                )
     except Exception:
         logger.exception(
             "Autoscaler failed after routing query %s; "
@@ -149,4 +153,4 @@ def route_and_update_bookkeeping(
             query.query_id,
         )
 
-    return selected_cluster_name
+    return selected_cluster_name, actions

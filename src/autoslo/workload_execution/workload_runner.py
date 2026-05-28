@@ -3,6 +3,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import queue
 import threading
 from functools import partial
 from pathlib import Path
@@ -10,8 +11,8 @@ from typing import Optional
 
 from tqdm.auto import tqdm
 
-from autoslo.clusters.actions import SpinUpAction, TearDownAction
-from autoslo.clusters.cluster import Cluster, ClusterState
+from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
+from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.clusters.redshift_provisioner import RedshiftServerlessProvisioner
 from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.execution_config import ExecutionConfig
@@ -30,6 +31,55 @@ from autoslo.workload_definition.query import Query, QueryTextId
 from autoslo.workload_definition.query_text_registry import QueryTextRegistry
 from autoslo.workload_definition.schema import Schema
 from autoslo.workload_definition.workload import Workload
+
+# ---------------------------------------------------------------------------
+# Background autoscaler thread helpers
+# ---------------------------------------------------------------------------
+
+
+class _AutoscalerWorkItem:
+    """
+    Payload enqueued by _AutoscalerProxy for the background autoscaler thread.
+    """
+
+    __slots__ = ("rel_time_s", "query", "snapshot")
+
+    def __init__(
+        self,
+        rel_time_s: float,
+        query: "Query",
+        snapshot: "dict[str, ClusterView]",
+    ) -> None:
+        self.rel_time_s = rel_time_s
+        self.query = query
+        self.snapshot = snapshot
+
+
+class _AutoscalerProxy:
+    """Passed to route_and_update_bookkeeping in place of the real Autoscaler.
+
+    inform() enqueues the call onto the background thread's queue and returns
+    [] immediately, removing autoscaler work from the routing critical path.
+    SpinUp/TearDown actions are dispatched by the background thread instead.
+    """
+
+    def __init__(
+        self, q: "queue.SimpleQueue[_AutoscalerWorkItem | None]"
+    ) -> None:
+        self._queue = q
+
+    def inform(
+        self,
+        rel_time_s: float,
+        current_query: "Query",
+        pool_snapshot_with_current_query: "dict[str, ClusterView]",
+    ) -> list[ScalingAction]:
+        self._queue.put(
+            _AutoscalerWorkItem(
+                rel_time_s, current_query, pool_snapshot_with_current_query
+            )
+        )
+        return []
 
 
 class WorkloadRunner:
@@ -84,6 +134,9 @@ class WorkloadRunner:
         self._routing_lock = threading.Lock()
         self._spin_ups_lock = threading.Lock()
         self._pending_spin_ups: list[concurrent.futures.Future] = []
+        self._autoscaler_queue: queue.SimpleQueue[
+            Optional[_AutoscalerWorkItem]
+        ] = queue.SimpleQueue()
 
     @property
     def workload(self) -> Workload:
@@ -181,20 +234,62 @@ class WorkloadRunner:
         concurrent routing calls from clobbering each other's
         ``predicted_latencies`` updates.
 
+        autoscaler.inform() is dispatched to the background autoscaler
+        thread via _AutoscalerProxy; it does not block routing.
+
         Called from an executor thread — never from the event loop.
         """
         with self._routing_lock:
-            return route_and_update_bookkeeping(
+            cluster_name, _ = route_and_update_bookkeeping(
                 source="WorkloadRunner",
                 rel_time_s_getter=self._rel_time_s,
                 pool=self._pool,
                 router=self._router,
                 query=query,
-                autoscaler=self._autoscaler,
-                on_spin_up=self._on_live_spin_up,
-                write_text_log=self._write_text_log,
+                autoscaler=_AutoscalerProxy(self._autoscaler_queue),
                 simulator_pending_events_heap=None,
             )
+            # We can ignore the second return value (autoscaler actions) because
+            # AutoscalerProxy enqueues the work item for the background thread
+            # and returns [] immediately, instead of returning real actions to
+            # be dispatched here.
+            return cluster_name
+
+    def _autoscaler_loop(self) -> None:
+        """Background thread: drain _autoscaler_queue and call the autoscaler.
+
+        Runs for the lifetime of run().  Exits when it dequeues the sentinel
+        (None) that run()'s finally block enqueues after all routing is done.
+        Actions returned by inform() are dispatched here, mirroring the
+        dispatch logic in route_and_update_bookkeeping.
+        """
+        while True:
+            item = self._autoscaler_queue.get()
+            if item is None:  # sentinel — time to exit
+                break
+            try:
+                actions = self._autoscaler.inform(
+                    rel_time_s=item.rel_time_s,
+                    current_query=item.query,
+                    pool_snapshot_with_current_query=item.snapshot,
+                )
+                for action in actions:
+                    if isinstance(action, SpinUpAction):
+                        self._on_live_spin_up(action)
+                    elif isinstance(action, TearDownAction):
+                        self._pool.request_tear_down(action, self._rel_time_s())
+                    elif self._write_text_log:
+                        logging.warning(
+                            "Unknown autoscaling action type: %s", type(action)
+                        )
+            except Exception:
+                logging.exception(
+                    (
+                        "Autoscaler background thread failed for query %s; "
+                        "continuing."
+                    ),
+                    item.query.query_id,
+                )
 
     def _run_query_sync(
         self,
@@ -431,6 +526,15 @@ class WorkloadRunner:
             total=self._workload.num_queries, desc="Queries", unit="q"
         )
 
+        # Start the background autoscaler thread.  It will drain
+        # _autoscaler_queue until it sees the None sentinel in finally.
+        autoscaler_thread = threading.Thread(
+            target=self._autoscaler_loop,
+            name="autoscaler-bg",
+            daemon=True,
+        )
+        autoscaler_thread.start()
+
         try:
             for query in self._workload.queries():
 
@@ -464,6 +568,11 @@ class WorkloadRunner:
                     if isinstance(r, Exception):
                         logging.error("Background spin-up failed: %s", r)
         finally:
+            # Signal the background autoscaler thread to finish processing any
+            # remaining queued items and exit before we begin cluster teardown.
+            self._autoscaler_queue.put(None)
+            autoscaler_thread.join()
+
             self._pbar.close()
 
             # Graceful cleanup: tear down every remaining READY cluster.
