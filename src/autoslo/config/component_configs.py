@@ -267,7 +267,7 @@ class SloResolverConfig(_PartialConfig):
     per-template overrides.
     """
 
-    slo_s: float
+    slo_s: float = 10.0
     slo_dict_filename: Optional[str] = None
 
 
@@ -277,8 +277,8 @@ class SloObjectiveConfig(_PartialConfig):
     Configuration for the SLO objective, including the metric and threshold.
     """
 
-    slo_metric: str | SloMetric
-    slo_threshold: float
+    slo_metric: str | SloMetric = "binary"
+    slo_threshold: float = 0.05
 
 
 @dataclass(frozen=True)

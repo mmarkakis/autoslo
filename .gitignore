@@ -31,11 +31,7 @@ data/redset_executable_workloads/redbench_*/matching_*/workload.csv
 
 data/__query_texts/
 
-docs/reference/
-docs/index.md
-docs/assets/
-
-docs/*.md
+docs/
 
 data/tuner_runs/
 data/simulator_runs/TESTTEST/
