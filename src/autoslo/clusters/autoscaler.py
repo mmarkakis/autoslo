@@ -2,6 +2,7 @@ import logging
 import math
 import threading
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,21 @@ from autoslo.slo.slo_resolver import SloResolver
 from autoslo.workload_definition.query import Query
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CounterfactualReplayStats:
+    candidate_rpu: int
+    simulated_queries: int
+    replay_copies: int
+    finished_after_ready: int
+    organic_done: bool
+
+
+@dataclass(frozen=True)
+class SelectRpuStats:
+    total_simulated_queries: int
+    per_candidate: dict[int, CounterfactualReplayStats]
 
 
 class Autoscaler:
@@ -89,6 +105,10 @@ class Autoscaler:
             force_one_decision_after_query_count
         )
         self._inform_count: int = 0
+        self._last_select_rpu_stats = SelectRpuStats(
+            total_simulated_queries=0,
+            per_candidate={},
+        )
 
     # ------------------------------------------------------------------
     # Properties
@@ -132,6 +152,10 @@ class Autoscaler:
     @property
     def forced_decision_mode(self) -> bool:
         return self._force_one_decision_after_query_count is not None
+
+    @property
+    def last_select_rpu_stats(self) -> SelectRpuStats:
+        return self._last_select_rpu_stats
 
     # ------------------------------------------------------------------
     # Public interface
@@ -389,12 +413,16 @@ class Autoscaler:
             )
 
         viol_and_costs: list[ViolationCost] = []
+        replay_stats_by_rpu: dict[int, CounterfactualReplayStats] = {}
+        total_simulated_queries = 0
 
         for rpu in self._allowed_rpu_sizes:
-            slo_viol_and_cost = self._counterfactual_replay(
+            slo_viol_and_cost, replay_stats = self._counterfactual_replay(
                 rpu, rel_time_s, pool_snapshot_with_current_query
             )
             viol_and_costs.append(slo_viol_and_cost)
+            replay_stats_by_rpu[rpu] = replay_stats
+            total_simulated_queries += replay_stats.simulated_queries
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
@@ -415,6 +443,10 @@ class Autoscaler:
         best_local_idx = self._slo_objective.idx_of_best(viol_and_costs)
         best_rpu = self._allowed_rpu_sizes[best_local_idx]
         best_viol_and_cost = viol_and_costs[best_local_idx]
+        self._last_select_rpu_stats = SelectRpuStats(
+            total_simulated_queries=total_simulated_queries,
+            per_candidate=replay_stats_by_rpu,
+        )
 
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
         emit_structured(
@@ -439,7 +471,7 @@ class Autoscaler:
         candidate_rpu: int,
         rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, ClusterView],
-    ) -> ViolationCost:
+    ) -> tuple[ViolationCost, CounterfactualReplayStats]:
         """Replay the trailing window with a hypothetical new cluster of
         *candidate_rpu*.
 
@@ -486,6 +518,8 @@ class Autoscaler:
         lat_and_slos: list[LatencySlo] = []
         hyp_ready_time_s: float | None = None
         finished_after_ready: int = 0
+        simulated_queries: int = 0
+        replay_copies_run: int = 0
 
         actual_observed_window_length_s = (
             rel_time_s - self._trailing_queries[0].rel_start_time_s
@@ -502,6 +536,7 @@ class Autoscaler:
         organic_done = False
         last_time_s = replay_start_rel_time_s
         for copy_idx in range(max_copies):
+            replay_copies_run = copy_idx + 1
             for query in self._trailing_queries:
                 time_s = (
                     query.rel_start_time_s
@@ -577,6 +612,7 @@ class Autoscaler:
                     new_predicted_latencies_for_cluster,
                     new_cache_state,
                 )
+                simulated_queries += 1
 
             if organic_done:
                 break
@@ -604,4 +640,10 @@ class Autoscaler:
             total_cost += cluster_cost
 
         aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
-        return ViolationCost(aggregate, total_cost)
+        return ViolationCost(aggregate, total_cost), CounterfactualReplayStats(
+            candidate_rpu=candidate_rpu,
+            simulated_queries=simulated_queries,
+            replay_copies=replay_copies_run,
+            finished_after_ready=finished_after_ready,
+            organic_done=organic_done,
+        )
