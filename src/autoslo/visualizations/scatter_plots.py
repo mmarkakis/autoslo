@@ -44,6 +44,24 @@ class ImprovementArrow:
     target_label: str
 
 
+@dataclass
+class ThresholdLine:
+    """A dashed vertical line marking a threshold of interest on the x-axis.
+
+    Specify a list of these per-panel in the plotting manifest under the
+    ``threshold_lines`` key, e.g.::
+
+        threshold_lines:
+          - value: 0.05
+            color: green
+            label: "SLO target"
+    """
+
+    value: float
+    color: str
+    label: str | None = None
+
+
 FORMATTING = {
     "initial": (Palette.gray, "x"),
     "ground_truth": (Palette.dark_purple, "*"),
@@ -64,6 +82,8 @@ FORMATTING = {
     "autoscaler_duplicate_largest": (Palette.light_blue, "^"),
     "autoscaler_ours": (Palette.dark_green, "o"),
     "autoscaler_ours_forward": (Palette.light_green, "o"),
+    "main_eval_16_16": (Palette.light_red, "s"),
+    "main_eval_32": (Palette.light_purple, "s"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
@@ -96,8 +116,9 @@ def cost_vs_compliance_scatter(
     ax: Axes | None = None,
     x_threshold_color: str = Palette.light_green,
     x_threshold_objective: SloObjective | None = None,
+    threshold_lines: Sequence[ThresholdLine] | None = None,
     improvement_arrow: ImprovementArrow | None = None,
-    show_legend: bool = False,
+    show_legend: bool | str = False,
 ) -> tuple[Figure, Axes, tuple[float, float], tuple[float, float]]:
     """Create a cost-vs-compliance scatter plot.
 
@@ -184,6 +205,31 @@ def cost_vs_compliance_scatter(
         #     transform=ax.get_xaxis_transform(),
         # )
 
+    # Dashed vertical threshold lines.
+    if threshold_lines:
+        _palette_map = Palette.as_colormap()
+        for tl in threshold_lines:
+            resolved_color = _palette_map.get(tl.color, tl.color)
+            ax.axvline(
+                tl.value,
+                color=resolved_color,
+                linestyle="--",
+                linewidth=1.2,
+                zorder=1,
+            )
+            if tl.label is not None:
+                ax.text(
+                    tl.value,
+                    0.97,
+                    tl.label,
+                    color=resolved_color,
+                    rotation=90,
+                    ha="right",
+                    va="top",
+                    transform=ax.get_xaxis_transform(),
+                    fontsize=9,
+                )
+
     # Plot points.
     for pt in points:
         if pt.formatting_id not in FORMATTING:
@@ -225,7 +271,8 @@ def cost_vs_compliance_scatter(
 
     # Maybe add legend.
     if show_legend and len(points) > 0:
-        ax.legend(loc="upper right")
+        loc = show_legend if isinstance(show_legend, str) else "best"
+        ax.legend(loc=loc)
 
     # Relative padding around x data.
     xvals = [pt.x for pt in points]
@@ -304,7 +351,7 @@ def cost_vs_compliance_scatter(
                     ha="left",
                     va="bottom",
                     transform=ax.transAxes,
-                    fontsize=10
+                    fontsize=10,
                 )
 
     fig.tight_layout()

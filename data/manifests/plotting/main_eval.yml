@@ -1,0 +1,83 @@
+locals:
+  may27_workload_config: &may27_workload_config
+    workload_name: redbench_provisioned_157_0
+    target_date: "2024-05-27"
+    rescale_factor: 0.16666667
+
+main_content:
+
+  layout:
+    rows: 1
+    cols: 2
+    figsize: [8, 4]
+    shared_xlim: true
+    shared_ylim: true
+    show_target_region: false
+    suppress_subplot_titles: true
+
+
+  panels:
+  - row: 0
+    col: 0
+    title: "κ=4"
+    show_legend: center right
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    threshold_lines:
+    - value: 0.05
+      color: dark_green
+    - value: 0.10
+      color: dark_blue
+    points:
+      - label: "RoundRobin16+16"
+        formatting_id: main_eval_16_16
+        workload_config: *may27_workload_config
+        execution_config: exec:handmade/main_eval_round_robin.yml
+        params:
+          TARGET_DATE: "2024-05-27"
+          INITIAL_RPU: [16,16]
+      - label: "Single32"
+        formatting_id: main_eval_32
+        workload_config: *may27_workload_config
+        execution_config: exec:handmade/main_eval_round_robin.yml
+        params:
+          TARGET_DATE: "2024-05-27"
+          INITIAL_RPU: [32]
+
+      
+
+  - row: 0
+    col: 1
+    title: "κ=2"
+    show_legend: False
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    threshold_lines:
+    - value: 0.05
+      color: dark_green
+    - value: 0.10
+      color: dark_blue
+    points:
+      - label: "RoundRobin16+16"
+        formatting_id: main_eval_16_16
+        workload_config: *may27_workload_config
+        execution_config: exec:handmade/main_eval_round_robin.yml
+        params:
+          TARGET_DATE: "2024-05-27"
+          INITIAL_RPU: [16,16]
+      - label: "Single32"
+        formatting_id: main_eval_32
+        workload_config: *may27_workload_config
+        execution_config: exec:handmade/main_eval_round_robin.yml
+        params:
+          TARGET_DATE: "2024-05-27"
+          INITIAL_RPU: [32]
+

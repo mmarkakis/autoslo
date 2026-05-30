@@ -1,0 +1,23 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[ht]
+\centering
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{c c c || c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{RoundRobin16+16} & \multicolumn{2}{c}{Single32} \\
+ &  &  & VR & Cost & VR & Cost \\
+\hline
+κ=4 &  &  & \underline{0.5553} & \$25.37 & \textbf{0.4820} & \$24.98 \\
+κ=2 &  &  & \underline{0.7845} & \$25.37 & \textbf{0.7256} & \$24.98 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \textbf{-10.4\%} & -1.5\% \\
+\bottomrule
+\end{tabular}}
+\caption{Mean improvement is relative to RoundRobin16+16.}
+\label{tab:TODO}
+\end{table}
+\end{document}

@@ -27,6 +27,7 @@ from autoslo.slo.slo_resolver import SloResolver
 from autoslo.visualizations.scatter_plots import (
     ImprovementArrow,
     ScatterPoint,
+    ThresholdLine,
     cost_vs_compliance_scatter,
     plot_legend_to,
 )
@@ -49,8 +50,9 @@ def _cluster_annotation(run_dir: Path) -> str | None:
 
     unique_nonempty_cluster_names = df["cluster_name"].dropna().unique()
     target_name = [
-        name for name in unique_nonempty_cluster_names if 
-        (name.strip() and (Cluster.counter_for_cluster_name(name) == 1))
+        name
+        for name in unique_nonempty_cluster_names
+        if (name.strip() and (Cluster.counter_for_cluster_name(name) == 1))
     ]
     if len(target_name) != 1:
         return None
@@ -66,9 +68,10 @@ class _PanelData:
     slo_obj: SloObjective
     x_threshold_objective: SloObjective | None
     title: str | None
-    show_legend: bool
+    show_legend: bool | str
     improvement_arrow: ImprovementArrow | None
     tail_fraction: float
+    threshold_lines: list[ThresholdLine]
 
 
 def _load_panel_data(
@@ -77,7 +80,7 @@ def _load_panel_data(
     live: bool,
     *,
     layout_show_target_region: bool = False,
-    layout_show_legend: bool = False,
+    layout_show_legend: bool | str = False,
     layout_annotate_cluster_sizes: bool = False,
 ) -> _PanelData:
     """Parse a panel config dict into a fully-resolved _PanelData.
@@ -92,7 +95,7 @@ def _load_panel_data(
     show_target_region = layout_show_target_region or panel.get(
         "show_target_region", False
     )
-    show_legend = layout_show_legend or panel.get("show_legend", False)
+    show_legend = panel.get("show_legend", False) or layout_show_legend
     annotate_cluster_sizes: bool = layout_annotate_cluster_sizes or panel.get(
         "annotate_with_cluster_sizes", False
     )
@@ -106,6 +109,15 @@ def _load_panel_data(
         if arrow_spec
         else None
     )
+
+    threshold_lines: list[ThresholdLine] = [
+        ThresholdLine(
+            value=float(tl["value"]),
+            color=tl["color"],
+            label=tl.get("label"),
+        )
+        for tl in panel.get("threshold_lines", [])
+    ]
 
     scatter_points: list[ScatterPoint] = []
     runs_dir = Path(pu.get_runs_path())
@@ -165,6 +177,7 @@ def _load_panel_data(
         show_legend=show_legend,
         improvement_arrow=improvement_arrow,
         tail_fraction=tail_fraction,
+        threshold_lines=threshold_lines,
     )
 
 
@@ -320,7 +333,10 @@ def _save_points_latex_table(
         x_diffs: list[float] = []
         y_diffs: list[float] = []
         for _, points_by_method in panel_entries:
-            if reference_label not in points_by_method or method not in points_by_method:
+            if (
+                reference_label not in points_by_method
+                or method not in points_by_method
+            ):
                 continue
             ref_x, ref_y = points_by_method[reference_label]
             x, y = points_by_method[method]
@@ -404,6 +420,7 @@ def _render_and_save_figure(
         panel_data.scatter_points,
         x_metric=panel_data.slo_obj.slo_metric,
         x_threshold_objective=panel_data.x_threshold_objective,
+        threshold_lines=panel_data.threshold_lines or None,
         title=panel_data.title,
         show_legend=panel_data.show_legend,
         improvement_arrow=panel_data.improvement_arrow,
@@ -492,7 +509,7 @@ def _generate_multi_panel_plot(
     )
     shared_xlim: bool = layout.get("shared_xlim", False)
     shared_ylim: bool = layout.get("shared_ylim", False)
-    show_legend: bool = layout.get("show_legend", False)
+    show_legend: bool | str = layout.get("show_legend", False)
     show_target_region: bool = layout.get("show_target_region", False)
     suppress_subplot_titles: bool = layout.get("suppress_subplot_titles", False)
     annotate_cluster_sizes: bool = layout.get(
@@ -520,6 +537,7 @@ def _generate_multi_panel_plot(
             panel_data.scatter_points,
             x_metric=panel_data.slo_obj.slo_metric,
             x_threshold_objective=panel_data.x_threshold_objective,
+            threshold_lines=panel_data.threshold_lines or None,
             title=panel_data.title,
             ax=ax,
             show_legend=panel_data.show_legend,
