@@ -194,23 +194,19 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         assert (
-            result[0][0] == 10 - lead_time_s
+            result[0] == 10 - lead_time_s
         ), "Expected spinup time to be the start of the violating period minus spin-up delay"
 
     @pytest.mark.parametrize("seed", range(10))
     def test_one_log_bottom_at_zero(self, seed):
         """
-        A violating period that starts well before ``lead_time_s`` produces a
-        placement time of 0 *but* has no scoreable intervals after
-        ``0 + lead_time_s``.  The new scoring algorithm correctly filters out
-        such zero-score candidates, so the result should be empty.
+        A violating period that starts well before ``lead_time_s`` still
+        produces a valid placement candidate at 0.
         """
         np.random.seed(seed)
         slo_s = 1
         slo_resolver = SloResolver(SloResolverConfig(slo_s=slo_s))
-        # Violation starts in [0, 5) and ends 2s later, so at most at time 7.
-        # lead_time_s is in [5, 10], so effective_start >= 5.
-        # The violation is entirely before effective_start → score = 0 → no candidates.
+        # Violation starts in [0, 5) and ends 2s later, so placement is clamped to 0.
         start_times = [np.random.uniform(0, 5)]
         end_times = [start_times[0] + 2]
         log = _make_completion_structured_log(start_times, end_times)
@@ -227,20 +223,13 @@ class TestFindNextSpinupTimeDF:
             min_delinquent_workloads=1,
             lead_time_s=lead_time_s,
         )
-        assert (
-            result == []
-        ), "Expected no viable candidates when the entire violation is within lead_time_s"
+        assert result, "Expected at least one candidate"
+        assert result[0] == 0.0, "Expected candidate time to be clamped to 0"
 
     @pytest.mark.parametrize("seed", range(10))
-    def test_one_log_multiple_violating_periods_highest_score_first(self, seed):
+    def test_one_log_multiple_violating_periods_in_detection_order(self, seed):
         """
-        The result list is ordered by descending score.  When scores differ
-        the highest-scoring candidate comes first.
-
-        Scenario: two epochs; the earlier epoch (t=10) has lead_time_s=0 so
-        its effective_start is 10 and it sees both its own violation AND the
-        later epoch's violation, giving it a higher combined score.  Verify
-        that the result list is in non-increasing score order.
+        The result list is returned in chronological detection order.
         """
         np.random.seed(seed)
 
@@ -270,18 +259,9 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         assert len(result) >= 1, "Expected at least one candidate"
-        # Verify the result list is in non-increasing score order.
-        scores = [score for _, score in result]
-        assert scores == sorted(
-            scores, reverse=True
-        ), "Expected candidates to be ordered by descending score"
-        # The earlier epoch (t_p=10) captures both violations so its score
-        # must be >= the later epoch's score.
-        assert (
-            result[0][0] <= result[-1][0]
-            or len(result) == 1
-            or scores[0] >= scores[-1]
-        ), "Expected highest-scoring candidate to rank first"
+        assert result == sorted(result), (
+            "Expected candidates to be in chronological detection order"
+        )
 
     @pytest.mark.parametrize("seed", range(10))
     def test_one_log_multiple_violating_periods_ignores_below_threshold(
@@ -320,7 +300,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         expected_time = 20 - lead_time_s
-        assert abs(result[0][0] - expected_time) < 1e-6, (
+        assert abs(result[0] - expected_time) < 1e-6, (
             "Expected spinup time to be the start of the earliest violating "
             "period above threshold minus spin-up delay"
         )
@@ -392,7 +372,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         expected_time = 100 - lead_time_s
-        condition = abs(result[0][0] - expected_time) < 1e-6
+        condition = abs(result[0] - expected_time) < 1e-6
         if not condition:
             breakpoint()
         assert (
@@ -437,7 +417,7 @@ class TestFindNextSpinupTimeDF:
         )
         expected_time = 100 - lead_time_s
         assert (
-            abs(result[0][0] - expected_time) < 1e-6
+            abs(result[0] - expected_time) < 1e-6
         ), "Expected spinup time to be the start of the earliest violating period minus spin-up delay"
 
     @pytest.mark.parametrize("seed", range(10))
@@ -534,7 +514,7 @@ class TestFindNextSpinupTimeDF:
             lead_time_s=lead_time_s,
         )
         expected_time = 10 + (nqueries // 2) * 10 - lead_time_s
-        condition = abs(result[0][0] - expected_time) < 1e-6
+        condition = abs(result[0] - expected_time) < 1e-6
         if not condition:
             breakpoint()
         assert condition, (

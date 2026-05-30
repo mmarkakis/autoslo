@@ -82,12 +82,11 @@ def find_next_spinup_time(
     min_delinquent_workloads: int,
     lead_time_s: float,
     min_candidate_spacing_s: Optional[float] = None,
-) -> list[tuple[float, float]]:
-    """Return a ranked list of ``(placement_time, score)`` pairs.
+) -> list[float]:
+    """Return a list of candidate placement times.
 
-    Each pair represents a candidate scheduled-spin-up placement time,
-    ordered by descending score (delinquency-weighted integral).  An
-    empty list means no viable placement time exists.
+    Each element represents a candidate scheduled-spin-up placement time.
+    An empty list means no viable placement time exists.
 
     ``min_candidate_spacing_s`` is forwarded to
     :func:`find_next_spinup_time_df`; see that function for details.
@@ -126,13 +125,11 @@ def find_next_spinup_time_df(
     min_delinquent_workloads: int,
     lead_time_s: float,
     min_candidate_spacing_s: Optional[float] = None,
-) -> list[tuple[float, float]]:
-    """Return a ranked list of ``(placement_time, score)`` pairs.
+) -> list[float]:
+    """Return a list of candidate placement times.
 
-    Each pair represents a candidate scheduled-spin-up placement time,
-    ordered by descending score (delinquency-weighted integral, normalised
-    by the number of training scenarios).  An empty list means no viable
-    placement time exists.
+    Each element represents a candidate scheduled-spin-up placement time.
+    An empty list means no viable placement time exists.
 
     Algorithm
     ---------
@@ -144,19 +141,13 @@ def find_next_spinup_time_df(
        one candidate placement time ``max(0, epoch_start - lead_time_s)``.
        Epochs that collapse to the same placement time (e.g. multiple early
        epochs all below ``lead_time_s``) are deduplicated.
-    4. Score each unique placement time as the sum of
-       ``(b - a) * count / N`` over all qualifying intervals that begin at
-       or after ``placement_time + lead_time_s``.
-    5. Filter out zero-score candidates, sort by descending score
-       (tiebreak: ascending placement time).
-    6. Greedily drop candidates that are within ``min_candidate_spacing_s``
-       of an already-retained candidate (higher-scoring candidates are
-       evaluated first, so lower-scoring near-duplicates are discarded).
+     4. Greedily drop candidates that are within ``min_candidate_spacing_s``
+         of an already-retained candidate. Candidates are considered in
+         chronological detection order.
        ``None`` uses ``lead_time_s`` as the spacing threshold.
     """
-    N = len(completion_structured_logs)
-
     # Create events per scenario and form a single timeline.
+    n_scenarios = len(completion_structured_logs)
     events = []
     for scenario_id, completions in enumerate(completion_structured_logs):
 
@@ -191,7 +182,7 @@ def find_next_spinup_time_df(
     # non-zero-length interval.
     active_queries: dict[int, dict[str, LatencySlo]] = defaultdict(dict)
     delinquency_per_workload: dict[int, bool] = {
-        scenario_id: False for scenario_id in range(N)
+        scenario_id: False for scenario_id in range(n_scenarios)
     }
     intervals: list[tuple[float, float, int]] = []  # (a, b, count)
 
@@ -252,30 +243,7 @@ def find_next_spinup_time_df(
         )
         return []
 
-    # Score each placement time: delinquency-weighted integral / N.
-    scored: list[tuple[float, float]] = []
-    for t_p in unique_placement_times:
-        effective_start = t_p + lead_time_s
-        score = (
-            sum(
-                (b - a) * count
-                for a, b, count in intervals
-                if a >= effective_start and count >= min_delinquent_workloads
-            )
-            / N
-        )
-        if score > 0.0:
-            scored.append((t_p, score))
-
-    if not scored:
-        console.print(
-            "[green]No viable candidate times after scoring "
-            f"(all violations occur before lead_time_s={lead_time_s:.1f}s)."
-        )
-        return []
-
-    # Sort: descending score, ascending placement time as tiebreaker.
-    scored.sort(key=lambda x: (-x[1], x[0]))
+    candidates = unique_placement_times
 
     # Greedy spacing deduplication: discard candidates within
     # min_candidate_spacing_s of an already-retained candidate.
@@ -284,14 +252,15 @@ def find_next_spinup_time_df(
         if min_candidate_spacing_s is None
         else min_candidate_spacing_s
     )
+    
     if spacing > 0.0:
-        retained: list[tuple[float, float]] = []
-        for t_p, score in scored:
-            if all(abs(t_p - r_t) >= spacing for r_t, _ in retained):
-                retained.append((t_p, score))
-        scored = retained
+        retained: list[float] = []
+        for t_p in candidates:
+            if all(abs(t_p - r_t) >= spacing for r_t in retained):
+                retained.append(t_p)
+        candidates = retained
 
-    if not scored:
+    if not candidates:
         console.print(
             "[green]No viable candidate times remain after spacing "
             f"deduplication (min_candidate_spacing_s={spacing:.1f}s)."
@@ -299,10 +268,10 @@ def find_next_spinup_time_df(
         return []
 
     console.print(
-        f"[green]Found {len(scored)} candidate placement time(s). "
-        f"Top candidate: t_p={scored[0][0]:.1f}s, score={scored[0][1]:.3f}."
+        f"[green]Found {len(candidates)} candidate placement time(s). "
+        f"First candidate: t_p={candidates[0]:.1f}s."
     )
-    return scored
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +389,7 @@ class SpinupOptimizer:
                 current_train_agg = agg_train_results
 
             # 2. Rank all viable candidate placement times.
-            ranked_candidates = find_next_spinup_time(
+            candidate_times = find_next_spinup_time(
                 train_results,
                 slo_resolver=self._slo_resolver,
                 slo_objective=self._slo_objective,
@@ -429,7 +398,7 @@ class SpinupOptimizer:
                 min_candidate_spacing_s=self._spinup_optimizer_config.min_candidate_spacing_s,
             )
 
-            if not ranked_candidates:
+            if not candidate_times:
                 console.print(
                     "[green]No promising spin-up time found — stopping."
                 )
@@ -464,11 +433,9 @@ class SpinupOptimizer:
 
             accepted_in_round = False
             attempt_records: list[dict] = []
-            candidates_to_try = ranked_candidates[:max_attempts_per_round]
+            candidates_to_try = candidate_times[:max_attempts_per_round]
 
-            for attempt_idx, (placement_time, score) in enumerate(
-                candidates_to_try
-            ):
+            for attempt_idx, placement_time in enumerate(candidates_to_try):
                 attempt_dir = round_dir / f"attempt_{attempt_idx:03d}"
 
                 # 4. Try each RPU size at this placement time.
@@ -523,7 +490,6 @@ class SpinupOptimizer:
                     {
                         "attempt_idx": attempt_idx,
                         "placement_time": placement_time,
-                        "score": score,
                         "outcome": "accepted" if accepted else "rejected",
                         "best_rpu": best_su.rpu,
                         "best_violation": best_vc.violation,
@@ -536,7 +502,6 @@ class SpinupOptimizer:
                         round_idx,
                         attempt_idx,
                         placement_time,
-                        score,
                         cands,
                         best_su,
                     )
@@ -561,8 +526,7 @@ class SpinupOptimizer:
                 else:
                     console.print(
                         f"  [red][round {round_idx} / attempt {attempt_idx}] "
-                        f"Rejected t_p={placement_time:.1f}s "
-                        f"(score={score:.3f}): "
+                        f"Rejected t_p={placement_time:.1f}s: "
                         f"best RPU={best_su.rpu}, "
                         f"violation {baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
                         f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
@@ -596,7 +560,6 @@ class SpinupOptimizer:
         round_idx: int,
         attempt_idx: int,
         placement_time: float,
-        score: float,
         candidates: list[
             tuple[
                 ScheduledSpinUp,
@@ -608,7 +571,7 @@ class SpinupOptimizer:
         table = Table(
             title=(
                 f"Round {round_idx} / Attempt {attempt_idx} — Candidate RPU Sizes "
-                f"(t_p={placement_time:.0f}s, score={score:.3f})"
+                f"(t_p={placement_time:.0f}s)"
             ),
             show_lines=True,
         )
