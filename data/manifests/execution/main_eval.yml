@@ -5,7 +5,7 @@ locals:
     rescale_factor: 0.16666667
 
 main_content:
-
+  # Common baselines
   - workload_config: *may27_workload_config
     execution_config: exec:handmade/main_eval_round_robin.yml
     params:
@@ -16,3 +16,34 @@ main_content:
     params:
       TARGET_DATE: "2024-05-27"
       INITIAL_RPU: [32]
+
+  # Kappa=8
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k8_thresh5_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_oracle_k8_thresh5_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k8_thresh10_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_oracle_k8_thresh10_nocache_v2.yml
+
+
+  # Kappa=4
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k4_thresh5_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_oracle_k4_thresh5_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_oracle_k4_thresh10_nocache_v2.yml
+
+  # # Kappa=2
+  # - workload_config: *may27_workload_config
+  #   execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v2.yml
+  # - workload_config: *may27_workload_config
+  #   execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v2.yml
+  # - workload_config: *may27_workload_config
+  #   execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v2.yml
+  # - workload_config: *may27_workload_config
+  #   execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v2.yml

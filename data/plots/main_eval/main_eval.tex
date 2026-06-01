@@ -6,15 +6,16 @@
 \begin{table}[ht]
 \centering
 \resizebox{\columnwidth}{!}{
-\begin{tabular}{c c c || c c | c c}
+\begin{tabular}{c c c || c c | c c | c c | c c | c c | c c}
 \toprule
-$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{RoundRobin16+16} & \multicolumn{2}{c}{Single32} \\
- &  &  & VR & Cost & VR & Cost \\
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{RoundRobin16+16} & \multicolumn{2}{c|}{Single32} & \multicolumn{2}{c|}{Past30, τ=0.05} & \multicolumn{2}{c|}{Oracle, τ=0.05} & \multicolumn{2}{c|}{Past30, τ=0.10} & \multicolumn{2}{c}{Oracle, τ=0.10} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
 \hline
-κ=4 &  &  & \underline{0.5553} & \$25.37 & \textbf{0.4820} & \$24.98 \\
-κ=2 &  &  & \underline{0.7845} & \$25.37 & \textbf{0.7256} & \$24.98 \\
+κ=8 &  &  & 0.3312 & \$25.37 & 0.3132 & \$24.98 & 0.1114 & \$15.30 & \textbf{0.0453} & \$28.54 & 0.1034 & \$16.79 & \underline{0.0711} & \$24.94 \\
+κ=4 &  &  & 0.5553 & \$25.37 & 0.4820 & \$24.98 & 0.1882 & \$29.82 & \textbf{0.0568} & \$42.21 & 0.2536 & \$20.06 & \underline{0.0991} & \$36.11 \\
+κ=2 &  &  & 0.7845 & \$25.37 & 0.7256 & \$24.98 & 0.3714 & \$33.83 & \underline{0.1473} & \$51.35 & 0.4001 & \$32.45 & \textbf{0.1135} & \$55.32 \\
 \hline
-\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \textbf{-10.4\%} & -1.5\% \\
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & -8.7\% & -1.5\% & -61.7\% & +3.7\% & \textbf{-85.8\%} & +60.4\% & -57.4\% & -8.9\% & \underline{-82.1\%} & +52.9\% \\
 \bottomrule
 \end{tabular}}
 \caption{Mean improvement is relative to RoundRobin16+16.}

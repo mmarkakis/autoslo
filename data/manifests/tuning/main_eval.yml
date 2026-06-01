@@ -1,0 +1,98 @@
+locals:
+    default_configs: &default_configs
+        initial_execution_config: "exec:handmade/main_eval_base"
+        tuner_config: "tuner:sampled_nocache_v2"
+    oracle_configs: &oracle_configs
+        initial_execution_config: "exec:handmade/main_eval_base"
+        tuner_config: "tuner:groundtruth_nocache_v2"
+    default_slo: &default_slo
+        KAPPA: 4
+        SLO_THRESHOLD: 0.05
+    may27_default_params: &may27_default_params
+        LAST_DAY_DATE_INCLUSIVE: "2024-05-26"
+        NUM_DAYS: 30
+        TARGET_DATE: "2024-05-27"
+        <<: *default_slo
+
+main_content:
+    # May 27 runs with threshold 0.05:
+    may27_1month_k4_thresh5_nocache_v2:
+        configs: *default_configs
+        params: *may27_default_params
+    may27_1month_k2_thresh5_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            KAPPA: 2
+    may27_1month_k8_thresh5_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            KAPPA: 8
+    may27_oracle_k4_thresh5_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+    may27_oracle_k2_thresh5_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+            KAPPA: 2
+    may27_oracle_k8_thresh5_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+            KAPPA: 8
+
+    # May 27 runs with threshold 0.10:
+    may27_1month_k4_thresh10_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            SLO_THRESHOLD: 0.10
+    may27_1month_k2_thresh10_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            KAPPA: 2
+            SLO_THRESHOLD: 0.10
+    may27_1month_k8_thresh10_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: *may27_default_params
+            KAPPA: 8
+            SLO_THRESHOLD: 0.10
+    may27_oracle_k4_thresh10_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+            SLO_THRESHOLD: 0.10
+    may27_oracle_k2_thresh10_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+            KAPPA: 2
+            SLO_THRESHOLD: 0.10
+    may27_oracle_k8_thresh10_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_params
+            LAST_DAY_DATE_INCLUSIVE: "2024-05-27"
+            NUM_DAYS: 1
+            KAPPA: 8
+            SLO_THRESHOLD: 0.10
+
+    
+    
+
+  

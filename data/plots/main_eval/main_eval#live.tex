@@ -1,0 +1,24 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[ht]
+\centering
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{c c c || c c | c c | c c | c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{RoundRobin16+16} & \multicolumn{2}{c|}{Single32} & \multicolumn{2}{c|}{Past30, τ=0.05} & \multicolumn{2}{c|}{Oracle, τ=0.05} & \multicolumn{2}{c|}{Past30, τ=0.10} & \multicolumn{2}{c}{Oracle, τ=0.10} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+κ=8 &  &  & 0.2464 & \$27.81 & \textbf{0.0338} & \$28.11 & 0.8398 & \$33.66 & \underline{0.0941} & \$43.76 & 0.6300 & \$37.02 & 0.1789 & \$33.48 \\
+κ=4 &  &  & 0.4080 & \$27.81 & \underline{0.1537} & \$28.11 & 0.6494 & \$39.56 & \textbf{0.1315} & \$49.75 & 0.9267 & \$37.38 & 0.1609 & \$46.61 \\
+κ=2 &  &  & \underline{0.6559} & \$27.81 & \textbf{0.3427} & \$28.11 & --- & --- & --- & --- & --- & --- & --- & --- \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \textbf{-65.5\%} & +1.1\% & +150.0\% & +31.6\% & \underline{-64.8\%} & +68.1\% & +141.4\% & +33.7\% & -44.0\% & +44.0\% \\
+\bottomrule
+\end{tabular}}
+\caption{Mean improvement is relative to RoundRobin16+16.}
+\label{tab:TODO}
+\end{table}
+\end{document}
