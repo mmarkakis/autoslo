@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
-from rich.console import Console
 from rich.table import Table
 
 from autoslo.slo.slo_metric import SloMetric
@@ -58,7 +58,7 @@ class AggregatedExecutionResults:
     @staticmethod
     def print_comparison(
         *entries: tuple[str, AggregatedExecutionResults],
-        console: Console,
+        console: Any,
         agg_method: str = "p90",
         slo_metric: str | SloMetric = "binary",
         highlight_best: bool = True,

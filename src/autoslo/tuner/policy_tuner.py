@@ -8,8 +8,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import (
     ParamSweepConfig,
@@ -28,13 +26,13 @@ from autoslo.tuner.param_sweep import ParamSweep
 from autoslo.tuner.policy_tuner_timer import PolicyTunerTimer
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
 from autoslo.tuner.spinup_optimizer import SpinupOptimizer
+from autoslo.tuner.tuner_console import console
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.aggregated_execution_results import (
     AggregatedExecutionResults,
 )
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 class AlreadyCompleteError(Exception):
@@ -443,6 +441,7 @@ class PolicyTuner:
         Returns the path to the final optimised config file.
         """
         final_path = self._out_dir / "final_execution_config.yml"
+        console.start_file_logging(self._out_dir / "console.log")
         try:
             ### Phase 2: Preparing workloads
             with self._timer.timed_phase(
@@ -561,6 +560,7 @@ class PolicyTuner:
                 f"Published tuned config to [bold]{self._publication_path}[/]"
             )
         finally:
+            console.stop_file_logging()
             self._timer.finalize(self._out_dir)
 
     @staticmethod

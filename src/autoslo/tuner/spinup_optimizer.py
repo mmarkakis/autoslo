@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
-from rich.console import Console
 from rich.table import Table
 
 import autoslo.config.utils as cfgu
@@ -35,13 +34,13 @@ from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.tuner.tuner_console import console
 from autoslo.workload_execution.aggregated_execution_results import (
     AggregatedExecutionResults,
 )
 from autoslo.workload_execution.execution_result import ExecutionResult
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +251,7 @@ def find_next_spinup_time_df(
         if min_candidate_spacing_s is None
         else min_candidate_spacing_s
     )
-    
+
     if spacing > 0.0:
         retained: list[float] = []
         for t_p in candidates:

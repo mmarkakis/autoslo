@@ -17,7 +17,6 @@ import random as stdlib_random
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
 from rich.table import Table
 
 import autoslo.config.utils as cfgu
@@ -25,12 +24,12 @@ from autoslo.config.component_configs import ParamSweepConfig, WorkloadConfig
 from autoslo.filesystem.yaml_helpers import dump_yaml
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.tuner.tuner_console import console
 from autoslo.workload_execution.aggregated_execution_results import (
     AggregatedExecutionResults,
 )
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 # ---------------------------------------------------------------------------

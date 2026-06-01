@@ -8,13 +8,10 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from rich.console import Console
 
 from autoslo.config.component_configs import ReservoirConfig
+from autoslo.tuner.tuner_console import console
 from autoslo.workload_definition.workload import Workload
-
-console = Console()
-
 
 logger = logging.getLogger(__name__)
 
