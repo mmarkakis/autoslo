@@ -85,8 +85,10 @@ class ParamSweep:
         phase_name: str,
         slo_objective: SloObjective,
         agg_method: str,
+        verbose_progress: bool = True,
     ) -> None:
         self._evaluator = evaluator
+        self._verbose_progress = verbose_progress
         self._config = initial_config
         self._run_dir = run_dir
         self._phase_name = phase_name
@@ -173,6 +175,7 @@ class ParamSweep:
             all_config_overrides=val_overrides,
             out_dir=phase_dir / "val",
             workload_first=False,
+            verbose_progress=self._verbose_progress,
         )
         for i, idx in enumerate(top_k_indices):
             val_results = all_val_results[i]
@@ -220,6 +223,7 @@ class ParamSweep:
             all_config_overrides=candidates,
             out_dir=out_dir,
             workload_first=False,
+            verbose_progress=self._verbose_progress,
         )
         grid_results: list[dict[str, Any]] = []
         for idx, candidate in enumerate(candidates):

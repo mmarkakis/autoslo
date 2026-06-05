@@ -299,8 +299,10 @@ class SpinupOptimizer:
         config: dict[str, Any],
         run_dir: Path,
         agg_method: str,
+        verbose_progress: bool = True,
     ) -> None:
         self._evaluator = evaluator
+        self._verbose_progress = verbose_progress
         self._config = config
         self._run_dir = run_dir
         self._agg_method = agg_method
@@ -379,6 +381,7 @@ class SpinupOptimizer:
                         configs=[current_config],
                         out_dir=round_dir / "baseline",
                         workload_first=False,
+                        verbose_progress=self._verbose_progress,
                     )
                 )
                 train_results = nested_train_results[0]
@@ -460,6 +463,7 @@ class SpinupOptimizer:
                     configs=all_configs,
                     out_dir=attempt_dir / "train",
                     workload_first=False,
+                    verbose_progress=self._verbose_progress,
                 )
                 cands: list[
                     tuple[ScheduledSpinUp, AggregatedExecutionResults]

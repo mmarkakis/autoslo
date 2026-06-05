@@ -53,6 +53,7 @@ class PolicyTuner:
         force: bool = False,
         params: dict[str, str] | None = None,
         run_id: str | None = None,
+        verbose_progress: bool = True,
     ) -> None:
 
         if params is None:
@@ -112,6 +113,7 @@ class PolicyTuner:
 
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator()
+        self._verbose_progress = verbose_progress
 
         # SLO objective — drives metric routing and threshold-aware selection.
         slo_objective_config = SloObjectiveConfig.from_config(
@@ -253,6 +255,7 @@ class PolicyTuner:
             configs=[self._initial_execution_config],
             out_dir=summary_dir / "results",
             workload_first=False,
+            verbose_progress=self._verbose_progress,
         )
         all_results = all_results_nested[0]
         train_results = all_results[:n_train]
@@ -322,6 +325,7 @@ class PolicyTuner:
                 spinup_optimizer_config=spinup_optimizer_config,
                 run_dir=candidate_dir,
                 agg_method=self._agg_method,
+                verbose_progress=self._verbose_progress,
             )
             post_spinups_config, train_agg = optimizer.optimize(
                 train_workload_configs=train_workload_configs,
@@ -336,6 +340,7 @@ class PolicyTuner:
                 configs=[post_spinups_config],
                 out_dir=val_out,
                 workload_first=False,
+                verbose_progress=self._verbose_progress,
             )
             val_results = nested[0]
             val_agg = AggregatedExecutionResults.aggregate_from(
@@ -423,6 +428,7 @@ class PolicyTuner:
             phase_name=phase_name,
             slo_objective=self._slo_objective,
             agg_method=self._agg_method,
+            verbose_progress=self._verbose_progress,
         )
         post_sweep_config, train_agg, val_agg = sweeper.sweep(
             train_workload_configs=train_workload_configs,

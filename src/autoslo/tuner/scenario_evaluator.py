@@ -144,6 +144,7 @@ class ScenarioEvaluator:
         config_labels: list[str] | None = None,
         workload_first: bool = True,
         render_log: bool = False,
+        verbose_progress: bool = True,
     ) -> list[list[ExecutionResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
@@ -164,6 +165,7 @@ class ScenarioEvaluator:
             config_labels=config_labels,
             workload_first=workload_first,
             render_log=render_log,
+            verbose_progress=verbose_progress,
         )
 
     def evaluate_batch_from_configs(
@@ -175,6 +177,7 @@ class ScenarioEvaluator:
         config_labels: list[str] | None = None,
         workload_first: bool = True,
         render_log: bool = False,
+        verbose_progress: bool = True,
     ) -> list[list[ExecutionResult]]:
         """
         Evaluate the cross-product of *workload_configs* and *configs* in
@@ -268,13 +271,17 @@ class ScenarioEvaluator:
                 main_task = progress.add_task(
                     f"[cyan]{progress_bar_label}", total=len(futures)
                 )
-                per_config_tasks = {
-                    config_idx: progress.add_task(
-                        f"  [bold]{config_label}[/bold]",
-                        total=num_workloads,
-                    )
-                    for config_idx, config_label in enumerate(config_labels)
-                }
+                per_config_tasks = (
+                    {
+                        config_idx: progress.add_task(
+                            f"  [bold]{config_label}[/bold]",
+                            total=num_workloads,
+                        )
+                        for config_idx, config_label in enumerate(config_labels)
+                    }
+                    if verbose_progress
+                    else {}
+                )
                 sub_tasks: dict[int, int] = {}
                 pending = set(futures.keys())
 
@@ -283,23 +290,24 @@ class ScenarioEvaluator:
                         pending, timeout=0.3, return_when=FIRST_COMPLETED
                     )
 
-                    for combination_idx, (current, total) in list(
-                        progress_dict.items()
-                    ):
-                        if combination_idx not in sub_tasks:
-                            config_idx, workload_idx = from_combination_idx(
-                                combination_idx,
-                                num_workloads=num_workloads,
-                            )
-                            sub_tasks[combination_idx] = progress.add_task(
-                                f"    config {config_idx} - workload {workload_idx}",
+                    if verbose_progress:
+                        for combination_idx, (current, total) in list(
+                            progress_dict.items()
+                        ):
+                            if combination_idx not in sub_tasks:
+                                config_idx, workload_idx = from_combination_idx(
+                                    combination_idx,
+                                    num_workloads=num_workloads,
+                                )
+                                sub_tasks[combination_idx] = progress.add_task(
+                                    f"    config {config_idx} - workload {workload_idx}",
+                                    total=total,
+                                )
+                            progress.update(
+                                sub_tasks[combination_idx],
+                                completed=current,
                                 total=total,
                             )
-                        progress.update(
-                            sub_tasks[combination_idx],
-                            completed=current,
-                            total=total,
-                        )
 
                     for future in done:
                         combination_idx = futures[future]
@@ -321,13 +329,18 @@ class ScenarioEvaluator:
                             results[config_idx] = {}
                         results[config_idx][workload_idx] = result
                         progress.advance(main_task)
-                        progress.advance(per_config_tasks[config_idx])
 
-                        if combination_idx in sub_tasks:
-                            progress.remove_task(sub_tasks.pop(combination_idx))
+                        if verbose_progress:
+                            progress.advance(per_config_tasks[config_idx])
+                            if combination_idx in sub_tasks:
+                                progress.remove_task(
+                                    sub_tasks.pop(combination_idx)
+                                )
                         progress_dict.pop(combination_idx, None)
 
-                        if len(results[config_idx]) == num_workloads:
+                        if verbose_progress and len(
+                            results[config_idx]
+                        ) == num_workloads:
                             progress.remove_task(per_config_tasks[config_idx])
 
         mgr.shutdown()

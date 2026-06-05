@@ -51,6 +51,15 @@ def main():
             "Commands that don't manage a run directory ignore this flag."
         ),
     )
+    parser.add_argument(
+        "--verbose_progress",
+        action="store_true",
+        default=False,
+        help=(
+            "Show per-config and per-simulation sub-level progress bars in "
+            "addition to the top-level bar. Defaults to False."
+        ),
+    )
     args = parser.parse_args()
 
     # Useful work.
@@ -76,6 +85,7 @@ def main():
                     force=args.force,
                     params=tuning_run_spec.get("params", {}),
                     run_id=tuning_run_name,
+                    verbose_progress=args.verbose_progress,
                 )
             except AlreadyCompleteError as exc:
                 console.print(f"[dim]Skipping: {exc}[/]")
@@ -91,6 +101,7 @@ def main():
             tuner_config_path=args.tuner_config_path,
             force=args.force,
             params=parse_params(args.param),
+            verbose_progress=args.verbose_progress,
         )
     except AlreadyCompleteError as exc:
         console.print(f"[dim]Skipping: {exc}[/]")
