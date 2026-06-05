@@ -39,11 +39,11 @@ main_content:
     execution_config: exec:tuned/may27_oracle_k4_thresh10_nocache_v2.yml
 
   # # Kappa=2
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v2.yml
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v2.yml
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v2.yml
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v2.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v2.yml

@@ -22,7 +22,7 @@ workload_runner_config:
 
 managed_cluster_pool_config:
   maxconns: 1000
-  max_clusters: 15
+  max_clusters: 8
   initial_rpus:
     - 16
 
