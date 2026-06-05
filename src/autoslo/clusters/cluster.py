@@ -302,7 +302,10 @@ class Cluster:
         if not set(self.active_query_ids).issubset(
             self.predicted_latencies.keys()
         ):
-            breakpoint()
+            raise ValueError(
+                f"Predicted latencies missing for some active queries on "
+                f"cluster {self.name}."
+            )
         times_and_ids_of_finished_queries = []
         for qid, q in self.queries.items():
             predicted_completion_rel_time_s = (

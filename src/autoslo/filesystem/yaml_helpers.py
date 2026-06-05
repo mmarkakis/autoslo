@@ -14,6 +14,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import yaml
 
 _LEADING_ZERO_RE = re.compile(r"^0\d+$")
@@ -52,6 +53,16 @@ _QuotingSafeDumper.add_multi_representer(
     str, lambda d, v: _quote_ambiguous_str(d, str(v))
 )
 _QuotingSafeDumper.add_multi_representer(Path, _posix_path_as_str)
+# Numpy scalar types: represent as their nearest Python primitive.
+_QuotingSafeDumper.add_multi_representer(
+    np.floating, lambda d, v: d.represent_float(float(v))
+)
+_QuotingSafeDumper.add_multi_representer(
+    np.integer, lambda d, v: d.represent_int(int(v))
+)
+_QuotingSafeDumper.add_multi_representer(
+    np.bool_, lambda d, v: d.represent_bool(bool(v))
+)
 _QuotingSafeDumper.add_multi_representer(object, _dataclass_using_asdict)
 
 

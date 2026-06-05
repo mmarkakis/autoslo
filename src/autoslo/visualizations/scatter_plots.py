@@ -84,6 +84,10 @@ FORMATTING = {
     "autoscaler_ours_forward": (Palette.light_green, "o"),
     "main_eval_16_16": (Palette.light_red, "s"),
     "main_eval_32": (Palette.light_purple, "s"),
+    "main_eval_past30_thresh5": (Palette.dark_green, "o"),
+    "main_eval_oracle_thresh5": (Palette.dark_green, "*"),
+    "main_eval_past30_thresh10": (Palette.dark_blue, "o"),
+    "main_eval_oracle_thresh10": (Palette.dark_blue, "*"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
