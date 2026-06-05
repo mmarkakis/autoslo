@@ -79,6 +79,10 @@ class EventType(str, Enum):
     RPU_SELECTION = "rpu_selection"
     FORCED_DECISION_POINT = "forced_decision_point"
 
+    # Autoscaler counterfactual simulation
+    SIM_QUERY_ARRIVAL = "sim_arrival"
+    SIM_QUERY_COMPLETION = "sim_completion"
+
     # ------------------------------------------------------------------
     # Grouped subsets
     # ------------------------------------------------------------------
@@ -126,6 +130,8 @@ class EventType(str, Enum):
         return {
             cls.RPU_COUNTERFACTUAL,
             cls.RPU_SELECTION,
+            cls.SIM_QUERY_ARRIVAL,
+            cls.SIM_QUERY_COMPLETION,
         }
 
 
@@ -160,6 +166,8 @@ REQUIRED_DETAILS: dict[EventType, list[str]] = {
     EventType.RPU_SELECTION: ["slo_violation", "cost"],
     EventType.QUERY_EXECUTION_FINISH: ["latency_s"],
     EventType.FORCED_DECISION_POINT: ["force_one_decision_after_query_count"],
+    EventType.SIM_QUERY_ARRIVAL: ["copy_idx", "phase"],
+    EventType.SIM_QUERY_COMPLETION: ["latency_s", "started_after_ready"],
 }
 
 

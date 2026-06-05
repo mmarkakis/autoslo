@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Optional, Self
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import SloMetric
 
 # An "execution config" is the YAML config file that a user provides to run
@@ -32,6 +33,18 @@ class _PartialConfig:
     A parent class for partial configs that implements parsing from a config
     file.
     """
+
+    @classmethod
+    def from_run_id(cls, run_id: str) -> Self:
+        """
+        Load the execution config YAML file for the given run_id and parse it
+        into an instance of the PartialConfig subclass.
+        """
+        cfg_path = (
+            Path(pu.get_data_path()) / "runs" / run_id / "execution_config.yml"
+        )
+        cfg = load_yaml(cfg_path)
+        return cls.from_config(cfg)
 
     @classmethod
     def from_config(cls, cfg: dict, **kwargs) -> Self:
@@ -208,9 +221,10 @@ class AutoscalerConfig(_PartialConfig):
     min_observations_to_act: int = 5
     slo_tightening_factor: float = 1.0
     min_finished_queries_in_counterfactual: int = 30
-    force_one_decision_after_query_fraction: Optional[float] = None  # When set, 
-    # disables reactive autoscaling and fires a single forced decision after 
+    force_one_decision_after_query_fraction: Optional[float] = None  # When set,
+    # disables reactive autoscaling and fires a single forced decision after
     # this fraction of the workload's queries have been routed.
+
 
 @dataclass(frozen=True)
 class QueryRouterConfig(_PartialConfig):
