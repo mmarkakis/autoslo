@@ -181,24 +181,23 @@ def _parse_log(
             )
         exec_start_s = exec_start_evts[0]["rel_time_s"]
 
-        # Execution finish (required)
+        # Execution finish (optional — query may have been interrupted)
         exec_finish_evts = by_type.get(
             EventType.QUERY_EXECUTION_FINISH.value, []
         )
-        if not exec_finish_evts:
+        exec_finish_s: float | None = (
+            exec_finish_evts[0]["rel_time_s"] if exec_finish_evts else None
+        )
+
+        # Completion (required)
+        completion_evts = by_type.get(EventType.COMPLETION.value, [])
+        if not completion_evts:
             raise ValueError(
-                f"Query {qid!r} is missing a QUERY_EXECUTION_FINISH event. "
+                f"Query {qid!r} is missing a COMPLETION event. "
                 "Check emission sites."
             )
-        exec_finish_s = exec_finish_evts[0]["rel_time_s"]
-
-        # Completion (optional — run may have been interrupted)
-        completion_evts = by_type.get(EventType.COMPLETION.value, [])
-        completion_s: float | None = None
-        success: bool | None = None
-        if completion_evts:
-            completion_s = completion_evts[0]["rel_time_s"]
-            success = success_by_qid.get(qid)
+        completion_s: float = completion_evts[0]["rel_time_s"]
+        success: bool | None = success_by_qid.get(qid)
 
         # Cluster name from QUERY_ROUTED or execution events
         routed_evts = by_type.get(EventType.QUERY_ROUTED.value, [])
@@ -223,20 +222,12 @@ def _parse_log(
             arrival_s = exec_start_s
 
         # End-to-end latency: arrival (or exec start as fallback) to completion.
-        # None for queries that have not yet completed.
-        latency_s = (
-            (completion_s - arrival_s) if completion_s is not None else None
-        )
+        latency_s = completion_s - arrival_s
 
         # For overall bar extent
-        end_s = completion_s if completion_s is not None else exec_finish_s
+        end_s = completion_s
 
-        completed = completion_s is not None
-        violates_slo = (
-            (latency_s > slo_s)
-            if (completed and success is not False)
-            else False
-        )
+        violates_slo = (not success) or (latency_s > slo_s) 
 
         queries.append(
             {
@@ -254,7 +245,7 @@ def _parse_log(
                 "slo_s": slo_s,
                 "success": success,
                 "violates_slo": violates_slo,
-                "state": "completed" if completed else "running",
+                "state": "completed",
             }
         )
 
