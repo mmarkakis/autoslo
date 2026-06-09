@@ -311,8 +311,8 @@ class IconqModel:
             # collate_fn wrapping) and avoids computing losses during inference.
             for start in range(0, n, inference_batch_size):
                 end = min(start + inference_batch_size, n)
-                batch = ConcurrentQueryDataset.collate_and_pad(
-                    [dataset[i] for i in range(start, end)]
+                batch = ConcurrentQueryDataset.collate_for_inference(
+                    dataset, start, end
                 )
                 predictions.update(self._infer_batch(batch))
 
@@ -389,6 +389,17 @@ class IconqModel:
         )
         result: dict[ClusterAwareQueryId, ModelPrediction] = {}
 
+        # Pre-compute run_id once per unique cluster name so that
+        # Cluster.run_id_for_cluster_name (which calls str.split) is not
+        # invoked once per prediction inside the hot loop.
+        unique_cluster_names = {
+            caqi.cluster_name for caqi in cluster_aware_query_ids
+        }
+        run_id_by_cluster: dict[str, str] = {
+            cluster_name: Cluster.run_id_for_cluster_name(cluster_name)
+            for cluster_name in unique_cluster_names
+        }
+
         if self._loss_type == LossType.MDN_NLL:
             for i, (m, le, mix, q, t) in enumerate(
                 zip(
@@ -405,9 +416,7 @@ class IconqModel:
                     mix_coeffs=mix,
                     metadata={
                         "num_other_concurrent_queries": int(le) - 1,
-                        "run_id": Cluster.run_id_for_cluster_name(
-                            q.cluster_name
-                        ),
+                        "run_id": run_id_by_cluster[q.cluster_name],
                         "query_text_id": t,
                         "query_id": q.query_id,
                     },
@@ -426,9 +435,7 @@ class IconqModel:
                     std_dev_s=stddev_np[i],
                     metadata={
                         "num_other_concurrent_queries": int(le) - 1,
-                        "run_id": Cluster.run_id_for_cluster_name(
-                            q.cluster_name
-                        ),
+                        "run_id": run_id_by_cluster[q.cluster_name],
                         "query_text_id": t,
                         "query_id": q.query_id,
                     },
@@ -451,9 +458,7 @@ class IconqModel:
                     mean_s=m,
                     metadata={
                         "num_other_concurrent_queries": int(le) - 1,
-                        "run_id": Cluster.run_id_for_cluster_name(
-                            q.cluster_name
-                        ),
+                        "run_id": run_id_by_cluster[q.cluster_name],
                         "query_text_id": t,
                         "query_id": q.query_id,
                         "target_is_lower_bound": yislb,
@@ -488,7 +493,7 @@ class IconqModel:
 
         if self._train_config is None:
             raise RuntimeError(
-                "No train_config set — cannot run inference without a " 
+                "No train_config set — cannot run inference without a "
                 "train_config."
             )
         train_config = self._train_config
@@ -509,16 +514,44 @@ class IconqModel:
                 list[int], np.where(x_len_np <= 1)[0].tolist()
             )
 
-            for i in isolated_indices:
-                pred = self._predict_isolated_query(
-                    i,
-                    x,
-                    pinch_points,
-                    cluster_aware_query_ids,
-                    query_text_ids,
-                    y_is_lower_bound,
-                )
-                result[cluster_aware_query_ids[i]] = pred
+            if isolated_indices:
+                # Group by RPU so we issue one stage-model call per RPU rather
+                # than one call per isolated query.  Isolated queries have
+                # x_len == 1 so pinch_points[i] == 0; the RPU sits in row 0.
+                rpu_dim = self._iconq_interaction_featurizer.rpu_dim_idx
+                rpu_to_indices: dict[int, list[int]] = {}
+                for i in isolated_indices:
+                    rpu = int(x[i, 0, rpu_dim].item())
+                    rpu_to_indices.setdefault(rpu, []).append(i)
+
+                for rpu, indices in rpu_to_indices.items():
+                    qtid_map = {
+                        cluster_aware_query_ids[i]: query_text_ids[i]
+                        for i in indices
+                    }
+                    preds = self.stage_model.predict_from_query_text_id(
+                        qtid_map, cluster_rpu=rpu
+                    )
+                    for i in indices:
+                        caqi = cluster_aware_query_ids[i]
+                        pred = preds[caqi]
+                        result[caqi] = ModelPrediction(
+                            mean_s=pred.mean_s,
+                            std_dev_s=pred.std_dev_s,
+                            mix_coeffs=pred.mix_coeffs,
+                            metadata={
+                                "num_other_concurrent_queries": 0,
+                                "run_id": Cluster.run_id_for_cluster_name(
+                                    caqi.cluster_name
+                                ),
+                                "query_text_id": query_text_ids[i],
+                                "query_id": caqi.query_id,
+                                "target_is_lower_bound": y_is_lower_bound[
+                                    i
+                                ].item(),
+                                "loss": 0.0,
+                            },
+                        )
 
             if not non_isolated_indices:
                 return result
@@ -934,7 +967,7 @@ class IconqModel:
         self._nn.train()
         if self._train_config is None:
             raise RuntimeError(
-                "No train_config set — cannot run training loop without a " \
+                "No train_config set — cannot run training loop without a "
                 "train_config."
             )
         train_config = self._train_config

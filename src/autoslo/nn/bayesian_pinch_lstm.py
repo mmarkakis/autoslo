@@ -120,15 +120,31 @@ class BayesianPinchLSTM(nn.Module):
         x_len: torch.Tensor,
     ) -> torch.Tensor:
         """Reverse each sequence within its valid length, keeping padding at
-        the end."""
-        batch_size, seq_len, _ = x.size()
-        x_rev = x.clone()
-        idx = torch.arange(seq_len, device=self._device).unsqueeze(0).expand(
-            batch_size, -1
-        )  # Shape (batch_size, seq_len)
-        mask = idx < x_len.unsqueeze(1)  # Shape (batch_size, seq_len)
-        for i in range(batch_size):
-            x_rev[i, mask[i]] = x[i, mask[i]].flip(0)
+        the end.
+
+        Vectorized implementation: a single gather + masked_fill rather than a
+        Python loop over the batch dimension.  For a batch of size B this
+        reduces kernel launches from O(B) to O(1).
+        """
+        B, T, F = x.shape
+        lengths = x_len.to(x.device)  # (B,)
+
+        # pos[i, j] = j  — position index broadcast across the batch
+        pos = torch.arange(T, device=x.device).unsqueeze(0).expand(B, T)  # (B, T)
+
+        # rev_pos[i, j] = x_len[i] - 1 - j  for valid positions,
+        #                 0                   for padding positions (clamped)
+        rev_pos = (lengths.unsqueeze(1) - 1 - pos).clamp(min=0)  # (B, T)
+
+        # Single gather kernel: x_rev[i, j, k] = x[i, rev_pos[i, j], k]
+        # At padding positions (j >= x_len[i]) this writes x[i, 0, k], which is
+        # corrected to zero by the masked_fill below.
+        x_rev = x.gather(1, rev_pos.unsqueeze(-1).expand(B, T, F))  # (B, T, F)
+
+        # Zero out padding positions (j >= x_len[i]) across all features.
+        pad_mask = pos >= lengths.unsqueeze(1)  # (B, T)
+        x_rev = x_rev.masked_fill(pad_mask.unsqueeze(-1), 0.0)
+
         return x_rev
 
     def _forward_fused(

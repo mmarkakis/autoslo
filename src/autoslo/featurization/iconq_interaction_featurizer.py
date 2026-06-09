@@ -154,18 +154,30 @@ class IconqInteractionFeaturizer:
         arr[:, :q_dim] = qa_np
         arr[:, q_dim] = qa_latency_prediction
 
+        # Extract columns from the sorted entries in one pass, then assign
+        # each column to the array in bulk instead of writing row-by-row.
+        N = len(qb_entries_sorted)
+        qb_times = np.empty(N, dtype=np.float32)
+        qb_lats = np.empty(N, dtype=np.float32)
         pinch_idx = 0
         for j, (qb_t, qb_idx, qb_lat, is_self) in enumerate(qb_entries_sorted):
-            arr[j, q_dim + 1 : 2 * q_dim + 1] = (
-                self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
-                    qb_idx
-                )
-            )
-            arr[j, 2 * q_dim + 1] = qb_lat
-            arr[j, 2 * q_dim + 2] = abs(qb_t - qa_start_time_s)
-            arr[j, 2 * q_dim + 3] = float(qa_start_time_s < qb_t)
-            arr[j, 2 * q_dim + 4] = rpu
+            qb_times[j] = qb_t
+            qb_lats[j] = qb_lat
             if is_self:
                 pinch_idx = j
+
+        # qb feature matrix: stack all neighbor vectors in one numpy call.
+        qb_vecs = np.stack([
+            self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
+                e[1]
+            )
+            for e in qb_entries_sorted
+        ])  # (N, q_dim)
+
+        arr[:, q_dim + 1 : 2 * q_dim + 1] = qb_vecs
+        arr[:, 2 * q_dim + 1] = qb_lats
+        arr[:, 2 * q_dim + 2] = np.abs(qb_times - qa_start_time_s)
+        arr[:, 2 * q_dim + 3] = (qa_start_time_s < qb_times).astype(np.float32)
+        arr[:, 2 * q_dim + 4] = rpu
 
         return arr, pinch_idx

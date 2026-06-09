@@ -187,6 +187,51 @@ class ConcurrentQueryDataset(Dataset):
             y_is_lower_bound_out,
         )
 
+    @staticmethod
+    def collate_for_inference(
+        dataset: "ConcurrentQueryDataset",
+        start: int,
+        end: int,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        list[ClusterAwareQueryId],
+        list[QueryTextId],
+        torch.Tensor,
+    ]:
+        """
+        Inference-only collation: slice the dataset's pre-stored tensors
+        directly, skip the length-based sort, and call pad_sequence only when
+        the slice contains sequences of differing lengths.
+
+        Avoids the __getitem__ loop, zip(*batch) unzip, numpy argsort
+        round-trip, and four list-comprehension rewrites that collate_and_pad
+        performs on every batch.
+        """
+        x_slice = dataset.x[start:end]  # list of (seq_len_i, F) tensors
+        lengths = [t.shape[0] for t in x_slice]
+        x_len = torch.tensor(lengths, dtype=torch.long)
+
+        # When all sequences share the same length (common at routing time),
+        # torch.stack is cheaper than pad_sequence because it skips the
+        # fill-zero pass and the length-scan inside pad_sequence.
+        if len(set(lengths)) == 1:
+            x_padded = torch.stack(x_slice)
+        else:
+            x_padded = pad_sequence(x_slice, batch_first=True, padding_value=0)
+
+        return (
+            x_padded,
+            x_len,
+            dataset.pinch_points[start:end].long(),
+            dataset.y[start:end],
+            dataset.cluster_aware_query_ids[start:end],
+            dataset.query_text_id[start:end],
+            dataset.y_is_lower_bound[start:end],
+        )
+
     def save_to(self, path: str) -> None:
         """
         Saves the dataset to disk at the specified path.
