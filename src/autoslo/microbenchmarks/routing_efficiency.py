@@ -16,6 +16,9 @@ from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
 from autoslo.visualizations.colors import Palette
+from autoslo.workload_definition.poisson_workload_creator import (
+    PoissonWorkloadCreator,
+)
 
 
 class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
@@ -26,24 +29,20 @@ class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
     @classmethod
     def required_keys(cls) -> list[str]:
         return [
-            "model_id",
-            "template_selection_seed",
+            "workload_seed",
             "rpu",
             "reps",
             "cluster_values",
             "active_queries_per_cluster_values",
-            "routing_policy_name",
-            "slo_s",
-            "slo_metric",
-            "slo_threshold",
+            "slo_resolver_config",
+            "slo_objective_config",
+            "query_router_config",
         ]
 
     @classmethod
     def run_from_manifest(cls, manifest: dict) -> None:
 
         # Parse manifest parameters.
-        model_id = str(manifest["model_id"])
-        seed = int(manifest["template_selection_seed"])
         rpu = int(manifest["rpu"])
         reps = int(manifest["reps"])
         cluster_values = [int(v) for v in manifest["cluster_values"]]
@@ -51,66 +50,59 @@ class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
             int(v) for v in manifest["active_queries_per_cluster_values"]
         ]
 
-        # Setup.
-        model = IconqModel.load(model_id)
-        max_needed = (max(cluster_values) * max(active_values)) + 1
-        query_pool = cls.load_uniform_tpcds_template_001_pool(
-            model=model,
-            allowed_rpu_sizes=[rpu],
-            n_queries=max_needed,
-            template_selection_seed=seed,
+        # Setup router and workload.
+        router = QueryRouter(
+            slo_resolver=SloResolver(SloResolverConfig.from_config(manifest)),
+            slo_objective=SloObjective(
+                SloObjectiveConfig.from_config(manifest)
+            ),
+            query_router_config=QueryRouterConfig.from_config(manifest),
+            out_dir=cls.scratch_dir(),
         )
-        rows: list[dict[str, float | int | str]] = []
-        total_steps = len(cluster_values) * len(active_values) * reps
+        total_queries_needed = cls.round_up_to_next_multiple_of_base(
+            max(cluster_values) * max(active_values) + 1, base=99
+        )
+        workload = PoissonWorkloadCreator.create_poisson_workload(
+            num_templates=99,
+            num_query_texts_per_template=1,
+            num_queries_per_query_text=total_queries_needed // 99,
+            poisson_lambda=total_queries_needed / 0.010,  # All within 10ms.
+            seed=int(manifest["workload_seed"]),
+        )
+        workload.populate_featurizations_and_isolated_predictions(
+            iconq_model=router.iconq_model,
+            allowed_rpu_sizes=[rpu],
+        )
 
         # Run.
+        rows: list[dict[str, float | int | str]] = []
         with cls.make_progress() as progress:
+            total_steps = len(cluster_values) * len(active_values) * reps
             task = progress.add_task("Routing benchmark", total=total_steps)
             for n_clusters, active_per_cluster in itertools.product(
                 cluster_values, active_values
             ):
-                needed_active = n_clusters * active_per_cluster
-                initial_queries = query_pool[:needed_active]
-                incoming = query_pool[needed_active]
-                router = QueryRouter(
-                    slo_resolver=SloResolver(
-                        SloResolverConfig(slo_s=float(manifest["slo_s"]))
-                    ),
-                    slo_objective=SloObjective(
-                        SloObjectiveConfig(
-                            slo_metric=str(manifest["slo_metric"]),
-                            slo_threshold=float(manifest["slo_threshold"]),
-                        )
-                    ),
-                    query_router_config=QueryRouterConfig(
-                        routing_policy_name=manifest["routing_policy_name"],
-                        iconq_model_id=model_id,
-                    ),
-                    iconq_model=model,
-                    out_dir=cls.scratch_dir(),
-                )
+                total_active = n_clusters * active_per_cluster
                 snapshot = cls.ingest_initial(
-                    initial_queries=initial_queries,
-                    n_clusters=n_clusters,
-                    rpu=rpu,
-                    cache_state_dim=model.iconq_query_featurizer.num_tables,
+                    workload=workload,
+                    n_to_ingest=total_active,
+                    initial_cluster_sizes=[rpu] * n_clusters,
                     query_router=router,
                 )
-
+                next_q = workload.queries()[total_active]
                 for rep in range(reps):
-
                     t0 = time.perf_counter()
                     router.route_query(
-                        query=incoming,
+                        query=next_q,
                         snapshot=snapshot,
-                        rel_time_s=incoming.rel_start_time_s,
+                        rel_time_s=next_q.rel_start_time_s,
                     )
                     elapsed_s = time.perf_counter() - t0
                     rows.append(
                         {
                             "clusters": n_clusters,
                             "active_per_cluster": active_per_cluster,
-                            "total_active_queries": needed_active,
+                            "total_active_queries": total_active,
                             "rep": rep,
                             "elapsed_s": elapsed_s,
                         }

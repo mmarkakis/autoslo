@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Optional, Self
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_metric import SloMetric
 
@@ -213,7 +214,9 @@ class AutoscalerConfig(_PartialConfig):
     parameters.
     """
 
-    allowed_rpu_sizes: list[int]
+    allowed_rpu_sizes: list[int] = field(
+        default_factory=Cluster.all_allowed_rpu_sizes
+    )
     autoscaling_policy: str = "add_single_best_forward"
     min_cluster_lifetime_s: float = 1200.0
     idle_time_before_tear_down_s: float = 300.0

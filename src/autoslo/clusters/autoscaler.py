@@ -54,17 +54,21 @@ class Autoscaler:
         self,
         slo_resolver: SloResolver,
         slo_objective: SloObjective,
-        iconq_model: IconqModel,
         provisioner_config: ProvisionerConfig,
         query_router_config: QueryRouterConfig,
         autoscaler_config: AutoscalerConfig,
         out_dir: str | Path,
+        iconq_model: Optional[IconqModel] = None,
         force_one_decision_after_query_count: Optional[int] = None,
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
         self._allowed_rpu_sizes = sorted(autoscaler_config.allowed_rpu_sizes)
-        self._iconq_model = iconq_model
+        self._iconq_model = (
+            iconq_model
+            if iconq_model is not None
+            else IconqModel.load(query_router_config.iconq_model_id)
+        )
         self._query_router_config = query_router_config
         self._out_dir = out_dir
         self._min_cluster_lifetime_s = autoscaler_config.min_cluster_lifetime_s

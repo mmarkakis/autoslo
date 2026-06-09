@@ -29,8 +29,8 @@ class QueryRouter:
         slo_resolver: SloResolver,
         slo_objective: SloObjective,
         query_router_config: QueryRouterConfig,
-        iconq_model: IconqModel,
         out_dir: str | Path,
+        iconq_model: Optional[IconqModel] = None,
         source_for_log_records: str = "QueryRouter",
     ):
         self._slo_resolver = slo_resolver
@@ -38,7 +38,11 @@ class QueryRouter:
         self._routing_policy = QueryRouterPolicy(
             query_router_config.routing_policy_name
         )
-        self._iconq_model = iconq_model
+        self._iconq_model = (
+            iconq_model
+            if iconq_model is not None
+            else IconqModel.load(query_router_config.iconq_model_id)
+        )
         self._round_robin_idx = 0
         self._query_router_config = query_router_config
         self._source_for_log_records = source_for_log_records
@@ -104,6 +108,10 @@ class QueryRouter:
     @property
     def routing_policy(self) -> QueryRouterPolicy:
         return self._routing_policy
+    
+    @property
+    def iconq_model(self) -> IconqModel:
+        return self._iconq_model
 
     def route_query(
         self,

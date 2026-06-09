@@ -30,7 +30,11 @@ from autoslo.config.component_configs import (
 )
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
-from autoslo.routing.wrapper import route_and_update_bookkeeping
+from autoslo.routing.wrapper import (
+    NoOpAutoscaler,
+    _AutoscalerLike,
+    route_and_update_bookkeeping,
+)
 from autoslo.visualizations.colors import Palette
 from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
@@ -119,6 +123,13 @@ class MicrobenchmarkRunner:
     }
 
     @staticmethod
+    def round_up_to_next_multiple_of_base(value: int, base: int) -> int:
+        """Round up value to the next multiple of the given number."""
+        if base <= 0:
+            raise ValueError("base must be positive")
+        return int(((value + base - 1) // base) * base)
+
+    @staticmethod
     def make_progress() -> Progress:
         """Return a pre-configured Rich Progress context manager."""
         return Progress(
@@ -187,23 +198,29 @@ class MicrobenchmarkRunner:
         return pool
 
     @classmethod
-    def build_ready_snapshot(
+    def ingest_initial(
         cls,
         *,
-        active_queries: list[Query],
-        n_clusters: int,
-        rpu: int,
+        workload: Workload,
+        n_to_ingest: int,
+        initial_cluster_sizes: list[int],
         query_router: QueryRouter,
-        cache_state_dim: int,
+        autoscaler: Optional[_AutoscalerLike] = None,
     ) -> dict[str, ClusterView]:
         """
         Ingest queries into a number of clusters, using the given router.
         """
 
-        if n_clusters <= 0:
-            raise ValueError("n_clusters must be positive")
+        if len(initial_cluster_sizes) == 0:
+            raise ValueError("initial_cluster_sizes must be non-empty")
+
+        if autoscaler is None:
+            autoscaler = NoOpAutoscaler()
 
         # Initialize cluster pool without any queries.
+        cache_state_dim = (
+            query_router._iconq_model.iconq_query_featurizer.num_tables
+        )
         mcp = ManagedClusterPool(
             provisioner=SimulatedProvisioner(
                 ProvisionerConfig(
@@ -212,8 +229,8 @@ class MicrobenchmarkRunner:
                 )
             ),
             config=ManagedClusterPoolConfig(
-                initial_rpus=[rpu] * n_clusters,
-                max_clusters=n_clusters,
+                initial_rpus=initial_cluster_sizes,
+                max_clusters=len(initial_cluster_sizes),
             ),
         )
         mcp.add_details_and_spin_up_initial_clusters()
@@ -221,13 +238,14 @@ class MicrobenchmarkRunner:
             mcp.on_cluster_ready(name, 0.0)
 
         # Ingest queries.
-        for query in active_queries:
+        for query in workload.queries()[:n_to_ingest]:
             route_and_update_bookkeeping(
-                source="snapshot_builder",
+                source="ingest_initial",
                 rel_time_s_getter=lambda: query.rel_start_time_s,
                 pool=mcp,
                 router=query_router,
                 query=query,
+                autoscaler=autoscaler,
             )
 
         return mcp.snapshot(only_ready=True)
