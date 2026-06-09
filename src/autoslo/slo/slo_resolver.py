@@ -28,22 +28,35 @@ class SloResolver:
         Filename (not full path) of a YAML file under
         ``data/slos/`` mapping template IDs (zero-padded str) to SLOs
         (float).  If *None*, only the global default is used.
+    slo_tightening_factor:
+        Optional factor to multiply all SLOs by, simulating tighter or looser
+        SLOs without needing multiple YAML files.  A factor of 0.8 means
+        "pretend SLOs are 80% of real". Applied to both the default and all
+        overrides.
     """
 
     def __init__(
-        self,
-        config: SloResolverConfig,
+        self, config: SloResolverConfig, slo_tightening_factor: float = 1.0
     ) -> None:
-        self._default = config.slo_s
-        self._dict: dict[str, float] = {}
+        self._config = config
+        self._slo_tightening_factor = slo_tightening_factor
+        if slo_tightening_factor <= 0:
+            raise ValueError(
+                f"Tightening factor must be positive, "
+                f"got {slo_tightening_factor}"
+            )
+
+        self._default = config.slo_s * slo_tightening_factor
         self._filename: str | None = config.slo_dict_filename
+        self._dict: dict[str, float] = {}
 
         if self._filename:
             path = os.path.join(pu.get_data_path(), "slos", self._filename)
             with open(path) as f:
                 raw = yaml.safe_load(f) or {}
             self._dict = {
-                str(k).zfill(3): float(v) for k, v in raw["slo_dict"].items()
+                str(k).zfill(3): float(v) * slo_tightening_factor
+                for k, v in raw["slo_dict"].items()
             }
 
     # ------------------------------------------------------------------
@@ -109,22 +122,21 @@ class SloResolver:
         """True when at least one per-template override is present."""
         return bool(self._dict)
 
+    @property
+    def slo_tightening_factor(self) -> float:
+        return self._slo_tightening_factor
+
     # ------------------------------------------------------------------
     # derived resolvers
     # ------------------------------------------------------------------
 
-    def tightened(self, factor: float) -> "SloResolver":
+    def tightened(self, slo_tightening_factor: float) -> "SloResolver":
         """Return a copy with all SLOs (default and overrides) scaled by *factor*.
 
         A *factor* of 0.8 means "pretend SLOs are 80% of real", causing
         the autoscaler to trigger earlier.
         """
-        if factor <= 0:
-            raise ValueError(
-                f"Tightening factor must be positive, got {factor}"
-            )
         return SloResolver(
-            config=SloResolverConfig(
-                slo_s=self._default * factor, slo_dict_filename=self._filename
-            )
+            config=self._config,
+            slo_tightening_factor=slo_tightening_factor,
         )

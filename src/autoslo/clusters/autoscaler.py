@@ -86,10 +86,8 @@ class Autoscaler:
         self._autoscaling_policy = AutoscalingPolicy(
             autoscaler_config.autoscaling_policy
         )
-        self._trigger_slo_resolver = (
-            slo_resolver.tightened(autoscaler_config.slo_tightening_factor)
-            if autoscaler_config.slo_tightening_factor != 1.0
-            else slo_resolver
+        self._trigger_slo_resolver = slo_resolver.tightened(
+            autoscaler_config.slo_tightening_factor
         )
         self._spin_up_delay_s = provisioner_config.spin_up_delay_s
         self._min_finished_queries_in_counterfactual = (
