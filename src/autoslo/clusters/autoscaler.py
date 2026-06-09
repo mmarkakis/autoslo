@@ -17,7 +17,11 @@ from autoslo.clusters.cluster import (
     cluster_cost_until_drained,
 )
 from autoslo.config.component_configs import AutoscalerConfig, ProvisionerConfig
-from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.filesystem.structured_events import (
+    BaseStructuredEvent,
+    EventType,
+    QueryRelatedEvent,
+)
 from autoslo.filesystem.structured_log import emit_structured
 from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
@@ -595,14 +599,29 @@ class Autoscaler:
 
                 # Expire finished queries. Only count completions for queries
                 # that arrived after the hyp cluster became ready.
-                for cluster in local_cluster_pool.values():
+                for cluster_name, cluster in local_cluster_pool.items():
                     for q, latency_s in cluster.finish_queries_until(
                         rel_time_s=time_s,
                     ):
-                        if (
-                            hyp_ready_time_s is not None
-                            and q.rel_start_time_s >= hyp_ready_time_s
-                        ):
+                        started_after_ready = (
+                            q.rel_start_time_s >= hyp_ready_time_s
+                        )
+                        emit_structured(
+                            QueryRelatedEvent(
+                                rel_time_s=time_s,
+                                event_type=EventType.SIM_QUERY_COMPLETION,
+                                source="Autoscaler",
+                                cluster_name=cluster_name,
+                                query_id=q.query_id,
+                                query_text_id=q.query_text_id,
+                                details={
+                                    "latency_s": latency_s,
+                                    "started_after_ready": started_after_ready,
+                                    "candidate_rpu": candidate_rpu,
+                                },
+                            )
+                        )
+                        if started_after_ready:
                             slo = self._slo_resolver.resolve(q.query_text_id)
                             lat_and_slos.append(LatencySlo(latency_s, slo))
                             finished_after_ready += 1
@@ -615,7 +634,20 @@ class Autoscaler:
                     break
 
                 # Route and update state for the incoming query.
-                # Wrap as ClusterViews for the router
+                emit_structured(
+                    QueryRelatedEvent(
+                        rel_time_s=time_s,
+                        event_type=EventType.SIM_QUERY_ARRIVAL,
+                        source="Autoscaler",
+                        query_id=routed_query.query_id,
+                        query_text_id=routed_query.query_text_id,
+                        details={
+                            "copy_idx": copy_idx,
+                            "phase": "post_spinup",
+                            "candidate_rpu": candidate_rpu,
+                        },
+                    )
+                )
                 snapshot_for_routing = {
                     cluster_name: ClusterView(cluster)
                     for cluster_name, cluster in local_cluster_pool.items()
