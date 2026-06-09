@@ -65,3 +65,24 @@ simulator or on live workload clusters)
 
 **Outputs**:
 - A plot living in `data/plots/<plot_name>.png`
+
+
+## Microbenchmarks
+
+`src/autoslo/entry_points/microbench.py`
+
+**Objective**: Run method-level efficiency microbenchmarks (routing,
+autoscaling, tuner-phase timing) using dedicated manifests.
+
+**Inputs**:
+- The `<name>` of a  `microbench manifest` under `data/manifests/microbench/<name>.yml`.
+
+**Example**:
+
+```bash
+python src/autoslo/entry_points/microbench.py routing_efficiency
+```
+
+**Outputs**:
+- Experiment data at `data/plot_data/<name>.csv`
+- Plot at `data/plots/<name>.png`
