@@ -20,7 +20,7 @@ from rich.progress import (
 )
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
+from autoslo.clusters.cluster import ClusterState, ClusterView
 from autoslo.clusters.cluster_provisioner import SimulatedProvisioner
 from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.config.component_configs import (

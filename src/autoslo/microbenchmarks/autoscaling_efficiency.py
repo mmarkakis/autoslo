@@ -92,15 +92,13 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
             for arrival_rate_qps in arrival_rates:
 
                 # Set up workload with the given arrival rate.
-                total_queries_needed = cls.round_up_to_next_multiple_of_base(
-                    arrival_rate_qps * autoscaler_config.observation_window_s,
-                    base=99,
+                total_queries_needed = (
+                    arrival_rate_qps * autoscaler_config.observation_window_s
                 )
-
-                workload = PoissonWorkloadCreator.create_poisson_workload(
+                workload = PoissonWorkloadCreator.create_poisson_workload_with_n_queries(
                     num_templates=99,
                     num_query_texts_per_template=1,
-                    num_queries_per_query_text=total_queries_needed // 99,
+                    num_total_queries=total_queries_needed,
                     poisson_lambda=arrival_rate_qps,
                     seed=int(manifest["workload_seed"]),
                     print_summary=False,

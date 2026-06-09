@@ -14,11 +14,13 @@ class PoissonWorkloadCreator:
     def name_from_params(
         num_templates: int,
         num_query_texts_per_template: int,
-        num_queries_per_query_text: int,
+        num_queries_per_query_text: int | None,
         poisson_lambda: float,
         seed: int,
+        num_total_queries: int | None = None,
     ) -> str:
-        return "_".join(
+
+        name = "_".join(
             [
                 "poisson",
                 str(num_templates),
@@ -28,6 +30,11 @@ class PoissonWorkloadCreator:
                 str(seed),
             ]
         )
+
+        if num_total_queries is not None:
+            name += f"_{num_total_queries}"
+
+        return name
 
     @staticmethod
     def create_poisson_workload(
@@ -62,6 +69,23 @@ class PoissonWorkloadCreator:
                         f"ext_tpcds1000#{template_idx:03d}#{query_text_idx:03d}"
                     )
         rng.shuffle(query_text_ids)
+
+        return PoissonWorkloadCreator._package_queries_into_workload(
+            query_text_ids=query_text_ids,
+            poisson_lambda=poisson_lambda,
+            workload_name=workload_name,
+            print_summary=print_summary,
+            rng=rng,
+        )
+
+    @staticmethod
+    def _package_queries_into_workload(
+        query_text_ids: list[str],
+        poisson_lambda: float,
+        workload_name: str,
+        print_summary: bool,
+        rng: np.random.Generator,
+    ) -> Workload:
 
         # Create submission times using a Poisson process.
         n_queries = len(query_text_ids)
@@ -99,6 +123,50 @@ class PoissonWorkloadCreator:
             workload.print_summary()
 
         return workload
+
+    @staticmethod
+    def create_poisson_workload_with_n_queries(
+        num_templates: int,
+        num_query_texts_per_template: int,
+        num_total_queries: int,
+        poisson_lambda: float,
+        seed: int,
+        print_summary: bool = True,
+    ) -> Workload:
+
+        rng = np.random.default_rng(seed)
+        workload_name = PoissonWorkloadCreator.name_from_params(
+            num_templates=num_templates,
+            num_query_texts_per_template=num_query_texts_per_template,
+            num_queries_per_query_text=None,
+            poisson_lambda=poisson_lambda,
+            seed=seed,
+            num_total_queries=num_total_queries,
+        )
+
+        # Determine which templates to use
+        all_templates = list(range(1, 100))
+        rng.shuffle(all_templates)
+        selected_templates = all_templates[:num_templates]
+
+        # Create the queries in sorted order and then shuffle.
+        query_text_ids = []
+        for template_idx in sorted(selected_templates):
+            for query_text_idx in range(1, num_query_texts_per_template + 1):
+                for _ in range(1, num_total_queries + 1):
+                    query_text_ids.append(
+                        f"ext_tpcds1000#{template_idx:03d}#{query_text_idx:03d}"
+                    )
+        rng.shuffle(query_text_ids)
+        query_text_ids = query_text_ids[:num_total_queries]
+
+        return PoissonWorkloadCreator._package_queries_into_workload(
+            query_text_ids=query_text_ids,
+            poisson_lambda=poisson_lambda,
+            workload_name=workload_name,
+            print_summary=print_summary,
+            rng=rng,
+        )
 
 
 if __name__ == "__main__":

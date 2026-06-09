@@ -11,7 +11,6 @@ from autoslo.config.component_configs import (
     SloResolverConfig,
 )
 from autoslo.microbenchmarks.microbenchmark_runner import MicrobenchmarkRunner
-from autoslo.models.iconq_model import IconqModel
 from autoslo.routing.query_router import QueryRouter
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
@@ -59,15 +58,16 @@ class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
             query_router_config=QueryRouterConfig.from_config(manifest),
             out_dir=cls.scratch_dir(),
         )
-        total_queries_needed = cls.round_up_to_next_multiple_of_base(
-            max(cluster_values) * max(active_values) + 1, base=99
-        )
-        workload = PoissonWorkloadCreator.create_poisson_workload(
-            num_templates=99,
-            num_query_texts_per_template=1,
-            num_queries_per_query_text=total_queries_needed // 99,
-            poisson_lambda=total_queries_needed / 0.010,  # All within 10ms.
-            seed=int(manifest["workload_seed"]),
+        total_queries_needed = max(cluster_values) * max(active_values) + 1
+        workload = (
+            PoissonWorkloadCreator.create_poisson_workload_with_n_queries(
+                num_templates=99,
+                num_query_texts_per_template=1,
+                num_total_queries=total_queries_needed,
+                poisson_lambda=total_queries_needed / 0.010,  # All within 10ms.
+                seed=int(manifest["workload_seed"]),
+                print_summary=False,
+            )
         )
         workload.populate_featurizations_and_isolated_predictions(
             iconq_model=router.iconq_model,

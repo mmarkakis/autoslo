@@ -1,0 +1,18 @@
+workload_seed: 42
+
+reps: 3
+n_scenarios_values: [10, 20, 50]
+queries_per_scenario_values: [100, 1000, 10000]
+
+latency_multiplier: 1.5
+
+spinup_optimizer_config:
+  min_delinquent_workload_fraction: 0.5
+  lead_time_s: 360.0
+
+slo_resolver_config:
+  slo_s: 10.0
+
+slo_objective_config:
+  slo_metric: binary
+  slo_threshold: 0.05
