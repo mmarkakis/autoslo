@@ -81,6 +81,7 @@ def find_next_spinup_time(
     min_delinquent_workloads: int,
     lead_time_s: float,
     min_candidate_spacing_s: Optional[float] = None,
+    verbose: bool = True,
 ) -> list[float]:
     """Return a list of candidate placement times.
 
@@ -114,6 +115,7 @@ def find_next_spinup_time(
         min_delinquent_workloads=min_delinquent_workloads,
         lead_time_s=lead_time_s,
         min_candidate_spacing_s=min_candidate_spacing_s,
+        verbose=verbose,
     )
 
 
@@ -124,6 +126,7 @@ def find_next_spinup_time_df(
     min_delinquent_workloads: int,
     lead_time_s: float,
     min_candidate_spacing_s: Optional[float] = None,
+    verbose: bool = True,
 ) -> list[float]:
     """Return a list of candidate placement times.
 
@@ -260,16 +263,18 @@ def find_next_spinup_time_df(
         candidates = retained
 
     if not candidates:
-        console.print(
-            "[green]No viable candidate times remain after spacing "
-            f"deduplication (min_candidate_spacing_s={spacing:.1f}s)."
-        )
+        if verbose:
+            console.print(
+                "[green]No viable candidate times remain after spacing "
+                f"deduplication (min_candidate_spacing_s={spacing:.1f}s)."
+            )
         return []
 
-    console.print(
-        f"[green]Found {len(candidates)} candidate placement time(s). "
-        f"First candidate: t_p={candidates[0]:.1f}s."
-    )
+    if verbose:
+        console.print(
+            f"[green]Found {len(candidates)} candidate placement time(s). "
+            f"First candidate: t_p={candidates[0]:.1f}s."
+        )
     return candidates
 
 
@@ -398,6 +403,7 @@ class SpinupOptimizer:
                 min_delinquent_workloads=min_delinquent_workloads,
                 lead_time_s=self._lead_time_s,
                 min_candidate_spacing_s=self._spinup_optimizer_config.min_candidate_spacing_s,
+                verbose=self._verbose_progress,
             )
 
             if not candidate_times:

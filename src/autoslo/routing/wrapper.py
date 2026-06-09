@@ -31,6 +31,17 @@ class _AutoscalerLike(Protocol):
         pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[ScalingAction]: ...
 
+class NoOpAutoscaler:
+    """An autoscaler that performs no actions, for testing purposes."""
+
+    def inform(
+        self,
+        rel_time_s: float,
+        current_query: Query,
+        pool_snapshot_with_current_query: dict[str, ClusterView],
+    ) -> list[ScalingAction]:
+        return []
+    
 
 def route_and_update_bookkeeping(
     source: str,
@@ -38,7 +49,7 @@ def route_and_update_bookkeeping(
     pool: ManagedClusterPool,
     router: QueryRouter,
     query: Query,
-    autoscaler: _AutoscalerLike,
+    autoscaler: _AutoscalerLike = NoOpAutoscaler(),
     simulator_pending_events_heap: Optional[list[SimulatorEvent]] = None,
 ) -> tuple[str, list[ScalingAction]]:
 
