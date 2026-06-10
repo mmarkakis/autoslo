@@ -94,7 +94,7 @@ class MicrobenchmarkRunner:
     TPCDS_99_TEMPLATE_SOURCE_WORKLOAD = "poisson_99_1_3_0.2_42"
     TPCDS_TEMPLATE_QUERY_INDEX = "001"
     TPCDS_TEMPLATE_COUNT = 99
-    SCATTER_FIGSIZE = (6.5, 5)
+    SCATTER_FIGSIZE = (7, 5)
     SCATTER_DPI = 180
     SCATTER_MARKER_SIZE = 200
     SCATTER_POINT_ALPHA = 0.9
@@ -114,6 +114,12 @@ class MicrobenchmarkRunner:
     SCATTER_COLORBAR_LABEL_FONT_SIZE = BASE_FONT_SIZE
     SCATTER_COLORBAR_TICK_FONT_SIZE = BASE_FONT_SIZE
     LEGEND_LABEL_SPACING = 0.1
+    LEGEND_BORDER_PAD = 0.15 # padding between legend content and legend frame
+    LEGEND_HANDLE_TEXT_PAD = 0.1 # space between legend marker and text
+    LEGEND_BORDER_AXES_PAD = 0.2 # space between legend and axes edge
+    LEGNED_HANDLE_LENGTH = 1.25
+    LEGEND_HANDLE_HEIGHT = 1.0
+    LEGEND_FRAME_ALPHA = 0.2
 
     DEFAULT_PROVISIONER_CONFIG_ARGS = {
         "aws_config_path": "",
@@ -271,7 +277,7 @@ class MicrobenchmarkRunner:
         ax.set_facecolor(Palette.white)
 
         markers = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
-        shape_values = sorted(df[shape_col].unique().tolist())
+        shape_values = df[shape_col].unique().tolist()
         color_values = df[color_col].astype(float)
         cmap_name = f"{cls.name()}_cmap"
         cmap = LinearSegmentedColormap.from_list(cmap_name, cmap_colors)
@@ -306,7 +312,7 @@ class MicrobenchmarkRunner:
                 [0],
                 marker=markers[idx % len(markers)],
                 color="none",
-                markerfacecolor=Palette.white,
+                markerfacecolor=Palette.black,
                 markeredgecolor=Palette.black,
                 markeredgewidth=cls.SCATTER_LEGEND_MARKER_EDGE_WIDTH,
                 markersize=cls.SCATTER_LEGEND_MARKER_SIZE,
@@ -314,6 +320,7 @@ class MicrobenchmarkRunner:
             )
             for idx, shape_value in enumerate(shape_values)
         ]
+        
         shape_legend = ax.legend(
             handles=shape_handles,
             title=shape_legend_title,
@@ -323,6 +330,12 @@ class MicrobenchmarkRunner:
             title_fontsize=cls.SCATTER_LEGEND_TITLE_FONT_SIZE,
             fontsize=cls.SCATTER_LEGEND_TEXT_FONT_SIZE,
             labelspacing=cls.LEGEND_LABEL_SPACING,
+            borderpad=cls.LEGEND_BORDER_PAD,      
+            handletextpad=cls.LEGEND_HANDLE_TEXT_PAD,
+            borderaxespad=cls.LEGEND_BORDER_AXES_PAD,
+            handlelength=cls.LEGNED_HANDLE_LENGTH,
+            handleheight=cls.LEGEND_HANDLE_HEIGHT,
+            framealpha=cls.LEGEND_FRAME_ALPHA,
         )
         shape_legend.get_title().set_color(Palette.black)
         shape_legend.get_title().set_ha("center")
