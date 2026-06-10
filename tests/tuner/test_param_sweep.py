@@ -9,9 +9,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from autoslo.config.component_configs import (
+    ParamSweepConfig,
+    SloObjectiveConfig,
+    WorkloadConfig,
+)
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.tuner.param_sweep import ParamSweep, build_grid
-from autoslo.tuner.tuner_utils import SimulationResult
+from autoslo.workload_execution.execution_result import ExecutionResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,20 +26,26 @@ from autoslo.tuner.tuner_utils import SimulationResult
 def _make_scenario_result(
     violation_rate: float = 0.05,
     total_cost: float = 10.0,
-    out_dir: str = "/tmp/fake",
-) -> SimulationResult:
-    return SimulationResult(
+) -> ExecutionResult:
+    return ExecutionResult(
+        execution_dir=Path("/tmp/fake"),
         violation_rate=violation_rate,
         violation_amount_s=0.0,
         violation_relative_mean=0.0,
         total_cost=total_cost,
         num_queries=100,
-        simulation_dir=Path(out_dir),
+        total_rel_time_s=0.0,
+        tail_fraction=1.0,
     )
 
 
+def _wc(name: str) -> WorkloadConfig:
+    """Minimal WorkloadConfig for tests (never read; evaluator is mocked)."""
+    return WorkloadConfig(workload_name=name, workload_dir=Path("/tmp"))
+
+
 def _mock_evaluator(
-    results_by_call: list[list[list[SimulationResult]]] | None = None,
+    results_by_call: list[list[list[ExecutionResult]]] | None = None,
 ) -> MagicMock:
     """Return a mock ScenarioEvaluator with canned evaluate_batch_from_overrides() results.
 
@@ -92,9 +103,11 @@ class TestSelectBest:
             run_dir=Path("/tmp/fake"),
             phase_name="test",
             slo_objective=SloObjective(
-                slo_metric="binary", slo_threshold=slo_threshold
+                SloObjectiveConfig(
+                    slo_metric="binary", slo_threshold=slo_threshold
+                )
             ),
-            agg_metric="mean",
+            agg_method="mean",
         )
 
     def test_single_pareto_point(self):
@@ -220,14 +233,16 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/train.parquet")],
-            val_paths=[Path("/tmp/val.parquet")],
-            sweep_config={"params": {"eta_crit": [0.5]}},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(params={"eta_crit": [0.5]}),
         )
 
         assert best == {"eta_crit": 0.5} | config
@@ -248,14 +263,16 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"eta_crit": [0.5]}},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(params={"eta_crit": [0.5]}),
         )
 
         results_file = run_dir / "test_sweep" / "sweep_results.json"
@@ -285,8 +302,12 @@ class TestParamSweepIntegration:
                     [_make_scenario_result(0.03, 90.0)],
                 ],
                 [  # val: top-k in train-rank order (eta_crit=0.7 ranked first)
-                    [_make_scenario_result(0.04, 95.0)],   # eta_crit=0.7 (rank 0)
-                    [_make_scenario_result(0.12, 55.0)],   # eta_crit=0.3 (rank 1)
+                    [
+                        _make_scenario_result(0.04, 95.0)
+                    ],  # eta_crit=0.7 (rank 0)
+                    [
+                        _make_scenario_result(0.12, 55.0)
+                    ],  # eta_crit=0.3 (rank 1)
                 ],
             ]
         )
@@ -296,14 +317,18 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.01),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.01)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"eta_crit": [0.3, 0.7]}},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"eta_crit": [0.3, 0.7]}
+            ),
         )
 
         assert best == {"eta_crit": 0.7} | config
@@ -338,14 +363,18 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.01),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.01)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"a": [1, 2, 3]}, "val_top_k": 2},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"a": [1, 2, 3]}, val_top_k=2
+            ),
         )
 
         # 1 train batch + 1 val batch (top-2 only)
@@ -367,14 +396,16 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(params={}),
         )
 
         assert best == {} | config
@@ -395,14 +426,18 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"routing_config.weight": [0.5]}},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"routing_config.weight": [0.5]}
+            ),
         )
 
         call_overrides = evaluator.evaluate_batch_from_overrides.call_args_list[
@@ -432,14 +467,18 @@ class TestParamSweepIntegration:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_sweep",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"a": [1, 2], "b": [10, 20, 30]}},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"a": [1, 2], "b": [10, 20, 30]}
+            ),
         )
 
         # Best should have both keys.
@@ -482,19 +521,21 @@ class TestRandomSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_random",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "random",
-                "budget": 2,
-                "seed": 42,
-                "params": {"a": [1, 2], "b": [10, 20]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="random",
+                budget=2,
+                seed=42,
+                params={"a": [1, 2], "b": [10, 20]},
+            ),
         )
 
         # Train call should have exactly 2 overrides.
@@ -522,19 +563,21 @@ class TestRandomSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_random",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "random",
-                "budget": 100,
-                "seed": 42,
-                "params": {"a": [1, 2]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="random",
+                budget=100,
+                seed=42,
+                params={"a": [1, 2]},
+            ),
         )
 
         train_call = evaluator.evaluate_batch_from_overrides.call_args_list[0]
@@ -556,19 +599,19 @@ class TestRandomSweep:
                 run_dir=run_dir / f"run_{_}",
                 phase_name="test_random",
                 slo_objective=SloObjective(
-                    slo_metric="binary", slo_threshold=0.5
+                    SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
                 ),
-                agg_metric="mean",
+                agg_method="mean",
             )
             sweeper.sweep(
-                train_paths=[Path("/tmp/t.parquet")],
-                val_paths=[Path("/tmp/v.parquet")],
-                sweep_config={
-                    "strategy": "random",
-                    "budget": 1,
-                    "seed": 123,
-                    "params": {"a": [1, 2, 3, 4, 5]},
-                },
+                train_workload_configs=[_wc("t")],
+                val_workload_configs=[_wc("v")],
+                param_sweep_config=ParamSweepConfig(
+                    strategy="random",
+                    budget=1,
+                    seed=123,
+                    params={"a": [1, 2, 3, 4, 5]},
+                ),
             )
             call = evaluator.evaluate_batch_from_overrides.call_args_list[0]
             samples.append(call[1]["all_config_overrides"])
@@ -650,18 +693,20 @@ class TestCoordinateDescentSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_cd",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.03),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.03)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "coordinate_descent",
-                "max_cycles": 1,
-                "params": {"a": [1, 2, 3], "b": [10, 20, 30]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="coordinate_descent",
+                max_cycles=1,
+                params={"a": [1, 2, 3], "b": [10, 20, 30]},
+            ),
         )
 
         # Should have evaluated 5 unique configs (3 + 2 new).
@@ -680,14 +725,18 @@ class TestCoordinateDescentSweep:
                 # Sweep a (cycle 0):
                 [
                     [_make_scenario_result(0.10, 100.0)],  # a=1
-                    [_make_scenario_result(0.05, 50.0)],   # a=2 (cheapest → best)
-                    [_make_scenario_result(0.08, 80.0)],   # a=3
+                    [
+                        _make_scenario_result(0.05, 50.0)
+                    ],  # a=2 (cheapest → best)
+                    [_make_scenario_result(0.08, 80.0)],  # a=3
                 ],
                 # Validation (top-k order: a=2 rank0, a=3 rank1, a=1 rank2):
                 [
-                    [_make_scenario_result(0.06, 45.0)],   # a=2 (cheapest val → wins)
-                    [_make_scenario_result(0.09, 75.0)],   # a=3
-                    [_make_scenario_result(0.11, 95.0)],   # a=1
+                    [
+                        _make_scenario_result(0.06, 45.0)
+                    ],  # a=2 (cheapest val → wins)
+                    [_make_scenario_result(0.09, 75.0)],  # a=3
+                    [_make_scenario_result(0.11, 95.0)],  # a=1
                 ],
             ]
         )
@@ -697,18 +746,20 @@ class TestCoordinateDescentSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_cd",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "coordinate_descent",
-                "max_cycles": 5,  # would run 5 cycles, but should stop at 1
-                "params": {"a": [1, 2, 3]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="coordinate_descent",
+                max_cycles=5,
+                params={"a": [1, 2, 3]},
+            ),
         )
 
         # Only 1 train batch (cycle 0, sweep a) + 1 val batch.
@@ -743,18 +794,20 @@ class TestCoordinateDescentSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_cd",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "coordinate_descent",
-                "max_cycles": 3,
-                "params": {"a": [1, 2, 3]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="coordinate_descent",
+                max_cycles=3,
+                params={"a": [1, 2, 3]},
+            ),
         )
 
         # 1 train batch in cycle 0. Cycle 1: a=1 is still best, all 3 configs
@@ -787,19 +840,21 @@ class TestCoordinateDescentSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_cd",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         best, _, _ = sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "coordinate_descent",
-                "max_cycles": 1,
-                "starting_point": {"a": 3},
-                "params": {"a": [1, 2, 3]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="coordinate_descent",
+                max_cycles=1,
+                starting_point={"a": 3},
+                params={"a": [1, 2, 3]},
+            ),
         )
 
         # All 3 are feasible (threshold=0.5), cheapest wins → a=1 ($50).
@@ -825,18 +880,20 @@ class TestCoordinateDescentSweep:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_cd",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "strategy": "coordinate_descent",
-                "max_cycles": 1,
-                "params": {"a": [1, 2]},
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="coordinate_descent",
+                max_cycles=1,
+                params={"a": [1, 2]},
+            ),
         )
 
         results_file = run_dir / "test_cd" / "sweep_results.json"
@@ -859,17 +916,18 @@ class TestUnknownStrategy:
             initial_config={"tuner_config": {"aggregation_metric": "mean"}},
             run_dir=tmp_path,
             phase_name="test",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
         with pytest.raises(ValueError, match="Unknown sweep strategy"):
             sweeper.sweep(
-                train_paths=[Path("/tmp/t.parquet")],
-                val_paths=[Path("/tmp/v.parquet")],
-                sweep_config={
-                    "strategy": "nonexistent",
-                    "params": {"a": [1]},
-                },
+                train_workload_configs=[_wc("t")],
+                val_workload_configs=[_wc("v")],
+                param_sweep_config=ParamSweepConfig(
+                    strategy="nonexistent", params={"a": [1]}
+                ),
             )
 
 
@@ -906,14 +964,18 @@ class TestTopKValidation:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_topk",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"a": [1, 2, 3, 4, 5]}, "val_top_k": 2},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"a": [1, 2, 3, 4, 5]}, val_top_k=2
+            ),
         )
 
         val_call = evaluator.evaluate_batch_from_overrides.call_args_list[1]
@@ -942,17 +1004,18 @@ class TestTopKValidation:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_topk",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.05),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.05)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "params": {"a": [1, 2, 3, 4]},
-                "val_top_k": 2,
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"a": [1, 2, 3, 4]}, val_top_k=2
+            ),
         )
 
         # The feasible candidate (a=2, idx=1) must appear in the val overrides.
@@ -982,17 +1045,18 @@ class TestTopKValidation:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_topk",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={
-                "params": {"a": [1, 2, 3]},
-                "val_top_k": 100,
-            },
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                params={"a": [1, 2, 3]}, val_top_k=100
+            ),
         )
 
         val_call = evaluator.evaluate_batch_from_overrides.call_args_list[1]
@@ -1017,14 +1081,16 @@ class TestTopKValidation:
             initial_config=config,
             run_dir=run_dir,
             phase_name="test_topk",
-            slo_objective=SloObjective(slo_metric="binary", slo_threshold=0.5),
-            agg_metric="mean",
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
         )
 
         sweeper.sweep(
-            train_paths=[Path("/tmp/t.parquet")],
-            val_paths=[Path("/tmp/v.parquet")],
-            sweep_config={"params": {"a": [1, 2]}},
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(params={"a": [1, 2]}),
         )
 
         results_file = run_dir / "test_topk" / "sweep_results.json"
@@ -1032,3 +1098,262 @@ class TestTopKValidation:
         for entry in data["grid_results"]:
             assert "train_rank" in entry
             assert "is_pareto" not in entry
+
+
+# ---------------------------------------------------------------------------
+# Adaptive batch strategy
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptiveBatchSweep:
+    @pytest.fixture()
+    def run_dir(self, tmp_path: Path) -> Path:
+        return tmp_path / "sweep_run"
+
+    @pytest.fixture()
+    def config(self) -> dict[str, Any]:
+        return {"tuner_config": {"aggregation_metric": "mean"}}
+
+    def _sweeper(
+        self,
+        run_dir: Path,
+        config: dict[str, Any],
+        evaluator,
+        phase: str = "test_ab",
+    ) -> ParamSweep:
+        return ParamSweep(
+            evaluator=evaluator,
+            initial_config=config,
+            run_dir=run_dir,
+            phase_name=phase,
+            slo_objective=SloObjective(
+                SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+            ),
+            agg_method="mean",
+        )
+
+    def test_degenerate_param_raises(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """Fewer than 2 distinct values per param → ValueError."""
+        sweeper = self._sweeper(run_dir, config, _mock_evaluator())
+        with pytest.raises(ValueError, match="\u22652 distinct values"):
+            sweeper.sweep(
+                train_workload_configs=[_wc("t")],
+                val_workload_configs=[_wc("v")],
+                param_sweep_config=ParamSweepConfig(
+                    strategy="adaptive_batch",
+                    budget=4,
+                    max_rounds=1,
+                    params={"a": [5, 5, 5]},
+                ),
+            )
+
+    def test_round0_evaluates_budget_configs(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """With max_rounds=0, only the LHS round 0 runs before validation."""
+        budget = 4
+        train_batch = [
+            [_make_scenario_result(0.10 - i * 0.01, 50.0 + i * 5)]
+            for i in range(budget)
+        ]
+        val_batch = [
+            [_make_scenario_result(0.09 - i * 0.01, 52.0 + i * 5)]
+            for i in range(budget)
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+        sweeper = self._sweeper(run_dir, config, evaluator)
+
+        sweeper.sweep(
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="adaptive_batch",
+                budget=budget,
+                seed=42,
+                max_rounds=0,
+                params={"a": [1.0, 10.0]},
+            ),
+        )
+
+        # Round 0 train + validation.
+        assert evaluator.evaluate_batch_from_overrides.call_count == 2
+        train_call = evaluator.evaluate_batch_from_overrides.call_args_list[0]
+        assert len(train_call[1]["all_config_overrides"]) == budget
+
+    def test_lhs_samples_within_bounds(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """All round-0 samples lie within [lo, hi]; integer params are rounded."""
+        budget = 8
+        lo_a, hi_a = 1.0, 10.0
+        lo_b, hi_b = 100, 200  # int bounds
+
+        train_batch = [
+            [_make_scenario_result(0.05, 50.0)] for _ in range(budget)
+        ]
+        val_batch = [[_make_scenario_result(0.06, 55.0)] for _ in range(budget)]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+        sweeper = self._sweeper(run_dir, config, evaluator)
+
+        sweeper.sweep(
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="adaptive_batch",
+                budget=budget,
+                seed=99,
+                max_rounds=0,
+                params={"a": [lo_a, hi_a], "b": [lo_b, hi_b]},
+            ),
+        )
+
+        overrides = evaluator.evaluate_batch_from_overrides.call_args_list[0][
+            1
+        ]["all_config_overrides"]
+        assert len(overrides) == budget
+        for cfg in overrides:
+            assert lo_a <= cfg["a"] <= hi_a
+            assert lo_b <= cfg["b"] <= hi_b
+            assert isinstance(cfg["b"], int)
+
+    def test_early_halt_when_integer_space_exhausted(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """Integer param space with only 2 values saturates after round 0."""
+        # LHS with budget=2 on an int range [1, 2] always produces exactly
+        # {a:1} and {a:2}.  In round 1, every Gaussian proposal rounds to
+        # 1 or 2, both already cached → 0 new candidates < ceil(2/2)=1
+        # → early halt.  Only round-0 train + val calls are made.
+        budget = 2
+        train_batch = [
+            [_make_scenario_result(0.05, 50.0)],
+            [_make_scenario_result(0.08, 40.0)],
+        ]
+        val_batch = [
+            [_make_scenario_result(0.06, 55.0)],
+            [_make_scenario_result(0.09, 45.0)],
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+        sweeper = self._sweeper(run_dir, config, evaluator)
+
+        sweeper.sweep(
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="adaptive_batch",
+                budget=budget,
+                seed=42,
+                max_rounds=5,
+                params={"a": [1, 2]},
+            ),
+        )
+
+        assert evaluator.evaluate_batch_from_overrides.call_count == 2
+
+    def test_cem_runs_multiple_rounds(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """With float params and max_rounds=2, three training batches are issued."""
+        budget = 3
+
+        def _tb(n: int) -> list:
+            return [
+                [_make_scenario_result(0.10 - i * 0.01, 50.0 + i * 5)]
+                for i in range(n)
+            ]
+
+        val_batch = [
+            [_make_scenario_result(0.05, 55.0)] for _ in range(budget * 3)
+        ]
+        evaluator = _mock_evaluator(
+            [_tb(budget), _tb(budget), _tb(budget), val_batch]
+        )
+        sweeper = self._sweeper(run_dir, config, evaluator)
+
+        sweeper.sweep(
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="adaptive_batch",
+                budget=budget,
+                seed=7,
+                max_rounds=2,
+                params={"x": [0.0, 100.0]},  # wide float range → no collisions
+            ),
+        )
+
+        # Round 0 + round 1 + round 2 training, then validation.
+        assert evaluator.evaluate_batch_from_overrides.call_count == 4
+
+    def test_seed_reproducibility(self, run_dir: Path, config: dict[str, Any]):
+        """Same seed produces identical round-0 samples."""
+        budget = 4
+
+        def _run(run_id: int) -> list[dict]:
+            train_batch = [
+                [_make_scenario_result(0.05, 50.0)] for _ in range(budget)
+            ]
+            val_batch = [
+                [_make_scenario_result(0.06, 55.0)] for _ in range(budget)
+            ]
+            evaluator = _mock_evaluator([train_batch, val_batch])
+            sweeper = ParamSweep(
+                evaluator=evaluator,
+                initial_config={"tuner_config": {"aggregation_metric": "mean"}},
+                run_dir=run_dir / f"r{run_id}",
+                phase_name="test_ab",
+                slo_objective=SloObjective(
+                    SloObjectiveConfig(slo_metric="binary", slo_threshold=0.5)
+                ),
+                agg_method="mean",
+            )
+            sweeper.sweep(
+                train_workload_configs=[_wc("t")],
+                val_workload_configs=[_wc("v")],
+                param_sweep_config=ParamSweepConfig(
+                    strategy="adaptive_batch",
+                    budget=budget,
+                    seed=42,
+                    max_rounds=0,
+                    params={"a": [0.0, 1.0], "b": [10.0, 20.0]},
+                ),
+            )
+            return evaluator.evaluate_batch_from_overrides.call_args_list[0][1][
+                "all_config_overrides"
+            ]
+
+        assert _run(0) == _run(1)
+
+    def test_results_wire_through_val_and_best_selection(
+        self, run_dir: Path, config: dict[str, Any]
+    ):
+        """Best config returned by sweep() has the swept parameter key."""
+        budget = 2
+        train_batch = [
+            [_make_scenario_result(0.05, 50.0)],
+            [_make_scenario_result(0.08, 80.0)],
+        ]
+        val_batch = [
+            [_make_scenario_result(0.06, 55.0)],
+            [_make_scenario_result(0.09, 85.0)],
+        ]
+        evaluator = _mock_evaluator([train_batch, val_batch])
+        sweeper = self._sweeper(run_dir, config, evaluator)
+
+        best, _, _ = sweeper.sweep(
+            train_workload_configs=[_wc("t")],
+            val_workload_configs=[_wc("v")],
+            param_sweep_config=ParamSweepConfig(
+                strategy="adaptive_batch",
+                budget=budget,
+                seed=42,
+                max_rounds=0,
+                val_top_k=2,
+                params={"x": [1.0, 5.0]},
+            ),
+        )
+
+        assert "x" in best
+        assert 1.0 <= best["x"] <= 5.0

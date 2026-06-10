@@ -5,7 +5,8 @@ step 6) follow the same pattern: generate candidate configurations,
 evaluate them on the training set, rank them via
 :meth:`SloObjective.rank_indices`, validate the top-k, and select the
 best.  :class:`ParamSweep` encapsulates this logic with pluggable search
-strategies (``grid``, ``random``, ``coordinate_descent``).
+strategies (``grid``, ``random``, ``coordinate_descent``,
+``adaptive_batch``).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import math
 import random as stdlib_random
 from pathlib import Path
 from typing import Any
@@ -144,6 +146,10 @@ class ParamSweep:
             )
         elif strategy == "coordinate_descent":
             candidates, grid_results = self._sweep_coordinate_descent(
+                train_workload_configs, param_sweep_config, phase_dir
+            )
+        elif strategy == "adaptive_batch":
+            candidates, grid_results = self._sweep_adaptive_batch(
                 train_workload_configs, param_sweep_config, phase_dir
             )
         else:
@@ -400,6 +406,171 @@ class ParamSweep:
                     f"\n  [dim]Converged after {cycle + 1} cycle(s).[/dim]"
                 )
                 break
+
+        return all_candidates, all_grid_results
+
+    def _sweep_adaptive_batch(
+        self,
+        train_workload_configs: list[WorkloadConfig],
+        param_sweep_config: ParamSweepConfig,
+        phase_dir: Path,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Adaptive batch search: LHS initialisation then Noisy CEM refinement.
+
+        Round 0 uses Latin Hypercube Sampling (McKay et al. 1979) for uniform
+        coverage.  Each subsequent round applies the Cross-Entropy Method with
+        a diagonal Gaussian (Rubinstein 1999; De Boer et al. 2005) refit to
+        the top-B elite set.  A variance floor follows Noisy CEM (Szita &
+        Lörincz 2006) to prevent premature distribution collapse.
+        """
+        params = param_sweep_config.params
+        budget = param_sweep_config.budget
+        seed = param_sweep_config.seed
+        max_rounds = param_sweep_config.max_rounds
+        beam_size = param_sweep_config.beam_size
+        min_sigma_frac = param_sweep_config.min_sigma_fraction
+        explr_mult = param_sweep_config.exploration_multiplier
+        param_names = list(params.keys())
+
+        # Validate and extract per-parameter bounds and type flags.
+        # Type: if all listed values are Python int, treat as integer;
+        # otherwise continuous float.
+        lo: dict[str, float] = {}
+        hi: dict[str, float] = {}
+        is_int: dict[str, bool] = {}
+        for name, values in params.items():
+            distinct = set(values)
+            if len(distinct) < 2:
+                raise ValueError(
+                    f"adaptive_batch requires at least 2 distinct values for "
+                    f"{name!r}; got {sorted(distinct)}"
+                )
+            lo[name] = float(min(values))
+            hi[name] = float(max(values))
+            is_int[name] = all(isinstance(v, int) for v in values)
+
+        rng = stdlib_random.Random(seed)
+
+        def _clamp(name: str, v: float) -> Any:
+            v = max(lo[name], min(hi[name], v))
+            return int(round(v)) if is_int[name] else v
+
+        def _config_key(cfg: dict[str, Any]) -> frozenset:
+            return frozenset(sorted(cfg.items()))
+
+        def _std(vals: list[float]) -> float:
+            if len(vals) < 2:
+                return 0.0
+            mean = sum(vals) / len(vals)
+            return (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+
+        all_candidates: list[dict[str, Any]] = []
+        all_grid_results: list[dict[str, Any]] = []
+        evaluated_cache: dict[frozenset, int] = {}
+
+        def _absorb(
+            new_cands: list[dict[str, Any]], batch: list[dict[str, Any]]
+        ) -> None:
+            """Append a completed evaluation batch into the accumulators."""
+            for j, c in enumerate(new_cands):
+                idx = len(all_candidates)
+                batch[j]["grid_point"] = idx
+                all_candidates.append(c)
+                all_grid_results.append(batch[j])
+                evaluated_cache[_config_key(c)] = idx
+
+        console.print(
+            f"\n[bold cyan]Adaptive batch (LHS + Noisy CEM)[/]  "
+            f"budget={budget}  |  max_rounds={max_rounds}  |  "
+            f"beam_size={beam_size}  |  params={len(param_names)}  |  "
+            f"training scenarios={len(train_workload_configs)}"
+        )
+
+        # ── Round 0: Latin Hypercube Sampling ─────────────────────────
+        # Divide [lo, hi] into `budget` equal intervals per dimension;
+        # draw one sample per interval; shuffle columns independently.
+        lhs_cols: dict[str, list] = {}
+        for name in param_names:
+            raw = [
+                lo[name] + (i + rng.random()) / budget * (hi[name] - lo[name])
+                for i in range(budget)
+            ]
+            rng.shuffle(raw)
+            lhs_cols[name] = [_clamp(name, v) for v in raw]
+
+        round0_candidates = [
+            {name: lhs_cols[name][i] for name in param_names}
+            for i in range(budget)
+        ]
+
+        console.print(f"\n[bold cyan]Round 0 (LHS, {budget} samples):[/]")
+        _absorb(
+            round0_candidates,
+            self._evaluate_candidates(
+                train_workload_configs,
+                round0_candidates,
+                phase_dir / "train" / "round_0",
+            ),
+        )
+
+        # ── Rounds 1..max_rounds: CEM with Noisy CEM variance floor ───
+        for rnd in range(1, max_rounds + 1):
+            # Re-rank all accumulated results and pick the elite set.
+            points = [
+                ViolationCost(r["train_violation_agg"], r["train_cost_agg"])
+                for r in all_grid_results
+            ]
+            ranked = self._slo_objective.rank_indices(points)
+            elite = [
+                all_candidates[i]
+                for i in ranked[: min(beam_size, len(ranked))]
+            ]
+
+            # CEM variance refit: std(elite) × multiplier, floored at
+            # min_sigma_frac × range (Noisy CEM floor).
+            sigma: dict[str, float] = {}
+            for name in param_names:
+                elite_vals = [float(c[name]) for c in elite]
+                floor = min_sigma_frac * (hi[name] - lo[name])
+                sigma[name] = max(_std(elite_vals) * explr_mult, floor)
+
+            # Sample `budget` candidates via Gaussian perturbation around
+            # elite centers (round-robin); retry up to 5× to avoid cache hits.
+            new_candidates: list[dict[str, Any]] = []
+            for k in range(budget):
+                center = elite[k % len(elite)]
+                for _ in range(5):
+                    proposal = {
+                        name: _clamp(
+                            name, rng.gauss(float(center[name]), sigma[name])
+                        )
+                        for name in param_names
+                    }
+                    if _config_key(proposal) not in evaluated_cache:
+                        new_candidates.append(proposal)
+                        break
+
+            # Halt early if the parameter space is saturated.
+            if len(new_candidates) < math.ceil(budget / 2):
+                console.print(
+                    f"\n  [dim]Converged after {rnd} CEM round(s) "
+                    f"({len(new_candidates)} unique < "
+                    f"{math.ceil(budget / 2)} threshold).[/dim]"
+                )
+                break
+
+            console.print(
+                f"\n[bold cyan]Round {rnd} "
+                f"(CEM, {len(new_candidates)} candidates):[/]"
+            )
+            _absorb(
+                new_candidates,
+                self._evaluate_candidates(
+                    train_workload_configs,
+                    new_candidates,
+                    phase_dir / "train" / f"round_{rnd}",
+                ),
+            )
 
         return all_candidates, all_grid_results
 

@@ -381,3 +381,9 @@ class ParamSweepConfig(_PartialConfig):
     # For coordinate descent strategy
     max_cycles: int = 3
     starting_point: Optional[dict[str, Any]] = None
+
+    # For adaptive_batch strategy
+    max_rounds: int = 5
+    beam_size: int = 3
+    min_sigma_fraction: float = 0.05
+    exploration_multiplier: float = 2.0
