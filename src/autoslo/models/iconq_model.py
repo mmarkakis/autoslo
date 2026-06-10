@@ -24,6 +24,36 @@ from torch import nn, optim
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader, Subset
 
+import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
+from autoslo.featurization.iconq_interaction_featurizer import (
+    IconqInteractionFeaturizer,
+)
+from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.model_training.iconq_model_training_checkpoint import (
+    update_checkpoint,
+    update_plots,
+)
+from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
+from autoslo.models.iconq_model_config import (
+    IconqModelInitConfig,
+    IconqModelTrainConfig,
+)
+from autoslo.models.model_prediction import ModelPrediction
+from autoslo.models.stage_model import StageModel
+from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.nn.loss_functions import (
+    LossType,
+    mdn_negative_log_likelihood_loss,
+    negative_log_likelihood_loss,
+    sensitive_q_error_loss,
+)
+from autoslo.nn.runtime_net import RuntimeNet
+from autoslo.workload_definition.query import ClusterAwareQueryId
+from autoslo.workload_execution.trace import Trace
+
+logger = logging.getLogger(__name__)
+
 _console = Console()
 
 
@@ -84,47 +114,6 @@ def _print_errors_table(
 
     _console.print(Rule(title))
     _console.print(table)
-
-
-import autoslo.filesystem.path_utils as pu
-from autoslo.clusters.cluster import Cluster
-from autoslo.featurization.iconq_interaction_featurizer import (
-    IconqInteractionFeaturizer,
-)
-from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
-from autoslo.model_training.iconq_model_training_checkpoint import (
-    update_checkpoint,
-    update_plots,
-)
-from autoslo.models.iconq_model_config import (
-    IconqModelInitConfig,
-    IconqModelTrainConfig,
-)
-from autoslo.models.model_prediction import ModelPrediction
-from autoslo.models.stage_model import StageModel
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.nn.loss_functions import (
-    LossType,
-    mdn_negative_log_likelihood_loss,
-    negative_log_likelihood_loss,
-    sensitive_q_error_loss,
-)
-from autoslo.nn.runtime_net import RuntimeNet
-from autoslo.workload_definition.query import ClusterAwareQueryId
-
-logger = logging.getLogger(__name__)
-
-
-def _load_train_config(params: dict) -> Optional[IconqModelTrainConfig]:
-    """
-    Resolve a train config from a params dict, handling the legacy
-    ``train_config_sequence`` list format produced by older saves.
-    """
-    if "train_config_sequence" in params:
-        tc_list = params["train_config_sequence"]
-        return IconqModelTrainConfig(**tc_list[-1]) if tc_list else None
-    raw = params.get("train_config")
-    return IconqModelTrainConfig(**raw) if raw is not None else None
 
 
 class IconqModel:
@@ -663,9 +652,19 @@ class IconqModel:
                 f"IconqModel params.yml missing 'init_config': {param_path}"
             )
 
+        train_config_dict: dict[str, Any] = {}
+        if "train_config_sequence" in params:
+            train_config_dict = (
+                params["train_config_sequence"][-1]
+                if params["train_config_sequence"]
+                else {}
+            )
+        else:
+            train_config_dict = params.get("train_config", {}) or {}
+
         model = IconqModel(
             init_config=IconqModelInitConfig(**params["init_config"]),
-            train_config=_load_train_config(params),
+            train_config=IconqModelTrainConfig(**train_config_dict),
             device=torch.device(params["device"]),
             parent_save_dir=parent_load_dir,
             model_id=model_id,
