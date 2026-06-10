@@ -7,7 +7,6 @@ import autoslo.filesystem.path_utils as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.models.cache_model import CacheModel
-from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.iconq_model_config import (
     IconqModelInitConfig,
@@ -15,8 +14,6 @@ from autoslo.models.iconq_model_config import (
 )
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-from autoslo.workload_execution.trace import Trace
 
 parser = argparse.ArgumentParser(
     description="Trains an IconqModel step-by-step, caching progress."
@@ -179,32 +176,7 @@ iconq_model = IconqModel(
     train_config=iconq_model_train_config,
     model_id=iconq_model_id,
 )
-
-datasets = [
-    build_dataset_from_trace(
-        trace=Trace(run_id),
-        iconq_model=iconq_model,
-        use_log_runtime=iconq_model.trained_on_log_runtime,
-        use_client_side_latencies=use_client_side_latencies,
-        use_fixed_window_radius_s=iconq_model_init_config.use_fixed_window_radius_s,
-        use_fixed_window_max_neighbors_per_side=iconq_model_init_config.use_fixed_window_max_neighbors_per_side,
-        ignore_aborted_queries=ignore_aborted_queries,
-    )
-    for run_id in train_val_run_ids
-]
-overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
-
-train_dataloader, val_dataloader, test_dataloader = (
-    iconq_model._get_dataloaders(
-        overall_dataset, iconq_model_train_config, split=True, save_dataset=True
-    )
-)
-assert val_dataloader is not None
-iconq_model._run_training_loop(
-    train_dataloader=train_dataloader,
-    val_dataloader=val_dataloader,
-    test_dataloader=test_dataloader,
-)
+iconq_model.train()
 iconq_model_id_readout = iconq_model.save()
 assert iconq_model_id_readout == iconq_model_id
 print(f"Done. IconqModel ID: {iconq_model_id}")

@@ -7,7 +7,6 @@ import yaml
 import autoslo.filesystem.path_utils as pu
 from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
 from autoslo.models.cache_model import CacheModel
-from autoslo.models.iconq_dataset_builder import build_dataset_from_trace
 from autoslo.models.iconq_model import IconqModel
 from autoslo.models.iconq_model_config import (
     IconqModelInitConfig,
@@ -15,9 +14,7 @@ from autoslo.models.iconq_model_config import (
 )
 from autoslo.models.stage_model import StageModel
 from autoslo.models.xgboost_model import XGBoostModel
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.nn.runtime_net import RuntimeNet
-from autoslo.workload_execution.trace import Trace
 
 
 def find_run_ids() -> tuple[list[str], dict[str, list[str]]]:
@@ -197,27 +194,7 @@ def train_iconq_model(
     iconq_model._nn = RuntimeNet(**iconq_model._nn_args).to(iconq_model._device)  # type: ignore
     iconq_model._save_params()
 
-    datasets = [
-        build_dataset_from_trace(
-            trace=Trace(run_id),
-            iconq_model=iconq_model,
-            use_log_runtime=iconq_model.trained_on_log_runtime,
-            use_client_side_latencies=nn_model_train_config.use_client_side_latencies,
-            use_fixed_window_radius_s=iconq_model_init_config.use_fixed_window_radius_s,
-            use_fixed_window_max_neighbors_per_side=iconq_model_init_config.use_fixed_window_max_neighbors_per_side,
-        )
-        for run_id in nn_model_train_config.run_ids
-    ]
-    overall_dataset = ConcurrentQueryDataset.concatenate(datasets)
-
-    train_dataloader, val_dataloader = iconq_model._get_dataloaders(
-        overall_dataset, nn_model_train_config, split=True, save_dataset=True
-    )
-    assert val_dataloader is not None
-    iconq_model._run_training_loop(
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
-    )
+    iconq_model.train()
     return iconq_model.save()
 
 

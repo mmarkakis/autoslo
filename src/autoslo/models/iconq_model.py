@@ -3,6 +3,7 @@ import logging
 import os
 from dataclasses import asdict
 from datetime import datetime
+from enum import Enum
 from typing import Any, Optional, cast
 
 import numpy as np
@@ -57,7 +58,13 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
-def _print_errors_table(
+class DataSplit(Enum):
+    TRAIN = "train"
+    VAL = "val"
+    TEST = "test"
+
+
+def print_errors_table(
     title: str,
     sets: list[tuple[str, dict[str, float]]],
 ) -> None:
@@ -221,6 +228,9 @@ class IconqModel:
             self._loss_type = LossType.NLL
         else:
             self._loss_type = LossType.SENSITIVE_Q_ERROR
+
+        # Initialize the dataset and split indices.
+        self._populate_dataset_and_split_idxs()
 
         # Save initial model parameters (skip when loading from disk to
         # avoid a write that races with concurrent readers).
@@ -689,226 +699,108 @@ class IconqModel:
 
         return model
 
-    @staticmethod
-    def print_performance_tables(
-        model_ids: list[str],
-        parent_load_dir: Optional[str] = None,
-    ) -> None:
-        """Print train / val / test performance tables for one or more saved models.
+    # ── Dataset / split helpers ────────────────────────────────────────────────
 
-        Each model must have been trained with ``save_dataset=True`` so that
-        ``dataset.pkl``, ``train_indices.json``, ``val_indices.json``, and
-        ``test_indices.json`` are present in its model directory.
+    def _populate_dataset_and_split_idxs(self) -> None:
+        """Return the full dataset together with train / val / test index lists.
 
-        Parameters:
-            model_ids: Identifiers of the models to evaluate.
-            parent_load_dir: Parent directory that contains the model
-                subdirectories.  Defaults to ``data/iconq_models/``.
+        Fast path
+            If ``dataset.pkl``, ``train_indices.json``, ``val_indices.json``,
+            and ``test_indices.json`` are all present in the model directory,
+            they are loaded and returned immediately.
+
+        Slow path
+            Otherwise the dataset is rebuilt from the run IDs in
+            ``self._train_config`` and the split indices are re-derived
+            deterministically and saved to the model directory so that
+            subsequent calls take the fast path.
         """
-        for model_id in model_ids:
-            model = IconqModel.load(model_id, parent_load_dir)
-            save_dir = model._save_dir
-            if model._train_config is None:
-                raise RuntimeError(
-                    f"Model '{model_id}' has no train_config — cannot print "
-                    f"performance tables."
-                )
-            train_config = model._train_config
+        dataset_pkl = os.path.join(self._save_dir, "dataset.pkl")
+        train_idx_file = os.path.join(self._save_dir, "train_indices.json")
+        val_idx_file = os.path.join(self._save_dir, "val_indices.json")
+        test_idx_file = os.path.join(self._save_dir, "test_indices.json")
 
-            required = {
-                "dataset.pkl": os.path.join(save_dir, "dataset.pkl"),
-                "train_indices.json": os.path.join(
-                    save_dir, "train_indices.json"
-                ),
-                "val_indices.json": os.path.join(save_dir, "val_indices.json"),
-                "test_indices.json": os.path.join(
-                    save_dir, "test_indices.json"
-                ),
-            }
-            missing = [
-                name
-                for name, path in required.items()
-                if not os.path.exists(path)
+        if all(
+            os.path.exists(p)
+            for p in (dataset_pkl, train_idx_file, val_idx_file, test_idx_file)
+        ):
+            self._dataset = ConcurrentQueryDataset.load_from(dataset_pkl)
+            with open(train_idx_file) as f:
+                self._train_idxs: list[int] = json.load(f)
+            with open(val_idx_file) as f:
+                self._val_idxs: list[int] = json.load(f)
+            with open(test_idx_file) as f:
+                self._test_idxs: list[int] = json.load(f)
+            return
+
+        if self._train_config is None:
+            raise RuntimeError(
+                "No train_config — cannot build dataset without run_ids."
+            )
+        self._dataset = ConcurrentQueryDataset.concatenate(
+            [
+                build_dataset_from_trace(
+                    trace=Trace(run_id),
+                    iconq_query_featurizer=self._iconq_query_featurizer,
+                    iconq_interaction_featurizer=self._iconq_interaction_featurizer,
+                    stage_model=self._stage_model,
+                    use_log_runtime=self.trained_on_log_runtime,
+                    use_client_side_latencies=self._train_config.use_client_side_latencies,
+                    use_fixed_window_radius_s=self._init_config.use_fixed_window_radius_s,
+                    use_fixed_window_max_neighbors_per_side=self._init_config.use_fixed_window_max_neighbors_per_side,
+                    ignore_aborted_queries=self._train_config.ignore_aborted_queries,
+                )
+                for run_id in self._train_config.run_ids
             ]
-            if missing:
-                raise FileNotFoundError(
-                    f"Model '{model_id}' is missing: {', '.join(missing)}. "
-                    "Re-train with save_dataset=True to enable performance tables."
+        )
+
+        # Derive split indices.
+        explicit = self._train_config.explicit_run_ids_per_split
+        if explicit is None:
+            rng = np.random.default_rng(self._train_config.split_seed)
+            indices = rng.permutation(len(self._dataset))
+            n_val = round(self._train_config.val_frac * len(self._dataset))
+            n_test = round(self._train_config.test_frac * len(self._dataset))
+
+            self._idxs_for_split = {
+                DataSplit.TRAIN: list(indices[n_val + n_test :]),
+                DataSplit.VAL: list(indices[:n_val]),
+                DataSplit.TEST: list(indices[n_val : n_val + n_test]),
+            }
+            return
+
+        
+        train_run_ids = set(explicit.get("train", []))
+        val_run_ids = set(explicit.get("val", []))
+        test_run_ids = set(explicit.get("test", []))
+        train_idxs: list[int] = []
+        val_idxs: list[int] = []
+        test_idxs: list[int] = []
+        for i, caqi in enumerate(self._dataset.cluster_aware_query_ids):
+            run_id = Cluster.run_id_for_cluster_name(caqi.cluster_name)
+            if run_id in train_run_ids:
+                train_idxs.append(i)
+            elif run_id in val_run_ids:
+                val_idxs.append(i)
+            elif run_id in test_run_ids:
+                test_idxs.append(i)
+            else:
+                raise ValueError(
+                    f"Query with run ID {run_id} not found in any explicit "
+                    "run ID split list."
                 )
 
-            dataset = ConcurrentQueryDataset.load_from(required["dataset.pkl"])
-            with open(required["train_indices.json"]) as f:
-                train_indices: list[int] = json.load(f)
-            with open(required["val_indices.json"]) as f:
-                val_indices: list[int] = json.load(f)
-            with open(required["test_indices.json"]) as f:
-                test_indices: list[int] = json.load(f)
+        # Save out.
+        self._dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
+        for name, idxs in [
+            ("train_indices.json", train_idxs),
+            ("val_indices.json", val_idxs),
+            ("test_indices.json", test_idxs),
+        ]:
+            with open(os.path.join(self._save_dir, name), "w") as f:
+                json.dump(idxs, f)
 
-            batch_size = train_config.batch_size
-            make_dl = lambda idxs: DataLoader(
-                Subset(dataset, idxs),
-                batch_size=batch_size,
-                shuffle=False,
-                collate_fn=ConcurrentQueryDataset.collate_and_pad,
-            )
-            _, train_errors = model._validate(
-                make_dl(train_indices), train_config
-            )
-            _, val_errors = model._validate(make_dl(val_indices), train_config)
-            _, test_errors = model._validate(
-                make_dl(test_indices), train_config
-            )
-
-            _print_errors_table(
-                title=f"[bold]{model_id}[/]",
-                sets=[
-                    ("train", train_errors),
-                    ("val", val_errors),
-                    ("test", test_errors),
-                ],
-            )
-
-    def _get_dataloaders(  # pylint: disable=too-many-locals
-        self,
-        dataset: ConcurrentQueryDataset,
-        train_config: IconqModelTrainConfig,
-        split: bool = True,
-        save_dataset: bool = False,
-    ) -> tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
-        """
-        Converts the given dataset into DataLoaders for training, validation,
-        and testing.
-
-        Parameters:
-            dataset: The dataset to convert.
-            train_config: The training configuration for the LSTM model.
-            split: Whether to split the data into training and validation sets.
-            save_dataset: Whether to save the created dataset to disk.
-
-        Returns:
-            train_dataloader: The DataLoader for the training set, or the sole
-                dataloader if split is False.
-            val_dataloader: The DataLoader for the validation set, or None if
-                split is False.
-            test_dataloader: The DataLoader for the test set, or None if
-                split is False.
-        """
-
-        if not split:
-            dataloader = DataLoader(
-                dataset,
-                batch_size=train_config.batch_size,
-                shuffle=False,
-                collate_fn=ConcurrentQueryDataset.collate_and_pad,
-            )
-            return dataloader, None, None
-
-        if train_config.explicit_run_ids_per_split is None:
-            train_idxs, val_idxs, test_idxs = self._get_data_splits(
-                len(dataset), train_config
-            )
-            train_dataset = Subset(dataset, train_idxs)
-            val_dataset = Subset(dataset, val_idxs)
-            test_dataset = Subset(dataset, test_idxs)
-        else:
-            explicit_run_ids_per_split = train_config.explicit_run_ids_per_split
-            train_run_ids = explicit_run_ids_per_split.get("train", [])
-            val_run_ids = explicit_run_ids_per_split.get("val", [])
-            test_run_ids = explicit_run_ids_per_split.get("test", [])
-            train_indices = []
-            val_indices = []
-            test_indices = []
-            for i, cluster_aware_query_id in enumerate(
-                dataset.cluster_aware_query_ids
-            ):
-                cluster_name = cluster_aware_query_id.cluster_name
-                run_id = Cluster.run_id_for_cluster_name(cluster_name)
-                if run_id in train_run_ids:
-                    train_indices.append(i)
-                elif run_id in val_run_ids:
-                    val_indices.append(i)
-                elif run_id in test_run_ids:
-                    test_indices.append(i)
-                else:
-                    raise ValueError(
-                        f"Query with run ID {run_id} not found in any explicit "
-                        f"run ID split list."
-                    )
-
-            train_dataset = Subset(dataset, train_indices)
-            val_dataset = Subset(dataset, val_indices)
-            test_dataset = Subset(dataset, test_indices)
-
-            if save_dataset:
-                dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
-                with open(
-                    os.path.join(self._save_dir, "train_indices.json"), "w"
-                ) as f:
-                    json.dump(train_indices, f)
-                with open(
-                    os.path.join(self._save_dir, "val_indices.json"), "w"
-                ) as f:
-                    json.dump(val_indices, f)
-                with open(
-                    os.path.join(self._save_dir, "test_indices.json"), "w"
-                ) as f:
-                    json.dump(test_indices, f)
-
-        train_generator = torch.Generator()
-        train_generator.manual_seed(
-            train_config.training_dataloader_shuffle_seed
-        )
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=train_config.batch_size,
-            shuffle=True,
-            generator=train_generator,
-            collate_fn=ConcurrentQueryDataset.collate_and_pad,
-        )
-        val_dataloader = DataLoader(
-            val_dataset,
-            batch_size=train_config.batch_size,
-            shuffle=False,
-            collate_fn=ConcurrentQueryDataset.collate_and_pad,
-        )
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=train_config.batch_size,
-            shuffle=False,
-            collate_fn=ConcurrentQueryDataset.collate_and_pad,
-        )
-
-        return train_dataloader, val_dataloader, test_dataloader
-
-    def _get_data_splits(  # pylint: disable=too-many-arguments
-        self,
-        data_size: int,
-        train_config: IconqModelTrainConfig,
-    ) -> tuple[list[int], list[int], list[int]]:
-        """
-        Splits the data into training, validation, and testing sets.
-
-        Parameters:
-            data_size: The size of the data to split.
-            train_config: The training configuration for the LSTM model.
-
-        Returns:
-            train_idxs: The indices of the training set.
-            val_idxs: The indices of the validation set.
-            test_idxs: The indices of the testing set.
-        """
-
-        rng = np.random.default_rng(train_config.split_seed)
-        indices = rng.permutation(data_size)
-
-        n_val = round(train_config.val_frac * data_size)
-        n_test = round(train_config.test_frac * data_size)
-
-        val_idx = indices[:n_val]
-        test_idx = indices[n_val : n_val + n_test]
-        train_idx = indices[n_val + n_test :]
-
-        return list(train_idx), list(val_idx), list(test_idx)
+        return
 
     def _extract_lower_bounds_from_batch(self, x: torch.Tensor) -> torch.Tensor:
         # x has shape (batch_size, seq_len, num_features)
@@ -943,22 +835,10 @@ class IconqModel:
         )
         return max_arrival_time_diffs_tensor
 
-    def _run_training_loop(
-        self,
-        train_dataloader: DataLoader,
-        val_dataloader: DataLoader,
-        test_dataloader: Optional[DataLoader] = None,
-    ) -> tuple[float, float]:
+    def train(self) -> tuple[float, float]:
         """
-        Runs the training loop for the model and returns the final training and
-        validation loss.
+        Trains the model and returns the final training and validation loss.
 
-        Parameters:
-            train_dataloader: The DataLoader for the training set.
-            val_dataloader: The DataLoader for the validation set.
-            test_dataloader: Optional DataLoader for the held-out test set.
-                If provided, the best checkpoint is reloaded at the end and
-                evaluated; results are printed as a summary table.
         Returns:
             final_train_loss: The final training loss.
             final_val_loss: The final validation loss.
@@ -970,6 +850,18 @@ class IconqModel:
                 "train_config."
             )
         train_config = self._train_config
+
+        train_generator = torch.Generator()
+        train_generator.manual_seed(
+            train_config.training_dataloader_shuffle_seed
+        )
+        train_dataloader = DataLoader(
+            Subset(self._dataset, self._idxs_for_split[DataSplit.TRAIN]),
+            batch_size=train_config.batch_size,
+            shuffle=True,
+            generator=train_generator,
+            collate_fn=ConcurrentQueryDataset.collate_and_pad,
+        )
 
         optimizer = optim.Adam(
             self._nn.parameters(),
@@ -1027,20 +919,11 @@ class IconqModel:
             train_loss_trajectory[epoch] = (
                 total_train_batch_loss / total_train_batches
             )
-            val_loss_trajectory[epoch], val_errors = self._validate(
-                dataloader=val_dataloader,
-                var_reg_weight=train_config.var_reg_weight,
-                training_dir=self._save_dir,
-                epoch=epoch,
-                train_config=train_config,
+            val_loss_trajectory[epoch], val_errors = self.eval_on_split(
+                split=DataSplit.VAL, out_filename=f"val_predictions_{epoch}.csv"
             )
-            _, train_errors = self._validate(
-                dataloader=train_dataloader,
-                var_reg_weight=train_config.var_reg_weight,
-                training_dir=None,
-                epoch=None,
-                train_config=train_config,
-            )
+            _, train_errors = self.eval_on_split(split=DataSplit.TRAIN)
+
             update_plots(
                 self._save_dir,
                 best_val_loss["epoch"],
@@ -1068,7 +951,7 @@ class IconqModel:
                 lr,
             )
 
-            _print_errors_table(
+            print_errors_table(
                 title=f"Epoch {epoch} — errors",
                 sets=[("train", train_errors), ("val", val_errors)],
             )
@@ -1134,7 +1017,7 @@ class IconqModel:
         )
 
         # ── Final evaluation on all sets (best checkpoint) ────────────────────
-        if test_dataloader is not None and len(test_dataloader) > 0:
+        if len(self._idxs_for_split[DataSplit.TEST]) > 0:
             # Reload best checkpoint so we score the saved model, not the
             # last in-memory weights (which may be from a post-best epoch).
             checkpoint_files = [
@@ -1153,28 +1036,17 @@ class IconqModel:
                         weights_only=True,
                     )
                 )
-            _, final_train_errors = self._validate(
-                dataloader=train_dataloader,
-                var_reg_weight=train_config.var_reg_weight,
-                training_dir=None,
-                epoch=None,
-                train_config=train_config,
+            _, final_train_errors = self.eval_on_split(
+                split=DataSplit.TRAIN, out_filename="final_train.csv"
             )
-            _, final_val_errors = self._validate(
-                dataloader=val_dataloader,
-                var_reg_weight=train_config.var_reg_weight,
-                training_dir=None,
-                epoch=None,
-                train_config=train_config,
+            _, final_val_errors = self.eval_on_split(
+                split=DataSplit.VAL, out_filename="final_val.csv"
             )
-            _, test_errors = self._validate(
-                dataloader=test_dataloader,
-                var_reg_weight=train_config.var_reg_weight,
-                training_dir=None,
-                epoch=None,
-                train_config=train_config,
+            _, test_errors = self.eval_on_split(
+                split=DataSplit.TEST, out_filename="final_test.csv"
             )
-            _print_errors_table(
+
+            print_errors_table(
                 title="[bold cyan]Final evaluation — best checkpoint[/]",
                 sets=[
                     ("train", final_train_errors),
@@ -1185,36 +1057,39 @@ class IconqModel:
 
         return final_train_loss, final_val_loss
 
-    def _validate(
+    def eval_on_split(
         self,
-        dataloader: DataLoader,
-        train_config: IconqModelTrainConfig,
-        var_reg_weight: float = 0.0,
-        training_dir: Optional[str] = None,
-        epoch: Optional[int] = None,
+        split: DataSplit,
+        out_filename: Optional[str] = None,
     ) -> tuple[float, dict[str, float]]:
         """
-        Evaluates the model on the validation set.
+        Evaluates the model on a subset of *dataset* identified by *indices*.
 
         Parameters:
-            dataloader: The DataLoader to validate on.
-            var_reg_weight: The weight for the variance regularization term for the negative
-                log likelihood loss.
-            training_dir: The directory where the training artifacts are saved.
-            training_dir: The directory for the model training. If given, will save the validation
-                predictions to a CSV file.
-            epoch: The epoch number. If given and training_dir is given, will include the epoch
-                number in the filename of the validation predictions CSV file.
+            dataset: The full dataset.
+            indices: Indices into *dataset* to evaluate on.
+            train_config: Training configuration used to compute the loss.
+            var_reg_weight: Weight for the variance regularisation term (NLL
+                loss only).
+            out_filename: If given, the filename (relative to the model's save
+                dir) to save the predictions on the evaluated subset.
 
         Returns:
-            mean_val_batch_loss: The mean batch loss on the validation set.
-            errors: Mean, median, 90th percentile, and 95th percentile error metrics on the
-                validation set. The exact metrics depend on the loss type.
+            mean_batch_loss: The mean batch loss on the evaluated subset.
+            errors: Mean, median, 90th and 95th percentile error metrics.
         """
-
+        indices = self._idxs_for_split[split]
+        train_config = self._train_config
+        assert train_config is not None, "train_config required for validation"
+        dataloader = DataLoader(
+            Subset(self._dataset, indices),
+            batch_size=train_config.batch_size,
+            shuffle=False,
+            collate_fn=ConcurrentQueryDataset.collate_and_pad,
+        )
         total_batches = len(dataloader)
-        total_batch_loss = 0.0
-        all_pred_v_true = []
+        total_loss = 0.0
+        all_pred_v_true: list[tuple] = []
         self._nn.eval()
         with torch.no_grad():
             for batch in dataloader:
@@ -1224,86 +1099,69 @@ class IconqModel:
                     derive_individual_predictions=True,
                 )
                 all_pred_v_true.extend(batch_pred_v_true)
-                total_batch_loss += batch_loss.item()
+                total_loss += batch_loss.item()
 
-        mean_val_batch_loss = total_batch_loss / total_batches
+        mean_batch_loss = total_loss / total_batches
 
-        # Calculate error metrics
+        # Calculate per-query error metrics.
+        rows = []
+        for pred, y_true, caqi, qtid in all_pred_v_true:
+            y_true_safe = max(float(y_true), 1e-9)
+            y_pred_safe = max(pred.overall_mean_s(), 1e-9)
+            md = pred.metadata
+
+            row = {
+                "query_id": caqi.query_id,
+                "query_text_id": str(qtid),
+                "run_id": str(md.get("run_id", "")),
+                "num_other_concurrent_queries": int(
+                    md.get("num_other_concurrent_queries", 0)
+                ),
+                "y": y_true_safe,
+                "y_pred_mean": y_pred_safe,
+                "abs_error": abs(y_pred_safe - y_true_safe),
+                "q_error": max(
+                    y_pred_safe / y_true_safe,
+                    y_true_safe / y_pred_safe,
+                ),
+                "target_is_lower_bound": bool(
+                    md.get("target_is_lower_bound", False)
+                ),
+            }
+            if "loss" in md:
+                row["individual_loss"] = md["loss"]
+            rows.append(row)
+        df = pd.DataFrame(rows)
+
+        # Compute aggregates.
         errors: dict[str, float] = {}
-        # (ModelPrediction, true_runtime, cluster_aware_query_id, query_text_id)
-        abs_error = [
-            abs(pred.overall_mean_s() - true)
-            for pred, true, _, _ in all_pred_v_true
-        ]
-        q_error = [
-            max(pred.overall_mean_s() / true, true / pred.overall_mean_s())
-            for pred, true, _, _ in all_pred_v_true
-        ]
-        was_aborted = [
-            pred.metadata.get("target_is_lower_bound", False)
-            for pred, _, _, _ in all_pred_v_true
-        ]
+        for suffix, mask in {
+            "normal": ~df["target_is_lower_bound"],
+            "aborted": df["target_is_lower_bound"],
+            "all": pd.Series(True, index=df.index),
+        }.items():
+            subset = df.loc[mask, ["abs_error", "q_error"]]
 
-        for suffix, condition in [
-            ("normal", lambda ab: not ab),
-            ("aborted", lambda ab: ab),
-            ("all", lambda ab: True),
-        ]:
-            filtered_abs_error = [
-                ae for ae, ab in zip(abs_error, was_aborted) if condition(ab)
-            ]
-            filtered_q_error = [
-                qe for qe, ab in zip(q_error, was_aborted) if condition(ab)
-            ]
-            errors[f"n_{suffix}"] = len(filtered_abs_error)
-            if not filtered_abs_error:
+            errors[f"n_{suffix}"] = len(subset)
+            if subset.empty:
                 continue
 
-            errors[f"mean_abs_error_{suffix}"] = np.mean(filtered_abs_error)
-            errors[f"mean_q_error_{suffix}"] = np.mean(filtered_q_error)
-            for p in [50, 90, 95]:
-                errors[f"p{p}_abs_error_{suffix}"] = np.percentile(
-                    filtered_abs_error, p
+            for col in ["abs_error", "q_error"]:
+                errors[f"mean_{col}_{suffix}"] = subset[col].mean()
+                for p in [50, 90, 95]:
+                    errors[f"p{p}_{col}_{suffix}"] = subset[col].quantile(
+                        p / 100
+                    )
+
+        if out_filename is not None:
+            df.sort_values("y", inplace=True, ascending=False)
+            if not out_filename.endswith(".csv"):
+                raise ValueError(
+                    f"out_filename must end with .csv (got {out_filename})"
                 )
-                errors[f"p{p}_q_error_{suffix}"] = np.percentile(
-                    filtered_q_error, p
-                )
+            df.to_csv(os.path.join(self._save_dir, out_filename))
 
-        # Print out a dataframe of predictions
-        if training_dir is not None:
-            val_df = pd.DataFrame()
-            val_df["query_id"] = [
-                cluster_aware_query_id.query_id
-                for _, _, cluster_aware_query_id, _ in all_pred_v_true
-            ]
-            val_df["num_other_concurrent_queries"] = [
-                pred.metadata["num_other_concurrent_queries"]
-                for pred, _, _, _ in all_pred_v_true
-            ]
-            val_df["y"] = [true for _, true, _, _ in all_pred_v_true]
-            val_df["y_pred"] = [pred for pred, _, _, _ in all_pred_v_true]
-            val_df["target_is_lower_bound"] = [
-                pred.metadata["target_is_lower_bound"]
-                for pred, _, _, _ in all_pred_v_true
-            ]
-            val_df["query_text_id"] = [t for _, _, _, t in all_pred_v_true]
-            val_df["abs_error"] = abs_error
-            val_df["q_error"] = q_error
-            val_df["run_id"] = [
-                pred.metadata["run_id"] for pred, _, _, _ in all_pred_v_true
-            ]
-            if "loss" in all_pred_v_true[0][0].metadata:
-                val_df["individual_loss"] = [
-                    pred.metadata["loss"] for pred, _, _, _ in all_pred_v_true
-                ]
-
-            val_df.sort_values("y", inplace=True, ascending=False)
-            suffix = f"_{epoch}" if epoch is not None else ""
-            val_df.to_csv(
-                os.path.join(training_dir, f"val_predictions{suffix}.csv")
-            )
-
-        return mean_val_batch_loss, errors
+        return mean_batch_loss, errors
 
     def _process_batch(
         self, batch, train_config, derive_individual_predictions=False
@@ -1340,10 +1198,15 @@ class IconqModel:
                         query_text_ids,
                         y_is_lower_bound,
                     )
+                    y_true = (
+                        torch.exp(y[i])
+                        if self._trained_on_log_runtime
+                        else y[i]
+                    )
                     batch_pred_v_true.append(
                         (
                             pred,
-                            y[i],
+                            y_true,
                             cluster_aware_query_ids[i],
                             query_text_ids[i],
                         )

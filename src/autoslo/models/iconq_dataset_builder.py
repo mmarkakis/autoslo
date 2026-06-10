@@ -1,18 +1,26 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from typing import Callable, Optional
 
 from intervaltree import Interval, IntervalTree  # type: ignore[import]
 
 from autoslo.clusters.cluster import Cluster
-from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.workload_definition.query import ClusterAwareQueryId, Query
 from autoslo.workload_execution.trace import Trace
 
+from autoslo.featurization.iconq_query_featurizer import IconqQueryFeaturizer
+from autoslo.featurization.iconq_interaction_featurizer import IconqInteractionFeaturizer
+from autoslo.models.stage_model import StageModel
+
+
 
 def build_dataset_from_trace(
     trace: Trace,
-    iconq_model: IconqModel,
+    iconq_query_featurizer: IconqQueryFeaturizer,
+    iconq_interaction_featurizer: IconqInteractionFeaturizer,
+    stage_model: StageModel,
     use_log_runtime: bool = False,
     use_client_side_latencies: bool = False,
     use_fixed_window_radius_s: Optional[float] = None,
@@ -28,13 +36,10 @@ def build_dataset_from_trace(
     cluster_aware_query_ids = trace.cluster_aware_query_ids
     query_text_ids = trace.query_text_ids
 
-    query_featurizer = iconq_model.iconq_query_featurizer
-    interaction_featurizer = iconq_model.iconq_interaction_featurizer
-    stage_model = iconq_model.stage_model
 
     if not cluster_aware_query_ids:
         return ConcurrentQueryDataset.build_from_query_groups(
-            iconq_interaction_featurizer=interaction_featurizer,
+            iconq_interaction_featurizer=iconq_interaction_featurizer,
             cluster_to_base_to_neighbors={},
         )
 
@@ -91,7 +96,7 @@ def build_dataset_from_trace(
             query_id=cluster_aware_query_id.query_id,
             query_text_id=query_text_id,
             rel_start_time_s=start_s,
-            featurization=query_featurizer.featurize_from_query_text_id(
+            featurization=iconq_query_featurizer.featurize_from_query_text_id(
                 query_text_id
             ),
             # Pre-compute stage-model predictions for every allowed RPU size so
@@ -124,7 +129,7 @@ def build_dataset_from_trace(
         is_lower_bound[qid] = is_lb
 
     return ConcurrentQueryDataset.build_from_query_groups(
-        iconq_interaction_featurizer=interaction_featurizer,
+        iconq_interaction_featurizer=iconq_interaction_featurizer,
         cluster_to_base_to_neighbors=cluster_to_base_to_neighbors,
         targets=targets,
         is_lower_bound=is_lower_bound,
