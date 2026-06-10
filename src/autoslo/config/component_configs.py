@@ -228,6 +228,8 @@ class AutoscalerConfig(_PartialConfig):
     # disables reactive autoscaling and fires a single forced decision after
     # this fraction of the workload's queries have been routed.
 
+    max_replay_copies: int = 30 # Max acceptable replays of obs. window.
+
 
 @dataclass(frozen=True)
 class QueryRouterConfig(_PartialConfig):

@@ -24,7 +24,11 @@ from autoslo.filesystem.structured_events import (
 )
 from autoslo.filesystem.structured_log import emit_structured
 from autoslo.models.iconq_model import IconqModel
-from autoslo.routing.query_router import QueryRouter, QueryRouterConfig
+from autoslo.routing.query_router import (
+    QueryRouter,
+    QueryRouterConfig,
+    QueryRouterState,
+)
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
@@ -34,18 +38,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class CounterfactualReplayStats:
-    candidate_rpu: int
-    simulated_queries: int
-    replay_copies: int
-    finished_after_ready: int
-    organic_done: bool
+class ReplayEndCheckpoint:
+    replay_type: str
+    arrivals_processed: int
+    pool_snapshot: dict[str, ClusterView]
+    query_router_state: QueryRouterState
+    next_copy_idx: int = 0
+    next_query_idx: int = 0
 
 
 @dataclass(frozen=True)
 class SelectRpuStats:
-    total_simulated_queries: int
-    per_candidate: dict[int, CounterfactualReplayStats]
+    pre_spinup_arrivals_processed: int
+    post_spinup_arrivals_processed: dict[int, int]
 
 
 class Autoscaler:
@@ -97,6 +102,7 @@ class Autoscaler:
         self._min_finished_queries_in_counterfactual = (
             autoscaler_config.min_finished_queries_in_counterfactual
         )
+        self._max_replay_copies = autoscaler_config.max_replay_copies
 
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
@@ -116,10 +122,6 @@ class Autoscaler:
             force_one_decision_after_query_count
         )
         self._inform_count: int = 0
-        self._last_select_rpu_stats = SelectRpuStats(
-            total_simulated_queries=0,
-            per_candidate={},
-        )
 
     # ------------------------------------------------------------------
     # Properties
@@ -163,10 +165,6 @@ class Autoscaler:
     @property
     def forced_decision_mode(self) -> bool:
         return self._force_one_decision_after_query_count is not None
-
-    @property
-    def last_select_rpu_stats(self) -> SelectRpuStats:
-        return self._last_select_rpu_stats
 
     # ------------------------------------------------------------------
     # Public interface
@@ -425,7 +423,7 @@ class Autoscaler:
         self,
         rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, ClusterView],
-    ) -> int:
+    ) -> tuple[int, SelectRpuStats]:
         """
         Select the RPU size for a new cluster based on the current window.
         """
@@ -440,16 +438,49 @@ class Autoscaler:
             )
 
         viol_and_costs: list[ViolationCost] = []
-        replay_stats_by_rpu: dict[int, CounterfactualReplayStats] = {}
-        total_simulated_queries = 0
+        post_spinup_replay_end_checkpoints: dict[int, ReplayEndCheckpoint] = {}
+
+        # Run the spin-up-delay portion of the replay once; it is identical
+        # for every RPU candidate because the hypothetical cluster is PENDING
+        # (excluded from routing) throughout that window.
+        query_router = QueryRouter(
+            slo_resolver=self._slo_resolver,
+            slo_objective=self._slo_objective,
+            query_router_config=self._query_router_config,
+            iconq_model=self._iconq_model,
+            out_dir=self._out_dir,
+            source_for_log_records="Autoscaler.QueryRouter",
+        )
+        initial_checkpoint = ReplayEndCheckpoint(
+            replay_type="initial",
+            arrivals_processed=0,
+            pool_snapshot=pool_snapshot_with_current_query,
+            query_router_state=query_router.get_state(),
+            next_copy_idx=0,
+            next_query_idx=0,
+        )
+        pre_spinup_replay_end_checkpoint, _ = (
+            self._partial_counterfactual_replay(
+                query_router=query_router,
+                overall_replay_start_rel_time_s=rel_time_s,
+                prev_replay_end_checkpoint=initial_checkpoint,
+                candidate_rpu=None,
+            )
+        )
 
         for rpu in self._allowed_rpu_sizes:
-            slo_viol_and_cost, replay_stats = self._counterfactual_replay(
-                rpu, rel_time_s, pool_snapshot_with_current_query
+            post_spinup_replay_end_checkpoint, slo_viol_and_cost = (
+                self._partial_counterfactual_replay(
+                    query_router=query_router,
+                    overall_replay_start_rel_time_s=rel_time_s,
+                    prev_replay_end_checkpoint=pre_spinup_replay_end_checkpoint,
+                    candidate_rpu=rpu,
+                )
+            )
+            post_spinup_replay_end_checkpoints[rpu] = (
+                post_spinup_replay_end_checkpoint
             )
             viol_and_costs.append(slo_viol_and_cost)
-            replay_stats_by_rpu[rpu] = replay_stats
-            total_simulated_queries += replay_stats.simulated_queries
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
@@ -470,10 +501,6 @@ class Autoscaler:
         best_local_idx = self._slo_objective.idx_of_best(viol_and_costs)
         best_rpu = self._allowed_rpu_sizes[best_local_idx]
         best_viol_and_cost = viol_and_costs[best_local_idx]
-        self._last_select_rpu_stats = SelectRpuStats(
-            total_simulated_queries=total_simulated_queries,
-            per_candidate=replay_stats_by_rpu,
-        )
 
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
         emit_structured(
@@ -491,16 +518,26 @@ class Autoscaler:
             )
         )
 
-        return best_rpu
+        return best_rpu, SelectRpuStats(
+            pre_spinup_arrivals_processed=(
+                pre_spinup_replay_end_checkpoint.arrivals_processed
+            ),
+            post_spinup_arrivals_processed={
+                rpu: post_spinup_replay_end_checkpoints[rpu].arrivals_processed
+                for rpu in self._allowed_rpu_sizes
+            },
+        )
 
-    def _counterfactual_replay(
+    def _partial_counterfactual_replay(
         self,
-        candidate_rpu: int,
-        rel_time_s: float,
-        pool_snapshot_with_current_query: dict[str, ClusterView],
-    ) -> tuple[ViolationCost, CounterfactualReplayStats]:
-        """Replay the trailing window with a hypothetical new cluster of
-        *candidate_rpu*.
+        query_router: QueryRouter,
+        overall_replay_start_rel_time_s: float,
+        prev_replay_end_checkpoint: ReplayEndCheckpoint,
+        candidate_rpu: Optional[int] = None,
+    ) -> tuple[ReplayEndCheckpoint, Optional[ViolationCost]]:
+        """Replay part of the trailing window with a hypothetical new cluster of
+        *candidate_rpu*. Allows for independent replay before/after the new
+        cluster is available, for efficiency.
 
         Two-phase approach:
 
@@ -519,96 +556,110 @@ class Autoscaler:
         toward violation in either phase.  Returns
         ``ViolationCost(float('inf'), cost)`` if no such completions occur.
         """
-        replay_start_rel_time_s = rel_time_s
+
+        # Restore pool and router from the checkpoint.
         local_cluster_pool: dict[str, Cluster] = {
             name: view.to_cluster()
-            for name, view in pool_snapshot_with_current_query.items()
+            for name, view in prev_replay_end_checkpoint.pool_snapshot.items()
         }
-        hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
-        local_cluster_pool[hyp_cluster_name] = Cluster(
-            creation_time_s=replay_start_rel_time_s,
-            rpu=candidate_rpu,
-            name=hyp_cluster_name,
-            cache_state=np.zeros(self._cluster_cache_state_dim, dtype=float),
-            state=ClusterState.PENDING,
-        )
-        router = QueryRouter(
-            slo_resolver=self._slo_resolver,
-            slo_objective=self._slo_objective,
-            query_router_config=self._query_router_config,
-            iconq_model=self._iconq_model,
-            out_dir=self._out_dir,
-            source_for_log_records="Autoscaler.QueryRouter",
-        )
+        query_router.set_state(prev_replay_end_checkpoint.query_router_state)
 
-        # Sequential replay.
+        # Initialize tracking variables.
+        cluster_ready_time_s = (
+            overall_replay_start_rel_time_s + self._spin_up_delay_s
+        )
+        queries_list = list(self._trailing_queries)
+        arrivals_processed = 0
+        last_seen_rel_start_time_s = overall_replay_start_rel_time_s
+        is_post_spinup = candidate_rpu is not None
         lat_and_slos: list[LatencySlo] = []
-        hyp_ready_time_s: float | None = None
-        finished_after_ready: int = 0
-        simulated_queries: int = 0
-        replay_copies_run: int = 0
-
-        actual_observed_window_length_s = (
-            rel_time_s - self._trailing_queries[0].rel_start_time_s
-        )
-        base_copies = math.ceil(
-            (self._spin_up_delay_s + self._observation_window_s)
-            / actual_observed_window_length_s
-        )
-        max_copies = max(base_copies * 10, 200)
-
-        # --- Organic phase ---
-        # Replay window copies with continuous arrivals until enough
-        # post-readiness completions have been collected.
+        finished_after_ready = 0
         organic_done = False
-        last_time_s = replay_start_rel_time_s
-        for copy_idx in range(max_copies):
-            replay_copies_run = copy_idx + 1
-            for query in self._trailing_queries:
-                time_s = (
+
+        # Add the hypothetical cluster, if this is the post-spinup phase.
+        if is_post_spinup:
+            hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
+            local_cluster_pool[hyp_cluster_name] = Cluster(
+                creation_time_s=overall_replay_start_rel_time_s,
+                rpu=candidate_rpu,
+                name=hyp_cluster_name,
+                cache_state=np.zeros(
+                    self._cluster_cache_state_dim, dtype=float
+                ),
+                state=ClusterState.READY,
+            )
+
+            if (
+                self._autoscaling_policy
+                == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD
+            ):
+                for name, c in local_cluster_pool.items():
+                    if (
+                        name != hyp_cluster_name
+                        and c.state == ClusterState.READY
+                    ):
+                        c.update_state(ClusterState.DRAINING)
+
+        # Process organic phase arrivals.
+        for copy_idx in range(
+            prev_replay_end_checkpoint.next_copy_idx,
+            self._max_replay_copies,
+        ):
+            # For the first copy, begin from the query that triggered spinup;
+            # subsequent copies replay the full window.
+            start_q_idx = (
+                prev_replay_end_checkpoint.next_query_idx
+                if copy_idx == prev_replay_end_checkpoint.next_copy_idx
+                else 0
+            )
+            for query_idx, query in enumerate(
+                queries_list[start_q_idx:], start=start_q_idx
+            ):
+                rel_start_time_s = (
                     query.rel_start_time_s
-                    - self._trailing_queries[0].rel_start_time_s
-                    + rel_time_s
-                    + copy_idx * actual_observed_window_length_s
+                    + (copy_idx + 1) * self._observation_window_s
                 )
-                last_time_s = time_s
+                last_seen_rel_start_time_s = rel_start_time_s
                 routed_query = query.copy_with_new_info(
-                    f"fwd-{copy_idx}:", time_s
+                    f"fwd-{copy_idx}:", rel_start_time_s
                 )
 
-                # Phase transition: activate hyp cluster once spin-up delay
-                # has elapsed.
+                # If pre-spinup and reached the cluster ready time, return.
                 if (
-                    local_cluster_pool[hyp_cluster_name].state
-                    == ClusterState.PENDING
-                ) and (time_s >= rel_time_s + self._spin_up_delay_s):
-                    local_cluster_pool[hyp_cluster_name].update_state(
-                        ClusterState.READY
+                    not is_post_spinup
+                    and rel_start_time_s >= cluster_ready_time_s
+                ):
+                    # This query is the first one at/after the spin-up
+                    # deadline.  Snapshot the pool state and return; the
+                    # post-spinup phase will process this query and all
+                    # subsequent ones.
+                    return (
+                        ReplayEndCheckpoint(
+                            replay_type="pre_spinup",
+                            arrivals_processed=arrivals_processed,
+                            pool_snapshot={
+                                name: ClusterView(c)
+                                for name, c in local_cluster_pool.items()
+                            },
+                            query_router_state=query_router.get_state(),
+                            next_copy_idx=copy_idx,
+                            next_query_idx=query_idx,
+                        ),
+                        None,
                     )
-                    hyp_ready_time_s = time_s
-                    if (
-                        self._autoscaling_policy
-                        == AutoscalingPolicy.REPLACE_WITH_SINGLE_BEST_FORWARD
-                    ):
-                        for name, c in local_cluster_pool.items():
-                            if (
-                                name != hyp_cluster_name
-                                and c.state == ClusterState.READY
-                            ):
-                                c.update_state(ClusterState.DRAINING)
 
                 # Expire finished queries. Only count completions for queries
                 # that arrived after the hyp cluster became ready.
                 for cluster_name, cluster in local_cluster_pool.items():
                     for q, latency_s in cluster.finish_queries_until(
-                        rel_time_s=time_s,
+                        rel_time_s=rel_start_time_s,
                     ):
                         started_after_ready = (
-                            q.rel_start_time_s >= hyp_ready_time_s
+                            q.rel_start_time_s >= cluster_ready_time_s
                         )
                         emit_structured(
                             QueryRelatedEvent(
-                                rel_time_s=time_s,
+                                rel_time_s=rel_start_time_s,
                                 event_type=EventType.SIM_QUERY_COMPLETION,
                                 source="Autoscaler",
                                 cluster_name=cluster_name,
@@ -616,6 +667,11 @@ class Autoscaler:
                                 query_text_id=q.query_text_id,
                                 details={
                                     "latency_s": latency_s,
+                                    "phase": (
+                                        "post_spinup"
+                                        if is_post_spinup
+                                        else "pre_spinup"
+                                    ),
                                     "started_after_ready": started_after_ready,
                                     "candidate_rpu": candidate_rpu,
                                 },
@@ -636,14 +692,18 @@ class Autoscaler:
                 # Route and update state for the incoming query.
                 emit_structured(
                     QueryRelatedEvent(
-                        rel_time_s=time_s,
+                        rel_time_s=rel_start_time_s,
                         event_type=EventType.SIM_QUERY_ARRIVAL,
                         source="Autoscaler",
                         query_id=routed_query.query_id,
                         query_text_id=routed_query.query_text_id,
                         details={
                             "copy_idx": copy_idx,
-                            "phase": "post_spinup",
+                            "phase": (
+                                "post_spinup"
+                                if is_post_spinup
+                                else "pre_spinup"
+                            ),
                             "candidate_rpu": candidate_rpu,
                         },
                     )
@@ -657,28 +717,41 @@ class Autoscaler:
                     selected_cluster_name,
                     new_predicted_latencies_for_cluster,
                     new_cache_state,
-                ) = router.route_query(
+                ) = query_router.route_query(
                     query=routed_query,
                     snapshot=snapshot_for_routing,
-                    rel_time_s=time_s,
+                    rel_time_s=rel_start_time_s,
                 )
                 local_cluster_pool[selected_cluster_name].add_query(
                     routed_query,
                     new_predicted_latencies_for_cluster,
                     new_cache_state,
                 )
-                simulated_queries += 1
+                arrivals_processed += 1
 
             if organic_done:
                 break
 
         # --- Drain phase ---
+        # If we got here pre-spinup, raise error:
+        if not is_post_spinup:
+            raise RuntimeError(
+                f"Replay exhausted {self._max_replay_copies} window copies "
+                f"without reaching cluster_ready_time_s="
+                f"{cluster_ready_time_s:.3f} s. Max time in replay was "
+                f"{last_seen_rel_start_time_s:.3f} s, which is "
+                f"{last_seen_rel_start_time_s - overall_replay_start_rel_time_s:.3f} s "
+                f"after the start of the replay but "
+                f"{cluster_ready_time_s - last_seen_rel_start_time_s:.3f} s "
+                f"before the cluster ready time."
+            )
+
         # Also add the lat and slo from any queries still active at the end of
         # the window, and compute cost directly from the replay cluster state
         # using the same model as QueryRouter.
         total_cost = 0.0
         for cluster in local_cluster_pool.values():
-            active_pairs = router._collect_cluster_pairs(
+            active_pairs = query_router._collect_cluster_pairs(
                 queries=cluster.active_queries,
                 predicted_latencies=cluster.predicted_latencies,
             )
@@ -688,17 +761,16 @@ class Autoscaler:
                 past_billing_intervals=cluster.past_billing_intervals,
                 billing_window_start_s=cluster.billing_window_start_s,
                 cost_per_second=cluster.cost_per_second,
-                current_rel_time_s=last_time_s,
+                current_rel_time_s=last_seen_rel_start_time_s,
             )
 
             lat_and_slos.extend(active_pairs)
             total_cost += cluster_cost
 
         aggregate = self._slo_objective.slo_metric.aggregate_batch(lat_and_slos)
-        return ViolationCost(aggregate, total_cost), CounterfactualReplayStats(
-            candidate_rpu=candidate_rpu,
-            simulated_queries=simulated_queries,
-            replay_copies=replay_copies_run,
-            finished_after_ready=finished_after_ready,
-            organic_done=organic_done,
-        )
+        return ReplayEndCheckpoint(
+            replay_type="post_spinup",
+            arrivals_processed=arrivals_processed,
+            pool_snapshot={},  # For efficiency.
+            query_router_state=query_router.get_state(),
+        ), ViolationCost(aggregate, total_cost)

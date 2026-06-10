@@ -1,5 +1,7 @@
+import bisect
 import logging
 import random
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +23,13 @@ from autoslo.workload_definition.query import Query
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class QueryRouterState:
+    """Snapshot of the mutable state inside a QueryRouter."""
+
+    round_robin_idx: int = 0
 
 
 class QueryRouter:
@@ -52,7 +61,6 @@ class QueryRouter:
         self._sorted_forecast_times = sorted(
             self._rel_time_s_to_forecasted_table_vecs.keys()
         )
-        self._idx_into_forecast_sequence = 0
 
     def _read_or_derive_rel_time_s_to_forecasted_table_vecs(
         self, out_dir: str | Path
@@ -108,10 +116,18 @@ class QueryRouter:
     @property
     def routing_policy(self) -> QueryRouterPolicy:
         return self._routing_policy
-    
+
     @property
     def iconq_model(self) -> IconqModel:
         return self._iconq_model
+
+    def get_state(self) -> QueryRouterState:
+        """Return a snapshot of the router's mutable sequencing state."""
+        return QueryRouterState(round_robin_idx=self._round_robin_idx)
+
+    def set_state(self, state: QueryRouterState) -> None:
+        """Restore the router to a previously captured state snapshot."""
+        self._round_robin_idx = state.round_robin_idx
 
     def route_query(
         self,
@@ -186,18 +202,13 @@ class QueryRouter:
         # Retrieve the appropriate forecasted query vecs for this time.
         forecasted_table_vecs: Optional[np.ndarray] = None
         if self._routing_policy == QueryRouterPolicy.CACHE_AWARE:
-            while (
-                self._idx_into_forecast_sequence
-                < (len(self._sorted_forecast_times) - 1)
-            ) and (
-                self._sorted_forecast_times[
-                    self._idx_into_forecast_sequence + 1
-                ]
-                <= rel_time_s
-            ):
-                self._idx_into_forecast_sequence += 1
+            idx = max(
+                0,
+                bisect.bisect_right(self._sorted_forecast_times, rel_time_s)
+                - 1,
+            )
             forecasted_table_vecs = self._rel_time_s_to_forecasted_table_vecs[
-                self._sorted_forecast_times[self._idx_into_forecast_sequence]
+                self._sorted_forecast_times[idx]
             ]
 
         # For each candidate cluster, compute the global after-state
