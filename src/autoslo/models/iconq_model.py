@@ -4,6 +4,7 @@ import os
 from dataclasses import asdict
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional, cast
 
 import numpy as np
@@ -129,6 +130,10 @@ class IconqModel:
     Optionally, it can also predict the uncertainty of the predictions.
     """
 
+    @staticmethod
+    def default_save_dir(model_id: str) -> str:
+        return os.path.join(pu.get_data_path(), "iconq_models", model_id)
+
     def __init__(
         self,
         init_config: IconqModelInitConfig,
@@ -157,10 +162,9 @@ class IconqModel:
         if model_id is None:
             model_id = str(int(datetime.now().timestamp()))
         self._model_id = model_id
-        if parent_save_dir is None:
-            parent_save_dir = os.path.join(pu.get_data_path(), "iconq_models")
-        self._parent_save_dir = parent_save_dir
-        self._save_dir = os.path.join(parent_save_dir, self._model_id)
+        self._save_dir = self.default_save_dir(model_id)
+        if parent_save_dir is not None:
+            self._save_dir = os.path.join(parent_save_dir, model_id)
         os.makedirs(self._save_dir, exist_ok=True)
 
         # Initialize the query and interaction featurizer.
@@ -769,7 +773,6 @@ class IconqModel:
             }
             return
 
-        
         train_run_ids = set(explicit.get("train", []))
         val_run_ids = set(explicit.get("val", []))
         test_run_ids = set(explicit.get("test", []))
@@ -1342,3 +1345,27 @@ class IconqModel:
             batch_loss,
             batch_pred_v_true,
         )
+
+    @staticmethod
+    def optimized_load_final_dfs_per_split(
+        model_id: str,
+    ) -> dict[DataSplit, pd.DataFrame]:
+        split_dfs: dict[DataSplit, pd.DataFrame] = {}
+        save_dir = Path(IconqModel.default_save_dir(model_id))
+        model: Optional[IconqModel] = None
+        for split in DataSplit:
+            split_str = split.value
+            csv_path = save_dir / f"final_{split_str}.csv"
+            parquet_path = save_dir / f"final_{split_str}.parquet"
+            if parquet_path.exists():
+                split_dfs[split] = pd.read_parquet(parquet_path)
+            elif csv_path.exists():
+                split_dfs[split] = pd.read_csv(csv_path)
+                split_dfs[split].to_parquet(parquet_path)
+            else:
+                if model is None:
+                    model = IconqModel.load(model_id)
+                model.eval_on_split(split=split, out_filename=str(csv_path))
+                split_dfs[split] = pd.read_csv(csv_path)
+                split_dfs[split].to_parquet(parquet_path)
+        return split_dfs
