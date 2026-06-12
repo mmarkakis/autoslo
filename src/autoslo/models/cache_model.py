@@ -1,7 +1,7 @@
 import os
 from collections import defaultdict
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import yaml
@@ -27,6 +27,8 @@ class CacheModel:
     If best effort is enabled, cache misses will return the overall mean and
     standard deviation of all cached runtimes.
     """
+
+    MEAN_S_WITH_NO_INFO = 0.001
 
     def __init__(
         self,
@@ -54,22 +56,123 @@ class CacheModel:
         #   key: tpcds template index
         #   value: dictionary where
         #       key: index of query with that template
-        #       value: (list of runtimes, mean runtime, std runtime)
+        #       value: bucket dict with exact and censored (lower-bound) data.
         self._cache: dict[
             int,
             dict[
                 int,
-                dict[int, tuple[list[float], float, float]],
+                dict[int, dict[str, Any]],
             ],
         ] = {}
         self._enable_template_cache = enable_template_cache
         self._best_effort = best_effort
         self._run_ids: list[str] = []
+        self._overall_mean_runtime_s: float = 0.0
+        self._overall_std_runtime_s: float = 0.0
         self._mean_runtime_s_for_rpu: dict[int, float] = defaultdict(float)
         self._std_runtime_s_for_rpu: dict[int, float] = defaultdict(float)
 
         self._only_non_overlapping_queries = False
         self._ignore_cluster_size = ignore_cluster_size
+
+    @staticmethod
+    def _restricted_mean_std_from_km(
+        exact_runtimes: list[float],
+        lower_bounds: list[float],
+    ) -> tuple[float, float]:
+        """Estimate restricted mean/std from right-censored samples.
+
+        This computes a Kaplan-Meier survival estimate and integrates it up to
+        the largest observed time (restricted mean).
+        """
+        if not exact_runtimes and not lower_bounds:
+            return CacheModel.MEAN_S_WITH_NO_INFO, 0.0
+
+        exact = np.asarray(exact_runtimes, dtype=float)
+        cens = np.asarray(lower_bounds, dtype=float)
+
+        if exact.size == 0:
+            lb = (
+                float(np.max(cens))
+                if cens.size
+                else CacheModel.MEAN_S_WITH_NO_INFO
+            )
+            return lb, 0.0  # TODO: should have a nonzero std in this case.
+
+        if cens.size == 0:
+            return float(np.mean(exact)), float(np.std(exact, ddof=0))
+
+        times = np.unique(np.concatenate([exact, cens]))
+        times.sort()
+
+        s_prev = 1.0
+        prev_t = 0.0
+        mean = 0.0
+        second_moment = 0.0
+
+        for t in times:
+            dt = float(t - prev_t)
+            if dt > 0:
+                mean += s_prev * dt
+                second_moment += s_prev * (t**2 - prev_t**2)
+
+            n_at_risk = int((exact >= t).sum() + (cens >= t).sum())
+            d_t = int((exact == t).sum())
+            if n_at_risk > 0 and d_t > 0:
+                s_prev *= max(0.0, 1.0 - (d_t / n_at_risk))
+            prev_t = float(t)
+
+        var = max(0.0, second_moment - mean**2)
+        return float(mean), float(np.sqrt(var))
+
+    def _init_bucket(self) -> dict[str, Any]:
+        return {
+            "exact_runtimes": [],
+            "lower_bounds": [],
+            "mean_runtime": 0.0,
+            "std_runtime": 0.0,
+        }
+
+    def _normalize_bucket(self, bucket: Any) -> dict[str, Any]:
+        """Normalize legacy tuple buckets and new dict buckets to one schema."""
+        if isinstance(bucket, tuple) and len(bucket) == 3:
+            runtimes, mean_runtime, std_runtime = bucket
+            return {
+                "exact_runtimes": list(runtimes),
+                "lower_bounds": [],
+                "mean_runtime": float(mean_runtime),
+                "std_runtime": float(std_runtime),
+            }
+
+        if isinstance(bucket, dict):
+            exact = list(bucket.get("exact_runtimes", []))
+            lb = list(bucket.get("lower_bounds", []))
+            if "mean_runtime" in bucket and "std_runtime" in bucket:
+                mean_runtime = float(bucket["mean_runtime"])
+                std_runtime = float(bucket["std_runtime"])
+            else:
+                mean_runtime, std_runtime = self._restricted_mean_std_from_km(
+                    exact, lb
+                )
+            return {
+                "exact_runtimes": exact,
+                "lower_bounds": lb,
+                "mean_runtime": mean_runtime,
+                "std_runtime": std_runtime,
+            }
+
+        return self._init_bucket()
+
+    def _bucket_stats(self, bucket: dict[str, Any]) -> tuple[float, float]:
+        exact = [float(x) for x in bucket.get("exact_runtimes", [])]
+        lb = [float(x) for x in bucket.get("lower_bounds", [])]
+        return self._restricted_mean_std_from_km(exact, lb)
+
+    def _refresh_bucket_summary(self, bucket: dict[str, Any]) -> dict[str, Any]:
+        mean_runtime, std_runtime = self._bucket_stats(bucket)
+        bucket["mean_runtime"] = mean_runtime
+        bucket["std_runtime"] = std_runtime
+        return bucket
 
     def predict_from_query_text_id(
         self,
@@ -107,6 +210,10 @@ class CacheModel:
                     predictions[query_id] = ModelPrediction(
                         mean_s=[self._mean_runtime_s_for_rpu[effective_rpu]],
                         std_dev_s=[self._std_runtime_s_for_rpu[effective_rpu]],
+                        metadata={
+                            "origin": "CacheModel_miss",
+                            "censored_support_used": True,
+                        },
                     )
                 else:
                     predictions[query_id] = None
@@ -114,23 +221,37 @@ class CacheModel:
                 query_within_template_id not in cache_for_rpu[template_id]
             ) and self._enable_template_cache:
                 # Template cache hit
-                runtimes = []
-                for _, (local_runtimes, _, _) in cache_for_rpu[
-                    template_id
-                ].items():
-                    runtimes.extend(local_runtimes)
-                predictions[query_id] = ModelPrediction(
-                    mean_s=[float(np.mean(runtimes))],
-                    std_dev_s=[float(np.std(runtimes, ddof=0))],
+                runtimes: list[float] = []
+                lower_bounds: list[float] = []
+                for raw_bucket in cache_for_rpu[template_id].values():
+                    bucket = self._normalize_bucket(raw_bucket)
+                    runtimes.extend(bucket["exact_runtimes"])
+                    lower_bounds.extend(bucket["lower_bounds"])
+                mean_runtime, std_runtime = self._restricted_mean_std_from_km(
+                    runtimes, lower_bounds
                 )
-            elif query_within_template_id in cache_for_rpu[template_id]:
-                # Cache hit
-                _, mean_runtime, std_runtime = cache_for_rpu[template_id][
-                    query_within_template_id
-                ]
                 predictions[query_id] = ModelPrediction(
                     mean_s=[mean_runtime],
                     std_dev_s=[std_runtime],
+                    metadata={
+                        "origin": "CacheModel_template_hit",
+                        "censored_support_used": True,
+                    },
+                )
+            elif query_within_template_id in cache_for_rpu[template_id]:
+                # Cache hit
+                bucket = self._normalize_bucket(
+                    cache_for_rpu[template_id][query_within_template_id]
+                )
+                mean_runtime = float(bucket["mean_runtime"])
+                std_runtime = float(bucket["std_runtime"])
+                predictions[query_id] = ModelPrediction(
+                    mean_s=[mean_runtime],
+                    std_dev_s=[std_runtime],
+                    metadata={
+                        "origin": "CacheModel_hit",
+                        "censored_support_used": True,
+                    },
                 )
 
         return predictions
@@ -176,19 +297,17 @@ class CacheModel:
             )
             query_text_ids = trace.query_text_ids
             query_is_non_overlapping = trace.query_is_non_overlapping()
-            was_aborted = trace.was_aborted() if ignore_aborted_queries else {}
+            was_aborted = trace.was_aborted()
 
-            for (cluster_aware_query_id, latency), query_text_id in zip(
-                latencies.items(), query_text_ids
-            ):
+            for cluster_aware_query_id, query_text_id in query_text_ids.items():
+                key = str(cluster_aware_query_id)
+                latency = float(latencies[key])
                 if (
                     only_non_overlapping_queries
-                    and not query_is_non_overlapping[cluster_aware_query_id]
+                    and not query_is_non_overlapping[key]
                 ):
                     continue
-                if ignore_aborted_queries and was_aborted.get(
-                    cluster_aware_query_id, False
-                ):
+                if ignore_aborted_queries and was_aborted.get(key, False):
                     continue
 
                 cluster_name = ClusterAwareQueryId(
@@ -213,35 +332,46 @@ class CacheModel:
                 ):
                     self._cache[cluster_rpu][template_id][
                         query_within_template_id
-                    ] = (
-                        [],
-                        0.0,
-                        0.0,
-                    )
+                    ] = self._init_bucket()
 
-                runtimes, _, _ = self._cache[cluster_rpu][template_id][
-                    query_within_template_id
-                ]
-                runtimes.append(latency)
+                bucket = self._normalize_bucket(
+                    self._cache[cluster_rpu][template_id][
+                        query_within_template_id
+                    ]
+                )
+                if bool(was_aborted.get(key, False)):
+                    bucket["lower_bounds"].append(latency)
+                else:
+                    bucket["exact_runtimes"].append(latency)
+
+                bucket = self._refresh_bucket_summary(bucket)
                 self._cache[cluster_rpu][template_id][
                     query_within_template_id
-                ] = (
-                    runtimes,
-                    float(np.mean(runtimes)),
-                    float(np.std(runtimes, ddof=0)),
-                )
+                ] = bucket
 
         # Update overall mean and standard deviation
         for cluster_rpu, template_dict in self._cache.items():
-            runtimes_for_rpu = []
+            exacts: list[float] = []
+            lower_bounds: list[float] = []
             for query_dict in template_dict.values():
-                for runtimes, _, _ in query_dict.values():
-                    runtimes_for_rpu.extend(runtimes)
-            self._mean_runtime_s_for_rpu[cluster_rpu] = float(
-                np.mean(runtimes_for_rpu)
+                for raw_bucket in query_dict.values():
+                    bucket = self._normalize_bucket(raw_bucket)
+                    exacts.extend(bucket["exact_runtimes"])
+                    lower_bounds.extend(bucket["lower_bounds"])
+
+            mean_runtime, std_runtime = self._restricted_mean_std_from_km(
+                exacts,
+                lower_bounds,
             )
-            self._std_runtime_s_for_rpu[cluster_rpu] = float(
-                np.std(runtimes_for_rpu, ddof=0)
+            self._mean_runtime_s_for_rpu[cluster_rpu] = mean_runtime
+            self._std_runtime_s_for_rpu[cluster_rpu] = std_runtime
+
+        if self._mean_runtime_s_for_rpu:
+            self._overall_mean_runtime_s = float(
+                np.mean(list(self._mean_runtime_s_for_rpu.values()))
+            )
+            self._overall_std_runtime_s = float(
+                np.mean(list(self._std_runtime_s_for_rpu.values()))
             )
 
         self._run_ids.extend(run_ids)
@@ -274,6 +404,7 @@ class CacheModel:
         with open(param_path, "w") as f:
             yaml.safe_dump(
                 {
+                    "schema_version": 2,
                     "enable_template_cache": self._enable_template_cache,
                     "best_effort": self._best_effort,
                     "ignore_cluster_size": self._ignore_cluster_size,
@@ -283,6 +414,8 @@ class CacheModel:
                         self._mean_runtime_s_for_rpu
                     ),
                     "std_runtime_s_for_rpu": dict(self._std_runtime_s_for_rpu),
+                    "overall_mean_runtime_s": self._overall_mean_runtime_s,
+                    "overall_std_runtime_s": self._overall_std_runtime_s,
                 },
                 f,
             )
@@ -331,12 +464,62 @@ class CacheModel:
             ignore_cluster_size=params.get("ignore_cluster_size", False),
         )
         model._run_ids = params["run_ids"]
-        model._mean_runtime_s_for_rpu = params["mean_runtime_s_for_rpu"]
-        model._std_runtime_s_for_rpu = params["std_runtime_s_for_rpu"]
+        model._mean_runtime_s_for_rpu = defaultdict(
+            float,
+            {
+                int(k): float(v)
+                for k, v in params["mean_runtime_s_for_rpu"].items()
+            },
+        )
+        model._std_runtime_s_for_rpu = defaultdict(
+            float,
+            {
+                int(k): float(v)
+                for k, v in params["std_runtime_s_for_rpu"].items()
+            },
+        )
+        model._overall_mean_runtime_s = float(
+            params.get(
+                "overall_mean_runtime_s",
+                (
+                    np.mean(list(model._mean_runtime_s_for_rpu.values()))
+                    if model._mean_runtime_s_for_rpu
+                    else 0.0
+                ),
+            )
+        )
+        model._overall_std_runtime_s = float(
+            params.get(
+                "overall_std_runtime_s",
+                (
+                    np.mean(list(model._std_runtime_s_for_rpu.values()))
+                    if model._std_runtime_s_for_rpu
+                    else 0.0
+                ),
+            )
+        )
 
         # Load the model itself
         cache_yml_path = os.path.join(load_dir, "model.yml")
         with open(cache_yml_path, "r") as f:
-            model._cache = yaml.safe_load(f)
+            raw_cache = yaml.safe_load(f)
+
+        if raw_cache is None:
+            raw_cache = {}
+
+        normalized_cache: dict[int, dict[int, dict[int, dict[str, Any]]]] = {}
+        for rpu, template_dict in raw_cache.items():
+            irpu = int(rpu)
+            normalized_cache[irpu] = {}
+            for template_id, query_dict in template_dict.items():
+                itemplate_id = int(template_id)
+                normalized_cache[irpu][itemplate_id] = {}
+                for qidx, bucket in query_dict.items():
+                    iqidx = int(qidx)
+                    nb = model._normalize_bucket(bucket)
+                    nb = model._refresh_bucket_summary(nb)
+                    normalized_cache[irpu][itemplate_id][iqidx] = nb
+
+        model._cache = normalized_cache
 
         return model
