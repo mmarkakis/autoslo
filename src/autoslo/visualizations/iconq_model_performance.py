@@ -1,6 +1,6 @@
 """Diagnostic plots for IconqModel prediction performance.
 
-Provides five diagnostic plots (each with one panel per data split):
+Provides eight diagnostic plots (each with one panel per data split):
 
 1. Q-Error CDF               — ``plot_qerror_cdf``
 2. Predicted vs. Actual      — ``plot_predicted_vs_actual``
@@ -9,6 +9,14 @@ Provides five diagnostic plots (each with one panel per data split):
 4. Q-Error vs. Concurrency   — ``plot_qerror_vs_concurrency``
 5. Q-Error heatmap           — ``plot_qerror_heatmap``
    (template × concurrency)
+6. Error by cluster RPU      — ``plot_error_by_cluster_rpu``
+    (magnitude + direction)
+7. Error CDF by cluster RPU  — ``plot_error_cdf_by_cluster_rpu``
+    (magnitude + direction)
+8. Signed error heatmap      — ``plot_signed_error_heatmap_rpu_x_concurrency``
+    (RPU × concurrency)
+9. Template contribution     — ``plot_template_contribution_breakdown``
+    (error × frequency weighting)
 
 """
 
@@ -25,8 +33,16 @@ import pandas as pd
 from matplotlib.colors import SymLogNorm
 from matplotlib.figure import Figure
 
+from autoslo.clusters.cluster import Cluster
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.models.iconq_model import DataSplit, IconqModel
 from autoslo.visualizations.colors import Palette
+from autoslo.visualizations.prediction_error_cdf import (
+    add_monospace_summary_box,
+    build_direction_summary_lines,
+    build_percentile_summary_lines,
+    plot_grouped_cdf,
+)
 from autoslo.workload_definition.query import QueryTextId
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -70,6 +86,41 @@ def _add_concurrency_bins(df: pd.DataFrame) -> pd.DataFrame:
         labels=_CONC_LABELS,
     )
     return out
+
+
+def _add_cluster_rpu(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of *df* with a numeric ``cluster_rpu`` column."""
+    out = df.copy()
+
+    if "cluster_rpu" in out.columns:
+        out["cluster_rpu"] = pd.to_numeric(
+            out["cluster_rpu"], errors="coerce"
+        ).astype("Int64")
+        return out
+
+    if "cluster_name" in out.columns:
+        out["cluster_rpu"] = (
+            out["cluster_name"]
+            .astype(str)
+            .apply(lambda name: Cluster.rpu_for_cluster_name(name))
+            .astype("Int64")
+        )
+        return out
+
+    if "query_id" in out.columns:
+        # Fallback for cluster-aware ids serialized as "<cluster>#<query_id>".
+        parsed = out["query_id"].astype(str).str.split("#", n=1).str[0]
+        if parsed.str.startswith("autoslo-").all():
+            out["cluster_rpu"] = parsed.apply(
+                lambda name: Cluster.rpu_for_cluster_name(name)
+            ).astype("Int64")
+            return out
+
+    raise ValueError(
+        "cluster_rpu metadata is missing from final split DataFrames. "
+        "Re-run model evaluation so final_{train,val,test}.csv include "
+        "cluster_name/cluster_rpu columns."
+    )
 
 
 def plot_all(iconq_model_id: str) -> None:
@@ -456,7 +507,9 @@ def plot_qerror_vs_concurrency(
         ax.set_xticklabels(_CONC_LABELS, rotation=30, ha="right", fontsize=8)
         ax.set_xlabel("# concurrent queries")
         ax.set_ylabel("Q-Error" if split == DataSplit.TRAIN else "")
-        ax.set_title(f"{split.value.capitalize()}  (N={len(split_dfs[split]):,})")
+        ax.set_title(
+            f"{split.value.capitalize()}  (N={len(split_dfs[split]):,})"
+        )
         ax.grid(True, axis="y", linestyle=":", alpha=0.4)
 
     fig.suptitle(f"{iconq_model_id} - Q-Error vs. Concurrency", fontsize=12)
@@ -591,6 +644,615 @@ def plot_qerror_heatmap(
     fig.tight_layout()
     save_path = os.path.join(
         IconqModel.default_save_dir(iconq_model_id), "qerror_heatmap.png"
+    )
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig, save_path
+
+
+# ── Plot 6: Template contribution breakdown ──────────────────────────────────
+
+
+def plot_template_contribution_breakdown(
+    split_dfs: dict[DataSplit, pd.DataFrame],
+    iconq_model_id: str,
+    run_id: Optional[str] = None,
+    top_k: int = 12,
+) -> tuple[Figure, str]:
+    """Template-level error/frequency/contribution breakdown per split.
+
+    For each split and template:
+    - error: median Q-Error
+    - frequency: fraction of samples in the split
+    - contribution: frequency * error
+
+    If *run_id* is provided, overlays run template frequency and
+    run-mix contribution (run frequency * split template error) to help
+    diagnose whether degraded performance is due to submitting more
+    difficult templates.
+    """
+
+    # Prepare split-level template statistics.
+    split_stats: dict[DataSplit, pd.DataFrame] = {}
+    for split in DataSplit:
+        df = split_dfs[split].copy()
+        if "query_text_id" not in df.columns or "q_error" not in df.columns:
+            split_stats[split] = pd.DataFrame(
+                columns=["template", "error", "count", "freq", "contribution"]
+            )
+            continue
+
+        df["template"] = df["query_text_id"].astype(str).apply(
+            lambda x: QueryTextId(x).template_id
+        )
+        grouped = (
+            df.groupby("template", observed=True)
+            .agg(
+                error=("q_error", "median"),
+                count=("q_error", "size"),
+            )
+            .reset_index()
+        )
+        total = int(grouped["count"].sum())
+        grouped["freq"] = grouped["count"] / max(total, 1)
+        grouped["contribution"] = grouped["freq"] * grouped["error"]
+        split_stats[split] = grouped
+
+    # Optional run-level template frequencies from submitted queries.
+    run_freq_df: pd.DataFrame | None = None
+    if run_id:
+        try:
+            run_log = StructuredLog.load(run_id)
+            arrivals = run_log.df
+            if {"event_type", "query_text_id"}.issubset(arrivals.columns):
+                arrivals = arrivals[
+                    (arrivals["event_type"] == "arrival")
+                    & arrivals["query_text_id"].notna()
+                ].copy()
+                if not arrivals.empty:
+                    arrivals["template"] = arrivals["query_text_id"].astype(
+                        str
+                    ).apply(lambda x: QueryTextId(x).template_id)
+                    run_freq_df = (
+                        arrivals.groupby("template", observed=True)
+                        .size()
+                        .rename("count")
+                        .reset_index()
+                    )
+                    run_total = int(run_freq_df["count"].sum())
+                    run_freq_df["run_freq"] = run_freq_df["count"] / max(
+                        run_total, 1
+                    )
+        except Exception:
+            run_freq_df = None
+
+    # Choose a global template order by average contribution across splits.
+    all_stats = pd.concat(
+        [df.assign(split=split.value) for split, df in split_stats.items()],
+        ignore_index=True,
+    )
+    if all_stats.empty:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        ax.text(0.5, 0.5, "No template-level data", ha="center", va="center")
+        ax.set_axis_off()
+        save_path = os.path.join(
+            IconqModel.default_save_dir(iconq_model_id),
+            "template_contribution_breakdown.png",
+        )
+        fig.savefig(save_path, bbox_inches="tight", dpi=150)
+        return fig, save_path
+
+    template_rank = (
+        all_stats.groupby("template", observed=True)["contribution"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+    templates = template_rank.head(top_k).index.tolist()
+
+    fig, axes = plt.subplots(
+        3, 3, figsize=(20, 12), constrained_layout=True, sharey="row"
+    )
+    col_titles = [
+        "Template Error (median Q-Error)",
+        "Template Frequency",
+        "Template Contribution (freq × error)",
+    ]
+    for col_idx, title in enumerate(col_titles):
+        axes[0, col_idx].set_title(title)
+
+    for row_idx, split in enumerate(DataSplit):
+        s_df = split_stats[split].copy()
+        s_df = s_df[s_df["template"].isin(templates)]
+        s_df = s_df.set_index("template").reindex(templates).fillna(0.0)
+
+        y = np.arange(len(templates))
+        err_ax = axes[row_idx, 0]
+        freq_ax = axes[row_idx, 1]
+        contrib_ax = axes[row_idx, 2]
+
+        err_ax.barh(
+            y,
+            s_df["error"].to_numpy(dtype=float),
+            color=_SPLIT_COLORS[split.value],
+            alpha=0.85,
+        )
+        freq_ax.barh(
+            y,
+            s_df["freq"].to_numpy(dtype=float),
+            color=_SPLIT_COLORS[split.value],
+            alpha=0.85,
+            label=f"{split.value} mix",
+        )
+        contrib_ax.barh(
+            y,
+            s_df["contribution"].to_numpy(dtype=float),
+            color=_SPLIT_COLORS[split.value],
+            alpha=0.85,
+            label=f"{split.value} mix",
+        )
+
+        # Optional run-mix overlays to assess query-mix shift.
+        if run_freq_df is not None and not run_freq_df.empty:
+            run_map = run_freq_df.set_index("template")["run_freq"]
+            run_freq = (
+                run_map.reindex(templates).fillna(0.0).to_numpy(dtype=float)
+            )
+            split_err = s_df["error"].to_numpy(dtype=float)
+            run_contrib = run_freq * split_err
+
+            freq_ax.scatter(
+                run_freq,
+                y,
+                marker="D",
+                s=32,
+                color="black",
+                label=f"run {run_id} mix",
+                zorder=3,
+            )
+            contrib_ax.scatter(
+                run_contrib,
+                y,
+                marker="D",
+                s=32,
+                color="black",
+                label=f"run {run_id} mix",
+                zorder=3,
+            )
+
+            split_weighted = float(np.sum(s_df["contribution"].to_numpy(dtype=float)))
+            run_weighted = float(np.sum(run_contrib))
+            delta_pct = (
+                100.0 * (run_weighted - split_weighted) / max(split_weighted, 1e-9)
+            )
+            contrib_ax.text(
+                0.98,
+                0.03,
+                (
+                    f"split weighted={split_weighted:.3f}\n"
+                    f"run-mix weighted={run_weighted:.3f}\n"
+                    f"delta={delta_pct:+.1f}%"
+                ),
+                transform=contrib_ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=8,
+                bbox={
+                    "boxstyle": "round,pad=0.35",
+                    "facecolor": "white",
+                    "edgecolor": "0.8",
+                    "alpha": 0.9,
+                },
+            )
+
+        for ax in (err_ax, freq_ax, contrib_ax):
+            ax.set_yticks(y)
+            ax.set_yticklabels(templates, fontsize=8)
+            ax.invert_yaxis()
+            ax.grid(True, axis="x", linestyle=":", alpha=0.35)
+
+        err_ax.set_ylabel(
+            f"{split.value.capitalize()}\nTemplate ID",
+            fontsize=9,
+        )
+        freq_ax.set_ylabel("Template ID", fontsize=9)
+        contrib_ax.set_ylabel("Template ID", fontsize=9)
+
+        # Add row context on the left-most panel so viewers know which split
+        # each row of bars corresponds to.
+        err_ax.text(
+            0.02,
+            1.02,
+            f"Split: {split.value.capitalize()}",
+            transform=err_ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
+
+        if row_idx == len(DataSplit) - 1:
+            err_ax.set_xlabel("Median Q-Error")
+            freq_ax.set_xlabel("Frequency")
+            contrib_ax.set_xlabel("Contribution")
+
+        freq_ax.legend(fontsize=7, loc="lower right")
+        contrib_ax.legend(fontsize=7, loc="lower right")
+
+    fig.suptitle(
+        (
+            f"{iconq_model_id} - Template Contribution Breakdown"
+            + (f" (run mix: {run_id})" if run_id else "")
+        ),
+        fontsize=13,
+    )
+    save_path = os.path.join(
+        IconqModel.default_save_dir(iconq_model_id),
+        "template_contribution_breakdown.png",
+    )
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig, save_path
+
+
+# ── Plot 7: Error by cluster RPU ─────────────────────────────────────────────
+
+
+def plot_error_by_cluster_rpu(
+    split_dfs: dict[DataSplit, pd.DataFrame],
+    iconq_model_id: str,
+) -> tuple[Figure, str]:
+    """Error magnitude and direction grouped by cluster RPU, per split.
+
+    Top row: Q-Error boxplots by RPU (log scale, magnitude).
+    Bottom row: signed log10 prediction ratio boxplots by RPU
+        (positive = over-prediction, negative = under-prediction).
+    """
+    fig, axes = plt.subplots(
+        2, 3, figsize=(18, 10), sharex="col", constrained_layout=True
+    )
+
+    for col_idx, split in enumerate(DataSplit):
+        mag_ax = axes[0, col_idx]
+        dir_ax = axes[1, col_idx]
+
+        df = _add_cluster_rpu(split_dfs[split])
+        df = df.dropna(subset=["cluster_rpu", "y", "y_pred_mean", "q_error"])
+
+        if df.empty:
+            for ax in (mag_ax, dir_ax):
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
+                ax.set_xticks([])
+            continue
+
+        df["cluster_rpu"] = df["cluster_rpu"].astype(int)
+        df["signed_log_ratio"] = np.log10(
+            np.maximum(df["y_pred_mean"].astype(float), 1e-9)
+            / np.maximum(df["y"].astype(float), 1e-9)
+        )
+
+        rpus = sorted(df["cluster_rpu"].unique().tolist())
+        x_positions = np.arange(1, len(rpus) + 1)
+
+        mag_data = [
+            df.loc[df["cluster_rpu"] == r, "q_error"].to_numpy(dtype=float)
+            for r in rpus
+        ]
+        dir_data = [
+            df.loc[df["cluster_rpu"] == r, "signed_log_ratio"].to_numpy(
+                dtype=float
+            )
+            for r in rpus
+        ]
+
+        # Magnitude boxplots (Q-Error).
+        mag_bp = mag_ax.boxplot(
+            mag_data,
+            positions=x_positions,
+            widths=0.6,
+            patch_artist=True,
+            medianprops=dict(color="black", lw=1.3),
+            whiskerprops=dict(lw=0.8),
+            capprops=dict(lw=0.8),
+            flierprops=dict(marker=".", markersize=2, alpha=0.25),
+        )
+        for patch in mag_bp["boxes"]:
+            patch.set_facecolor(_SPLIT_COLORS[split.value])
+            patch.set_alpha(0.75)
+        mag_ax.set_yscale("log")
+        mag_ax.set_ylabel("Q-Error" if split == DataSplit.TRAIN else "")
+        mag_ax.set_title(f"{split.value.capitalize()}  (N={len(df):,})")
+        mag_ax.grid(True, axis="y", linestyle=":", alpha=0.4)
+
+        # Direction boxplots (signed log ratio).
+        dir_bp = dir_ax.boxplot(
+            dir_data,
+            positions=x_positions,
+            widths=0.6,
+            patch_artist=True,
+            medianprops=dict(color="black", lw=1.3),
+            whiskerprops=dict(lw=0.8),
+            capprops=dict(lw=0.8),
+            flierprops=dict(marker=".", markersize=2, alpha=0.25),
+        )
+        for patch in dir_bp["boxes"]:
+            patch.set_facecolor(_SPLIT_COLORS[split.value])
+            patch.set_alpha(0.75)
+
+        dir_ax.axhline(0.0, color=Palette.dark_red, linestyle="--", lw=1.0)
+        dir_ax.set_ylabel(
+            "log10(pred/actual)" if split == DataSplit.TRAIN else ""
+        )
+        dir_ax.set_xlabel("Cluster RPU")
+        dir_ax.set_xticks(x_positions)
+        dir_ax.set_xticklabels([str(r) for r in rpus])
+        dir_ax.grid(True, axis="y", linestyle=":", alpha=0.4)
+
+    fig.suptitle(
+        f"{iconq_model_id} - Error Magnitude/Direction by Cluster RPU",
+        fontsize=12,
+    )
+    save_path = os.path.join(
+        IconqModel.default_save_dir(iconq_model_id), "error_by_cluster_rpu.png"
+    )
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig, save_path
+
+
+# ── Plot 8: Error CDF by cluster RPU ─────────────────────────────────────────
+
+
+def plot_error_cdf_by_cluster_rpu(
+    split_dfs: dict[DataSplit, pd.DataFrame],
+    iconq_model_id: str,
+) -> tuple[Figure, str]:
+    """CDF views of error magnitude and direction grouped by cluster RPU.
+
+    Top row: Q-Error CDF by RPU (log x-axis).
+    Bottom row: signed log10(pred/actual) CDF by RPU.
+    """
+    fig, axes = plt.subplots(
+        2, 3, figsize=(18, 10), sharey="row", constrained_layout=True
+    )
+    palette = dict(Palette.rpu_to_color())
+
+    for col_idx, split in enumerate(DataSplit):
+        mag_ax = axes[1, col_idx]
+        dir_ax = axes[0, col_idx]
+
+        df = _add_cluster_rpu(split_dfs[split])
+        df = df.dropna(subset=["cluster_rpu", "y", "y_pred_mean", "q_error"])
+
+        if df.empty:
+            for ax in (mag_ax, dir_ax):
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
+            continue
+
+        df["cluster_rpu"] = df["cluster_rpu"].astype(int)
+        df["factor_error"] = np.maximum(
+            df["y_pred_mean"].astype(float), 1e-9
+        ) / np.maximum(df["y"].astype(float), 1e-9)
+
+        plot_grouped_cdf(
+            mag_ax,
+            df,
+            value_col="q_error",
+            group_col="cluster_rpu",
+            palette=palette,
+            xlabel="Q-Error",
+            ylabel="Fraction <= x" if split == DataSplit.TRAIN else "",
+            log_x=True,
+            legend_fontsize=7,
+        )
+
+        plot_grouped_cdf(
+            dir_ax,
+            df,
+            value_col="factor_error",
+            group_col="cluster_rpu",
+            palette=palette,
+            title=f"{split.value.capitalize()}  (N={len(df):,})",
+            xlabel="Factor error (predicted / actual)",
+            ylabel="Fraction <= x" if split == DataSplit.TRAIN else "",
+            log_x=True,
+            legend_fontsize=7,
+        )
+
+        q_summary_lines = build_percentile_summary_lines(
+            df,
+            group_col="cluster_rpu",
+            value_col="q_error",
+            quantiles=(0.50, 0.90, 0.95),
+            group_header="RPU",
+        )
+        add_monospace_summary_box(mag_ax, q_summary_lines, fontsize=7)
+
+        direction_summary_lines = build_direction_summary_lines(
+            df,
+            group_col="cluster_rpu",
+            actual_col="y",
+            predicted_col="y_pred_mean",
+            group_header="RPU",
+        )
+        add_monospace_summary_box(dir_ax, direction_summary_lines, fontsize=7)
+
+    fig.suptitle(
+        f"{iconq_model_id} - Error CDF by Cluster RPU",
+        fontsize=12,
+    )
+    save_path = os.path.join(
+        IconqModel.default_save_dir(iconq_model_id),
+        "error_cdf_by_cluster_rpu.png",
+    )
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig, save_path
+
+
+# ── Plot 9: Signed error heatmap (RPU × concurrency) ───────────────────────
+
+
+def plot_signed_error_heatmap_rpu_x_concurrency(
+    split_dfs: dict[DataSplit, pd.DataFrame],
+    iconq_model_id: str,
+) -> tuple[Figure, str]:
+    """3x3 heatmap grid: rows=P25/P50/P75, cols=train/val/test.
+
+    Within each panel: rows=RPU, cols=concurrency bins,
+    value=percentile(log10(pred/actual)) over queries in that cell.
+    """
+    enriched: dict[DataSplit, pd.DataFrame] = {}
+    all_rpus: set[int] = set()
+    percentiles = [25, 50, 75]
+
+    for split in DataSplit:
+        df = _add_cluster_rpu(_add_concurrency_bins(split_dfs[split]))
+        df = df.dropna(subset=["cluster_rpu", "conc_bin", "y", "y_pred_mean"])
+        if not df.empty:
+            df = df.copy()
+            df["cluster_rpu"] = df["cluster_rpu"].astype(int)
+            df["signed_log_ratio"] = np.log10(
+                np.maximum(df["y_pred_mean"].astype(float), 1e-9)
+                / np.maximum(df["y"].astype(float), 1e-9)
+            )
+            all_rpus.update(int(r) for r in df["cluster_rpu"].unique().tolist())
+        enriched[split] = df
+
+    sorted_rpus = sorted(all_rpus)
+    n_rpus = len(sorted_rpus)
+    n_bins = len(_CONC_LABELS)
+
+    fig_height = min(max(5, n_rpus * 0.45), 14)
+    fig, axes = plt.subplots(
+        3,
+        3,
+        figsize=(18, max(9, fig_height * 2.2)),
+        sharex=True,
+        sharey=True,
+    )
+
+    grids: dict[tuple[DataSplit, int], np.ndarray] = {}
+    for split in DataSplit:
+        df = enriched[split]
+        for p in percentiles:
+            grid = np.full((n_rpus, n_bins), np.nan)
+            if not df.empty:
+                for i, rpu in enumerate(sorted_rpus):
+                    for j, bin_label in enumerate(_CONC_LABELS):
+                        vals = df.loc[
+                            (df["cluster_rpu"] == rpu)
+                            & (df["conc_bin"] == bin_label),
+                            "signed_log_ratio",
+                        ].to_numpy(dtype=float)
+                        if len(vals) > 0:
+                            grid[i, j] = float(np.percentile(vals, p))
+            grids[(split, p)] = grid
+
+    all_vals = (
+        np.concatenate(
+            [g[~np.isnan(g)] for g in grids.values() if np.any(~np.isnan(g))]
+        )
+        if any(np.any(~np.isnan(g)) for g in grids.values())
+        else np.array([])
+    )
+    if len(all_vals) > 0:
+        vmax = max(0.1, float(np.nanpercentile(np.abs(all_vals), 95)))
+    else:
+        vmax = 1.0
+
+    cmap = plt.cm.get_cmap("RdBu_r").copy()
+    cmap.set_bad("lightgray")
+
+    for row_idx, p in enumerate(percentiles):
+        for col_idx, split in enumerate(DataSplit):
+            ax = axes[row_idx, col_idx]
+            grid = grids[(split, p)]
+
+            im = ax.imshow(
+                np.ma.masked_invalid(grid),
+                aspect="auto",
+                cmap=cmap,
+                vmin=-vmax,
+                vmax=vmax,
+                origin="upper",
+            )
+
+            ax.set_xticks(range(n_bins))
+            if row_idx == len(percentiles) - 1:
+                ax.set_xticklabels(
+                    _CONC_LABELS,
+                    rotation=45,
+                    ha="right",
+                    fontsize=8,
+                )
+                ax.set_xlabel("# concurrent queries")
+            else:
+                ax.set_xticklabels([])
+
+            ax.set_yticks(range(n_rpus))
+            if col_idx == 0:
+                ax.set_yticklabels([str(r) for r in sorted_rpus], fontsize=8)
+                ax.set_ylabel(f"P{p}\nCluster RPU")
+            else:
+                ax.set_yticklabels([])
+
+            if row_idx == 0:
+                ax.set_title(
+                    f"{split.value.capitalize()}  (N={len(enriched[split]):,})"
+                )
+
+            # Add sample count annotations for easier trust calibration.
+            df = enriched[split]
+            if not df.empty:
+                for i, rpu in enumerate(sorted_rpus):
+                    for j, bin_label in enumerate(_CONC_LABELS):
+                        n = int(
+                            (
+                                (df["cluster_rpu"] == rpu)
+                                & (df["conc_bin"] == bin_label)
+                            ).sum()
+                        )
+                        if n > 0 and not np.isnan(grid[i, j]):
+                            ax.text(
+                                j,
+                                i,
+                                str(n),
+                                ha="center",
+                                va="center",
+                                fontsize=5,
+                                color="black",
+                                alpha=0.5,
+                            )
+
+    fig.colorbar(
+        im,
+        ax=axes,
+        label="log10(pred/actual)",
+        fraction=0.02,
+        pad=0.02,
+    )
+
+    fig.suptitle(
+        (
+            f"{iconq_model_id} - Signed Error Heatmap "
+            "(RPU x Concurrency, P25/P50/P75)"
+        ),
+        fontsize=12,
+    )
+    fig.tight_layout()
+    save_path = os.path.join(
+        IconqModel.default_save_dir(iconq_model_id),
+        "signed_error_heatmap_rpu_x_concurrency.png",
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path

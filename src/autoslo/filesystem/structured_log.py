@@ -38,6 +38,7 @@ from typing import Any
 import pandas as pd
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
 
 # ---------------------------------------------------------------------------
@@ -498,3 +499,92 @@ class StructuredLog:
             .astype(bool)
             .rename("success")
         )
+
+    @staticmethod
+    def _safe_details_latency(details: Any) -> float | None:
+        if details is None:
+            return None
+        if isinstance(details, dict):
+            value = details.get("latency_s")
+        else:
+            try:
+                parsed = json.loads(details)
+            except (TypeError, json.JSONDecodeError):
+                return None
+            value = (
+                parsed.get("latency_s") if isinstance(parsed, dict) else None
+            )
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def prediction_accuracy_df(self) -> pd.DataFrame:
+        """
+        Return a DataFrame with one row per query containing actual latency,
+        predicted latency, RPU, and error metrics.
+        """
+        
+
+        query_data: dict[Any, dict[str, float | int | None]] = {}
+        for _, row in self.df.iterrows():
+            query_id = row.get("query_id")
+            event_type = row.get("event_type")
+            if query_id is None or event_type is None:
+                continue
+
+            if query_id not in query_data:
+                query_data[query_id] = {
+                    "arrival_time": None,
+                    "completion_time": None,
+                    "predicted_latency": None,
+                    "rpu": None,
+                }
+
+            if event_type == "arrival":
+                query_data[query_id]["arrival_time"] = float(row["rel_time_s"])
+            elif event_type == "completion":
+                query_data[query_id]["completion_time"] = float(
+                    row["rel_time_s"]
+                )
+            elif event_type in {"query_routed", "latency_update"}:
+                pred = self._safe_details_latency(row.get("details"))
+                if pred is not None:
+                    query_data[query_id]["predicted_latency"] = pred
+                if (
+                    event_type == "query_routed"
+                    and row.get("cluster_name") is not None
+                ):
+                    query_data[query_id]["rpu"] = Cluster.rpu_for_cluster_name(
+                        row["cluster_name"]
+                    )
+
+        results_df = pd.DataFrame.from_dict(query_data, orient="index")
+        if results_df.empty:
+            return results_df
+
+        results_df["actual_latency"] = (
+            results_df["completion_time"] - results_df["arrival_time"]
+        )
+        results_df = results_df.dropna(
+            subset=["actual_latency", "predicted_latency", "rpu"]
+        )
+        results_df = results_df[
+            (results_df["actual_latency"] > 0)
+            & (results_df["predicted_latency"] > 0)
+        ]
+
+        results_df["abs_error"] = (
+            results_df["actual_latency"] - results_df["predicted_latency"]
+        ).abs()
+        results_df["factor_error"] = (
+            results_df["predicted_latency"] / results_df["actual_latency"]
+        )
+        results_df["q_error"] = results_df[["factor_error"]].apply(
+            lambda row: max(row["factor_error"], 1.0 / row["factor_error"]),
+            axis=1,
+        )
+        results_df["rpu"] = results_df["rpu"].astype(int)
+        return results_df
