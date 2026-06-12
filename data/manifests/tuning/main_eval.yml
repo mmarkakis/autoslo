@@ -57,3 +57,28 @@ main_content:
         params:
             <<: *may27_default_exec_params
             SLO_THRESHOLD: 0.10
+
+    # kappa = 2
+    may27_1month_k2_thresh5_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: [*may27_default_exec_params, *default_sampling_tuner_params]
+            KAPPA: 2
+    may27_1month_k2_thresh10_nocache_v2:
+        configs: *default_configs
+        params:
+            <<: [*may27_default_exec_params, *default_sampling_tuner_params]
+            KAPPA: 2
+            SLO_THRESHOLD: 0.10
+    may27_oracle_k2_thresh5_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_exec_params
+            KAPPA: 2
+    may27_oracle_k2_thresh10_nocache_v2:
+        configs: *oracle_configs
+        params:
+            <<: *may27_default_exec_params
+            KAPPA: 2
+            SLO_THRESHOLD: 0.10
+
