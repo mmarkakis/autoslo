@@ -80,6 +80,7 @@ class Trace:
 
         # For caching.
         self._cluster_aware_query_ids: list[ClusterAwareQueryId] = []
+        self._redshift_version: Optional[str] = None
 
         # A map from table_name to [a map of cluster_name to DataFrame].
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
@@ -90,11 +91,13 @@ class Trace:
             f for f in os.listdir(run_dir) if f.endswith(".parquet")
         ]
 
-        # Pass 1: build redshift_query_id -> cluster_aware_query_id mapping
+        # Pass 1: build (cluster_name, redshift_query_id) -> cluster_aware_query_id mapping
         # and the reverse cluster lookup by parsing the WorkloadRunner SQL
         # comment (``--{run_id}/{query_id}\n{sql}``) from every
         # sys_query_history file.
-        self._redshift_to_cluster_aware: dict[str, ClusterAwareQueryId] = {}
+        self._redshift_to_cluster_aware: dict[
+            tuple[str, int], ClusterAwareQueryId
+        ] = {}
         for filename in pq_filenames:
             parts = filename.split(".")[0].split("+")
             if len(parts) != 2 or parts[0] != "sys_query_history":
@@ -113,11 +116,13 @@ class Trace:
                     else None
                 )
             )
-            for raw_id, wq_id in zip(df_ids["query_id"].astype(str), wq_ids):
+            for raw_id, wq_id in zip(df_ids["query_id"], wq_ids):
                 if wq_id is None:
                     continue
                 cluster_aware_id = ClusterAwareQueryId.make(cluster_name, wq_id)
-                self._redshift_to_cluster_aware[raw_id] = cluster_aware_id
+                self._redshift_to_cluster_aware[(cluster_name, raw_id)] = (
+                    cluster_aware_id
+                )
 
         # Pass 2: load all required parquet files.  For files that carry a
         # query_id column the raw Redshift integer is replaced with the
@@ -134,17 +139,18 @@ class Trace:
                     continue
 
                 if "query_id" in df.columns:
-                    known = (
-                        df["query_id"]
-                        .astype(str)
-                        .isin(self._redshift_to_cluster_aware)
+                    known = df["query_id"].apply(
+                        lambda qid: (
+                            (cluster_name, qid)
+                            in self._redshift_to_cluster_aware
+                        )
                     )
                     df = df[known].copy()
                     if len(df) == 0:
                         continue
                     df["cluster_aware_query_id"] = df["query_id"].apply(
-                        lambda raw_id: self._redshift_to_cluster_aware[
-                            str(raw_id)
+                        lambda query_id: self._redshift_to_cluster_aware[
+                            (cluster_name, query_id)
                         ]
                     )
                     df = df.rename(columns={"query_id": "redshift_query_id"})
@@ -196,6 +202,49 @@ class Trace:
             )
         pa.set_cpu_count(plu.inner_level_num_cpus())
         return pd.read_parquet(path, columns=column_list, engine="pyarrow")
+
+    UNKNOWN_REDSHIFT_VERSION_SENTINEL = "UNKNOWN"
+
+    @staticmethod
+    def redshift_version_for_run(run_id: str) -> str:
+        """
+        Get the Redshift version for the given run ID by reading any of the
+        sys_query_history Parquet files for the run.
+        """
+
+        run_dir = os.path.join(pu.get_runs_path(), run_id)
+        any_sys_query_history_file = next(
+            (
+                f
+                for f in os.listdir(run_dir)
+                if f.startswith("sys_query_history") and f.endswith(".parquet")
+            ),
+            None,
+        )
+        if any_sys_query_history_file is None:
+            return Trace.UNKNOWN_REDSHIFT_VERSION_SENTINEL
+        first_row_of_redshift_version_column = (
+            pd.read_parquet(
+                os.path.join(run_dir, any_sys_query_history_file),
+                columns=["redshift_version"],
+                engine="pyarrow",
+            )["redshift_version"]
+            .iloc[0]
+            .strip()
+        )
+        return first_row_of_redshift_version_column
+
+    @property
+    def redshift_version(self) -> str:
+        """
+        Get the Redshift version for this trace.
+
+        Returns:
+            The Redshift version for this trace.
+        """
+        if self._redshift_version is None:
+            self._redshift_version = Trace.redshift_version_for_run(self.run_id)
+        return self._redshift_version
 
     @property
     def num_queries(self) -> int:
@@ -437,7 +486,9 @@ class Trace:
                 columns=["query_id", "query_text"],
             )
             df["cluster_aware_query_id"] = df["query_id"].apply(
-                lambda raw_id: (self._redshift_to_cluster_aware[str(raw_id)])
+                lambda query_id: self._redshift_to_cluster_aware[
+                    (cluster_name, query_id)
+                ]
             )
             df["query_text_id"] = df["query_text"].map(Trace._get_query_text_id)
             s = df.set_index("cluster_aware_query_id")["query_text_id"]
