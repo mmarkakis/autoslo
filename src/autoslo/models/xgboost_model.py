@@ -1,11 +1,12 @@
 import os
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
+import xgboost as xgb
 from xgboost import XGBRegressor
 
 import autoslo.filesystem.path_utils as pu
@@ -91,6 +92,16 @@ class XGBoostModel:
         self._eta = eta
         self._eval_metric = eval_metric
         self._early_stopping_rounds = early_stopping_rounds
+        self._model: XGBRegressor | xgb.Booster
+        self._random_seed = random_seed
+        self._training_mode = "legacy_regression"
+        self._evals_result: dict[str, dict[str, list[float]]] = {}
+
+        self._only_non_overlapping_queries = False
+        self._ignore_cluster_size = ignore_cluster_size
+
+    def _setup_legacy_regressor(self) -> None:
+        self._training_mode = "legacy_regression"
         self._model = XGBRegressor(
             n_estimators=self._n_estimators,
             max_depth=self._max_depth,
@@ -99,10 +110,21 @@ class XGBoostModel:
             eval_metric=self._eval_metric,
             early_stopping_rounds=self._early_stopping_rounds,
         )
-        self._random_seed = random_seed
 
-        self._only_non_overlapping_queries = False
-        self._ignore_cluster_size = ignore_cluster_size
+    def _setup_aft_booster(self) -> None:
+        self._training_mode = "aft_censored"
+        self._eval_metric = "aft-nloglik"
+        self._model = xgb.Booster()
+
+    @staticmethod
+    def _to_aft_bounds(
+        runtimes: np.ndarray,
+        is_censored: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        lower = runtimes.astype(np.float32, copy=False)
+        upper = runtimes.astype(np.float32, copy=True)
+        upper[is_censored] = np.inf
+        return lower, upper
 
     def predict_from_query_text_id(
         self,
@@ -139,10 +161,25 @@ class XGBoostModel:
                 )
             featurization.append(effective_rpu)
             featurization_array = np.array(featurization).reshape(1, -1)
-            raw_prediction = self._model.predict(featurization_array)[0]
-            if self._train_on_log_runtime:
-                raw_prediction = np.exp(raw_prediction)
-            predictions[query_id] = ModelPrediction(mean_s=[raw_prediction])
+            raw_prediction: float = 0.0
+            if self._training_mode == "aft_censored":
+                dpred = xgb.DMatrix(featurization_array)
+                booster = cast(xgb.Booster, self._model)
+                raw_prediction = float(booster.predict(dpred)[0])
+            else:
+                regressor = cast(XGBRegressor, self._model)
+                raw_prediction = float(
+                    regressor.predict(featurization_array)[0]
+                )
+                if self._train_on_log_runtime:
+                    raw_prediction = float(np.exp(raw_prediction))
+            predictions[query_id] = ModelPrediction(
+                mean_s=[raw_prediction],
+                metadata={
+                    "origin": "XGBoostModel",
+                    "training_mode": self._training_mode,
+                },
+            )
 
         return predictions
 
@@ -166,7 +203,8 @@ class XGBoostModel:
             use_client_side_latencies: Use client-side latencies from the
                 structured log instead of Redshift server-side elapsed_time.
             ignore_aborted_queries: Whether to exclude aborted queries from
-                training.
+                training. If False, censored observations are used with an
+                AFT objective and label bounds.
 
         Returns:
             A tuple containing the final training and validation loss.
@@ -183,6 +221,10 @@ class XGBoostModel:
         os.makedirs(self._save_dir, exist_ok=True)
 
         self._only_non_overlapping_queries = only_non_overlapping_queries
+        if ignore_aborted_queries:
+            self._setup_legacy_regressor()
+        else:
+            self._setup_aft_booster()
 
         # Save the XGBoostModel parameters.
         params_path = os.path.join(self._save_dir, "params.yml")
@@ -203,6 +245,10 @@ class XGBoostModel:
                         self._only_non_overlapping_queries
                     ),
                     "ignore_cluster_size": self._ignore_cluster_size,
+                    "xgb_training_mode": self._training_mode,
+                    "trained_with_ignore_aborted_queries": (
+                        ignore_aborted_queries
+                    ),
                 },
                 f,
             )
@@ -218,7 +264,7 @@ class XGBoostModel:
                 else trace.server_side_latencies_s
             )
             query_is_non_overlapping = trace.query_is_non_overlapping()
-            was_aborted = trace.was_aborted() if ignore_aborted_queries else {}
+            was_aborted = trace.was_aborted()
             new_items = []
 
             for cluster_aware_query_id in featurizations.keys():
@@ -249,6 +295,9 @@ class XGBoostModel:
                         "query_id": cluster_aware_query_id.query_id,
                         "query_featurization": featurization,
                         "runtime_s": latency,
+                        "is_censored": bool(
+                            was_aborted.get(cluster_aware_query_id, False)
+                        ),
                     }
                 )
 
@@ -256,7 +305,12 @@ class XGBoostModel:
 
         featurization_df = pd.DataFrame(l)
         label_column_name = "runtime_s"
-        if self._train_on_log_runtime:
+        # In censored AFT mode (ignore_aborted_queries=False), we intentionally
+        # keep targets in raw time units and pass interval bounds directly:
+        # exact rows use [y, y], censored rows use [y, +inf). The AFT objective
+        # models log-time internally, so an external log transform here would
+        # be redundant and can mis-specify the label scale.
+        if self._train_on_log_runtime and ignore_aborted_queries:
             featurization_df["log_runtime_s"] = np.log(
                 featurization_df["runtime_s"]
             )
@@ -269,6 +323,7 @@ class XGBoostModel:
             .reset_index(drop=True)
         )
         split_idx = int(0.8 * len(featurization_df))
+        split_idx = min(max(split_idx, 1), len(featurization_df) - 1)
         train_df = featurization_df.iloc[:split_idx]
         val_df = featurization_df.iloc[split_idx:]
 
@@ -290,20 +345,67 @@ class XGBoostModel:
             np.float32
         )
         y_val = val_df[label_column_name].to_numpy()
-        self._model.fit(
-            X_train,
-            y_train,
-            # We include the training set to `eval_set` in order to get
-            # final_train_loss out. XGBoost only uses the last entry in this
-            # list for early stopping so it doesn't affect the training.
-            eval_set=[(X_train, y_train), (X_val, y_val)],
-            verbose=False,
-        )
 
-        # Get final training and validation losses.
-        losses = self._model.evals_result()
-        final_train_loss = losses["validation_0"][self._eval_metric][-1]
-        final_val_loss = losses["validation_1"][self._eval_metric][-1]
+        final_train_loss: float = 0.0
+        final_val_loss: float = 0.0
+        if ignore_aborted_queries:
+            regressor = cast(XGBRegressor, self._model)
+            regressor.fit(
+                X_train,
+                y_train,
+                # We include the training set to `eval_set` in order to get
+                # final_train_loss out. XGBoost only uses the last entry in this
+                # list for early stopping so it doesn't affect the training.
+                eval_set=[(X_train, y_train), (X_val, y_val)],
+                verbose=False,
+            )
+            self._evals_result = regressor.evals_result()
+        else:
+            is_cens_train = train_df["is_censored"].to_numpy(dtype=bool)
+            is_cens_val = val_df["is_censored"].to_numpy(dtype=bool)
+
+            train_lb, train_ub = self._to_aft_bounds(y_train, is_cens_train)
+            val_lb, val_ub = self._to_aft_bounds(y_val, is_cens_val)
+
+            dtrain = xgb.DMatrix(X_train)
+            dval = xgb.DMatrix(X_val)
+            dtrain.set_float_info("label_lower_bound", train_lb)
+            dtrain.set_float_info("label_upper_bound", train_ub)
+            dval.set_float_info("label_lower_bound", val_lb)
+            dval.set_float_info("label_upper_bound", val_ub)
+
+            params = {
+                "objective": "survival:aft",
+                "eval_metric": self._eval_metric,
+                "learning_rate": self._eta,
+                "max_depth": self._max_depth,
+                "seed": self._random_seed,
+                "subsample": 1.0,
+                "tree_method": "hist",
+                "aft_loss_distribution": "normal",
+                "aft_loss_distribution_scale": 1.0,
+            }
+            evals_result: dict[str, dict[str, list[float]]] = {}
+            self._model = xgb.train(
+                params=params,
+                dtrain=dtrain,
+                num_boost_round=self._n_estimators,
+                evals=[(dtrain, "train"), (dval, "val")],
+                evals_result=evals_result,
+                early_stopping_rounds=self._early_stopping_rounds,
+                verbose_eval=False,
+            )
+            self._evals_result = {
+                "validation_0": evals_result.get("train", {}),
+                "validation_1": evals_result.get("val", {}),
+            }
+
+        final_train_loss = self._evals_result["validation_0"][
+            self._eval_metric
+        ][-1]
+        final_val_loss = self._evals_result["validation_1"][self._eval_metric][
+            -1
+        ]
 
         return final_train_loss, final_val_loss
 
@@ -320,7 +422,7 @@ class XGBoostModel:
         self._model.save_model(model_json_path)
 
         # Also save the loss trajectories of the model as a plot.
-        losses = self._model.evals_result()
+        losses = self._evals_result
         loss_plot_path = os.path.join(self._save_dir, "loss_plot.png")
         plt.figure()
         plt.plot(losses["validation_0"][self._eval_metric], label="Train Loss")
@@ -376,6 +478,11 @@ class XGBoostModel:
 
         # Load the model.
         model_json_path = os.path.join(load_dir, "model.json")
+        training_mode = params.get("xgb_training_mode", "legacy_regression")
+        if training_mode == "aft_censored":
+            model._setup_aft_booster()
+        else:
+            model._setup_legacy_regressor()
         model._model.load_model(model_json_path)
 
         return model
