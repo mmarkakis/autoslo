@@ -366,7 +366,7 @@ def sensitive_q_error_loss_v4(
 
     input = input.flatten()
     target = target.flatten()
-    is_lb = target_is_lower_bound.flatten()
+    is_lb = target_is_lower_bound.flatten().bool()
 
     # Regime 1: Prediction (input) is larger than the target and the target is a
     # lower bound.
@@ -385,9 +385,9 @@ def sensitive_q_error_loss_v4(
     )
 
     if return_mean:
-        return loss.mean().requires_grad_(True)
+        return loss.mean()
     else:
-        return loss.requires_grad_(True)
+        return loss
 
 def sensitive_q_error_loss_v5(
     input: torch.Tensor,  # pylint: disable=redefined-builtin
@@ -423,7 +423,6 @@ def sensitive_q_error_loss_v5(
         return loss.mean().requires_grad_(True)
     else:
         return loss.requires_grad_(True)
-
 
 
 def sensitive_q_error_loss_v10(

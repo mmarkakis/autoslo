@@ -74,6 +74,15 @@ class Palette:
             Palette.gray,
         ]
 
+    @staticmethod
+    def rpu_to_color() -> Mapping[int, str]:
+        return {
+            4: Palette.light_green,
+            8: Palette.light_blue,
+            16: Palette.light_red,
+            32: Palette.light_purple,
+        }
+
 
 def set_plot_colors(dark: bool = False) -> None:
     """

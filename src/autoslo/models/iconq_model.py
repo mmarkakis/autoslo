@@ -1,16 +1,20 @@
-import json
+from __future__ import annotations
+
 import logging
 import os
+import pickle
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
+from intervaltree import Interval, IntervalTree  # type: ignore[import]
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -51,7 +55,7 @@ from autoslo.nn.loss_functions import (
     sensitive_q_error_loss,
 )
 from autoslo.nn.runtime_net import RuntimeNet
-from autoslo.workload_definition.query import ClusterAwareQueryId
+from autoslo.workload_definition.query import ClusterAwareQueryId, Query
 from autoslo.workload_execution.trace import Trace
 
 logger = logging.getLogger(__name__)
@@ -234,6 +238,7 @@ class IconqModel:
             self._loss_type = LossType.SENSITIVE_Q_ERROR
 
         # Initialize the dataset and split indices.
+        self._idxs_for_split: dict[DataSplit, list[int]] = {}
         self._populate_dataset_and_split_idxs()
 
         # Save initial model parameters (skip when loading from disk to
@@ -350,6 +355,8 @@ class IconqModel:
                 "run_id": Cluster.run_id_for_cluster_name(
                     cluster_aware_query_ids[i].cluster_name
                 ),
+                "rpu": int(rpu),
+                "model_source": "stage",
                 "query_text_id": query_text_ids[i],
                 "query_id": cluster_aware_query_ids[i].query_id,
                 "target_is_lower_bound": y_is_lower_bound[i].item(),
@@ -392,14 +399,18 @@ class IconqModel:
         )
         result: dict[ClusterAwareQueryId, ModelPrediction] = {}
 
-        # Pre-compute run_id once per unique cluster name so that
-        # Cluster.run_id_for_cluster_name (which calls str.split) is not
-        # invoked once per prediction inside the hot loop.
+        # Pre-compute run_id and rpu once per unique cluster name so that
+        # Cluster.run_id_for_cluster_name / rpu_for_cluster_name (which call
+        # str.split) are not invoked once per prediction inside the hot loop.
         unique_cluster_names = {
             caqi.cluster_name for caqi in cluster_aware_query_ids
         }
         run_id_by_cluster: dict[str, str] = {
             cluster_name: Cluster.run_id_for_cluster_name(cluster_name)
+            for cluster_name in unique_cluster_names
+        }
+        rpu_by_cluster: dict[str, int] = {
+            cluster_name: Cluster.rpu_for_cluster_name(cluster_name)
             for cluster_name in unique_cluster_names
         }
 
@@ -420,6 +431,8 @@ class IconqModel:
                     metadata={
                         "num_other_concurrent_queries": int(le) - 1,
                         "run_id": run_id_by_cluster[q.cluster_name],
+                        "rpu": rpu_by_cluster[q.cluster_name],
+                        "model_source": "lstm",
                         "query_text_id": t,
                         "query_id": q.query_id,
                     },
@@ -439,6 +452,8 @@ class IconqModel:
                     metadata={
                         "num_other_concurrent_queries": int(le) - 1,
                         "run_id": run_id_by_cluster[q.cluster_name],
+                        "rpu": rpu_by_cluster[q.cluster_name],
+                        "model_source": "lstm",
                         "query_text_id": t,
                         "query_id": q.query_id,
                     },
@@ -462,6 +477,8 @@ class IconqModel:
                     metadata={
                         "num_other_concurrent_queries": int(le) - 1,
                         "run_id": run_id_by_cluster[q.cluster_name],
+                        "rpu": rpu_by_cluster[q.cluster_name],
+                        "model_source": "lstm",
                         "query_text_id": t,
                         "query_id": q.query_id,
                         "target_is_lower_bound": yislb,
@@ -547,6 +564,8 @@ class IconqModel:
                                 "run_id": Cluster.run_id_for_cluster_name(
                                     caqi.cluster_name
                                 ),
+                                "rpu": rpu,
+                                "model_source": "stage",
                                 "query_text_id": query_text_ids[i],
                                 "query_id": caqi.query_id,
                                 "target_is_lower_bound": y_is_lower_bound[
@@ -720,21 +739,21 @@ class IconqModel:
             subsequent calls take the fast path.
         """
         dataset_pkl = os.path.join(self._save_dir, "dataset.pkl")
-        train_idx_file = os.path.join(self._save_dir, "train_indices.json")
-        val_idx_file = os.path.join(self._save_dir, "val_indices.json")
-        test_idx_file = os.path.join(self._save_dir, "test_indices.json")
+        train_idx_file = os.path.join(self._save_dir, "train_indices.pkl")
+        val_idx_file = os.path.join(self._save_dir, "val_indices.pkl")
+        test_idx_file = os.path.join(self._save_dir, "test_indices.pkl")
 
         if all(
             os.path.exists(p)
             for p in (dataset_pkl, train_idx_file, val_idx_file, test_idx_file)
         ):
             self._dataset = ConcurrentQueryDataset.load_from(dataset_pkl)
-            with open(train_idx_file) as f:
-                self._train_idxs: list[int] = json.load(f)
-            with open(val_idx_file) as f:
-                self._val_idxs: list[int] = json.load(f)
-            with open(test_idx_file) as f:
-                self._test_idxs: list[int] = json.load(f)
+            with open(train_idx_file, "rb") as f:
+                self._idxs_for_split[DataSplit.TRAIN] = pickle.load(f)
+            with open(val_idx_file, "rb") as f:
+                self._idxs_for_split[DataSplit.VAL] = pickle.load(f)
+            with open(test_idx_file, "rb") as f:
+                self._idxs_for_split[DataSplit.TEST] = pickle.load(f)
             return
 
         if self._train_config is None:
@@ -757,51 +776,52 @@ class IconqModel:
                 for run_id in self._train_config.run_ids
             ]
         )
+        self._dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
 
         # Derive split indices.
         explicit = self._train_config.explicit_run_ids_per_split
+        train_idxs: list[int] = []
+        val_idxs: list[int] = []
+        test_idxs: list[int] = []
         if explicit is None:
             rng = np.random.default_rng(self._train_config.split_seed)
             indices = rng.permutation(len(self._dataset))
             n_val = round(self._train_config.val_frac * len(self._dataset))
             n_test = round(self._train_config.test_frac * len(self._dataset))
-
-            self._idxs_for_split = {
-                DataSplit.TRAIN: list(indices[n_val + n_test :]),
-                DataSplit.VAL: list(indices[:n_val]),
-                DataSplit.TEST: list(indices[n_val : n_val + n_test]),
-            }
-            return
-
-        train_run_ids = set(explicit.get("train", []))
-        val_run_ids = set(explicit.get("val", []))
-        test_run_ids = set(explicit.get("test", []))
-        train_idxs: list[int] = []
-        val_idxs: list[int] = []
-        test_idxs: list[int] = []
-        for i, caqi in enumerate(self._dataset.cluster_aware_query_ids):
-            run_id = Cluster.run_id_for_cluster_name(caqi.cluster_name)
-            if run_id in train_run_ids:
-                train_idxs.append(i)
-            elif run_id in val_run_ids:
-                val_idxs.append(i)
-            elif run_id in test_run_ids:
-                test_idxs.append(i)
-            else:
-                raise ValueError(
-                    f"Query with run ID {run_id} not found in any explicit "
-                    "run ID split list."
-                )
+            train_idxs = list(indices[n_val + n_test :])
+            val_idxs = list(indices[:n_val])
+            test_idxs = list(indices[n_val : n_val + n_test])
+        else:
+            train_run_ids = set(explicit.get("train", []))
+            val_run_ids = set(explicit.get("val", []))
+            test_run_ids = set(explicit.get("test", []))
+            for i, caqi in enumerate(self._dataset.cluster_aware_query_ids):
+                run_id = Cluster.run_id_for_cluster_name(caqi.cluster_name)
+                if run_id in train_run_ids:
+                    train_idxs.append(i)
+                elif run_id in val_run_ids:
+                    val_idxs.append(i)
+                elif run_id in test_run_ids:
+                    test_idxs.append(i)
+                else:
+                    raise ValueError(
+                        f"Query with run ID {run_id} not found in any explicit "
+                        "run ID split list."
+                    )
+        self._idxs_for_split = {
+            DataSplit.TRAIN: train_idxs,
+            DataSplit.VAL: val_idxs,
+            DataSplit.TEST: test_idxs,
+        }
 
         # Save out.
-        self._dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
         for name, idxs in [
-            ("train_indices.json", train_idxs),
-            ("val_indices.json", val_idxs),
-            ("test_indices.json", test_idxs),
+            ("train_indices.pkl", train_idxs),
+            ("val_indices.pkl", val_idxs),
+            ("test_indices.pkl", test_idxs),
         ]:
-            with open(os.path.join(self._save_dir, name), "w") as f:
-                json.dump(idxs, f)
+            with open(os.path.join(self._save_dir, name), "wb") as f:
+                pickle.dump(idxs, f)
 
         return
 
@@ -1019,44 +1039,38 @@ class IconqModel:
             mark_prev_checkpoint=True,
         )
 
-        # ── Final evaluation on all sets (best checkpoint) ────────────────────
+        # ── Final evaluation on best checkpoint ──────────────────────────────
+        checkpoint_files = [
+            f
+            for f in os.listdir(self._save_dir)
+            if f.startswith("model_") and f.endswith(".pth")
+        ]
+        if checkpoint_files:
+            checkpoint_path = os.path.join(self._save_dir, checkpoint_files[0])
+            self._nn.load_state_dict(
+                torch.load(
+                    checkpoint_path,
+                    map_location=self._device,
+                    weights_only=True,
+                )
+            )
+        _, final_train_errors = self.eval_on_split(
+            split=DataSplit.TRAIN, out_filename="final_train.csv"
+        )
+        _, final_val_errors = self.eval_on_split(
+            split=DataSplit.VAL, out_filename="final_val.csv"
+        )
+        sets = [("train", final_train_errors), ("val", final_val_errors)]
         if len(self._idxs_for_split[DataSplit.TEST]) > 0:
-            # Reload best checkpoint so we score the saved model, not the
-            # last in-memory weights (which may be from a post-best epoch).
-            checkpoint_files = [
-                f
-                for f in os.listdir(self._save_dir)
-                if f.startswith("model_") and f.endswith(".pth")
-            ]
-            if checkpoint_files:
-                checkpoint_path = os.path.join(
-                    self._save_dir, checkpoint_files[0]
-                )
-                self._nn.load_state_dict(
-                    torch.load(
-                        checkpoint_path,
-                        map_location=self._device,
-                        weights_only=True,
-                    )
-                )
-            _, final_train_errors = self.eval_on_split(
-                split=DataSplit.TRAIN, out_filename="final_train.csv"
-            )
-            _, final_val_errors = self.eval_on_split(
-                split=DataSplit.VAL, out_filename="final_val.csv"
-            )
             _, test_errors = self.eval_on_split(
                 split=DataSplit.TEST, out_filename="final_test.csv"
             )
+            sets.append(("test", test_errors))
 
-            print_errors_table(
-                title="[bold cyan]Final evaluation — best checkpoint[/]",
-                sets=[
-                    ("train", final_train_errors),
-                    ("val", final_val_errors),
-                    ("test", test_errors),
-                ],
-            )
+        print_errors_table(
+            title="[bold cyan]Final evaluation — best checkpoint[/]",
+            sets=sets,
+        )
 
         return final_train_loss, final_val_loss
 
@@ -1082,10 +1096,21 @@ class IconqModel:
             errors: Mean, median, 90th and 95th percentile error metrics.
         """
         indices = self._idxs_for_split[split]
+        sliced_dataset = Subset(self._dataset, indices)
+        return self.eval_on_dataset(sliced_dataset, out_filename=out_filename)
+
+    def eval_on_dataset(
+        self,
+        dataset: ConcurrentQueryDataset | Subset,
+        out_filename: Optional[str] = None,
+    ) -> tuple[float, dict[str, float]]:
+        """
+        Evaluates the model on the given dataset.
+        """
         train_config = self._train_config
-        assert train_config is not None, "train_config required for validation"
+        assert train_config is not None, "train_config required for eval"
         dataloader = DataLoader(
-            Subset(self._dataset, indices),
+            dataset,
             batch_size=train_config.batch_size,
             shuffle=False,
             collate_fn=ConcurrentQueryDataset.collate_and_pad,
@@ -1117,6 +1142,8 @@ class IconqModel:
                 "query_id": caqi.query_id,
                 "query_text_id": str(qtid),
                 "run_id": str(md.get("run_id", "")),
+                "cluster_name": caqi.cluster_name,
+                "rpu": Cluster.rpu_for_cluster_name(caqi.cluster_name),
                 "num_other_concurrent_queries": int(
                     md.get("num_other_concurrent_queries", 0)
                 ),
@@ -1130,6 +1157,7 @@ class IconqModel:
                 "target_is_lower_bound": bool(
                     md.get("target_is_lower_bound", False)
                 ),
+                "model_source": str(md.get("model_source", "lstm")),
             }
             if "loss" in md:
                 row["individual_loss"] = md["loss"]
@@ -1357,15 +1385,27 @@ class IconqModel:
             split_str = split.value
             csv_path = save_dir / f"final_{split_str}.csv"
             parquet_path = save_dir / f"final_{split_str}.parquet"
+            loaded_from_disk = False
             if parquet_path.exists():
-                split_dfs[split] = pd.read_parquet(parquet_path)
+                df = pd.read_parquet(parquet_path)
+                loaded_from_disk = True
             elif csv_path.exists():
-                split_dfs[split] = pd.read_csv(csv_path)
-                split_dfs[split].to_parquet(parquet_path)
+                df = pd.read_csv(csv_path)
+                loaded_from_disk = True
             else:
                 if model is None:
                     model = IconqModel.load(model_id)
                 model.eval_on_split(split=split, out_filename=str(csv_path))
-                split_dfs[split] = pd.read_csv(csv_path)
+                df = pd.read_csv(csv_path)
+
+            # Backfill cluster_rpu metadata for older final_*.csv/parquet files.
+            if "rpu" not in df.columns or "model_source" not in df.columns:
+                if model is None:
+                    model = IconqModel.load(model_id)
+                model.eval_on_split(split=split, out_filename=str(csv_path))
+                df = pd.read_csv(csv_path)
+
+            split_dfs[split] = df
+            if loaded_from_disk or not parquet_path.exists():
                 split_dfs[split].to_parquet(parquet_path)
         return split_dfs

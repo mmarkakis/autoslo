@@ -262,14 +262,12 @@ class ConcurrentQueryDataset(Dataset):
         Returns:
             An instance of ConcurrentQueryDataset loaded from the specified path.
         """
-        data = torch.load(path)
+        data = torch.load(path, weights_only=False)
         return cls(
             x=data["x"],
             pinch_points=data["pinch_points"],
             y=data["y"],
-            cluster_aware_query_ids=[
-                ClusterAwareQueryId(q) for q in data["cluster_aware_query_ids"]
-            ],
+            cluster_aware_query_ids=data["cluster_aware_query_ids"],
             query_text_id=data["query_text_id"],
             y_is_lower_bound=data["y_is_lower_bound"],
         )
