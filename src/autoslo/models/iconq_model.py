@@ -86,37 +86,30 @@ def print_errors_table(
 
     _EMPTY_ROW = ("", "", "", "", "", "")
     n_sets = len(sets)
+    metrics_per_type = {
+        "normal": ["q_error", "abs_error"],
+        "aborted": ["factor_error", "underprediction_error_s"],
+    }
+
     for set_idx, (set_name, errs) in enumerate(sets):
         is_last_set = set_idx == n_sets - 1
-        for suffix in ["normal", "aborted", "all"]:
 
-            def _f(k: str, _e: dict = errs) -> str:  # default arg captures errs
-                v = _e.get(k)
-                return f"{v:.4f}" if v is not None else "-"
-
+        for suffix, metrics in metrics_per_type.items():
             n = int(errs.get(f"n_{suffix}", 0))
             if n == 0:
                 continue
-            label = f"{set_name} / {suffix} (N={n})"
-            table.add_row(
-                label,
-                "q-error",
-                _f(f"mean_q_error_{suffix}"),
-                _f(f"p50_q_error_{suffix}"),
-                _f(f"p90_q_error_{suffix}"),
-                _f(f"p95_q_error_{suffix}"),
-                style="white",
-            )
-            table.add_row(
-                "",
-                "abs error",
-                _f(f"mean_abs_error_{suffix}"),
-                _f(f"p50_abs_error_{suffix}"),
-                _f(f"p90_abs_error_{suffix}"),
-                _f(f"p95_abs_error_{suffix}"),
-                style="dim",
-                end_section=True,
-            )
+
+            for i, metric in enumerate(metrics):
+                table.add_row(
+                    f"{set_name} / {suffix} (N={n})" if i == 0 else "",
+                    metric,
+                    *(
+                        f'{errs[f"{stat}_{metric}_{suffix}"]:.4f}'
+                        for stat in ("mean", "p50", "p90", "p95")
+                    ),
+                    style="white" if i == 0 else "dim",
+                    end_section=True if i == len(metrics) - 1 else False,
+                )
         # Double horizontal line between splits: the abs-error row above already
         # added one rule via end_section; a blank spacer row with end_section
         # adds a second immediately adjacent rule.
@@ -165,6 +158,7 @@ class IconqModel:
         if model_id is None:
             model_id = str(int(datetime.now().timestamp()))
         self._model_id = model_id
+        self._parent_save_dir = parent_save_dir
         self._save_dir = self.default_save_dir(model_id)
         if parent_save_dir is not None:
             self._save_dir = os.path.join(parent_save_dir, model_id)
@@ -1125,7 +1119,17 @@ class IconqModel:
         for pred, y_true, caqi, qtid in all_pred_v_true:
             y_true_safe = max(float(y_true), 1e-9)
             y_pred_safe = max(pred.overall_mean_s(), 1e-9)
-            md = pred.metadata
+            md = pred.metadata or {}
+            target_is_lower_bound = bool(md.get("target_is_lower_bound", False))
+
+            factor_error = y_pred_safe / y_true_safe
+            underprediction_error_s = max(y_true_safe - y_pred_safe, 0.0)
+
+            q_error: Optional[float] = None
+            abs_error_s: Optional[float] = None
+            if not target_is_lower_bound:
+                abs_error_s = abs(y_pred_safe - y_true_safe)
+                q_error = max(factor_error, 1 / factor_error)
 
             row = {
                 "query_id": caqi.query_id,
@@ -1138,14 +1142,11 @@ class IconqModel:
                 ),
                 "y": y_true_safe,
                 "y_pred_mean": y_pred_safe,
-                "abs_error": abs(y_pred_safe - y_true_safe),
-                "q_error": max(
-                    y_pred_safe / y_true_safe,
-                    y_true_safe / y_pred_safe,
-                ),
-                "target_is_lower_bound": bool(
-                    md.get("target_is_lower_bound", False)
-                ),
+                "abs_error": abs_error_s,
+                "q_error": q_error,
+                "factor_error": factor_error,
+                "underprediction_error_s": underprediction_error_s,
+                "target_is_lower_bound": target_is_lower_bound,
                 "model_source": str(md.get("model_source", "lstm")),
             }
             if "loss" in md:
@@ -1155,18 +1156,21 @@ class IconqModel:
 
         # Compute aggregates.
         errors: dict[str, float] = {}
-        for suffix, mask in {
-            "normal": ~df["target_is_lower_bound"],
-            "aborted": df["target_is_lower_bound"],
-            "all": pd.Series(True, index=df.index),
-        }.items():
-            subset = df.loc[mask, ["abs_error", "q_error"]]
+        for suffix, mask, cols in zip(
+            ["normal", "aborted"],
+            [~df["target_is_lower_bound"], df["target_is_lower_bound"]],
+            [
+                ["abs_error", "q_error", "factor_error"],
+                ["underprediction_error_s", "factor_error"],
+            ],
+        ):
+            subset = df.loc[mask, cols]
 
             errors[f"n_{suffix}"] = len(subset)
             if subset.empty:
                 continue
 
-            for col in ["abs_error", "q_error"]:
+            for col in cols:
                 errors[f"mean_{col}_{suffix}"] = subset[col].mean()
                 for p in [50, 90, 95]:
                     errors[f"p{p}_{col}_{suffix}"] = subset[col].quantile(
@@ -1512,10 +1516,6 @@ class IconqModel:
                 continue
             targets[qid] = _latency(qid)
             is_lower_bound[qid] = is_lb
-
-        print(
-            f"Using {len(targets)}/{len(cluster_aware_query_ids)} queries from run {run_id} for training."
-        )
 
         return ConcurrentQueryDataset.build_from_query_groups(
             iconq_interaction_featurizer=self._iconq_interaction_featurizer,
