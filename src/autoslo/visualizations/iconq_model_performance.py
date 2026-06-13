@@ -139,6 +139,10 @@ def plot_all(iconq_model_id: str) -> None:
         plot_qerror_over_epochs,
         plot_qerror_vs_concurrency,
         plot_qerror_heatmap,
+        plot_template_contribution_breakdown,
+        plot_error_by_cluster_rpu,
+        plot_error_cdf_by_cluster_rpu,
+        plot_signed_error_heatmap_rpu_x_concurrency,
     ]
 
     for fn in fns:

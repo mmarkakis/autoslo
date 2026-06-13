@@ -10,6 +10,7 @@ from tqdm.auto import tqdm
 
 from autoslo.filesystem.path_utils import get_runs_path
 from autoslo.filesystem.structured_log import StructuredLog
+from autoslo.models.iconq_model import IconqModel
 from autoslo.visualizations.colors import Palette
 from autoslo.workload_execution.trace import Trace
 
@@ -20,7 +21,8 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Build prediction-accuracy drift-over-time plots by RPU from "
-            "run logs."
+            "run logs. Optionally compute counterfactual predictions from "
+            "IconQ models."
         )
     )
     parser.add_argument(
@@ -29,9 +31,19 @@ def _parse_args() -> argparse.Namespace:
         help="Display the figure interactively in addition to saving it.",
     )
     parser.add_argument(
-        "--refresh-cache",
+        "--refresh_cache",
         action="store_true",
         help="Ignore any existing cache and rebuild from run_log.csv.",
+    )
+    parser.add_argument(
+        "--iconq_model_ids",
+        nargs="+",
+        default=[],
+        help=(
+            "Optional space-separated list of IconQ model IDs to compute "
+            "counterfactual predictions. Predictions are cached in the "
+            "mega_df as iconq_{model_id}_* columns."
+        ),
     )
     return parser.parse_args()
 
@@ -92,6 +104,7 @@ def _load_cache(cache_path: Path, refresh_cache: bool) -> pd.DataFrame:
 def _collect_missing_run_metrics(
     run_ids: list[str],
     cached_df: pd.DataFrame,
+    iconq_model_ids: list[str] | None = None,
 ) -> pd.DataFrame:
     cached_run_ids = (
         set(cached_df["run_id"].astype(str).unique().tolist())
@@ -120,15 +133,127 @@ def _collect_missing_run_metrics(
             continue
 
         run_df = run_df.copy()
+        # Preserve query_id as a column (from index) so we can match counterfactual predictions
+        run_df.reset_index(names=["query_id"], inplace=True)
         run_df["run_id"] = str(run_id)
         appended_frames.append(run_df)
 
     if appended_frames:
         new_df = pd.concat(appended_frames, ignore_index=True)
         if cached_df.empty:
-            return new_df
-        return pd.concat([cached_df, new_df], ignore_index=True)
-    return cached_df
+            mega_df = new_df
+        else:
+            mega_df = pd.concat([cached_df, new_df], ignore_index=True)
+    else:
+        mega_df = cached_df
+
+    # Augment with counterfactual predictions from IconQ models
+    if iconq_model_ids and not mega_df.empty:
+        mega_df = _add_counterfactual_predictions(
+            mega_df, missing_run_ids if appended_frames else [], iconq_model_ids
+        )
+
+    return mega_df
+
+
+def _add_counterfactual_predictions(
+    mega_df: pd.DataFrame,
+    new_run_ids: list[str],
+    iconq_model_ids: list[str],
+) -> pd.DataFrame:
+    """
+    For each IconQ model, compute counterfactual predictions and add columns
+    to mega_df. Only computes for newly loaded runs (in new_run_ids) to avoid
+    redundant computation on cached data.
+
+    For model M, adds columns:
+    - iconq_{M}_predicted_latency: predicted runtime in seconds
+    - iconq_{M}_factor_error: predicted / actual
+    - iconq_{M}_q_error: max(predicted/actual, actual/predicted)
+
+    Parameters:
+        mega_df: The main dataframe with (run_id, query_id, actual_latency, ...)
+        new_run_ids: Run IDs that were newly loaded (empty list if using cache)
+        iconq_model_ids: List of IconQ model IDs to compute predictions for
+
+    Returns:
+        mega_df augmented with new columns for each model's predictions.
+    """
+    if not new_run_ids:
+        # No new data to compute counterfactuals for; but still add empty columns
+        # if they don't exist (to ensure cache consistency)
+        for model_id in iconq_model_ids:
+            pred_col = f"iconq_{model_id}_predicted_latency"
+            factor_col = f"iconq_{model_id}_factor_error"
+            q_error_col = f"iconq_{model_id}_q_error"
+            for col in [pred_col, factor_col, q_error_col]:
+                if col not in mega_df.columns:
+                    mega_df[col] = None
+        return mega_df
+
+    new_run_ids_set = set(new_run_ids)
+    new_rows = mega_df[mega_df["run_id"].isin(new_run_ids_set)]
+
+    for model_id in iconq_model_ids:
+        pred_col = f"iconq_{model_id}_predicted_latency"
+        factor_col = f"iconq_{model_id}_factor_error"
+        q_error_col = f"iconq_{model_id}_q_error"
+
+        # Initialize columns if they don't exist
+        for col in [pred_col, factor_col, q_error_col]:
+            if col not in mega_df.columns:
+                mega_df[col] = None
+
+        print(f"Loading IconQ model {model_id}...")
+        try:
+            model = IconqModel.load(model_id=model_id)
+        except Exception as exc:
+            print(f"  Failed to load model {model_id}: {exc}")
+            continue
+
+        # Compute predictions for each new run
+        for run_id in tqdm(
+            sorted(new_run_ids_set),
+            desc=f"Counterfactual predictions ({model_id})",
+        ):
+            try:
+                dataset = model.build_dataset_from_run_id(run_id)
+                predictions = model.predict_from_dataset(dataset)
+
+                # Map predictions back to mega_df rows by (run_id, query_id)
+                for cluster_aware_qid, model_pred in predictions.items():
+                    query_id = cluster_aware_qid.query_id
+                    pred_latency_s = model_pred.overall_mean_s()
+
+                    # Find matching row(s) in mega_df
+                    mask = (
+                        (mega_df["run_id"] == run_id)
+                        & (mega_df["query_id"] == query_id)
+                    )
+                    if not mask.any():
+                        continue
+
+                    for idx in mega_df[mask].index:
+                        actual_latency_s = mega_df.loc[idx, "actual_latency"]
+                        if actual_latency_s <= 0:
+                            continue
+
+                        mega_df.at[idx, pred_col] = pred_latency_s
+                        mega_df.at[idx, factor_col] = (
+                            pred_latency_s / actual_latency_s
+                        )
+                        mega_df.at[idx, q_error_col] = max(
+                            pred_latency_s / actual_latency_s,
+                            actual_latency_s / pred_latency_s,
+                        )
+
+            except Exception as exc:
+                print(
+                    f"  Failed to predict {model_id} on run {run_id}: {exc}"
+                )
+                continue
+
+    return mega_df
 
 
 def _aggregate_percentiles(
@@ -153,11 +278,32 @@ def _plot_drift_over_time(
     run_log_meta: pd.DataFrame,
     output_path: Path,
     show: bool,
+    model_id: str | None = None,
 ) -> None:
+    """Plot prediction accuracy drift over time.
+
+    Parameters:
+        mega_df: DataFrame with prediction accuracy data
+        run_ids: List of run IDs for x-axis ordering
+        run_log_meta: Run metadata (workload, version)
+        output_path: Path to save plot
+        show: Whether to display plot interactively
+        model_id: Optional model ID for counterfactual predictions.
+                  If None, uses historical predictions (factor_error, q_error).
+                  If provided, uses iconq_{model_id}_factor_error, etc.
+    """
+    # Derive column names based on model_id
+    if model_id is None:
+        factor_col = "factor_error"
+        q_error_col = "q_error"
+    else:
+        factor_col = f"iconq_{model_id}_factor_error"
+        q_error_col = f"iconq_{model_id}_q_error"
+
     if mega_df.empty:
         raise ValueError("No prediction accuracy rows available to plot.")
 
-    required_cols = {"run_id", "rpu", "factor_error", "q_error"}
+    required_cols = {"run_id", "rpu", factor_col, q_error_col}
     missing_cols = required_cols - set(mega_df.columns)
     if missing_cols:
         raise ValueError(
@@ -169,7 +315,7 @@ def _plot_drift_over_time(
     mega_df["rpu"] = pd.to_numeric(mega_df["rpu"], errors="coerce").astype(
         "Int64"
     )
-    mega_df = mega_df.dropna(subset=["rpu", "factor_error", "q_error"])
+    mega_df = mega_df.dropna(subset=["rpu", factor_col, q_error_col])
     mega_df["rpu"] = mega_df["rpu"].astype(int)
 
     if mega_df.empty:
@@ -197,7 +343,7 @@ def _plot_drift_over_time(
 
     positions = list(range(len(run_ids)))
     percentile_specs = [(0.50, "P50"), (0.90, "P90"), (0.95, "P95")]
-    metrics = [("factor_error", "Factor Error"), ("q_error", "Q-Error")]
+    metrics = [(factor_col, "Factor Error"), (q_error_col, "Q-Error")]
     palette = dict(Palette.rpu_to_color())
 
     def _workload_prefix(wl: str) -> str:
@@ -360,6 +506,190 @@ def _plot_drift_over_time(
         plt.close(fig)
 
 
+def _plot_counterfactual_vs_log_scatter(
+    mega_df: pd.DataFrame,
+    model_id: str,
+    output_path: Path,
+    show: bool,
+) -> None:
+    """Plot counterfactual predictions vs log-derived predictions.
+
+    X-axis: log-derived predicted latency (from structured log)
+    Y-axis: counterfactual IconQ predicted latency
+    Color: query RPU using Palette.rpu_to_color()
+    """
+    pred_col = f"iconq_{model_id}_predicted_latency"
+    required_cols = {"predicted_latency", pred_col, "rpu"}
+    missing_cols = required_cols - set(mega_df.columns)
+    if missing_cols:
+        raise ValueError(
+            f"mega dataframe missing columns for scatter: {sorted(missing_cols)}"
+        )
+
+    df = mega_df.copy()
+    df["predicted_latency"] = pd.to_numeric(
+        df["predicted_latency"], errors="coerce"
+    )
+    df[pred_col] = pd.to_numeric(df[pred_col], errors="coerce")
+    df["rpu"] = pd.to_numeric(df["rpu"], errors="coerce")
+    df = df.dropna(subset=["predicted_latency", pred_col, "rpu"])
+    df = df[(df["predicted_latency"] > 0) & (df[pred_col] > 0)]
+
+    if df.empty:
+        raise ValueError(
+            f"No valid rows for scatterplot of model {model_id}."
+        )
+
+    df["rpu"] = df["rpu"].astype(int)
+    palette = dict(Palette.rpu_to_color())
+
+    sns.set_theme(context="paper", style="whitegrid", font_scale=1.0)
+    fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
+
+    for rpu in sorted(df["rpu"].unique().tolist()):
+        sub = df[df["rpu"] == rpu]
+        ax.scatter(
+            sub["predicted_latency"],
+            sub[pred_col],
+            s=10,
+            alpha=0.6,
+            color=palette.get(int(rpu), "black"),
+            label=str(rpu),
+        )
+
+    # Reference y=x line.
+    min_v = min(df["predicted_latency"].min(), df[pred_col].min())
+    max_v = max(df["predicted_latency"].max(), df[pred_col].max())
+    ax.plot(
+        [min_v, max_v],
+        [min_v, max_v],
+        linestyle="--",
+        linewidth=1.1,
+        color="0.35",
+        label="y=x",
+    )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Log-derived predicted latency (s)")
+    ax.set_ylabel(f"Counterfactual predicted latency (s) - model {model_id}")
+    ax.set_title("Counterfactual vs Log-Derived Predictions")
+    ax.grid(True, which="major", axis="both", linestyle=":", alpha=0.4)
+    ax.grid(True, which="minor", axis="both", linestyle=":", alpha=0.2)
+    ax.legend(title="RPU", fontsize=7, loc="best")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    print(f"Saved scatterplot to: {output_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def _plot_predicted_vs_actual_scatter(
+    mega_df: pd.DataFrame,
+    model_id: str | None,
+    output_path: Path,
+    show: bool,
+) -> None:
+    """Plot predicted vs actual latencies for one prediction source.
+
+    When model_id is None, uses log-derived predictions.
+    Otherwise uses the specified counterfactual IconQ model predictions.
+    """
+    if model_id is None:
+        pred_col = "predicted_latency"
+        source_label = "log"
+    else:
+        pred_col = f"iconq_{model_id}_predicted_latency"
+        source_label = f"iconq_{model_id}"
+
+    required_cols = {"actual_latency", pred_col, "rpu"}
+    missing_cols = required_cols - set(mega_df.columns)
+    if missing_cols:
+        raise ValueError(
+            "mega dataframe missing columns for predicted-vs-actual scatter: "
+            f"{sorted(missing_cols)}"
+        )
+
+    df = mega_df.copy()
+    df["actual_latency"] = pd.to_numeric(df["actual_latency"], errors="coerce")
+    df[pred_col] = pd.to_numeric(df[pred_col], errors="coerce")
+    df["rpu"] = pd.to_numeric(df["rpu"], errors="coerce")
+    df = df.dropna(subset=["actual_latency", pred_col, "rpu"])
+    df = df[(df["actual_latency"] > 0) & (df[pred_col] > 0)]
+
+    if df.empty:
+        raise ValueError(
+            f"No valid rows for predicted-vs-actual scatter of {source_label}."
+        )
+
+    df["rpu"] = df["rpu"].astype(int)
+    palette = dict(Palette.rpu_to_color())
+
+    sns.set_theme(context="paper", style="whitegrid", font_scale=1.0)
+    fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
+
+    for rpu in sorted(df["rpu"].unique().tolist()):
+        sub = df[df["rpu"] == rpu]
+        ax.scatter(
+            sub["actual_latency"],
+            sub[pred_col],
+            s=10,
+            alpha=0.6,
+            color=palette.get(int(rpu), "black"),
+            label=str(rpu),
+        )
+
+    min_v = min(df["actual_latency"].min(), df[pred_col].min())
+    max_v = max(df["actual_latency"].max(), df[pred_col].max())
+    ax.plot(
+        [min_v, max_v],
+        [min_v, max_v],
+        linestyle="--",
+        linewidth=1.1,
+        color="0.35",
+        label="y=x",
+    )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Actual latency (s)")
+    ax.set_ylabel("Predicted latency (s)")
+    ax.set_title(f"Predicted vs Actual Latency ({source_label})")
+    ax.grid(True, which="major", axis="both", linestyle=":", alpha=0.4)
+    ax.grid(True, which="minor", axis="both", linestyle=":", alpha=0.2)
+    ax.legend(title="RPU", fontsize=7, loc="best")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    print(f"Saved predicted-vs-actual scatterplot to: {output_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def _get_available_model_ids(mega_df: pd.DataFrame) -> list[str | None]:
+    """
+    Get list of model IDs with valid predictions in mega_df.
+    Always includes None (for historical predictions) plus any counterfactual model IDs.
+
+    Returns:
+        List starting with None, followed by sorted counterfactual model IDs.
+    """
+    model_ids = set()
+    for col in mega_df.columns:
+        if col.startswith("iconq_") and col.endswith("_factor_error"):
+            # Extract model_id from "iconq_{model_id}_factor_error"
+            model_id = col[6:-13]  # Remove "iconq_" prefix and "_factor_error" suffix
+            model_ids.add(model_id)
+    return [None] + sorted(model_ids)
+
+
 def main() -> None:
     args = _parse_args()
 
@@ -370,7 +700,9 @@ def main() -> None:
     run_ids = _load_run_ids_from_run_log()
     run_log_meta = _load_run_log_metadata()
     cached_df = _load_cache(cache_path, refresh_cache=args.refresh_cache)
-    mega_df = _collect_missing_run_metrics(run_ids, cached_df)
+    mega_df = _collect_missing_run_metrics(
+        run_ids, cached_df, iconq_model_ids=args.iconq_model_ids or None
+    )
 
     if mega_df.empty:
         raise ValueError("No prediction accuracy data was collected from runs.")
@@ -381,13 +713,55 @@ def main() -> None:
     mega_df.to_parquet(cache_path, index=False)
     print(f"Saved mega dataframe to: {cache_path} ({len(mega_df):,} rows)")
 
-    _plot_drift_over_time(
-        mega_df,
-        run_ids=run_ids,
-        run_log_meta=run_log_meta,
-        output_path=plot_path,
-        show=args.show,
-    )
+    # Generate plots for all available models (None=historical + any counterfactual models)
+    model_ids = _get_available_model_ids(mega_df)
+    for model_id in model_ids:
+        if model_id is None:
+            output_path = script_dir / "prediction_error_drift_over_time.png"
+        else:
+            output_path = (
+                script_dir / f"prediction_error_drift_over_time_iconq_{model_id}.png"
+            )
+
+        try:
+            _plot_drift_over_time(
+                mega_df,
+                run_ids=run_ids,
+                run_log_meta=run_log_meta,
+                output_path=output_path,
+                show=args.show,
+                model_id=model_id,
+            )
+
+            if model_id is None:
+                scatter_actual_output_path = (
+                    script_dir / "prediction_scatter_log_vs_actual.png"
+                )
+            else:
+                scatter_actual_output_path = (
+                    script_dir
+                    / f"prediction_scatter_iconq_{model_id}_vs_actual.png"
+                )
+            _plot_predicted_vs_actual_scatter(
+                mega_df=mega_df,
+                model_id=model_id,
+                output_path=scatter_actual_output_path,
+                show=args.show,
+            )
+
+            if model_id is not None:
+                scatter_output_path = (
+                    script_dir
+                    / f"prediction_scatter_iconq_{model_id}_vs_log.png"
+                )
+                _plot_counterfactual_vs_log_scatter(
+                    mega_df=mega_df,
+                    model_id=model_id,
+                    output_path=scatter_output_path,
+                    show=args.show,
+                )
+        except Exception as exc:
+            print(f"Failed to generate plot for model {model_id}: {exc}")
 
 
 if __name__ == "__main__":
