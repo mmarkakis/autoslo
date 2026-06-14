@@ -25,6 +25,7 @@ from autoslo.filesystem.path_utils import (
 from autoslo.filesystem.yaml_helpers import load_yaml_with_params
 from autoslo.workload_definition.poisson_workload_creator import (
     PoissonWorkloadCreator,
+    PoissonArrivalPhase,
 )
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_runner import WorkloadRunner
@@ -61,9 +62,8 @@ def _fmt(seconds: float) -> str:
 
 def create_training_workloads() -> list[Workload]:
     """Create (or overwrite) all training workloads and return them."""
-    cross_product_table = Table(
-        title=f"Cross-product ({len(_COMBOS)} workloads)"
-    )
+    cross_product_table = Table(title=f"Training workloads")
+    cross_product_table.add_column("subset", justify="left")
     cross_product_table.add_column("num_templates", justify="right")
     cross_product_table.add_column(
         "num_query_texts_per_template", justify="right"
@@ -72,11 +72,7 @@ def create_training_workloads() -> list[Workload]:
         "num_queries_per_query_text", justify="right"
     )
     cross_product_table.add_column("poisson_lambda", justify="right")
-    for num_templates, num_qtpt, num_qpqt, lam in _COMBOS:
-        cross_product_table.add_row(
-            str(num_templates), str(num_qtpt), str(num_qpqt), str(lam)
-        )
-    print(cross_product_table)
+    cross_product_table.add_column("workload_name", justify="left")
 
     workloads = []
     for num_templates, num_qtpt, num_qpqt, lam in track(
@@ -91,6 +87,15 @@ def create_training_workloads() -> list[Workload]:
             print_summary=False,
         )
         workloads.append(workload)
+        cross_product_table.add_row(
+            "cross_product",
+            str(num_templates),
+            str(num_qtpt),
+            str(num_qpqt),
+            str(lam),
+            workload.workload_name,
+        )
+    print(cross_product_table)
 
     max_rel_times = [w.df["rel_start_time_s"].max() for w in workloads]
     summary_table = Table(title="Model Training Workloads Summary")
@@ -165,7 +170,12 @@ def print_run_status_table() -> None:
                 num_templates=t,
                 num_query_texts_per_template=q,
                 num_queries_per_query_text=n,
-                poisson_lambda=lam,
+                phases=[
+                    PoissonArrivalPhase(
+                        num_queries=t * q * n,
+                        poisson_lambda=lam,
+                    )
+                ],
                 seed=SEED,
             )
         ).id(): (t, q, n, lam)
@@ -193,7 +203,14 @@ def print_run_status_table() -> None:
     sorted_rpus = sorted({rpu for _, rpu in best})
 
     table = Table(title="Model Training Run Status")
-    for col in ("num_templates", "num_qtpt", "num_qpqt", "poisson_lambda"):
+    table.add_column("subset", justify="left")
+    for col in (
+        "num_templates",
+        "num_qtpt",
+        "num_qpqt",
+        "poisson_lambda",
+        "workload_id",
+    ):
         table.add_column(col, justify="right")
     for rpu in sorted_rpus:
         table.add_column(f"RPU={rpu}", justify="left")
@@ -207,7 +224,9 @@ def print_run_status_table() -> None:
             )
             for rpu in sorted_rpus
         ]
-        table.add_row(str(t), str(q), str(n), str(lam), *cells)
+        table.add_row(
+            "cross_product", str(t), str(q), str(n), str(lam), wid, *cells
+        )
 
     print(table)
 
@@ -266,7 +285,12 @@ if __name__ == "__main__":
                     num_templates=num_templates,
                     num_query_texts_per_template=num_qtpt,
                     num_queries_per_query_text=num_qpqt,
-                    poisson_lambda=lam,
+                    phases=[
+                        PoissonArrivalPhase(
+                            num_queries=num_templates * num_qtpt * num_qpqt,
+                            poisson_lambda=lam,
+                        )
+                    ],
                     seed=SEED,
                 )
             )
