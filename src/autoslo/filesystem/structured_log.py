@@ -541,6 +541,7 @@ class StructuredLog:
                     "completion_time": None,
                     "predicted_latency": None,
                     "rpu": None,
+                    "is_censored_target": False,
                 }
 
             if event_type == "arrival":
@@ -549,6 +550,22 @@ class StructuredLog:
                 query_data[query_id]["completion_time"] = float(
                     row["rel_time_s"]
                 )
+                details = row.get("details")
+                parsed_details: dict[str, Any] | None = None
+                if isinstance(details, dict):
+                    parsed_details = details
+                elif isinstance(details, str) and details:
+                    try:
+                        parsed = json.loads(details)
+                        if isinstance(parsed, dict):
+                            parsed_details = parsed
+                    except (TypeError, json.JSONDecodeError):
+                        parsed_details = None
+
+                if parsed_details is not None and "success" in parsed_details:
+                    query_data[query_id]["is_censored_target"] = not bool(
+                        parsed_details["success"]
+                    )
             elif event_type in {"query_routed", "latency_update"}:
                 pred = self._safe_details_latency(row.get("details"))
                 if pred is not None:
@@ -586,5 +603,11 @@ class StructuredLog:
             lambda row: max(row["factor_error"], 1.0 / row["factor_error"]),
             axis=1,
         )
+        results_df["is_censored_target"] = results_df[
+            "is_censored_target"
+        ].astype(bool)
+        results_df["underprediction_error_s"] = (
+            results_df["actual_latency"] - results_df["predicted_latency"]
+        ).clip(lower=0.0)
         results_df["rpu"] = results_df["rpu"].astype(int)
         return results_df

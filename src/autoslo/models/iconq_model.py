@@ -69,7 +69,7 @@ class DataSplit(Enum):
 
 
 def print_errors_table(
-    title: str,
+    title: Optional[str],
     sets: list[tuple[str, dict[str, float]]],
 ) -> None:
     """Print a Rich Table of per-set error metrics.
@@ -116,7 +116,8 @@ def print_errors_table(
         if not is_last_set:
             table.add_row(*_EMPTY_ROW, end_section=True)
 
-    _console.print(Rule(title))
+    if title is not None:
+        _console.print(Rule(title))
     _console.print(table)
 
 
@@ -958,7 +959,7 @@ class IconqModel:
             )
 
             print_errors_table(
-                title=f"Epoch {epoch} — errors",
+                title=None,
                 sets=[("train", train_errors), ("val", val_errors)],
             )
             logger.info(

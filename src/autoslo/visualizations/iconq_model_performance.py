@@ -92,14 +92,14 @@ def _add_cluster_rpu(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy of *df* with a numeric ``cluster_rpu`` column."""
     out = df.copy()
 
-    if "cluster_rpu" in out.columns:
-        out["cluster_rpu"] = pd.to_numeric(
-            out["cluster_rpu"], errors="coerce"
+    if "rpu" in out.columns:
+        out["rpu"] = pd.to_numeric(
+            out["rpu"], errors="coerce"
         ).astype("Int64")
         return out
 
     if "cluster_name" in out.columns:
-        out["cluster_rpu"] = (
+        out["rpu"] = (
             out["cluster_name"]
             .astype(str)
             .apply(lambda name: Cluster.rpu_for_cluster_name(name))
@@ -111,7 +111,7 @@ def _add_cluster_rpu(df: pd.DataFrame) -> pd.DataFrame:
         # Fallback for cluster-aware ids serialized as "<cluster>#<query_id>".
         parsed = out["query_id"].astype(str).str.split("#", n=1).str[0]
         if parsed.str.startswith("autoslo-").all():
-            out["cluster_rpu"] = parsed.apply(
+            out["rpu"] = parsed.apply(
                 lambda name: Cluster.rpu_for_cluster_name(name)
             ).astype("Int64")
             return out
@@ -121,6 +121,19 @@ def _add_cluster_rpu(df: pd.DataFrame) -> pd.DataFrame:
         "Re-run model evaluation so final_{train,val,test}.csv include "
         "cluster_name/cluster_rpu columns."
     )
+
+
+def _add_observation_type(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with ``observation_type`` in {normal, aborted}."""
+    out = df.copy()
+    if "target_is_lower_bound" in out.columns:
+        is_aborted = out["target_is_lower_bound"].fillna(False).astype(bool)
+    elif "is_censored_target" in out.columns:
+        is_aborted = out["is_censored_target"].fillna(False).astype(bool)
+    else:
+        is_aborted = pd.Series(False, index=out.index)
+    out["observation_type"] = np.where(is_aborted, "aborted", "normal")
+    return out
 
 
 def plot_all(iconq_model_id: str) -> None:
@@ -143,6 +156,7 @@ def plot_all(iconq_model_id: str) -> None:
         plot_error_by_cluster_rpu,
         plot_error_cdf_by_cluster_rpu,
         plot_signed_error_heatmap_rpu_x_concurrency,
+        plot_censor_aware_performance_dashboard,
     ]
 
     for fn in fns:
@@ -169,7 +183,15 @@ def plot_qerror_cdf(
 
     for ax, split in zip(axes, DataSplit):
         df = split_dfs[split]
-        q_errs = np.sort(df["q_error"].values)
+        q_errs = np.sort(
+            pd.to_numeric(df["q_error"], errors="coerce")
+            .dropna()
+            .to_numpy(dtype=float)
+        )
+        if len(q_errs) == 0:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{split.value.capitalize()}  (N=0)")
+            continue
         cdf = np.arange(1, len(q_errs) + 1) / len(q_errs)
         ax.plot(q_errs, cdf, color=_SPLIT_COLORS[split.value], lw=2)
 
@@ -208,67 +230,128 @@ def plot_predicted_vs_actual(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
 ) -> tuple[Figure, str]:
-    """
-    Log-log scatter of predicted vs. actual latency, one panel per split.
+    """Censor-aware predicted-vs-observed scatter, one panel per split/type.
 
-    Points are coloured by ``num_other_concurrent_queries``.  Reference lines
-    mark perfect prediction and the ±2× band.
+    Row 1 (normal): predicted vs actual with y=x and ±2x bands.
+    Row 2 (aborted): predicted vs lower-bound with violation region (pred<lb).
     """
     # Compute limits.
     nocq = "num_other_concurrent_queries"
-    vmax = max(1, max(split_dfs[s][nocq].max() for s in DataSplit))
-    norm = SymLogNorm(linthresh=1, vmin=0, vmax=vmax)
-    all_latencies = pd.concat(
-        [split_dfs[s][["y", "y_pred_mean"]] for s in DataSplit]
+    prepared = {
+        split: _add_observation_type(split_dfs[split]).copy() for split in DataSplit
+    }
+    vmax = max(
+        1,
+        max(
+            pd.to_numeric(prepared[s][nocq], errors="coerce").fillna(0).max()
+            for s in DataSplit
+        ),
     )
+    norm = SymLogNorm(linthresh=1, vmin=0, vmax=vmax)
+
+    all_latencies = pd.concat(
+        [prepared[s][["y", "y_pred_mean"]] for s in DataSplit],
+        ignore_index=True,
+    )
+    all_latencies = all_latencies.apply(pd.to_numeric, errors="coerce")
+    all_latencies = all_latencies[(all_latencies["y"] > 0) & (all_latencies["y_pred_mean"] > 0)]
     lim_min = max(float(all_latencies.min().min()) * 0.8, 1e-6)
     lim_max = float(all_latencies.max().max()) * 1.25
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5), constrained_layout=True)
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9), constrained_layout=True)
     scatter_handles = []
 
-    for ax, split in zip(axes, DataSplit):
-        df = split_dfs[split]
-        sc = ax.scatter(
-            df["y"],
-            df["y_pred_mean"],
-            c=df[nocq],
-            cmap="viridis",
-            norm=norm,
-            s=8,
-            alpha=0.5,
+    for col_idx, split in enumerate(DataSplit):
+        df = prepared[split]
+        df["y"] = pd.to_numeric(df["y"], errors="coerce")
+        df["y_pred_mean"] = pd.to_numeric(df["y_pred_mean"], errors="coerce")
+        df[nocq] = pd.to_numeric(df[nocq], errors="coerce")
+
+        for row_idx, obs in enumerate(["normal", "aborted"]):
+            ax = axes[row_idx, col_idx]
+            sub = df[
+                (df["observation_type"] == obs)
+                & df["y"].notna()
+                & df["y_pred_mean"].notna()
+                & (df["y"] > 0)
+                & (df["y_pred_mean"] > 0)
+            ]
+
+            if sub.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
+                continue
+
+            sc = ax.scatter(
+                sub["y"],
+                sub["y_pred_mean"],
+                c=sub[nocq],
+                cmap="viridis",
+                norm=norm,
+                s=8,
+                alpha=0.5,
+            )
+            scatter_handles.append(sc)
+
+            xs = np.array([lim_min, lim_max])
+            ax.plot(xs, xs, "k-", lw=1.2, label="y = x")
+            if obs == "normal":
+                _do = Palette.dark_orange
+                ax.plot(xs, xs * 2, "--", color=_do, lw=0.8, label="2× band")
+                ax.plot(xs, xs / 2, "--", color=_do, lw=0.8)
+            else:
+                ax.fill_between(
+                    xs,
+                    lim_min,
+                    xs,
+                    color=Palette.dark_red,
+                    alpha=0.08,
+                    label="Violation: pred < lower bound",
+                )
+                violation_rate = (sub["y_pred_mean"] < sub["y"]).mean() * 100
+                ax.text(
+                    0.98,
+                    0.03,
+                    f"underpred: {violation_rate:.1f}%",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="bottom",
+                    fontsize=8,
+                    bbox={
+                        "boxstyle": "round,pad=0.35",
+                        "facecolor": "white",
+                        "edgecolor": "0.8",
+                        "alpha": 0.9,
+                    },
+                )
+
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_xlim(lim_min, lim_max)
+            ax.set_ylim(lim_min, lim_max)
+            ax.set_xlabel(
+                "Actual latency (s)" if obs == "normal" else "Lower-bound latency (s)"
+            )
+            if col_idx == 0:
+                ax.set_ylabel("Predicted latency (s)")
+            ax.set_title(f"{split.value.capitalize()} / {obs} (N={len(sub):,})")
+            ax.grid(True, which="both", linestyle=":", alpha=0.3)
+            ax.legend(fontsize=7)
+
+    if scatter_handles:
+        cb = fig.colorbar(
+            scatter_handles[-1],
+            ax=list(axes.ravel()),
+            location="right",
+            fraction=0.015,
+            pad=0.04,
         )
-        scatter_handles.append(sc)
+        cb.set_label("# other concurrent queries")
 
-        # Reference lines.
-        xs = np.array([lim_min, lim_max])
-        ax.plot(xs, xs, "k-", lw=1.2, label="Perfect (y = x)")
-        _do = Palette.dark_orange
-        ax.plot(xs, xs * 2, "--", color=_do, lw=0.8, label="2× band")
-        ax.plot(xs, xs / 2, "--", color=_do, lw=0.8)
-
-        # Setup.
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_xlim(lim_min, lim_max)
-        ax.set_ylim(lim_min, lim_max)
-        ax.set_xlabel("Actual latency (s)")
-        if split == DataSplit.TRAIN:
-            ax.set_ylabel("Predicted latency (s)")
-        ax.set_title(f"{split.value.capitalize()}  (N={len(df):,})")
-        ax.grid(True, which="both", linestyle=":", alpha=0.3)
-        ax.legend(fontsize=7)
-
-    cb = fig.colorbar(
-        scatter_handles[-1],
-        ax=list(axes),
-        location="right",
-        fraction=0.015,
-        pad=0.04,
+    fig.suptitle(
+        f"{iconq_model_id} - Predicted vs Observed (Censor-aware)",
+        fontsize=12,
     )
-    cb.set_label("# other concurrent queries")
-
-    fig.suptitle(f"{iconq_model_id} - Predicted vs. Actual", fontsize=12)
     save_path = os.path.join(
         IconqModel.default_save_dir(iconq_model_id), "predicted_vs_actual.png"
     )
@@ -313,7 +396,7 @@ def plot_qerror_over_epochs(
     for epoch, csv_path in sorted(epoch_csv_files.items()):
         df_ep = pd.read_csv(
             csv_path,
-            usecols=lambda c: c.strip() in {"q_error", "individual_loss"},
+            usecols=lambda c: str(c).strip() in {"q_error", "individual_loss"},
         )
         q_errs = (
             pd.to_numeric(df_ep["q_error"], errors="coerce")
@@ -398,7 +481,7 @@ def plot_qerror_over_epochs(
         df = split_dfs[split]
         if df.empty:
             continue
-        q_errs = df["q_error"].dropna().values
+        q_errs = pd.to_numeric(df["q_error"], errors="coerce").dropna().to_numpy(dtype=float)
         vals = [
             float(np.percentile(q_errs, p)) if len(q_errs) else float("nan")
             for p in percentile_keys
@@ -471,7 +554,7 @@ def plot_qerror_vs_concurrency(
         non_empty_positions: list[int] = []
         for j, g in enumerate(groups):
             if len(g) > 0:
-                non_empty_data.append(g)
+                non_empty_data.append(np.asarray(g, dtype=float))
                 non_empty_positions.append(
                     j + 1
                 )  # boxplot uses 1-based positions
@@ -569,7 +652,7 @@ def plot_qerror_heatmap(
     n_bins = len(_CONC_LABELS)
     fig_height = min(max(6, n_templates * 0.28), 22)
 
-    cmap = plt.cm.Reds.copy()
+    cmap = plt.get_cmap("Reds").copy()
     cmap.set_bad("lightgray")
 
     fig, axes = plt.subplots(1, 3, figsize=(18, fig_height))
@@ -903,101 +986,71 @@ def plot_error_by_cluster_rpu(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
 ) -> tuple[Figure, str]:
-    """Error magnitude and direction grouped by cluster RPU, per split.
-
-    Top row: Q-Error boxplots by RPU (log scale, magnitude).
-    Bottom row: signed log10 prediction ratio boxplots by RPU
-        (positive = over-prediction, negative = under-prediction).
-    """
+    """Censor-aware error boxplots by RPU, one panel per split/metric family."""
     fig, axes = plt.subplots(
-        2, 3, figsize=(18, 10), sharex="col", constrained_layout=True
+        4, 3, figsize=(18, 16), sharex="col", constrained_layout=True
     )
 
+    metric_specs = [
+        ("normal", "q_error", "Q-Error", True),
+        ("normal", "abs_error", "Abs Error (s)", True),
+        ("aborted", "factor_error", "Factor Error", True),
+        ("aborted", "underprediction_error_s", "Underprediction Error (s)", True),
+    ]
+
     for col_idx, split in enumerate(DataSplit):
-        mag_ax = axes[0, col_idx]
-        dir_ax = axes[1, col_idx]
+        df = _add_observation_type(_add_cluster_rpu(split_dfs[split]))
+        df["rpu"] = pd.to_numeric(df["rpu"], errors="coerce").astype("Int64")
 
-        df = _add_cluster_rpu(split_dfs[split])
-        df = df.dropna(subset=["cluster_rpu", "y", "y_pred_mean", "q_error"])
+        for row_idx, (obs, metric, ylabel, log_y) in enumerate(metric_specs):
+            ax = axes[row_idx, col_idx]
+            sub = df[df["observation_type"] == obs].copy()
+            if metric not in sub.columns:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
+                continue
+            sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
+            sub = sub.dropna(subset=["rpu", metric])
+            if log_y:
+                sub = sub[sub[metric] > 0]
 
-        if df.empty:
-            for ax in (mag_ax, dir_ax):
-                ax.text(
-                    0.5,
-                    0.5,
-                    "No data",
-                    ha="center",
-                    va="center",
-                    transform=ax.transAxes,
-                )
-                ax.set_xticks([])
-            continue
+            if sub.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
+                continue
 
-        df["cluster_rpu"] = df["cluster_rpu"].astype(int)
-        df["signed_log_ratio"] = np.log10(
-            np.maximum(df["y_pred_mean"].astype(float), 1e-9)
-            / np.maximum(df["y"].astype(float), 1e-9)
-        )
+            sub["rpu"] = sub["rpu"].astype(int)
+            rpus = sorted(sub["rpu"].unique().tolist())
+            x_positions = np.arange(1, len(rpus) + 1)
+            data = [sub.loc[sub["rpu"] == r, metric].to_numpy(dtype=float) for r in rpus]
 
-        rpus = sorted(df["cluster_rpu"].unique().tolist())
-        x_positions = np.arange(1, len(rpus) + 1)
-
-        mag_data = [
-            df.loc[df["cluster_rpu"] == r, "q_error"].to_numpy(dtype=float)
-            for r in rpus
-        ]
-        dir_data = [
-            df.loc[df["cluster_rpu"] == r, "signed_log_ratio"].to_numpy(
-                dtype=float
+            bp = ax.boxplot(
+                data,
+                positions=x_positions,
+                widths=0.6,
+                patch_artist=True,
+                medianprops=dict(color="black", lw=1.3),
+                whiskerprops=dict(lw=0.8),
+                capprops=dict(lw=0.8),
+                flierprops=dict(marker=".", markersize=2, alpha=0.25),
             )
-            for r in rpus
-        ]
+            for patch in bp["boxes"]:
+                patch.set_facecolor(_SPLIT_COLORS[split.value])
+                patch.set_alpha(0.75)
 
-        # Magnitude boxplots (Q-Error).
-        mag_bp = mag_ax.boxplot(
-            mag_data,
-            positions=x_positions,
-            widths=0.6,
-            patch_artist=True,
-            medianprops=dict(color="black", lw=1.3),
-            whiskerprops=dict(lw=0.8),
-            capprops=dict(lw=0.8),
-            flierprops=dict(marker=".", markersize=2, alpha=0.25),
-        )
-        for patch in mag_bp["boxes"]:
-            patch.set_facecolor(_SPLIT_COLORS[split.value])
-            patch.set_alpha(0.75)
-        mag_ax.set_yscale("log")
-        mag_ax.set_ylabel("Q-Error" if split == DataSplit.TRAIN else "")
-        mag_ax.set_title(f"{split.value.capitalize()}  (N={len(df):,})")
-        mag_ax.grid(True, axis="y", linestyle=":", alpha=0.4)
-
-        # Direction boxplots (signed log ratio).
-        dir_bp = dir_ax.boxplot(
-            dir_data,
-            positions=x_positions,
-            widths=0.6,
-            patch_artist=True,
-            medianprops=dict(color="black", lw=1.3),
-            whiskerprops=dict(lw=0.8),
-            capprops=dict(lw=0.8),
-            flierprops=dict(marker=".", markersize=2, alpha=0.25),
-        )
-        for patch in dir_bp["boxes"]:
-            patch.set_facecolor(_SPLIT_COLORS[split.value])
-            patch.set_alpha(0.75)
-
-        dir_ax.axhline(0.0, color=Palette.dark_red, linestyle="--", lw=1.0)
-        dir_ax.set_ylabel(
-            "log10(pred/actual)" if split == DataSplit.TRAIN else ""
-        )
-        dir_ax.set_xlabel("Cluster RPU")
-        dir_ax.set_xticks(x_positions)
-        dir_ax.set_xticklabels([str(r) for r in rpus])
-        dir_ax.grid(True, axis="y", linestyle=":", alpha=0.4)
+            if log_y:
+                ax.set_yscale("log")
+            if col_idx == 0:
+                ax.set_ylabel(ylabel)
+            ax.set_title(f"{split.value.capitalize()} / {obs} (N={len(sub):,})")
+            ax.grid(True, axis="y", linestyle=":", alpha=0.4)
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels([str(r) for r in rpus])
+            if row_idx == len(metric_specs) - 1:
+                ax.set_xlabel("Cluster RPU")
 
     fig.suptitle(
-        f"{iconq_model_id} - Error Magnitude/Direction by Cluster RPU",
+        f"{iconq_model_id} - Censor-aware Error by Cluster RPU",
         fontsize=12,
     )
     save_path = os.path.join(
@@ -1014,90 +1067,231 @@ def plot_error_cdf_by_cluster_rpu(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
 ) -> tuple[Figure, str]:
-    """CDF views of error magnitude and direction grouped by cluster RPU.
-
-    Top row: Q-Error CDF by RPU (log x-axis).
-    Bottom row: signed log10(pred/actual) CDF by RPU.
-    """
+    """Censor-aware CDF views grouped by cluster RPU."""
     fig, axes = plt.subplots(
-        2, 3, figsize=(18, 10), sharey="row", constrained_layout=True
+        3, 3, figsize=(18, 13), sharey="row", constrained_layout=True
     )
     palette = dict(Palette.rpu_to_color())
 
+    metric_specs = [
+        ("normal", "factor_error", "Factor error (predicted / actual)", True),
+        ("normal", "q_error", "Q-Error", True),
+        ("aborted", "factor_error", "Factor error (predicted / lower-bound)", True),
+    ]
+
     for col_idx, split in enumerate(DataSplit):
-        mag_ax = axes[1, col_idx]
-        dir_ax = axes[0, col_idx]
+        df = _add_observation_type(_add_cluster_rpu(split_dfs[split]))
+        df["rpu"] = pd.to_numeric(df["rpu"], errors="coerce").astype("Int64")
 
-        df = _add_cluster_rpu(split_dfs[split])
-        df = df.dropna(subset=["cluster_rpu", "y", "y_pred_mean", "q_error"])
+        for row_idx, (obs, metric, xlabel, log_x) in enumerate(metric_specs):
+            ax = axes[row_idx, col_idx]
+            sub = df[df["observation_type"] == obs].copy()
+            if metric not in sub.columns:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
+                continue
+            sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
+            sub = sub.dropna(subset=["rpu", metric])
+            if log_x:
+                sub = sub[sub[metric] > 0]
 
-        if df.empty:
-            for ax in (mag_ax, dir_ax):
-                ax.text(
-                    0.5,
-                    0.5,
-                    "No data",
-                    ha="center",
-                    va="center",
-                    transform=ax.transAxes,
-                )
-            continue
+            if sub.empty:
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
+                continue
 
-        df["cluster_rpu"] = df["cluster_rpu"].astype(int)
-        df["factor_error"] = np.maximum(
-            df["y_pred_mean"].astype(float), 1e-9
-        ) / np.maximum(df["y"].astype(float), 1e-9)
+            sub["rpu"] = sub["rpu"].astype(int)
 
-        plot_grouped_cdf(
-            mag_ax,
-            df,
-            value_col="q_error",
-            group_col="cluster_rpu",
-            palette=palette,
-            xlabel="Q-Error",
-            ylabel="Fraction <= x" if split == DataSplit.TRAIN else "",
-            log_x=True,
-            legend_fontsize=7,
-        )
+            plot_grouped_cdf(
+                ax,
+                sub,
+                value_col=metric,
+                group_col="rpu",
+                palette=palette,
+                title=f"{split.value.capitalize()} / {obs}  (N={len(sub):,})",
+                xlabel=xlabel,
+                ylabel="Fraction <= x" if col_idx == 0 else "",
+                log_x=log_x,
+                legend_fontsize=7,
+            )
 
-        plot_grouped_cdf(
-            dir_ax,
-            df,
-            value_col="factor_error",
-            group_col="cluster_rpu",
-            palette=palette,
-            title=f"{split.value.capitalize()}  (N={len(df):,})",
-            xlabel="Factor error (predicted / actual)",
-            ylabel="Fraction <= x" if split == DataSplit.TRAIN else "",
-            log_x=True,
-            legend_fontsize=7,
-        )
-
-        q_summary_lines = build_percentile_summary_lines(
-            df,
-            group_col="cluster_rpu",
-            value_col="q_error",
-            quantiles=(0.50, 0.90, 0.95),
-            group_header="RPU",
-        )
-        add_monospace_summary_box(mag_ax, q_summary_lines, fontsize=7)
-
-        direction_summary_lines = build_direction_summary_lines(
-            df,
-            group_col="cluster_rpu",
-            actual_col="y",
-            predicted_col="y_pred_mean",
-            group_header="RPU",
-        )
-        add_monospace_summary_box(dir_ax, direction_summary_lines, fontsize=7)
+            summary_lines = build_percentile_summary_lines(
+                sub,
+                group_col="rpu",
+                value_col=metric,
+                quantiles=(0.50, 0.90, 0.95),
+                group_header="RPU",
+            )
+            add_monospace_summary_box(ax, summary_lines, fontsize=7)
 
     fig.suptitle(
-        f"{iconq_model_id} - Error CDF by Cluster RPU",
+        f"{iconq_model_id} - Censor-aware Error CDF by Cluster RPU",
         fontsize=12,
     )
     save_path = os.path.join(
         IconqModel.default_save_dir(iconq_model_id),
         "error_cdf_by_cluster_rpu.png",
+    )
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig, save_path
+
+
+def plot_censor_aware_performance_dashboard(
+    split_dfs: dict[DataSplit, pd.DataFrame],
+    iconq_model_id: str,
+) -> tuple[Figure, str]:
+    """Censor-aware dashboard with type-specific metrics.
+
+    Row 1: normal queries (q_error CDF, abs_error CDF, pred-vs-actual scatter)
+    Row 2: aborted queries (factor_error CDF, underprediction_error_s CDF,
+           underprediction rate by RPU)
+    """
+    combined = pd.concat(
+        [split_dfs[s].assign(split=s.value) for s in DataSplit],
+        ignore_index=True,
+    )
+    combined = _add_observation_type(_add_cluster_rpu(combined))
+    combined["rpu"] = pd.to_numeric(combined["rpu"], errors="coerce").astype("Int64")
+    palette = dict(Palette.rpu_to_color())
+
+    normal = combined[combined["observation_type"] == "normal"].copy()
+    aborted = combined[combined["observation_type"] == "aborted"].copy()
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10), constrained_layout=True)
+
+    # Normal: q_error CDF
+    if not normal.empty:
+        plot_grouped_cdf(
+            axes[0, 0],
+            normal,
+            value_col="q_error",
+            group_col="rpu",
+            palette=palette,
+            title=f"Normal: Q-Error CDF (N={len(normal):,})",
+            xlabel="Q-Error",
+            ylabel="Fraction <= x",
+            log_x=True,
+            legend_fontsize=7,
+        )
+    else:
+        axes[0, 0].text(0.5, 0.5, "No normal rows", ha="center", va="center", transform=axes[0, 0].transAxes)
+
+    # Normal: abs_error CDF
+    if not normal.empty:
+        plot_grouped_cdf(
+            axes[0, 1],
+            normal,
+            value_col="abs_error",
+            group_col="rpu",
+            palette=palette,
+            title=f"Normal: Abs Error CDF (N={len(normal):,})",
+            xlabel="Absolute error (s)",
+            ylabel="Fraction <= x",
+            log_x=True,
+            legend_fontsize=7,
+        )
+    else:
+        axes[0, 1].text(0.5, 0.5, "No normal rows", ha="center", va="center", transform=axes[0, 1].transAxes)
+
+    # Normal: scatter predicted vs actual
+    if not normal.empty:
+        sub = normal.copy()
+        sub["y"] = pd.to_numeric(sub["y"], errors="coerce")
+        sub["y_pred_mean"] = pd.to_numeric(sub["y_pred_mean"], errors="coerce")
+        sub = sub.dropna(subset=["y", "y_pred_mean", "rpu"])
+        sub = sub[(sub["y"] > 0) & (sub["y_pred_mean"] > 0)]
+        sub["rpu"] = sub["rpu"].astype(int)
+        for r in sorted(sub["rpu"].unique().tolist()):
+            rsub = sub[sub["rpu"] == r]
+            axes[0, 2].scatter(
+                rsub["y"],
+                rsub["y_pred_mean"],
+                s=8,
+                alpha=0.5,
+                color=palette.get(int(r), "black"),
+                label=str(r),
+            )
+        lim_min = max(float(min(sub["y"].min(), sub["y_pred_mean"].min())) * 0.8, 1e-6)
+        lim_max = float(max(sub["y"].max(), sub["y_pred_mean"].max())) * 1.25
+        xs = np.array([lim_min, lim_max])
+        axes[0, 2].plot(xs, xs, "k-", lw=1.2)
+        axes[0, 2].set_xscale("log")
+        axes[0, 2].set_yscale("log")
+        axes[0, 2].set_xlabel("Actual latency (s)")
+        axes[0, 2].set_ylabel("Predicted latency (s)")
+        axes[0, 2].set_title(f"Normal: Predicted vs Actual (N={len(sub):,})")
+        axes[0, 2].grid(True, which="both", linestyle=":", alpha=0.3)
+        axes[0, 2].legend(title="RPU", fontsize=7)
+    else:
+        axes[0, 2].text(0.5, 0.5, "No normal rows", ha="center", va="center", transform=axes[0, 2].transAxes)
+
+    # Aborted: factor_error CDF
+    if not aborted.empty:
+        plot_grouped_cdf(
+            axes[1, 0],
+            aborted,
+            value_col="factor_error",
+            group_col="rpu",
+            palette=palette,
+            title=f"Aborted: Factor Error CDF (N={len(aborted):,})",
+            xlabel="Factor error (pred / lower-bound)",
+            ylabel="Fraction <= x",
+            log_x=True,
+            legend_fontsize=7,
+        )
+    else:
+        axes[1, 0].text(0.5, 0.5, "No aborted rows", ha="center", va="center", transform=axes[1, 0].transAxes)
+
+    # Aborted: underprediction_error_s CDF
+    if not aborted.empty:
+        plot_grouped_cdf(
+            axes[1, 1],
+            aborted,
+            value_col="underprediction_error_s",
+            group_col="rpu",
+            palette=palette,
+            title=f"Aborted: Underprediction Error CDF (N={len(aborted):,})",
+            xlabel="Underprediction error (s)",
+            ylabel="Fraction <= x",
+            log_x=True,
+            legend_fontsize=7,
+        )
+    else:
+        axes[1, 1].text(0.5, 0.5, "No aborted rows", ha="center", va="center", transform=axes[1, 1].transAxes)
+
+    # Aborted: underprediction rate by RPU
+    if not aborted.empty:
+        rate_df = aborted.dropna(subset=["rpu", "underprediction_error_s"]).copy()
+        rate_df["rpu"] = rate_df["rpu"].astype(int)
+        rate_df["is_underpredicted"] = rate_df["underprediction_error_s"] > 0
+        rates = (
+            rate_df.groupby("rpu", observed=True)["is_underpredicted"]
+            .mean()
+            .sort_index()
+        )
+        rate_vals_pct = np.asarray(rates.to_numpy(dtype=float)) * 100.0
+        xs = np.arange(len(rates))
+        colors = [palette.get(int(r), "black") for r in rates.index]
+        axes[1, 2].bar(xs, rate_vals_pct, color=colors, alpha=0.85)
+        axes[1, 2].set_xticks(xs)
+        axes[1, 2].set_xticklabels([str(int(r)) for r in rates.index])
+        axes[1, 2].set_xlabel("RPU")
+        axes[1, 2].set_ylabel("Underprediction rate (%)")
+        axes[1, 2].set_ylim(0, 100)
+        axes[1, 2].set_title("Aborted: Underprediction Fraction by RPU")
+        axes[1, 2].grid(True, axis="y", linestyle=":", alpha=0.3)
+        for i, v in enumerate(rate_vals_pct):
+            axes[1, 2].text(i, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
+    else:
+        axes[1, 2].text(0.5, 0.5, "No aborted rows", ha="center", va="center", transform=axes[1, 2].transAxes)
+
+    fig.suptitle(
+        f"{iconq_model_id} - Censor-aware Performance Dashboard",
+        fontsize=13,
+    )
+    save_path = os.path.join(
+        IconqModel.default_save_dir(iconq_model_id),
+        "censor_aware_performance_dashboard.png",
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -1121,15 +1315,15 @@ def plot_signed_error_heatmap_rpu_x_concurrency(
 
     for split in DataSplit:
         df = _add_cluster_rpu(_add_concurrency_bins(split_dfs[split]))
-        df = df.dropna(subset=["cluster_rpu", "conc_bin", "y", "y_pred_mean"])
+        df = df.dropna(subset=["rpu", "conc_bin", "y", "y_pred_mean"])
         if not df.empty:
             df = df.copy()
-            df["cluster_rpu"] = df["cluster_rpu"].astype(int)
+            df["rpu"] = df["rpu"].astype(int)
             df["signed_log_ratio"] = np.log10(
                 np.maximum(df["y_pred_mean"].astype(float), 1e-9)
                 / np.maximum(df["y"].astype(float), 1e-9)
             )
-            all_rpus.update(int(r) for r in df["cluster_rpu"].unique().tolist())
+            all_rpus.update(int(r) for r in df["rpu"].unique().tolist())
         enriched[split] = df
 
     sorted_rpus = sorted(all_rpus)
@@ -1154,7 +1348,7 @@ def plot_signed_error_heatmap_rpu_x_concurrency(
                 for i, rpu in enumerate(sorted_rpus):
                     for j, bin_label in enumerate(_CONC_LABELS):
                         vals = df.loc[
-                            (df["cluster_rpu"] == rpu)
+                            (df["rpu"] == rpu)
                             & (df["conc_bin"] == bin_label),
                             "signed_log_ratio",
                         ].to_numpy(dtype=float)
@@ -1222,7 +1416,7 @@ def plot_signed_error_heatmap_rpu_x_concurrency(
                     for j, bin_label in enumerate(_CONC_LABELS):
                         n = int(
                             (
-                                (df["cluster_rpu"] == rpu)
+                                (df["rpu"] == rpu)
                                 & (df["conc_bin"] == bin_label)
                             ).sum()
                         )
