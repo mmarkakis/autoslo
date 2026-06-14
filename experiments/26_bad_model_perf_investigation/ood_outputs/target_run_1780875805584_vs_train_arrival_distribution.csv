@@ -1,0 +1,29 @@
+metric,metric_explanation,target_value,train_runs_mean,train_runs_std,target_zscore,target_percentile_among_train_runs
+num_arrivals,Count of ARRIVAL events (submitted queries).,1392.0,206.25,58.91678453547851,20.12584375316621,100.0
+arrival_span_s,Seconds between first and last arrival.,14036.342175006866,3142.5474727898836,1503.295460879246,7.246609190082587,100.0
+interarrival_cv,Burstiness proxy: std(interarrival) / mean(interarrival).,3.7521493033633018,0.9576923792519023,0.024297161350935573,115.0116626279801,100.0
+completion_success_rate,Fraction of completion events with success=True.,1.0,0.9624894781144782,0.07997101968239276,0.4690514393150916,100.0
+spike_p95_in_5s,95th percentile arrivals across 5s buckets.,18.0,2.0,0.0,,100.0
+spike_peak_in_10s,Peak arrivals seen in any 10s bucket.,36.0,4.0,0.5,64.0,100.0
+spike_p95_in_10s,95th percentile arrivals across 10s buckets.,22.0,2.5,0.5,39.0,100.0
+spike_peak_in_30s,Peak arrivals seen in any 30s bucket.,65.0,6.75,1.479019945774904,39.38418827034887,100.0
+spike_peak_to_p95_ratio_in_30s,Peak-to-typical burst amplification at 30s window (peak / p95).,2.338129496402879,1.4979934837889388,0.2737985185405799,3.068446159212593,100.0
+spike_peak_in_1s,Peak arrivals seen in any 1s bucket.,17.0,2.0,0.0,,100.0
+spike_peak_in_5s,Peak arrivals seen in any 5s bucket.,34.0,3.25,0.82915619758885,37.08589538306492,100.0
+spike_p95_in_1s,95th percentile arrivals across 1s buckets.,9.0,1.125,0.33071891388307384,23.811761799581316,100.0
+spike_p95_in_30s,95th percentile arrivals across 30s buckets.,27.799999999999983,4.693749999999998,1.3618547784180204,16.96675032182289,100.0
+executing_concurrency_max,Maximum actively executing query count.,123.0,44.3125,54.03959052167217,1.4561083687050327,90.625
+submitted_concurrency_at_arrival_median,Median in-flight submitted concurrency sampled at arrival instants.,59.0,18.578125,25.99312089735234,1.555098949434632,90.625
+submitted_effective_concurrency_max,Maximum in-flight submitted query count.,123.0,44.34375,54.0292798946784,1.4558078536920722,90.625
+arrival_rate_qps,Average submitted query rate: num_arrivals / arrival_span_s.,0.09917113608690713,0.0749798196606084,0.025340385946063342,0.9546546164604439,87.5
+submitted_concurrency_at_arrival_p95,95th percentile in-flight submitted concurrency sampled at arrival instants.,104.45000000000005,40.45781249999999,52.39302063099477,1.221387633873956,84.375
+submitted_effective_concurrency_p95,Time-weighted 95th percentile of in-flight submitted query count.,91.0,40.25,53.327408525072734,0.9516682209700679,78.125
+executing_concurrency_p95,Time-weighted 95th percentile actively executing query count.,91.0,40.25,53.327408525072734,0.9516682209700679,78.125
+executing_concurrency_mean,Time-weighted mean actively executing query count.,26.45905368365839,20.12662257601623,29.484044080291355,0.21477484874183456,68.75
+submitted_effective_concurrency_mean,Time-weighted mean in-flight submitted query count.,26.46548885135733,20.12899784605957,29.48574225994493,0.21490016935763562,68.75
+interarrival_p95_s,95th percentile time between consecutive arrivals (s).,52.429391503334045,44.97412966601551,15.409527984129873,0.4838085790166085,50.0
+spike_peak_to_p95_ratio_in_5s,Peak-to-typical burst amplification at 5s window (peak / p95).,1.8888888888888888,1.625,0.414578098794425,0.6365239496641676,50.0
+spike_peak_to_p95_ratio_in_10s,Peak-to-typical burst amplification at 10s window (peak / p95).,1.6363636363636365,1.6458333333333335,0.29389033290970595,-0.03222187295492451,50.0
+interarrival_mean_s,Mean time between consecutive arrivals (s).,10.090828306978336,15.12263310276808,5.101102845297268,-0.9864150848141771,12.5
+spike_peak_to_p95_ratio_in_1s,Peak-to-typical burst amplification at 1s window (peak / p95).,1.8888888888888888,1.875,0.33071891388307384,0.04199605255658065,12.5
+interarrival_median_s,Median time between consecutive arrivals (s).,0.19211792945861816,10.322961818426847,3.4502481405913197,-2.9362652992349583,0.0
