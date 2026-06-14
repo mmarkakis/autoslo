@@ -62,6 +62,39 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
+def _infer_runtime_net_input_size_from_state_dict(
+    state_dict: dict[str, torch.Tensor],
+) -> Optional[int]:
+    """Infer RuntimeNet input-size from a saved state dict, when possible."""
+    if "_bn.weight" in state_dict:
+        return int(state_dict["_bn.weight"].shape[0])
+    if "_in_model.0.weight" in state_dict:
+        return int(state_dict["_in_model.0.weight"].shape[1])
+    return None
+
+
+def _validate_runtime_net_input_size(
+    state_dict: dict[str, torch.Tensor],
+    expected_input_size: int,
+    interaction_feature_version: str,
+) -> None:
+    """Raise a clear error if checkpoint feature dimensionality mismatches."""
+    checkpoint_input_size = _infer_runtime_net_input_size_from_state_dict(
+        state_dict
+    )
+    if (
+        checkpoint_input_size is not None
+        and checkpoint_input_size != expected_input_size
+    ):
+        raise ValueError(
+            "Checkpoint/input feature mismatch: checkpoint expects "
+            f"input_size={checkpoint_input_size}, but current model was "
+            f"constructed with input_size={expected_input_size} "
+            f"(interaction_feature_version={interaction_feature_version}). "
+            "Load the model with matching feature version/config or retrain."
+        )
+
+
 class DataSplit(Enum):
     TRAIN = "train"
     VAL = "val"
@@ -190,6 +223,7 @@ class IconqModel:
             schema_name=init_config.schema_name,
             iconq_query_featurizer_id=self._iconq_query_featurizer_id,
             ignore_cluster_size=init_config.ignore_cluster_size,
+            interaction_feature_version=init_config.interaction_feature_version,
         )
 
         # Initialize the stage model, if applicable.
@@ -645,6 +679,18 @@ class IconqModel:
                 f,
             )
 
+    def _load_nn_state_dict_with_feature_guard(
+        self,
+        state_dict: dict[str, torch.Tensor],
+    ) -> None:
+        """Load RuntimeNet weights after validating input feature compatibility."""
+        _validate_runtime_net_input_size(
+            state_dict=state_dict,
+            expected_input_size=cast(int, self._nn_args["input_size"]),
+            interaction_feature_version=self._init_config.interaction_feature_version,
+        )
+        self._nn.load_state_dict(state_dict)
+
     @staticmethod
     def load(
         model_id: str, parent_load_dir: Optional[str] = None
@@ -712,7 +758,9 @@ class IconqModel:
             checkpoint_path = os.path.join(load_dir, latest_checkpoint_file)
             print(f"Loading model checkpoint from {checkpoint_path}")
             state_dict = torch.load(checkpoint_path, map_location=model._device)
-            model._nn.load_state_dict(state_dict)
+            model._load_nn_state_dict_with_feature_guard(state_dict)
+
+       
 
         return model
 
@@ -1031,7 +1079,7 @@ class IconqModel:
         ]
         if checkpoint_files:
             checkpoint_path = os.path.join(self._save_dir, checkpoint_files[0])
-            self._nn.load_state_dict(
+            self._load_nn_state_dict_with_feature_guard(
                 torch.load(
                     checkpoint_path,
                     map_location=self._device,
