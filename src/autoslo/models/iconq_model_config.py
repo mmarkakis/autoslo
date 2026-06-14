@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 
 @dataclass
@@ -49,6 +49,9 @@ class IconqModelInitConfig:
 
     ignore_cluster_size: bool = (
         False  # Whether to ignore the cluster size when featurizing queries.
+    )
+    interaction_feature_version: Literal["v1", "v2"] = (
+        "v1"  # Version of interaction features used by IconqInteractionFeaturizer.
     )
 
 

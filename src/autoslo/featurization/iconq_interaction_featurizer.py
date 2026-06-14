@@ -13,6 +13,7 @@ class IconqInteractionFeaturizer:
     """
 
     IconqInteractionFeaturization = list[float]
+    SUPPORTED_FEATURE_VERSIONS = {"v1", "v2"}
     """
     Represents the vectorized features of a query interaction.
     
@@ -30,6 +31,7 @@ class IconqInteractionFeaturizer:
         iconq_query_featurizer_id: Optional[str] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
         ignore_cluster_size: bool = False,
+        interaction_feature_version: str = "v1",
     ):
         """
         Initializes the IconqInteractionFeaturizer.
@@ -47,6 +49,9 @@ class IconqInteractionFeaturizer:
             ignore_cluster_size: Whether to ignore the cluster size when
                 featurizing queries. If True, the cluster size feature will be
                 zeroed out for all queries.
+            interaction_feature_version: The interaction feature schema
+                version. "v1" reproduces legacy behavior (single raw RPU
+                feature). "v2" appends additional RPU-derived features.
         """
         if iconq_query_featurizer_id is None:
             if iconq_query_featurizer_init_params is None:
@@ -62,6 +67,28 @@ class IconqInteractionFeaturizer:
                 schema_name, iconq_query_featurizer_id
             )
         self._ignore_cluster_size = ignore_cluster_size
+        if interaction_feature_version not in self.SUPPORTED_FEATURE_VERSIONS:
+            raise ValueError(
+                "Unsupported interaction_feature_version "
+                f"'{interaction_feature_version}'. "
+                f"Expected one of {sorted(self.SUPPORTED_FEATURE_VERSIONS)}."
+            )
+        self._interaction_feature_version = interaction_feature_version
+
+    @property
+    def interaction_feature_version(self) -> str:
+        """Returns the interaction feature schema version in use."""
+        return self._interaction_feature_version
+
+    @property
+    def _base_dim(self) -> int:
+        """Number of dimensions before interaction-specific scalar features."""
+        return 2 * self._iconq_query_featurizer.num_dims
+
+    @property
+    def _rpu_block_num_dims(self) -> int:
+        """Number of dimensions allocated to RPU-related interaction features."""
+        return 1 if self._interaction_feature_version == "v1" else 6
 
     @property
     def num_dims(self) -> int:
@@ -72,7 +99,7 @@ class IconqInteractionFeaturizer:
         Returns:
             The number of dimensions in the interaction feature vector.
         """
-        return 2 * self._iconq_query_featurizer.num_dims + 5
+        return self._base_dim + 4 + self._rpu_block_num_dims
 
     @property
     def arrival_time_diff_dim_idx(self) -> int:
@@ -83,7 +110,7 @@ class IconqInteractionFeaturizer:
         Returns:
             The index of the arrival time difference feature.
         """
-        return self.num_dims - 3
+        return self._base_dim + 2
 
     @property
     def arrival_time_sign_dim_idx(self) -> int:
@@ -94,7 +121,7 @@ class IconqInteractionFeaturizer:
         Returns:
             The index of the arrival time sign feature.
         """
-        return self.num_dims - 2
+        return self._base_dim + 3
 
     @property
     def rpu_dim_idx(self) -> int:
@@ -104,7 +131,7 @@ class IconqInteractionFeaturizer:
         Returns:
             The index of the RPU feature.
         """
-        return self.num_dims - 1
+        return self._base_dim + 4
 
     def featurize_one_vs_many_to_numpy(
         self,
@@ -178,6 +205,27 @@ class IconqInteractionFeaturizer:
         arr[:, 2 * q_dim + 1] = qb_lats
         arr[:, 2 * q_dim + 2] = np.abs(qb_times - qa_start_time_s)
         arr[:, 2 * q_dim + 3] = (qa_start_time_s < qb_times).astype(np.float32)
-        arr[:, 2 * q_dim + 4] = rpu
+
+        rpu_value = np.float32(0.0 if self._ignore_cluster_size else float(rpu))
+        rpu_dim = self.rpu_dim_idx
+        arr[:, rpu_dim] = rpu_value
+
+        if self._interaction_feature_version == "v2":
+            if self._ignore_cluster_size:
+                arr[:, rpu_dim + 1 : rpu_dim + 6] = 0.0
+            else:
+                log2_rpu = np.float32(np.log2(rpu_value))
+                inv_rpu = np.float32(1.0 / rpu_value)
+                qa_work_proxy = np.float32(qa_latency_prediction) * rpu_value
+                qb_work_proxy = qb_lats * rpu_value
+                pair_pressure_proxy = (
+                    np.float32(qa_latency_prediction) + qb_lats
+                ) * inv_rpu
+
+                arr[:, rpu_dim + 1] = log2_rpu
+                arr[:, rpu_dim + 2] = inv_rpu
+                arr[:, rpu_dim + 3] = qa_work_proxy
+                arr[:, rpu_dim + 4] = qb_work_proxy
+                arr[:, rpu_dim + 5] = pair_pressure_proxy
 
         return arr, pinch_idx
