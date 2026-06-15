@@ -367,16 +367,21 @@ def sensitive_q_error_loss_v4(
     input = input.flatten()
     target = target.flatten()
     is_lb = target_is_lower_bound.flatten().bool()
+    eps = 1e-8
 
     # Regime 1: Prediction (input) is larger than the target and the target is a
     # lower bound.
     regime_1_mask = (input >= target) & is_lb
-    regime_1_loss = torch.zeros_like(input)
+    # Keep the zero-loss branch connected to autograd so batches that are fully
+    # in this regime still produce a differentiable scalar loss.
+    regime_1_loss = input - input
 
     # Regime 2: Prediction (input) is larger than an exact target, or smaller
     # than the target (regardless of whether it's a lower bound or exact).
     # Apply Q-error penalty.
-    regime_2_loss = torch.abs(torch.log(target) - torch.log(input))
+    input_safe = torch.clamp(input, min=eps)
+    target_safe = torch.clamp(target, min=eps)
+    regime_2_loss = torch.abs(torch.log(target_safe) - torch.log(input_safe))
 
     loss = torch.where(
         regime_1_mask,

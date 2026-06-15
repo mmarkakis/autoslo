@@ -960,6 +960,14 @@ class IconqModel:
                         derive_individual_predictions=False,
                     )
 
+                    # Some batches can legitimately have no trainable signal
+                    # (e.g., all isolated queries routed to stage model).
+                    # In that case, skip gradient steps for the batch.
+                    if not batch_loss.requires_grad:
+                        total_train_batch_loss += batch_loss.item()
+                        progress.advance(task)
+                        continue
+
                     batch_loss.backward()
                     nn.utils.clip_grad_norm_(
                         self._nn.parameters(), train_config.grad_clip_max_norm

@@ -24,26 +24,40 @@ from autoslo.filesystem.path_utils import (
 )
 from autoslo.filesystem.yaml_helpers import load_yaml_with_params
 from autoslo.workload_definition.poisson_workload_creator import (
-    PoissonWorkloadCreator,
     PoissonArrivalPhase,
+    PoissonWorkloadCreator,
 )
 from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.workload_runner import WorkloadRunner
 
-NUM_TEMPLATES_OPTIONS = [66, 99]
-NUM_QUERY_TEXTS_PER_TEMPLATE_OPTIONS = [2, 3]
-NUM_QUERIES_PER_QUERY_TEXT_OPTIONS = [1]
-POISSON_LAMBDA_OPTIONS = [0.1, 0.05]
-SEED = 42
+# (num_templates, num_query_texts_per_template, num_queries_per_query_text,
+# poisson_lambda)
+UNPHASED_COMBOS = [
+    (66, 2, 1, 0.1),
+    (66, 2, 1, 0.05),
+    (66, 3, 1, 0.1),
+    (66, 3, 1, 0.05),
+    (99, 2, 1, 0.1),
+    (99, 2, 1, 0.05),
+    (99, 3, 1, 0.1),
+    (99, 3, 1, 0.05),
+    (99, 3, 1, 0.2),
+    (99, 3, 1, 0.5),
+    (99, 3, 1, 1.0),
+]
 
-_COMBOS = list(
-    itertools.product(
-        NUM_TEMPLATES_OPTIONS,
-        NUM_QUERY_TEXTS_PER_TEMPLATE_OPTIONS,
-        NUM_QUERIES_PER_QUERY_TEXT_OPTIONS,
-        POISSON_LAMBDA_OPTIONS,
-    )
-)
+# (num_templates, num_query_texts_per_template,
+# total_num_queries, num_lull_burst_cycles, lull_poisson_lambda,
+# burst_poisson_lambda, fraction_of_queries_in_bursts)
+PHASED_COMBOS = [
+    (99, 3, 300, 6, 0.05, 0.2, 0.2),  # Mild intensity, medium burstiness
+    (99, 3, 300, 12, 0.05, 0.2, 0.4),  # Mild intensity, high burstiness
+    (99, 3, 300, 6, 0.05, 0.5, 0.2),  # Medium intensity, medium burstiness
+    (99, 3, 300, 12, 0.05, 0.5, 0.4),  # Medium intensity, high burstiness
+]
+
+
+SEED = 42
 
 
 def _fmt(seconds: float) -> str:
@@ -62,21 +76,22 @@ def _fmt(seconds: float) -> str:
 
 def create_training_workloads() -> list[Workload]:
     """Create (or overwrite) all training workloads and return them."""
-    cross_product_table = Table(title=f"Training workloads")
-    cross_product_table.add_column("subset", justify="left")
-    cross_product_table.add_column("num_templates", justify="right")
-    cross_product_table.add_column(
-        "num_query_texts_per_template", justify="right"
-    )
-    cross_product_table.add_column(
-        "num_queries_per_query_text", justify="right"
-    )
-    cross_product_table.add_column("poisson_lambda", justify="right")
-    cross_product_table.add_column("workload_name", justify="left")
 
     workloads = []
+
+    # Unphased workloads.
+    unphased_table = Table(title=f"Unphased Training workloads")
+    unphased_table.add_column("subset", justify="left")
+    unphased_table.add_column("num_templates", justify="right")
+    unphased_table.add_column("num_query_texts_per_template", justify="right")
+    unphased_table.add_column("num_queries_per_query_text", justify="right")
+    unphased_table.add_column("poisson_lambda", justify="right")
+    unphased_table.add_column("workload_name", justify="left")
+    unphased_table.add_column("num_queries", justify="left")
+    unphased_table.add_column("max_arrival_rel_time_s", justify="left")
+
     for num_templates, num_qtpt, num_qpqt, lam in track(
-        _COMBOS, description="Creating workloads..."
+        UNPHASED_COMBOS, description="Creating workloads..."
     ):
         workload = PoissonWorkloadCreator.create_poisson_workload(
             num_templates=num_templates,
@@ -87,15 +102,71 @@ def create_training_workloads() -> list[Workload]:
             print_summary=False,
         )
         workloads.append(workload)
-        cross_product_table.add_row(
-            "cross_product",
+        max_rel_start_time_s = workload.rel_start_time_range()[1]
+        unphased_table.add_row(
+            "unphased",
             str(num_templates),
             str(num_qtpt),
             str(num_qpqt),
             str(lam),
             workload.workload_name,
+            str(workload.num_queries),
+            f"{_fmt(max_rel_start_time_s)}",
         )
-    print(cross_product_table)
+    print(unphased_table)
+
+    # Phased workloads.
+    phased_table = Table(title=f"Phased Training workloads")
+    phased_table.add_column("subset", justify="left")
+    phased_table.add_column("num_templates", justify="right")
+    phased_table.add_column("num_query_texts_per_template", justify="right")
+    phased_table.add_column("total_num_queries", justify="right")
+    phased_table.add_column("num_lull_burst_cycles", justify="right")
+    phased_table.add_column("lull_poisson_lambda", justify="right")
+    phased_table.add_column("burst_poisson_lambda", justify="right")
+    phased_table.add_column("fraction_of_queries_in_bursts", justify="right")
+    phased_table.add_column("workload_name", justify="left")
+    phased_table.add_column("max_arrival_rel_time_s", justify="left")
+
+    for (
+        num_templates,
+        num_qtpt,
+        total_num_queries,
+        num_lull_burst_cycles,
+        lull_poisson_lambda,
+        burst_poisson_lambda,
+        fraction_of_queries_in_bursts,
+    ) in track(PHASED_COMBOS, description="Creating workloads..."):
+        phases = PoissonWorkloadCreator.make_bursty_profile(
+            total_num_queries=total_num_queries,
+            num_lull_burst_cycles=num_lull_burst_cycles,
+            lull_poisson_lambda=lull_poisson_lambda,
+            burst_poisson_lambda=burst_poisson_lambda,
+            fraction_of_queries_in_bursts=fraction_of_queries_in_bursts,
+        )
+        workload = PoissonWorkloadCreator.create_poisson_workload_phased(
+            num_templates=num_templates,
+            num_query_texts_per_template=num_qtpt,
+            num_queries_per_query_text=None,
+            phases=phases,
+            seed=SEED,
+            print_summary=False,
+        )
+        workloads.append(workload)
+        max_rel_start_time_s = workload.rel_start_time_range()[1]
+        phased_table.add_row(
+            "phased",
+            str(num_templates),
+            str(num_qtpt),
+            str(total_num_queries),
+            str(num_lull_burst_cycles),
+            str(lull_poisson_lambda),
+            str(burst_poisson_lambda),
+            str(fraction_of_queries_in_bursts),
+            workload.workload_name,
+            f"{_fmt(max_rel_start_time_s)}",
+        )
+    print(phased_table)
 
     max_rel_times = [w.df["rel_start_time_s"].max() for w in workloads]
     summary_table = Table(title="Model Training Workloads Summary")
@@ -163,7 +234,7 @@ def print_run_status_table() -> None:
     """Print a table showing the most recent run_id per RPU size for every combo."""
     _RPU_RE = re.compile(r"RPU=(\d+)")
 
-    # workload_id → combo tuple, preserving _COMBOS order.
+    # workload_id → combo tuple, preserving UNPHASED_COMBOS and PHASED_COMBOS order.
     wid_to_combo = {
         WorkloadConfig(
             workload_name=PoissonWorkloadCreator.name_from_params(
@@ -179,7 +250,25 @@ def print_run_status_table() -> None:
                 seed=SEED,
             )
         ).id(): (t, q, n, lam)
-        for t, q, n, lam in _COMBOS
+        for t, q, n, lam in UNPHASED_COMBOS
+    }
+    wid_to_combo_phased = {
+        WorkloadConfig(
+            workload_name=PoissonWorkloadCreator.name_from_params(
+                num_templates=t,
+                num_query_texts_per_template=q,
+                num_queries_per_query_text=None,
+                phases=PoissonWorkloadCreator.make_bursty_profile(
+                    total_num_queries=total,
+                    num_lull_burst_cycles=num_cycles,
+                    lull_poisson_lambda=lull_lam,
+                    burst_poisson_lambda=burst_lam,
+                    fraction_of_queries_in_bursts=frac_burst,
+                ),
+                seed=SEED,
+            )
+        ).id(): (t, q, total, num_cycles, lull_lam, burst_lam, frac_burst)
+        for t, q, total, num_cycles, lull_lam, burst_lam, frac_burst in PHASED_COMBOS
     }
 
     # (workload_id, rpu) → best run_id
@@ -188,9 +277,8 @@ def print_run_status_table() -> None:
     if os.path.exists(log_path):
         with open(log_path, newline="") as f:
             for row in csv.DictReader(f):
-                if (
-                    not (wid := row.get("workload_id", ""))
-                    or wid not in wid_to_combo
+                if not (wid := row.get("workload_id", "")) or (
+                    wid not in wid_to_combo and wid not in wid_to_combo_phased
                 ):
                     continue
                 if not (m := _RPU_RE.search(row["config_id"])):
@@ -202,7 +290,7 @@ def print_run_status_table() -> None:
 
     sorted_rpus = sorted({rpu for _, rpu in best})
 
-    table = Table(title="Model Training Run Status")
+    table = Table(title="Unphased Workloads Run Status")
     table.add_column("subset", justify="left")
     for col in (
         "num_templates",
@@ -224,11 +312,56 @@ def print_run_status_table() -> None:
             )
             for rpu in sorted_rpus
         ]
-        table.add_row(
-            "cross_product", str(t), str(q), str(n), str(lam), wid, *cells
-        )
+        table.add_row("unphased", str(t), str(q), str(n), str(lam), wid, *cells)
 
     print(table)
+
+    phased_table = Table(title="Phased Workloads Run Status")
+    phased_table.add_column("subset", justify="left")
+    for col in (
+        "num_templates",
+        "num_qtpt",
+        "total_num_queries",
+        "num_lull_burst_cycles",
+        "lull_poisson_lambda",
+        "burst_poisson_lambda",
+        "fraction_of_queries_in_bursts",
+        "workload_id",
+    ):
+        phased_table.add_column(col, justify="right")
+    for rpu in sorted_rpus:
+        phased_table.add_column(f"RPU={rpu}", justify="left")
+
+    for wid, (
+        t,
+        q,
+        total,
+        num_cycles,
+        lull_lam,
+        burst_lam,
+        frac_burst,
+    ) in wid_to_combo_phased.items():
+        cells = [
+            (
+                f"[green]{best[(wid, rpu)]}[/]"
+                if (wid, rpu) in best
+                else "[dim]not run yet[/]"
+            )
+            for rpu in sorted_rpus
+        ]
+        phased_table.add_row(
+            "phased",
+            str(t),
+            str(q),
+            str(total),
+            str(num_cycles),
+            str(lull_lam),
+            str(burst_lam),
+            str(frac_burst),
+            wid,
+            *cells,
+        )
+    print(phased_table)
 
 
 if __name__ == "__main__":
@@ -279,7 +412,7 @@ if __name__ == "__main__":
                 "--execution_config is required when --mode is 'execute' or "
                 "'all'."
             )
-        workload_configs = [
+        unphased_workload_configs = [
             WorkloadConfig(
                 workload_name=PoissonWorkloadCreator.name_from_params(
                     num_templates=num_templates,
@@ -294,10 +427,42 @@ if __name__ == "__main__":
                     seed=SEED,
                 )
             )
-            for num_templates, num_qtpt, num_qpqt, lam in _COMBOS
+            for num_templates, num_qtpt, num_qpqt, lam in UNPHASED_COMBOS
         ]
         sequentially_execute_training_workloads(
-            workload_configs=workload_configs,
+            workload_configs=unphased_workload_configs,
+            execution_config_path=args.execution_config,
+            params=args.param,
+            force=args.force,
+        )
+        phased_workload_configs = [
+            WorkloadConfig(
+                workload_name=PoissonWorkloadCreator.name_from_params(
+                    num_templates=num_templates,
+                    num_query_texts_per_template=num_qtpt,
+                    num_queries_per_query_text=None,
+                    phases=PoissonWorkloadCreator.make_bursty_profile(
+                        total_num_queries=total_num_queries,
+                        num_lull_burst_cycles=num_lull_burst_cycles,
+                        lull_poisson_lambda=lull_poisson_lambda,
+                        burst_poisson_lambda=burst_poisson_lambda,
+                        fraction_of_queries_in_bursts=fraction_of_queries_in_bursts,
+                    ),
+                    seed=SEED,
+                )
+            )
+            for (
+                num_templates,
+                num_qtpt,
+                total_num_queries,
+                num_lull_burst_cycles,
+                lull_poisson_lambda,
+                burst_poisson_lambda,
+                fraction_of_queries_in_bursts,
+            ) in PHASED_COMBOS
+        ]
+        sequentially_execute_training_workloads(
+            workload_configs=phased_workload_configs,
             execution_config_path=args.execution_config,
             params=args.param,
             force=args.force,

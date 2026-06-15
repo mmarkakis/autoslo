@@ -339,6 +339,13 @@ class Workload:
             self._df["abs_start_time"].max(),
         )
 
+    def rel_start_time_range(self) -> tuple[float, float]:
+        """Return the minimum and maximum relative start times in the workload."""
+        return (
+            self._df["rel_start_time_s"].min(),
+            self._df["rel_start_time_s"].max(),
+        )
+
     def get_rel_time_s_to_table_vecs(
         self, iconq_query_featurizer: IconqQueryFeaturizer
     ) -> dict[float, np.ndarray]:

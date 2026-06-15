@@ -238,7 +238,7 @@ class QueryRouterConfig(_PartialConfig):
     """
 
     routing_policy_name: str = "use_iconq_model"
-    iconq_model_id: str = "1771539369"
+    iconq_model_id: str = "all_66_and_99_template_runs_with_aborted_v3"
     cluster_cache_state_update_alpha: float = 0.7
 
     cache_risk_cost_multiplier: float = 0.0
