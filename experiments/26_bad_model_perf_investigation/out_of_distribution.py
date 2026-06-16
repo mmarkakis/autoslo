@@ -132,18 +132,6 @@ def _weighted_quantile(
     return float(values[idx])
 
 
-def _parse_details(details: object) -> dict:
-    if isinstance(details, dict):
-        return details
-    if isinstance(details, str) and details:
-        try:
-            decoded = json.loads(details)
-            if isinstance(decoded, dict):
-                return decoded
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
 
 def _first_event_times(
     df: pd.DataFrame,
@@ -239,7 +227,7 @@ def _arrival_metrics_for_log(
     interarrivals = np.diff(arrival_values) if arrival_values.size >= 2 else np.array([])
 
     details_map = (
-        df[df["event_type"] == "completion"]["details"].apply(_parse_details)
+        df[df["event_type"] == "completion"]["details"]
         if "details" in df.columns
         else pd.Series(dtype=object)
     )

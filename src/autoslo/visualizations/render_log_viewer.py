@@ -155,7 +155,7 @@ def _parse_log(
                 "event_type": et,
                 "cluster_name": row.get("cluster_name", ""),
                 "query_text_id": str(row.get("query_text_id", "")),
-                "details": _parse_details(row.get("details", "")),
+                "details": row.get("details", {}),
             }
         )
 
@@ -254,14 +254,14 @@ def _parse_log(
     cl_mask = events["event_type"].isin(cluster_lifecycle_values)
     for _, row in events[cl_mask].iterrows():
         cname = row.get("cluster_name", "")
-        details = _parse_details(row.get("details", ""))
+        details = row.get("details", {})
         cluster_events_list.append(
             {
                 "rel_time_s": float(row["rel_time_s"]),
                 "event_type": row["event_type"],
                 "cluster_name": cname,
                 "rpu": _safe_rpu(cname),
-                "reason": details.get("reason", ""),
+                "reason": details.get("reason"),
             }
         )
 
@@ -269,7 +269,7 @@ def _parse_log(
     autoscaler_events = []
     as_mask = events["event_type"].isin(autoscaler_values)
     for _, row in events[as_mask].iterrows():
-        details = _parse_details(row.get("details", ""))
+        details = row.get("details", {})
         cname = row.get("cluster_name", "")
         autoscaler_events.append(
             {
@@ -288,7 +288,7 @@ def _parse_log(
     rs_mask = events["event_type"] == EventType.ROUTING_SCORE.value
     for _, row in events[rs_mask].iterrows():
         qid = row.get("query_id", "")
-        details = _parse_details(row.get("details", ""))
+        details = row.get("details", {})
         routing_scores[qid].append(
             {
                 "rel_time_s": float(row["rel_time_s"]),
@@ -304,7 +304,7 @@ def _parse_log(
     latency_update_events = []
     lu_mask = events["event_type"] == EventType.LATENCY_UPDATE.value
     for _, row in events[lu_mask].iterrows():
-        details = _parse_details(row.get("details", ""))
+        details = row.get("details", {})
         latency_update_events.append(
             {
                 "rel_time_s": float(row["rel_time_s"]),
@@ -319,7 +319,7 @@ def _parse_log(
     run_meta: dict[str, Any] = {}
     rs_rows = events[events["event_type"] == EventType.RUN_START.value]
     if not rs_rows.empty:
-        d = _parse_details(rs_rows.iloc[0].get("details", ""))
+        d = rs_rows.iloc[0].get("details", {})
         run_meta = {
             "workload_name": d.get("workload_name", ""),
             "num_queries": d.get("num_queries"),

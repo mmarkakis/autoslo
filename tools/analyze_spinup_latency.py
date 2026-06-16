@@ -35,6 +35,7 @@ from autoslo.config.component_configs import WorkloadConfig
 from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.path_utils import find_most_recent_live_run_id
+from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import load_yaml
 
 SPINUP_EVENTS = {
@@ -147,16 +148,12 @@ def fmt_s(value: Optional[float], decimals: int = 1) -> str:
 
 def records_from_log(log_path: Path, run_id: str) -> list[dict]:
     """Extract one dict per spun-up cluster from a structured log."""
-    df = pd.read_parquet(log_path)
+    df = StructuredLog.load(log_path).df
 
     ev = (
         df[df["event_type"].isin(SPINUP_EVENTS)]
         .sort_values("rel_time_s")
         .reset_index(drop=True)
-    )
-
-    ev["details_dict"] = ev["details"].apply(
-        lambda s: json.loads(s) if isinstance(s, str) and s else {}
     )
 
     started_rows = ev[ev["event_type"] == "spin_up_started"].copy()
@@ -186,7 +183,7 @@ def records_from_log(log_path: Path, run_id: str) -> list[dict]:
 
         def first_detail(event_type: str, key: str):
             rows = window[window["event_type"] == event_type]
-            return rows["details_dict"].iloc[0].get(key) if len(rows) else None
+            return rows["details"].iloc[0].get(key) if len(rows) else None
 
         t_decision = first_time("spin_up_decision")
         t_requested = first_time("spin_up_requested")

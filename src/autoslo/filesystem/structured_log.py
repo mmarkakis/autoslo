@@ -369,6 +369,21 @@ class StructuredLog:
                     f"Structured log at {self._parquet_path} is missing "
                     f"required column(s): {missing}"
                 )
+            if "details" in self._df.columns:
+                # Parse string into dict for easier downstream access.
+                def _parse_details(raw: Any) -> dict | None:
+                    if isinstance(raw, dict):
+                        return raw
+                    if isinstance(raw, str) and raw:
+                        try:
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, dict):
+                                return parsed
+                        except (TypeError, json.JSONDecodeError):
+                            return None
+                    return None
+
+                self._df["details"] = self._df["details"].apply(_parse_details)
         return self._df
 
     def query_latencies(self, *, drop_incomplete: bool = True) -> pd.DataFrame:
@@ -479,47 +494,15 @@ class StructuredLog:
         )
         completions = completions[completions["query_id"].notna()]
 
-        def _extract_success(raw) -> bool | None:
-            if isinstance(raw, dict):
-                d: dict = raw
-            elif isinstance(raw, str) and raw:
-                try:
-                    d = json.loads(raw)
-                except (ValueError, json.JSONDecodeError):
-                    return None
-            else:
-                return None
-            val = d.get("success")
-            return bool(val) if val is not None else None
-
-        completions["_success"] = completions["details"].apply(_extract_success)
+        completions["_success"] = completions["details"].apply(
+            lambda d: d.get("success", False)
+        )
         valid = completions[completions["_success"].notna()]
         return (
             valid.set_index("query_id")["_success"]
             .astype(bool)
             .rename("success")
         )
-
-    @staticmethod
-    def _safe_details_latency(details: Any) -> float | None:
-        if details is None:
-            return None
-        if isinstance(details, dict):
-            value = details.get("latency_s")
-        else:
-            try:
-                parsed = json.loads(details)
-            except (TypeError, json.JSONDecodeError):
-                return None
-            value = (
-                parsed.get("latency_s") if isinstance(parsed, dict) else None
-            )
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
 
     def prediction_accuracy_df(self) -> pd.DataFrame:
         """
@@ -550,24 +533,12 @@ class StructuredLog:
                 query_data[query_id]["completion_time"] = float(
                     row["rel_time_s"]
                 )
-                details = row.get("details")
-                parsed_details: dict[str, Any] | None = None
-                if isinstance(details, dict):
-                    parsed_details = details
-                elif isinstance(details, str) and details:
-                    try:
-                        parsed = json.loads(details)
-                        if isinstance(parsed, dict):
-                            parsed_details = parsed
-                    except (TypeError, json.JSONDecodeError):
-                        parsed_details = None
 
-                if parsed_details is not None and "success" in parsed_details:
-                    query_data[query_id]["is_censored_target"] = not bool(
-                        parsed_details["success"]
-                    )
+                query_data[query_id]["is_censored_target"] = not row[
+                    "details"
+                ].get("success", False)
             elif event_type in {"query_routed", "latency_update"}:
-                pred = self._safe_details_latency(row.get("details"))
+                pred = row["details"].get("latency_s")
                 if pred is not None:
                     query_data[query_id]["predicted_latency"] = pred
                 if (
