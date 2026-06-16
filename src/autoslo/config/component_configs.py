@@ -23,6 +23,7 @@ from autoslo.slo.slo_metric import SloMetric
 # A "tuner config" is the YAML config file that a user provides to run the
 # policy tuner, alongisde an initial execution config. It contains:
 # - sampling_config
+# - [tuning_constraints_config]
 # - spinup_optimizer_config
 # - [autoscaling_param_sweep.param_sweep_config]
 # - [query_routing_param_sweep.param_sweep_config]
@@ -208,6 +209,23 @@ class SamplingConfig(_PartialConfig):
 
 
 @dataclass(frozen=True)
+class TuningConstraintsConfig(_PartialConfig):
+    """Optional constraints that apply only while tuning simulations."""
+
+    simulation_max_clusters: Optional[int] = None
+
+    def __post_init__(self):
+        if (
+            self.simulation_max_clusters is not None
+            and self.simulation_max_clusters < 0
+        ):
+            raise ValueError(
+                "simulation_max_clusters must be >= 0 when provided, got "
+                f"{self.simulation_max_clusters}"
+            )
+
+
+@dataclass(frozen=True)
 class AutoscalerConfig(_PartialConfig):
     """
     Configuration for the autoscaler, including the target SLO and scaling
@@ -228,7 +246,7 @@ class AutoscalerConfig(_PartialConfig):
     # disables reactive autoscaling and fires a single forced decision after
     # this fraction of the workload's queries have been routed.
 
-    max_replay_copies: int = 30 # Max acceptable replays of obs. window.
+    max_replay_copies: int = 30  # Max acceptable replays of obs. window.
 
 
 @dataclass(frozen=True)
@@ -333,8 +351,26 @@ class ManagedClusterPoolConfig(_PartialConfig):
 
     initial_rpus: list[int]
     num_reserved_clusters: int = 0
-    max_clusters: int = 20
+    max_clusters: Optional[int] = None
     maxconns: int = 1000
+
+    def __post_init__(self):
+        if self.max_clusters is not None and self.max_clusters < 0:
+            raise ValueError(
+                f"max_clusters must be >= 0 when provided, got {self.max_clusters}"
+            )
+        total_clusters_needed = (
+            len(self.initial_rpus) + self.num_reserved_clusters
+        )
+        if (
+            self.max_clusters is not None
+            and self.max_clusters < total_clusters_needed
+        ):
+            raise ValueError(
+                f"max_clusters={self.max_clusters} is too low for initial_rpus "
+                f"({len(self.initial_rpus)}) + reserved "
+                f"({self.num_reserved_clusters})={total_clusters_needed}."
+            )
 
 
 @dataclass(frozen=True)

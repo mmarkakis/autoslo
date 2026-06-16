@@ -77,19 +77,6 @@ class ManagedClusterPool:
         self._budget = SpinUpBudget(max_clusters=config.max_clusters)
         self._budget.reserve(config.num_reserved_clusters)
 
-        total_clusters_needed = (
-            len(config.initial_rpus) + config.num_reserved_clusters
-        )
-        if config.max_clusters < total_clusters_needed:
-            raise ValueError(
-                f"config.max_clusters={config.max_clusters} is "
-                f"too low: initial RPUs ({len(config.initial_rpus)}) + "
-                f"worst-case "
-                f"scheduled spin-up reservation ({config.num_reserved_clusters}) "
-                f"requires at least "
-                f"{total_clusters_needed}."
-            )
-
     def add_details_and_spin_up_initial_clusters(
         self,
         search_path: str = "public",
@@ -164,8 +151,8 @@ class ManagedClusterPool:
             )
             if self._write_text_log:
                 logging.warning(
-                    "Spin-up denied: max_clusters=%d exhausted "
-                    "(used=%d, reserved=%d, available=%d). "
+                    "Spin-up denied: max_clusters=%s exhausted "
+                    "(used=%s, reserved=%s, available=%s). "
                     "action.reason=%s",
                     snap["max"],
                     snap["used"],

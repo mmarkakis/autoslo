@@ -24,6 +24,11 @@ class TestSpinUpBudgetInit:
         with pytest.raises(ValueError):
             SpinUpBudget(max_clusters=-1)
 
+    def test_none_max_clusters_is_unbounded(self):
+        b = SpinUpBudget(max_clusters=None)
+        assert b.max_clusters is None
+        assert b.available is None
+
 
 class TestSpinUpBudgetReserveRelease:
     def test_reserve_moves_available_to_reserved(self):
@@ -105,3 +110,19 @@ class TestSpinUpBudgetConsume:
         assert snap["used"] == 2
         assert snap["reserved"] == 2
         assert snap["available"] == 6
+
+    def test_unbounded_try_consume_always_succeeds(self):
+        b = SpinUpBudget(max_clusters=None)
+        for _ in range(100):
+            assert b.try_consume() is True
+        assert b.used == 100
+        assert b.available is None
+
+    def test_unbounded_reserved_paths_are_noop_and_succeed(self):
+        b = SpinUpBudget(max_clusters=None)
+        b.reserve(10)
+        assert b.reserved == 0
+        assert b.try_consume_reserved() is True
+        assert b.used == 1
+        b.release_reservation(5)
+        assert b.reserved == 0

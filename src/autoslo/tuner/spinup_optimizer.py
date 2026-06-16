@@ -419,13 +419,20 @@ class SpinupOptimizer:
             existing_spinups = cfgu.getd(
                 current_config, "scheduled_spinups", []
             )
-            max_clusters = int(
-                cfgu.getd(current_config, "autoscaling_config.max_clusters", 10)
+            max_clusters = cfgu.getd(
+                current_config,
+                "managed_cluster_pool_config.max_clusters",
+                None,
             )
+            if max_clusters is not None:
+                max_clusters = int(max_clusters)
             total_clusters_needed = (
                 len(initial_rpus) + len(existing_spinups) + 1
             )
-            if total_clusters_needed > max_clusters:
+            if (
+                max_clusters is not None
+                and total_clusters_needed > max_clusters
+            ):
                 console.print(
                     f"[yellow]Cannot place new spin-up: initial setup requires "
                     f"{len(initial_rpus)} clusters, existing spin-ups reserve "

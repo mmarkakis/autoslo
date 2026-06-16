@@ -15,6 +15,7 @@ from autoslo.config.component_configs import (
     SloObjectiveConfig,
     SloResolverConfig,
     SpinupOptimizerConfig,
+    TuningConstraintsConfig,
     WorkloadConfig,
 )
 from autoslo.config.utils import copy_and_apply_overrides, make_run_id
@@ -130,6 +131,23 @@ class PolicyTuner:
         # Aggregation metric — shared by all phases.
         self._sampling_config = SamplingConfig.from_config(self._tuner_config)
         self._agg_method = self._sampling_config.aggregation_method
+
+        # Optional simulation-only constraints.
+        try:
+            tuning_constraints = TuningConstraintsConfig.from_config(
+                self._tuner_config
+            )
+            self._simulation_max_clusters = (
+                tuning_constraints.simulation_max_clusters
+            )
+        except ValueError:
+            self._simulation_max_clusters = None
+
+        if self._simulation_max_clusters is not None:
+            console.print(
+                "Applying tuning-only constraint: "
+                f"simulation_max_clusters={self._simulation_max_clusters}."
+            )
 
         # Timing instrumentation.
         self._timer = PolicyTunerTimer()
@@ -252,7 +270,11 @@ class PolicyTuner:
         all_results_nested = self._evaluator.evaluate_batch_from_configs(
             progress_bar_label="baseline",
             workload_configs=all_workload_configs,
-            configs=[self._initial_execution_config],
+            configs=[
+                self._apply_simulation_constraints(
+                    self._initial_execution_config
+                )
+            ],
             out_dir=summary_dir / "results",
             workload_first=False,
             verbose_progress=self._verbose_progress,
@@ -313,6 +335,9 @@ class PolicyTuner:
             candidate_config = copy_and_apply_overrides(
                 self._initial_execution_config,
                 {"managed_cluster_pool_config.initial_rpus": rpus},
+            )
+            candidate_config = self._apply_simulation_constraints(
+                candidate_config
             )
 
             # Each candidate gets its own subdirectory.
@@ -423,7 +448,7 @@ class PolicyTuner:
 
         sweeper = ParamSweep(
             evaluator=self._evaluator,
-            initial_config=initial_config,
+            initial_config=self._apply_simulation_constraints(initial_config),
             run_dir=self._out_dir,
             phase_name=phase_name,
             slo_objective=self._slo_objective,
@@ -537,7 +562,9 @@ class PolicyTuner:
                 self._print_banner(
                     "Phase 7: Final comparison with tuned config"
                 )
-                final_config = post_second_sweep_config
+                final_config = self._restore_runtime_cluster_cap(
+                    post_second_sweep_config
+                )
                 dump_yaml(final_config, final_path)
                 console.print(
                     f"  Final config written to [bold]{final_path}[/]"
@@ -575,3 +602,30 @@ class PolicyTuner:
         console.print()
         console.rule(f"[bold cyan]{message}")
         console.print()
+
+    def _apply_simulation_constraints(
+        self, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply tuner-only constraints to a simulation config copy."""
+        if self._simulation_max_clusters is None:
+            return config
+        return copy_and_apply_overrides(
+            config,
+            {
+                "managed_cluster_pool_config.max_clusters": (
+                    self._simulation_max_clusters
+                )
+            },
+        )
+
+    def _restore_runtime_cluster_cap(
+        self, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Restore runtime max_clusters before persisting published config."""
+        runtime_max_clusters = self._initial_execution_config[
+            "managed_cluster_pool_config"
+        ]["max_clusters"]
+        return copy_and_apply_overrides(
+            config,
+            {"managed_cluster_pool_config.max_clusters": runtime_max_clusters},
+        )

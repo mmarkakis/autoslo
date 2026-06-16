@@ -329,7 +329,7 @@ class Autoscaler:
 
         # Find the best size to spin up.
 
-        best_rpu = self._select_rpu(
+        best_rpu, _ = self._select_rpu(
             rel_time_s,
             pool_snapshot_with_current_query,
         )

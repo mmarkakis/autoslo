@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+from typing import Optional
 
 
 class SpinUpBudget:
@@ -8,17 +8,20 @@ class SpinUpBudget:
 
     Not thread-safe.
 
-    Invariant at all times: ``used + reserved + available == max_clusters``
+    Invariant at all times (finite mode):
+    ``used + reserved + available == max_clusters``.
 
     Parameters
     ----------
     max_clusters :
         Total number of cumulative spin-ups permitted for the run.  Must
-        be a non-negative integer.
+        be a non-negative integer.  ``None`` means unbounded.
     """
 
-    def __init__(self, max_clusters: int) -> None:
-        if not isinstance(max_clusters, int) or max_clusters < 0:
+    def __init__(self, max_clusters: Optional[int]) -> None:
+        if max_clusters is not None and (
+            not isinstance(max_clusters, int) or max_clusters < 0
+        ):
             raise ValueError(
                 f"max_clusters must be a non-negative int, got {max_clusters!r}."
             )
@@ -38,6 +41,9 @@ class SpinUpBudget:
         """
         if n < 0:
             raise ValueError(f"reserve(n) requires n >= 0, got {n}.")
+        if self._max_clusters is None:
+            return
+        assert self._available is not None
         if n > self._available:
             raise ValueError(
                 f"Cannot reserve {n} units: only {self._available} "
@@ -56,6 +62,9 @@ class SpinUpBudget:
             raise ValueError(
                 f"release_reservation(n) requires n >= 0, got {n}."
             )
+        if self._max_clusters is None:
+            return
+        assert self._available is not None
         actual = min(n, self._reserved)
         self._reserved -= actual
         self._available += actual
@@ -70,6 +79,10 @@ class SpinUpBudget:
         Returns ``True`` on success and ``False`` if insufficient budget
         is available (in which case nothing is consumed).
         """
+        if self._max_clusters is None:
+            self._used += 1
+            return True
+        assert self._available is not None
         if self._available < 1:
             return False
         self._available -= 1
@@ -84,6 +97,9 @@ class SpinUpBudget:
         Returns ``False`` only if ``_reserved < 1`` (a programming bug —
         the config-load validation should have caught it).
         """
+        if self._max_clusters is None:
+            self._used += 1
+            return True
         if self._reserved < 1:
             return False
         self._reserved -= 1
@@ -95,7 +111,7 @@ class SpinUpBudget:
     # ------------------------------------------------------------------
 
     @property
-    def max_clusters(self) -> int:
+    def max_clusters(self) -> Optional[int]:
         return self._max_clusters
 
     @property
@@ -107,17 +123,17 @@ class SpinUpBudget:
         return self._reserved
 
     @property
-    def available(self) -> int:
+    def available(self) -> Optional[int]:
         return self._available
 
-    def snapshot(self) -> dict[str, int]:
+    def snapshot(self) -> dict[str, int | None]:
         """Atomic snapshot of all counters, for logging/telemetry."""
         return {
             "max": self._max_clusters,
             "used": self._used,
             "reserved": self._reserved,
             "available": self._available,
-            }
+        }
 
     def __repr__(self) -> str:  # pragma: no cover — debug aid
         s = self.snapshot()
