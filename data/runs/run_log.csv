@@ -181,3 +181,7 @@ run_id,config_id,workload_id,started_at
 1781511937938,model_training__RPU=8,poisson_99_3_None_None_42_phased_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l__target__rf1.000,2026-06-15T08:25:40Z
 1781513174670,model_training__RPU=4,poisson_99_3_None_None_42_phased_40q0.05l_10q0.5l_40q0.05l_10q0.5l_40q0.05l_10q0.5l_40q0.05l_10q0.5l_40q0.05l_10q0.5l_40q0.05l_10q0.5l__target__rf1.000,2026-06-15T08:46:17Z
 1781522879274,model_training__RPU=4,poisson_99_3_None_None_42_phased_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l_15q0.05l_10q0.5l__target__rf1.000,2026-06-15T11:28:02Z
+1781583634528,may27_oracle_k8_thresh5_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-16T04:20:38Z
+1781583661934,may27_oracle_k8_thresh10_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-16T04:21:05Z
+1781598745490,may27_oracle_k4_thresh5_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-16T08:32:29Z
+1781598789564,may27_oracle_k4_thresh10_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-16T08:33:13Z

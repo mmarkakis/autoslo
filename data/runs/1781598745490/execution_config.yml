@@ -1,0 +1,46 @@
+workload_config:
+  workload_name: redbench_provisioned_157_0
+  workload_dir: /home/markakis/chunkbench/data/workloads
+  target_date: '2024-05-27'
+  rescale_factor: 0.16666667
+slo_resolver_config:
+  slo_s: 30.0
+  slo_dict_filename: 1778469201294_p100_k4.yml
+slo_objective_config:
+  slo_metric: binary
+  slo_threshold: 0.05
+provisioner_config:
+  aws_config_path: data/config/aws.yml
+  spin_up_delay_s: 300.0
+workload_runner_config:
+  max_threads: 512
+  schema_name: ext_tpcds1000
+  closed_loop: false
+managed_cluster_pool_config:
+  maxconns: 1000
+  max_clusters: null
+  initial_rpus:
+  - 16
+scheduled_spinups:
+- rel_time_s: 3345.9360365970388
+  rpu: 32
+- rel_time_s: 3347.9932303148134
+  rpu: 32
+- rel_time_s: 5293.579502882149
+  rpu: 32
+query_router_config:
+  routing_policy_name: use_iconq_model
+  iconq_model_id: all_66_and_99_template_runs_with_aborted_v3
+autoscaler_config:
+  allowed_rpu_sizes:
+  - 4
+  - 8
+  - 16
+  - 32
+  autoscaling_policy: add_single_best_forward
+  min_cluster_lifetime_s: 3600.0
+  idle_time_before_tear_down_s: 600.0
+  observation_window_s: 300.0
+  min_observations_to_act: 5
+  slo_tightening_factor: 0.8
+  min_finished_queries_in_counterfactual: 30

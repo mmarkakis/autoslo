@@ -1,0 +1,40 @@
+sampling_config:
+  num_scenarios: 20
+  seed: 42
+  train_fraction: 0.6
+  aggregation_method: mean
+  forecaster_config:
+    forecast_policy_name: same_day_exponential
+    decay_factor: 0.5
+    reservoir_config:
+      workload_name: redbench_provisioned_157_0
+      last_day_date_inclusive: "<LAST_DAY_DATE_INCLUSIVE>"
+      num_days: <NUM_DAYS>
+
+tuning_constraints_config:
+  simulation_max_clusters: 10
+
+spinup_optimizer_config:
+  max_spinups: 3  
+  min_delinquent_workload_fraction: 0.5
+  lead_time_s: 360.0
+  allowed_rpu_sizes: [4, 8, 16, 32]
+  max_attempts_per_round: 5
+  initial_rpu_candidates:
+    - [16]
+
+autoscaling_param_sweep:
+ param_sweep_config:
+    strategy: grid
+    params:
+      "autoscaler_config.min_cluster_lifetime_s": [1200.0, 3600.0]
+      "autoscaler_config.idle_time_before_tear_down_s": [300.0, 600.0]
+      "autoscaler_config.observation_window_s": [120.0, 300.0]
+      "autoscaler_config.min_observations_to_act": [5, 10]
+      "autoscaler_config.slo_tightening_factor": [0.8, 1.0]
+      "autoscaler_config.min_finished_queries_in_counterfactual": [10, 30]
+
+
+query_routing_param_sweep:
+  param_sweep_config:
+    params: {}
