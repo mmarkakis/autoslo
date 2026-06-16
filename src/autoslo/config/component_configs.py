@@ -239,7 +239,6 @@ class AutoscalerConfig(_PartialConfig):
     min_cluster_lifetime_s: float = 1200.0
     idle_time_before_tear_down_s: float = 300.0
     observation_window_s: float = 120.0
-    min_observations_to_act: int = 5
     slo_tightening_factor: float = 1.0
     min_finished_queries_in_counterfactual: int = 30
     force_one_decision_after_query_fraction: Optional[float] = None  # When set,
@@ -247,6 +246,21 @@ class AutoscalerConfig(_PartialConfig):
     # this fraction of the workload's queries have been routed.
 
     max_replay_copies: int = 30  # Max acceptable replays of obs. window.
+
+    @classmethod
+    def from_config(cls, cfg: dict, **kwargs) -> Self:
+        """
+        Parse autoscaler config while tolerating the removed
+        ``min_observations_to_act`` key in existing YAML files.
+        """
+        try:
+            autoscaler_cfg = dict(cfg["autoscaler_config"])
+        except (KeyError, TypeError):
+            return super().from_config(cfg, **kwargs)
+
+        autoscaler_cfg.pop("min_observations_to_act", None)
+        new_cfg = {**cfg, "autoscaler_config": autoscaler_cfg}
+        return super().from_config(new_cfg, **kwargs)
 
 
 @dataclass(frozen=True)

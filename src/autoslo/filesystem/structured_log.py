@@ -371,7 +371,7 @@ class StructuredLog:
                 )
             if "details" in self._df.columns:
                 # Parse string into dict for easier downstream access.
-                def _parse_details(raw: Any) -> dict | None:
+                def _parse_details(raw: Any) -> dict:
                     if isinstance(raw, dict):
                         return raw
                     if isinstance(raw, str) and raw:
@@ -380,8 +380,8 @@ class StructuredLog:
                             if isinstance(parsed, dict):
                                 return parsed
                         except (TypeError, json.JSONDecodeError):
-                            return None
-                    return None
+                            return {}
+                    return {}
 
                 self._df["details"] = self._df["details"].apply(_parse_details)
         return self._df

@@ -12,7 +12,9 @@ spinup_optimizer_config:
   allowed_rpu_sizes: [4, 8, 16, 32]
   max_attempts_per_round: 5
   initial_rpu_candidates:
+    - [8]
     - [16]
+    - [32]
  
 autoscaling_param_sweep:
  param_sweep_config:
@@ -20,8 +22,7 @@ autoscaling_param_sweep:
     params:
       "autoscaler_config.min_cluster_lifetime_s": [1200.0, 3600.0]
       "autoscaler_config.idle_time_before_tear_down_s": [300.0, 600.0]
-      "autoscaler_config.observation_window_s": [120.0, 300.0]
-      "autoscaler_config.min_observations_to_act": [5, 10]
+      "autoscaler_config.observation_window_s": [300.0, 600.0]
       "autoscaler_config.slo_tightening_factor": [0.8, 1.0]
       "autoscaler_config.min_finished_queries_in_counterfactual": [10, 30]
 

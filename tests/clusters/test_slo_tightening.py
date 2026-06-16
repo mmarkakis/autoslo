@@ -53,7 +53,6 @@ def _autoscaler(
     slo_metric: SloMetric = SloMetric.RELATIVE,
     slo_threshold: float = 0.0,
     slo_tightening_factor: float = 1.0,
-    min_observations_to_act: int = 1,
     allowed_rpu_sizes: list[int] | None = None,
     observation_window_s: float = 600.0,
 ) -> Autoscaler:
@@ -65,7 +64,6 @@ def _autoscaler(
         ),
         allowed_rpu_sizes=allowed_rpu_sizes or [8],
         iconq_model=MagicMock(),
-        min_observations_to_act=min_observations_to_act,
         observation_window_s=observation_window_s,
         slo_tightening_factor=slo_tightening_factor,
     )
@@ -241,7 +239,6 @@ class TestAutoscalerTightening:
             ),
             allowed_rpu_sizes=[8],
             iconq_model=MagicMock(),
-            min_observations_to_act=1,
             observation_window_s=600.0,
             slo_tightening_factor=0.8,
         )

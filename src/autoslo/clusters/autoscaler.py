@@ -85,9 +85,6 @@ class Autoscaler:
             autoscaler_config.idle_time_before_tear_down_s
         )
         self._observation_window_s = autoscaler_config.observation_window_s
-        self._min_observations_to_act = (
-            autoscaler_config.min_observations_to_act
-        )
         self._slo_tightening_factor = autoscaler_config.slo_tightening_factor
         self._cluster_cache_state_dim = (
             provisioner_config.cluster_cache_state_dim
@@ -107,7 +104,7 @@ class Autoscaler:
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
         self._trailing_queries: deque[Query] = deque()
-        self._num_queries_since_last_cluster_ready: int = 0
+        self._most_recent_cluster_ready_rel_time_s: float = 0.0
         self._known_ready_cluster_names: frozenset[str] = frozenset()
         self._spin_up_disabled: bool = False
         # True from the moment a SpinUpAction is emitted until the new cluster
@@ -155,10 +152,6 @@ class Autoscaler:
         return self._observation_window_s
 
     @property
-    def min_observations_to_act(self) -> int:
-        return self._min_observations_to_act
-
-    @property
     def slo_tightening_factor(self) -> float:
         return self._slo_tightening_factor
 
@@ -201,8 +194,8 @@ class Autoscaler:
             if self._autoscaling_policy == AutoscalingPolicy.NOOP:
                 return []
 
-            # Detect new-READY clusters and reset the post-spinup observation
-            # counter.  Also clear _spin_up_in_flight: the cluster we were
+            # Detect new-READY clusters and record when the most recent one
+            # became ready. Also clear _spin_up_in_flight: the cluster we were
             # waiting for has arrived.
             current_ready = frozenset(
                 name
@@ -210,10 +203,9 @@ class Autoscaler:
                 if cluster.state == ClusterState.READY
             )
             if current_ready - self._known_ready_cluster_names:
-                self._num_queries_since_last_cluster_ready = 0
+                self._most_recent_cluster_ready_rel_time_s = rel_time_s
                 self._known_ready_cluster_names = current_ready
                 self._spin_up_in_flight = False
-            self._num_queries_since_last_cluster_ready += 1
 
             # Maintain the trailing window.
             self._trailing_queries.append(current_query)
@@ -245,10 +237,11 @@ class Autoscaler:
         pool_snapshot_with_current_query: dict[str, ClusterView],
     ) -> list[ScalingAction]:
         """
-        Recommend spinning up a cluster if both are true:
-        1. The window has at least ``min_observations_to_act`` queries.
-        2. The SloObjective is being violated on the current snapshot.
-        3. No spin-up is currently in flight.
+        Recommend spinning up a cluster if all are true:
+          1. The observation window starts after the most recent cluster became
+              ready.
+          2. The SloObjective is being violated on the current snapshot.
+          3. No spin-up is currently in flight.
 
         Use the window to determine the size of the cluster to spin up.
         """
@@ -292,11 +285,10 @@ class Autoscaler:
         else:
             ### NOT IN FORCED MODE: CHECK CONDITIONS ###
 
-            # Determine if we have enough observations to act.
-            if (
-                self._num_queries_since_last_cluster_ready
-                < self._min_observations_to_act
-            ):
+            # Only act once the trailing window is fully after the most
+            # recent READY cluster observed by the autoscaler.
+            cutoff = rel_time_s - self._observation_window_s
+            if self._most_recent_cluster_ready_rel_time_s > cutoff:
                 return []
 
             # Determine if the (possibly tightened) SLO objective is met.
@@ -319,8 +311,9 @@ class Autoscaler:
                 return []
 
             reason = (
-                f"num_queries_since_last_cluster_ready="
-                f"{self._num_queries_since_last_cluster_ready}, "
+                f"observation_window_start_s={cutoff:.4f}, "
+                f"most_recent_cluster_ready_rel_time_s="
+                f"{self._most_recent_cluster_ready_rel_time_s}, "
                 f"slo_metric={self._slo_objective.slo_metric}, "
                 f"slo_metric_value={slo_metric_value:.4f}, "
                 f"slo_threshold={self._slo_objective.slo_threshold:.4f}, "

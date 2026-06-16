@@ -1,0 +1,688 @@
+{
+  "decisions": [
+    {
+      "decision_rel_time_s": 5660.220644950867,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 8,
+      "reason": "num_queries_since_last_cluster_ready=68, slo_metric=SloMetric.BINARY, slo_metric_value=0.1739, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.12903225806451613,
+          "projected_cost": 3.9379166666666667,
+          "arrivals_pre_spinup": 27,
+          "completions_pre_spinup": 27,
+          "completions_of_simulated_pre_spinup": 4,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 54,
+          "completions_of_simulated_post_spinup": 54,
+          "fraction_routed_to_hypothetical": 0.3870967741935484
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 3.99,
+          "arrivals_pre_spinup": 27,
+          "completions_pre_spinup": 27,
+          "completions_of_simulated_pre_spinup": 4,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 54,
+          "completions_of_simulated_post_spinup": 54,
+          "fraction_routed_to_hypothetical": 0.45161290322580644
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 4.11,
+          "arrivals_pre_spinup": 27,
+          "completions_pre_spinup": 27,
+          "completions_of_simulated_pre_spinup": 4,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 54,
+          "completions_of_simulated_post_spinup": 54,
+          "fraction_routed_to_hypothetical": 0.6774193548387096
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 4.328333333333333,
+          "arrivals_pre_spinup": 27,
+          "completions_pre_spinup": 27,
+          "completions_of_simulated_pre_spinup": 4,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 54,
+          "completions_of_simulated_post_spinup": 54,
+          "fraction_routed_to_hypothetical": 0.6129032258064516
+        }
+      ],
+      "num_queries_in_observation_window": 27
+    },
+    {
+      "decision_rel_time_s": 5956.070046901703,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 4,
+      "reason": "num_queries_since_last_cluster_ready=7, slo_metric=SloMetric.BINARY, slo_metric_value=0.1429, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 4.876666666666667,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 49,
+          "completions_post_spinup": 40,
+          "completions_of_simulated_post_spinup": 40,
+          "fraction_routed_to_hypothetical": 0.061224489795918366
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 4.956666666666667,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 49,
+          "completions_post_spinup": 40,
+          "completions_of_simulated_post_spinup": 40,
+          "fraction_routed_to_hypothetical": 0.10204081632653061
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 5.02,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 49,
+          "completions_post_spinup": 43,
+          "completions_of_simulated_post_spinup": 43,
+          "fraction_routed_to_hypothetical": 0.6530612244897959
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 5.218333333333334,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 49,
+          "completions_post_spinup": 55,
+          "completions_of_simulated_post_spinup": 55,
+          "fraction_routed_to_hypothetical": 0.6938775510204082
+        }
+      ],
+      "num_queries_in_observation_window": 31
+    },
+    {
+      "decision_rel_time_s": 6859.392139911652,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 4,
+      "reason": "num_queries_since_last_cluster_ready=50, slo_metric=SloMetric.BINARY, slo_metric_value=0.2143, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 7.440416666666668,
+          "arrivals_pre_spinup": 49,
+          "completions_pre_spinup": 50,
+          "completions_of_simulated_pre_spinup": 22,
+          "arrivals_post_spinup": 64,
+          "completions_post_spinup": 61,
+          "completions_of_simulated_post_spinup": 61,
+          "fraction_routed_to_hypothetical": 0.171875
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 7.461250000000001,
+          "arrivals_pre_spinup": 49,
+          "completions_pre_spinup": 50,
+          "completions_of_simulated_pre_spinup": 22,
+          "arrivals_post_spinup": 64,
+          "completions_post_spinup": 65,
+          "completions_of_simulated_post_spinup": 65,
+          "fraction_routed_to_hypothetical": 0.203125
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 7.477916666666666,
+          "arrivals_pre_spinup": 49,
+          "completions_pre_spinup": 50,
+          "completions_of_simulated_pre_spinup": 22,
+          "arrivals_post_spinup": 64,
+          "completions_post_spinup": 65,
+          "completions_of_simulated_post_spinup": 65,
+          "fraction_routed_to_hypothetical": 0.34375
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 7.755416666666668,
+          "arrivals_pre_spinup": 49,
+          "completions_pre_spinup": 50,
+          "completions_of_simulated_pre_spinup": 22,
+          "arrivals_post_spinup": 62,
+          "completions_post_spinup": 58,
+          "completions_of_simulated_post_spinup": 58,
+          "fraction_routed_to_hypothetical": 0.5645161290322581
+        }
+      ],
+      "num_queries_in_observation_window": 49
+    },
+    {
+      "decision_rel_time_s": 7451.347049951553,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 8,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.9298, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.8530927835051546,
+          "projected_cost": 11.204583333333334,
+          "arrivals_pre_spinup": 174,
+          "completions_pre_spinup": 76,
+          "completions_of_simulated_pre_spinup": 59,
+          "arrivals_post_spinup": 145,
+          "completions_post_spinup": 57,
+          "completions_of_simulated_post_spinup": 56,
+          "fraction_routed_to_hypothetical": 0.06896551724137931
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.8098958333333334,
+          "projected_cost": 11.252500000000001,
+          "arrivals_pre_spinup": 174,
+          "completions_pre_spinup": 76,
+          "completions_of_simulated_pre_spinup": 59,
+          "arrivals_post_spinup": 141,
+          "completions_post_spinup": 58,
+          "completions_of_simulated_post_spinup": 57,
+          "fraction_routed_to_hypothetical": 0.1702127659574468
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.861198738170347,
+          "projected_cost": 10.38375,
+          "arrivals_pre_spinup": 174,
+          "completions_pre_spinup": 76,
+          "completions_of_simulated_pre_spinup": 59,
+          "arrivals_post_spinup": 73,
+          "completions_post_spinup": 55,
+          "completions_of_simulated_post_spinup": 54,
+          "fraction_routed_to_hypothetical": 0.3972602739726027
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.8490566037735849,
+          "projected_cost": 10.421666666666667,
+          "arrivals_pre_spinup": 174,
+          "completions_pre_spinup": 76,
+          "completions_of_simulated_pre_spinup": 59,
+          "arrivals_post_spinup": 71,
+          "completions_post_spinup": 53,
+          "completions_of_simulated_post_spinup": 52,
+          "fraction_routed_to_hypothetical": 0.49295774647887325
+        }
+      ],
+      "num_queries_in_observation_window": 174
+    },
+    {
+      "decision_rel_time_s": 8100.5990200042725,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 16,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.9853, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.03125,
+          "projected_cost": 10.379583333333333,
+          "arrivals_pre_spinup": 16,
+          "completions_pre_spinup": 69,
+          "completions_of_simulated_pre_spinup": 15,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 113,
+          "completions_of_simulated_post_spinup": 32,
+          "fraction_routed_to_hypothetical": 0.0967741935483871
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.03125,
+          "projected_cost": 10.436250000000001,
+          "arrivals_pre_spinup": 16,
+          "completions_pre_spinup": 69,
+          "completions_of_simulated_pre_spinup": 15,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 113,
+          "completions_of_simulated_post_spinup": 32,
+          "fraction_routed_to_hypothetical": 0.16129032258064516
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.03125,
+          "projected_cost": 10.254583333333333,
+          "arrivals_pre_spinup": 16,
+          "completions_pre_spinup": 69,
+          "completions_of_simulated_pre_spinup": 15,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 113,
+          "completions_of_simulated_post_spinup": 32,
+          "fraction_routed_to_hypothetical": 0.3870967741935484
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.03125,
+          "projected_cost": 10.604583333333334,
+          "arrivals_pre_spinup": 16,
+          "completions_pre_spinup": 69,
+          "completions_of_simulated_pre_spinup": 15,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 113,
+          "completions_of_simulated_post_spinup": 32,
+          "fraction_routed_to_hypothetical": 0.25806451612903225
+        }
+      ],
+      "num_queries_in_observation_window": 16
+    },
+    {
+      "decision_rel_time_s": 8516.413005828857,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 4,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.9178, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 11.966666666666669,
+          "arrivals_pre_spinup": 42,
+          "completions_pre_spinup": 166,
+          "completions_of_simulated_pre_spinup": 37,
+          "arrivals_post_spinup": 37,
+          "completions_post_spinup": 59,
+          "completions_of_simulated_post_spinup": 42,
+          "fraction_routed_to_hypothetical": 0.05405405405405406
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 12.009166666666669,
+          "arrivals_pre_spinup": 42,
+          "completions_pre_spinup": 166,
+          "completions_of_simulated_pre_spinup": 37,
+          "arrivals_post_spinup": 37,
+          "completions_post_spinup": 59,
+          "completions_of_simulated_post_spinup": 42,
+          "fraction_routed_to_hypothetical": 0.02702702702702703
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 12.18,
+          "arrivals_pre_spinup": 42,
+          "completions_pre_spinup": 166,
+          "completions_of_simulated_pre_spinup": 37,
+          "arrivals_post_spinup": 37,
+          "completions_post_spinup": 59,
+          "completions_of_simulated_post_spinup": 42,
+          "fraction_routed_to_hypothetical": 0.16216216216216217
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 12.466666666666667,
+          "arrivals_pre_spinup": 42,
+          "completions_pre_spinup": 166,
+          "completions_of_simulated_pre_spinup": 37,
+          "arrivals_post_spinup": 37,
+          "completions_post_spinup": 59,
+          "completions_of_simulated_post_spinup": 42,
+          "fraction_routed_to_hypothetical": 0.1891891891891892
+        }
+      ],
+      "num_queries_in_observation_window": 42
+    },
+    {
+      "decision_rel_time_s": 9142.111786842346,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 4,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.9921, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 14.244166666666668,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 153,
+          "completions_of_simulated_pre_spinup": 27,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.03225806451612903
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 14.344583333333336,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 153,
+          "completions_of_simulated_pre_spinup": 27,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.0
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 14.244166666666668,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 153,
+          "completions_of_simulated_pre_spinup": 27,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.16129032258064516
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 14.344166666666668,
+          "arrivals_pre_spinup": 31,
+          "completions_pre_spinup": 153,
+          "completions_of_simulated_pre_spinup": 27,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.16129032258064516
+        }
+      ],
+      "num_queries_in_observation_window": 31
+    },
+    {
+      "decision_rel_time_s": 9446.742493867874,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 4,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.9672, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 14.435833333333335,
+          "arrivals_pre_spinup": 15,
+          "completions_pre_spinup": 133,
+          "completions_of_simulated_pre_spinup": 11,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.0
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 14.435833333333335,
+          "arrivals_pre_spinup": 15,
+          "completions_pre_spinup": 133,
+          "completions_of_simulated_pre_spinup": 11,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.0
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 14.435833333333335,
+          "arrivals_pre_spinup": 15,
+          "completions_pre_spinup": 133,
+          "completions_of_simulated_pre_spinup": 11,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.0
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 14.435833333333335,
+          "arrivals_pre_spinup": 15,
+          "completions_pre_spinup": 133,
+          "completions_of_simulated_pre_spinup": 11,
+          "arrivals_post_spinup": 31,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.0
+        }
+      ],
+      "num_queries_in_observation_window": 15
+    },
+    {
+      "decision_rel_time_s": 9773.172281980515,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 32,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.9325, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.6044776119402985,
+          "projected_cost": 20.17333333333334,
+          "arrivals_pre_spinup": 159,
+          "completions_pre_spinup": 180,
+          "completions_of_simulated_pre_spinup": 111,
+          "arrivals_post_spinup": 135,
+          "completions_post_spinup": 62,
+          "completions_of_simulated_post_spinup": 57,
+          "fraction_routed_to_hypothetical": 0.044444444444444446
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.6067415730337079,
+          "projected_cost": 20.140000000000004,
+          "arrivals_pre_spinup": 159,
+          "completions_pre_spinup": 180,
+          "completions_of_simulated_pre_spinup": 111,
+          "arrivals_post_spinup": 135,
+          "completions_post_spinup": 62,
+          "completions_of_simulated_post_spinup": 56,
+          "fraction_routed_to_hypothetical": 0.1259259259259259
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.6142322097378277,
+          "projected_cost": 20.155,
+          "arrivals_pre_spinup": 159,
+          "completions_pre_spinup": 180,
+          "completions_of_simulated_pre_spinup": 111,
+          "arrivals_post_spinup": 135,
+          "completions_post_spinup": 59,
+          "completions_of_simulated_post_spinup": 53,
+          "fraction_routed_to_hypothetical": 0.15555555555555556
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.5677966101694916,
+          "projected_cost": 19.92625,
+          "arrivals_pre_spinup": 159,
+          "completions_pre_spinup": 180,
+          "completions_of_simulated_pre_spinup": 111,
+          "arrivals_post_spinup": 104,
+          "completions_post_spinup": 40,
+          "completions_of_simulated_post_spinup": 34,
+          "fraction_routed_to_hypothetical": 0.25
+        }
+      ],
+      "num_queries_in_observation_window": 159
+    },
+    {
+      "decision_rel_time_s": 10716.327132940292,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 16,
+      "reason": "num_queries_since_last_cluster_ready=192, slo_metric=SloMetric.BINARY, slo_metric_value=0.8796, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.37362637362637363,
+          "projected_cost": 23.629583333333336,
+          "arrivals_pre_spinup": 60,
+          "completions_pre_spinup": 112,
+          "completions_of_simulated_pre_spinup": 45,
+          "arrivals_post_spinup": 58,
+          "completions_post_spinup": 63,
+          "completions_of_simulated_post_spinup": 55,
+          "fraction_routed_to_hypothetical": 0.05172413793103448
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.3626373626373626,
+          "projected_cost": 23.61958333333334,
+          "arrivals_pre_spinup": 60,
+          "completions_pre_spinup": 112,
+          "completions_of_simulated_pre_spinup": 45,
+          "arrivals_post_spinup": 58,
+          "completions_post_spinup": 62,
+          "completions_of_simulated_post_spinup": 54,
+          "fraction_routed_to_hypothetical": 0.08620689655172414
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.3626373626373626,
+          "projected_cost": 23.494583333333335,
+          "arrivals_pre_spinup": 60,
+          "completions_pre_spinup": 112,
+          "completions_of_simulated_pre_spinup": 45,
+          "arrivals_post_spinup": 58,
+          "completions_post_spinup": 63,
+          "completions_of_simulated_post_spinup": 55,
+          "fraction_routed_to_hypothetical": 0.20689655172413793
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.3626373626373626,
+          "projected_cost": 23.639583333333334,
+          "arrivals_pre_spinup": 60,
+          "completions_pre_spinup": 112,
+          "completions_of_simulated_pre_spinup": 45,
+          "arrivals_post_spinup": 58,
+          "completions_post_spinup": 66,
+          "completions_of_simulated_post_spinup": 58,
+          "fraction_routed_to_hypothetical": 0.3448275862068966
+        }
+      ],
+      "num_queries_in_observation_window": 60
+    },
+    {
+      "decision_rel_time_s": 11976.589570999146,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 4,
+      "reason": "num_queries_since_last_cluster_ready=333, slo_metric=SloMetric.BINARY, slo_metric_value=0.1905, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 25.64291666666666,
+          "arrivals_pre_spinup": 32,
+          "completions_pre_spinup": 34,
+          "completions_of_simulated_pre_spinup": 13,
+          "arrivals_post_spinup": 34,
+          "completions_post_spinup": 53,
+          "completions_of_simulated_post_spinup": 53,
+          "fraction_routed_to_hypothetical": 0.029411764705882353
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 25.667083333333338,
+          "arrivals_pre_spinup": 32,
+          "completions_pre_spinup": 34,
+          "completions_of_simulated_pre_spinup": 13,
+          "arrivals_post_spinup": 34,
+          "completions_post_spinup": 52,
+          "completions_of_simulated_post_spinup": 52,
+          "fraction_routed_to_hypothetical": 0.029411764705882353
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 25.723750000000003,
+          "arrivals_pre_spinup": 32,
+          "completions_pre_spinup": 34,
+          "completions_of_simulated_pre_spinup": 13,
+          "arrivals_post_spinup": 34,
+          "completions_post_spinup": 53,
+          "completions_of_simulated_post_spinup": 53,
+          "fraction_routed_to_hypothetical": 0.4117647058823529
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 25.837083333333332,
+          "arrivals_pre_spinup": 32,
+          "completions_pre_spinup": 34,
+          "completions_of_simulated_pre_spinup": 13,
+          "arrivals_post_spinup": 34,
+          "completions_post_spinup": 52,
+          "completions_of_simulated_post_spinup": 52,
+          "fraction_routed_to_hypothetical": 0.20588235294117646
+        }
+      ],
+      "num_queries_in_observation_window": 32
+    },
+    {
+      "decision_rel_time_s": 12537.380939006805,
+      "autoscaling_policy": "add_single_best_forward",
+      "selected_rpu": 16,
+      "reason": "num_queries_since_last_cluster_ready=5, slo_metric=SloMetric.BINARY, slo_metric_value=0.4286, slo_threshold=0.1000, slo_tightening_factor=0.8",
+      "candidates": [
+        {
+          "rpu": 4,
+          "slo_violation": 0.0,
+          "projected_cost": 20.839166666666667,
+          "arrivals_pre_spinup": 30,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 30,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.03333333333333333
+        },
+        {
+          "rpu": 8,
+          "slo_violation": 0.0,
+          "projected_cost": 20.854583333333338,
+          "arrivals_pre_spinup": 30,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 30,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.03333333333333333
+        },
+        {
+          "rpu": 16,
+          "slo_violation": 0.0,
+          "projected_cost": 20.83,
+          "arrivals_pre_spinup": 30,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 30,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.3
+        },
+        {
+          "rpu": 32,
+          "slo_violation": 0.0,
+          "projected_cost": 20.860000000000003,
+          "arrivals_pre_spinup": 30,
+          "completions_pre_spinup": 39,
+          "completions_of_simulated_pre_spinup": 25,
+          "arrivals_post_spinup": 30,
+          "completions_post_spinup": 35,
+          "completions_of_simulated_post_spinup": 35,
+          "fraction_routed_to_hypothetical": 0.4
+        }
+      ],
+      "num_queries_in_observation_window": 30
+    }
+  ]
+}

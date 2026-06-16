@@ -39,9 +39,8 @@ autoscaler_config:
     - 16
     - 32
   autoscaling_policy: add_single_best_forward
-  min_cluster_lifetime_s: 1200.0
+  min_cluster_lifetime_s: 3600.0
   idle_time_before_tear_down_s: 1200.0
   observation_window_s: 300.0
-  min_observations_to_act: 5
   slo_tightening_factor: 1.0
   min_finished_queries_in_counterfactual: 30

@@ -86,19 +86,6 @@ def _validate_rel_time(df: pd.DataFrame) -> None:
             f"not relative. Offending event types: {counts}"
         )
 
-
-def _parse_details(raw: Any) -> dict:
-    """Parse a details field that may be a JSON string or already a dict."""
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw:
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return {}
-
-
 def _safe_rpu(cluster_name: str) -> int | None:
     """Extract RPU from cluster name, returning None on failure."""
     if not cluster_name:
