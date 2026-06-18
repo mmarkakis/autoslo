@@ -6,6 +6,7 @@ sampling_config:
   forecaster_config:
     forecast_policy_name: same_day_exponential
     decay_factor: 0.5
+    arrival_time_policy_name: "interarrival_deciles"
     reservoir_config:
       workload_name: redbench_provisioned_157_0
       last_day_date_inclusive: "<LAST_DAY_DATE_INCLUSIVE>"
@@ -13,9 +14,10 @@ sampling_config:
 
 tuning_constraints_config:
   simulation_max_clusters: 10
+  slo_threshold_adjustment_factor: 0.8
 
 spinup_optimizer_config:
-  max_spinups: 3  
+  max_spinups: 9
   min_delinquent_workload_fraction: 0.5
   lead_time_s: 360.0
   allowed_rpu_sizes: [4, 8, 16, 32]
@@ -30,7 +32,7 @@ autoscaling_param_sweep:
     strategy: grid
     params:
       "autoscaler_config.min_cluster_lifetime_s": [1200.0, 3600.0]
-      "autoscaler_config.idle_time_before_tear_down_s": [300.0, 600.0]
+      "autoscaler_config.idle_time_before_tear_down_s": [600.0, 1200.0]
       "autoscaler_config.observation_window_s": [300.0, 600.0]
       "autoscaler_config.slo_tightening_factor": [0.8, 1.0]
       "autoscaler_config.min_finished_queries_in_counterfactual": [10, 30]

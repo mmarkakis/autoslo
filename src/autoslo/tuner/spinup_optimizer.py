@@ -304,6 +304,7 @@ class SpinupOptimizer:
         config: dict[str, Any],
         run_dir: Path,
         agg_method: str,
+        tuning_slo_objective: SloObjective | None = None,
         verbose_progress: bool = True,
     ) -> None:
         self._evaluator = evaluator
@@ -319,8 +320,11 @@ class SpinupOptimizer:
         self._slo_resolver = SloResolver(slo_resolver_config)
 
         # SLO objective for threshold-aware candidate selection.
-        slo_objective_config = SloObjectiveConfig.from_config(config)
-        self._slo_objective = SloObjective(slo_objective_config)
+        if tuning_slo_objective is None:
+            slo_objective_config = SloObjectiveConfig.from_config(config)
+            self._slo_objective = SloObjective(slo_objective_config)
+        else:
+            self._slo_objective = tuning_slo_objective
 
     # ------------------------------------------------------------------
     # Public API

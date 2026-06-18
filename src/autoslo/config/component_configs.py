@@ -237,6 +237,7 @@ class TuningConstraintsConfig(_PartialConfig):
     """Optional constraints that apply only while tuning simulations."""
 
     simulation_max_clusters: Optional[int] = None
+    slo_threshold_adjustment_factor: float = 1.0
 
     def __post_init__(self):
         if (
@@ -246,6 +247,11 @@ class TuningConstraintsConfig(_PartialConfig):
             raise ValueError(
                 "simulation_max_clusters must be >= 0 when provided, got "
                 f"{self.simulation_max_clusters}"
+            )
+        if self.slo_threshold_adjustment_factor <= 0:
+            raise ValueError(
+                "slo_threshold_adjustment_factor must be positive, got "
+                f"{self.slo_threshold_adjustment_factor}"
             )
 
 

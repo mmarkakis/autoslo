@@ -140,14 +140,27 @@ class PolicyTuner:
             self._simulation_max_clusters = (
                 tuning_constraints.simulation_max_clusters
             )
+            self._slo_threshold_adjustment_factor = (
+                tuning_constraints.slo_threshold_adjustment_factor
+            )
         except ValueError:
             self._simulation_max_clusters = None
+            self._slo_threshold_adjustment_factor = 1.0
 
-        if self._simulation_max_clusters is not None:
-            console.print(
-                "Applying tuning-only constraint: "
-                f"simulation_max_clusters={self._simulation_max_clusters}."
+        # Tuning-only SLO objective used for candidate ranking/selection.
+        # This does not mutate persisted execution configs.
+        adjusted_slo_threshold = (
+            self._slo_objective.slo_threshold
+            * self._slo_threshold_adjustment_factor
+        )
+        self._tuning_slo_objective = SloObjective(
+            SloObjectiveConfig(
+                slo_metric=self._slo_objective.slo_metric,
+                slo_threshold=adjusted_slo_threshold,
             )
+        )
+
+        
 
         # Timing instrumentation.
         self._timer = PolicyTunerTimer()
@@ -350,6 +363,7 @@ class PolicyTuner:
                 spinup_optimizer_config=spinup_optimizer_config,
                 run_dir=candidate_dir,
                 agg_method=self._agg_method,
+                tuning_slo_objective=self._tuning_slo_objective,
                 verbose_progress=self._verbose_progress,
             )
             post_spinups_config, train_agg = optimizer.optimize(
@@ -411,7 +425,7 @@ class PolicyTuner:
             )
             for agg in candidate_val_aggs
         ]
-        best_idx = self._slo_objective.idx_of_best(val_scores)
+        best_idx = self._tuning_slo_objective.idx_of_best(val_scores)
         best_config = candidate_configs[best_idx]
         best_train_agg = candidate_train_aggs[best_idx]
         best_val_agg = candidate_val_aggs[best_idx]
@@ -451,7 +465,7 @@ class PolicyTuner:
             initial_config=self._apply_simulation_constraints(initial_config),
             run_dir=self._out_dir,
             phase_name=phase_name,
-            slo_objective=self._slo_objective,
+            slo_objective=self._tuning_slo_objective,
             agg_method=self._agg_method,
             verbose_progress=self._verbose_progress,
         )
@@ -471,6 +485,20 @@ class PolicyTuner:
 
         Returns the path to the final optimised config file.
         """
+        if self._simulation_max_clusters is not None:
+            console.print(
+                "Applying tuning-only constraint: "
+                f"simulation_max_clusters={self._simulation_max_clusters}."
+            )
+        if self._slo_threshold_adjustment_factor != 1.0:
+            console.print(
+                "Applying tuning-only constraint: "
+                f"slo_threshold_adjustment_factor="
+                f"{self._slo_threshold_adjustment_factor} "
+                f"(decision threshold "
+                f"{self._slo_objective.slo_threshold:.6f} -> "
+                f"{self._tuning_slo_objective.slo_threshold:.6f})."
+            )
         final_path = self._out_dir / "final_execution_config.yml"
         console.start_file_logging(self._out_dir / "console.log")
         try:
