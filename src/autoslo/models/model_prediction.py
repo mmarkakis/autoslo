@@ -1,5 +1,8 @@
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from autoslo.models.residual_calibrator import ResidualCalibrator
 
 import numpy as np
 from scipy.optimize import root_scalar  # type: ignore[import]
@@ -22,6 +25,10 @@ class ModelPrediction:
     std_dev_s: Optional[list[float]] = None
     mix_coeffs: Optional[list[float]] = None
     metadata: Optional[dict[str, Any]] = None
+    # Shared reference to the owning IconqModel's calibrator.
+    calibrator: Optional["ResidualCalibrator"] = field(
+        default=None, compare=False, repr=False, hash=False
+    )
 
     def _c_constant(self) -> bool:
         """
@@ -71,19 +78,46 @@ class ModelPrediction:
             and (len(self.mean_s) == len(self.mix_coeffs))
         )
 
-    def overall_mean_s(self) -> float:
+    def overall_mean_s(self, percentile: Optional[float] = None) -> float:
         """
         Based on the contents of the model prediction, builds a mixture of Gaussians and computes
         the mean latency.
 
+        When ``percentile`` is provided and the prediction carries a residual
+        calibrator (set by IconqModel.predict_from_dataset), a post-hoc
+        multiplicative correction is applied in log-space.  Calibration is
+        restricted to point-estimate predictions (``_c_constant()``) that
+        originate from the LSTM (``metadata['model_source'] == 'lstm'``).
+
+        Parameters:
+            percentile: If given, apply residual calibration at this quantile
+                level (0–1).  ``None`` returns the raw prediction.
+
         Returns:
-            The mean latency.
+            The (optionally calibrated) mean latency in seconds.
 
         Raises:
             ValueError: If the model prediction is not well-formed.
         """
 
-        if self._c_constant() or self._c_norm():
+        if self._c_constant():
+            raw = max(self.mean_s[0], self.MINIMUM_OUTPUT_LATENCY_S)  # type: ignore
+            if (
+                percentile is not None
+                and self.calibrator is not None
+                and self.metadata is not None
+                and self.metadata.get("model_source") == "lstm"
+            ):
+                rpu = int(self.metadata["rpu"])
+                concurrency = int(
+                    self.metadata.get("num_other_concurrent_queries", 0)
+                )
+                return self.calibrator.correct_scalar(
+                    raw, rpu, concurrency, percentile
+                )
+
+            return raw
+        if self._c_norm():
             return max(self.mean_s[0], self.MINIMUM_OUTPUT_LATENCY_S)  # type: ignore
 
         if self._c_constant_mix() or self._c_norm_mix():

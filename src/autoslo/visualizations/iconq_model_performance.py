@@ -36,10 +36,13 @@ from matplotlib.figure import Figure
 from autoslo.clusters.cluster import Cluster
 from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.models.iconq_model import DataSplit, IconqModel
+from autoslo.models.residual_calibrator import (
+    CONCURRENCY_BINS as _CONC_BINS,
+    CONCURRENCY_LABELS as _CONC_LABELS,
+)
 from autoslo.visualizations.colors import Palette
 from autoslo.visualizations.prediction_error_cdf import (
     add_monospace_summary_box,
-    build_direction_summary_lines,
     build_percentile_summary_lines,
     plot_grouped_cdf,
 )
@@ -66,9 +69,6 @@ _PERCENTILE_LINE_STYLES: dict[int, str] = {
     99: ":",
 }
 
-# Concurrency bins used by plots 4 and 5.
-_CONC_BINS = [-0.5, 0.5, 25.5, 75.5, 150.5, 250.5, float("inf")]
-_CONC_LABELS = ["0", "1-25", "26-75", "76-150", "151-250", "251+"]
 
 # Cells in the heatmap with fewer than this many samples are masked.
 _MIN_HEATMAP_SAMPLES = 5

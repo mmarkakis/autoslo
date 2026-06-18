@@ -45,6 +45,7 @@ from autoslo.models.iconq_model_config import (
     IconqModelTrainConfig,
 )
 from autoslo.models.model_prediction import ModelPrediction
+from autoslo.models.residual_calibrator import ResidualCalibrator
 from autoslo.models.stage_model import StageModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
 from autoslo.nn.loss_functions import (
@@ -265,6 +266,9 @@ class IconqModel:
         else:
             self._loss_type = LossType.SENSITIVE_Q_ERROR
 
+        # Initialize residual calibrator (populated by fit_residual_calibrator()).
+        self._residual_calibrator: Optional[ResidualCalibrator] = None
+
         # Initialize the dataset and split indices.
         self._idxs_for_split: dict[DataSplit, list[int]] = {}
         self._populate_dataset_and_split_idxs()
@@ -390,6 +394,7 @@ class IconqModel:
                 "target_is_lower_bound": y_is_lower_bound[i].item(),
                 "loss": 0.0,
             },
+            calibrator=self._residual_calibrator,
         )
 
     def _build_predictions_from_nn_output(
@@ -464,6 +469,7 @@ class IconqModel:
                         "query_text_id": t,
                         "query_id": q.query_id,
                     },
+                    calibrator=self._residual_calibrator,
                 )
         elif self._loss_type == LossType.NLL:
             for i, (m, le, q, t) in enumerate(
@@ -485,6 +491,7 @@ class IconqModel:
                         "query_text_id": t,
                         "query_id": q.query_id,
                     },
+                    calibrator=self._residual_calibrator,
                 )
         else:  # LossType.SENSITIVE_Q_ERROR
             losses: list | np.ndarray = (
@@ -512,6 +519,7 @@ class IconqModel:
                         "target_is_lower_bound": yislb,
                         "loss": loss_val,
                     },
+                    calibrator=self._residual_calibrator,
                 )
 
         return result
@@ -601,6 +609,7 @@ class IconqModel:
                                 ].item(),
                                 "loss": 0.0,
                             },
+                            calibrator=self._residual_calibrator,
                         )
 
             if not non_isolated_indices:
@@ -760,9 +769,39 @@ class IconqModel:
             state_dict = torch.load(checkpoint_path, map_location=model._device)
             model._load_nn_state_dict_with_feature_guard(state_dict)
 
-       
+        # Load or retroactively fit the residual calibrator.
+        calibrator_pkl = os.path.join(load_dir, "residual_calibrator.pkl")
+        if os.path.exists(calibrator_pkl):
+            model._residual_calibrator = ResidualCalibrator.load(calibrator_pkl)
+        else:
+            model.fit_residual_calibrator()
 
         return model
+
+    def fit_residual_calibrator(self) -> None:
+        """Fit (or re-fit) the residual calibrator from the saved validation data.
+
+        Can be called retroactively on a loaded model if the calibrator pkl
+        was not created during training.
+        """
+        val_parquet = os.path.join(self._save_dir, "final_val.parquet")
+        val_csv = os.path.join(self._save_dir, "final_val.csv")
+        if os.path.exists(val_parquet):
+            val_df = pd.read_parquet(val_parquet)
+        elif os.path.exists(val_csv):
+            val_df = pd.read_csv(val_csv)
+        else:
+            raise FileNotFoundError(
+                f"Cannot fit residual calibrator: neither final_val.parquet nor "
+                f"final_val.csv found in {self._save_dir}."
+            )
+        self._residual_calibrator = ResidualCalibrator()
+        self._residual_calibrator.fit(val_df)
+        calibrator_pkl = os.path.join(self._save_dir, "residual_calibrator.pkl")
+        self._residual_calibrator.save(calibrator_pkl)
+        logger.info(
+            "Residual calibrator fitted and saved to %s.", calibrator_pkl
+        )
 
     # ── Dataset / split helpers ────────────────────────────────────────────────
 
@@ -1100,6 +1139,7 @@ class IconqModel:
         _, final_val_errors = self.eval_on_split(
             split=DataSplit.VAL, out_filename="final_val.csv"
         )
+        self.fit_residual_calibrator()
         sets = [("train", final_train_errors), ("val", final_val_errors)]
         if len(self._idxs_for_split[DataSplit.TEST]) > 0:
             _, test_errors = self.eval_on_split(
