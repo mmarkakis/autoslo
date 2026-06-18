@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -10,13 +11,15 @@ import numpy as np
 import pandas as pd
 
 import autoslo.filesystem.path_utils as pu
-from autoslo.config.component_configs import (
-    ForecasterConfig,
-    WorkloadConfig,
+from autoslo.config.component_configs import ForecasterConfig, WorkloadConfig
+from autoslo.forecasting.forecast_policy import (
+    ArrivalTimePolicy,
+    ForecastPolicy,
 )
-from autoslo.forecasting.forecast_policy import ForecastPolicy
 from autoslo.tuner.reservoir import QueryReservoir
 from autoslo.workload_definition.workload import Workload
+
+logger = logging.getLogger(__name__)
 
 
 class Forecaster:
@@ -40,6 +43,9 @@ class Forecaster:
         self.forecast_policy = ForecastPolicy(
             forecaster_config.forecast_policy_name
         )
+        self.arrival_time_policy = ArrivalTimePolicy(
+            forecaster_config.arrival_time_policy_name
+        )
         if self.forecast_policy != ForecastPolicy.NONE:
             reservoir_config = forecaster_config.reservoir_config
             if reservoir_config is None:
@@ -47,6 +53,16 @@ class Forecaster:
                     "reservoir_config must be provided for forecast policies other than 'none'"
                 )
             self.reservoir = QueryReservoir(reservoir_config)
+            if (
+                self.arrival_time_policy
+                == ArrivalTimePolicy.INTERARRIVAL_DECILES
+                and not self.reservoir.has_arrivals
+            ):
+                raise ValueError(
+                    "arrival_time_policy_name='interarrival_deciles' requires a "
+                    "reservoir built from a workload file, but this reservoir has "
+                    "no per-arrival timing data."
+                )
 
     def forecast(
         self,
@@ -85,6 +101,7 @@ class Forecaster:
             target_date = pd.Timestamp(target_date).date()
         assert isinstance(target_date, date)
 
+        rng = np.random.default_rng(seed)
         rows = []
         query_idx = 0
 
@@ -93,35 +110,56 @@ class Forecaster:
             if bin_df.empty:
                 continue
 
-            n_samples = self._n_samples(target_date, i, bin_df)
-            if use_fixed_queries_per_hour:
-                n_samples = self.forecaster_config.fixed_queries_per_hour
+            if (
+                self.arrival_time_policy
+                == ArrivalTimePolicy.INTERARRIVAL_DECILES
+                and not use_fixed_queries_per_hour
+            ):
+                # use_fixed_queries_per_hour forces the UNIFORM path so that
+                # callers (e.g. cache-aware routing) that need a fixed count
+                # are unaffected by the arrival-time policy.
+                deciles = self._get_gap_deciles_for_bin(target_date, i)
+                if deciles is not None:
+                    second_offsets = self._sample_hour_from_deciles(
+                        deciles,
+                        rng,
+                    )
+                    n_samples = len(second_offsets)
+                else:
+                    # Sparse-bin fallback: count-based uniform timing.
+                    n_samples = self._n_samples(target_date, i, bin_df)
+                    if n_samples == 0:
+                        continue
+                    second_offsets = list(
+                        np.sort(rng.uniform(0, 3600, size=n_samples))
+                    )
+            else:
+                # UNIFORM path, also used when use_fixed_queries_per_hour=True.
+                n_samples = self._n_samples(target_date, i, bin_df)
+                if use_fixed_queries_per_hour:
+                    n_samples = self.forecaster_config.fixed_queries_per_hour
+                if n_samples == 0:
+                    continue
+                second_offsets = list(
+                    np.sort(rng.uniform(0, 3600, size=n_samples))
+                )
+
             if n_samples == 0:
                 continue
 
-            # Sample with replacement from the 'query_text_id' column, based on
-            # the relative weights of the "count" column.
+            # Sample query templates weighted by historical counts.
             sampled_ids = bin_df.sample(
                 n=n_samples,
                 weights="count",
                 replace=True,
-                random_state=seed,
+                random_state=rng,
             )["query_text_id"]
 
-            # Given the number of arrivals, the arrival times for a Poisson
-            # process are uniformly distributed within the hour.
-            sampled_relative_start_times = list(
-                np.sort(
-                    np.random.default_rng(seed).uniform(0, 3600, size=n_samples)
-                )
-            )
             base_start_time = pd.Timestamp(target_date) + pd.Timedelta(hours=i)
 
             for query_text_id, rel_start_time in zip(
-                sampled_ids, sampled_relative_start_times
+                sampled_ids, second_offsets
             ):
-                if rel_start_time > 3600:
-                    break
                 rows.append(
                     {
                         "query_id": f"forecast_{query_idx:06d}",
@@ -133,7 +171,6 @@ class Forecaster:
                         "repetition_id": 0,
                     }
                 )
-
                 query_idx += 1
 
         forecast_df = pd.DataFrame(
@@ -331,3 +368,187 @@ class Forecaster:
             return 0
 
         return int(round(weighted_count_sum / total_weight))
+
+    def _get_gap_deciles_for_bin(
+        self, target_date: date, hour: int
+    ) -> np.ndarray | None:
+        """
+        Return gap decile boundaries (linear scale) for the given bin, or None
+        if all fallback levels fail to accumulate min_gaps_for_deciles gaps.
+
+        Fallback order (hard-coded):
+          1. Policy-window source days for this hour (mirrors _build_bin_df).
+          2. All available history for this hour (equal weights).
+          3. Union of hours h-1, h, h+1 across all available history.
+        """
+        min_gaps = self.forecaster_config.min_gaps_for_deciles
+        yesterday = target_date - pd.Timedelta(days=1)
+        one_week_ago = target_date - pd.Timedelta(days=7)
+
+        def _fetch(day: date, h: int) -> np.ndarray:
+            return np.sort(
+                self.reservoir.arrivals_bin_df(day, h)[
+                    "second_of_hour"
+                ].to_numpy()
+            )
+
+        # Level 1: policy-window source days.
+        if self.forecast_policy == ForecastPolicy.ONE_DAY:
+            policy_arrivals = [_fetch(yesterday, hour)]
+            policy_weights = [1.0]
+        elif self.forecast_policy == ForecastPolicy.SEVEN_DAYS_FLAT:
+            days = [one_week_ago + pd.Timedelta(days=d) for d in range(7)]
+            policy_arrivals = [_fetch(d, hour) for d in days]
+            policy_weights = [1.0] * 7
+        elif self.forecast_policy == ForecastPolicy.SAME_DAY_ONCE:
+            source = (
+                one_week_ago
+                if one_week_ago >= self.reservoir.min_date
+                else yesterday
+            )
+            policy_arrivals = [_fetch(source, hour)]
+            policy_weights = [1.0]
+        elif self.forecast_policy == ForecastPolicy.SAME_DAY_EXPONENTIAL:
+            weight = 1.0
+            day = target_date - pd.Timedelta(days=7)
+            policy_arrivals = []
+            policy_weights = []
+            while day >= self.reservoir.min_date:
+                policy_arrivals.append(_fetch(day, hour))
+                policy_weights.append(weight)
+                weight *= self.forecaster_config.decay_factor
+                day -= pd.Timedelta(days=7)
+            if not policy_arrivals:
+                if (
+                    target_date - pd.Timedelta(days=7)
+                ) < self.reservoir.min_date:
+                    # Date is before the reservoir range: fall back to yesterday.
+                    policy_arrivals = [_fetch(yesterday, hour)]
+                    policy_weights = [1.0]
+                # else: date is in range but no same-weekday data; keep lists empty.
+        else:
+            raise ValueError(
+                f"Unsupported forecast policy: {self.forecast_policy}"
+            )
+
+        result = self._compute_weighted_gap_deciles(
+            policy_arrivals, policy_weights, min_gaps
+        )
+        if result is not None:
+            return result
+
+        # Level 2: all available history for this hour, equal weights.
+        all_dates = self.reservoir.arrivals_df["date"].unique()
+        all_arrivals = [_fetch(d, hour) for d in all_dates]
+        result = self._compute_weighted_gap_deciles(
+            all_arrivals, [1.0] * len(all_dates), min_gaps
+        )
+        if result is not None:
+            return result
+
+        # Level 3: union of hours h-1, h, h+1 across all available history.
+        neighbor_hours = [h for h in (hour - 1, hour, hour + 1) if 0 <= h < 24]
+        neighbor_arrivals = [
+            _fetch(d, h) for h in neighbor_hours for d in all_dates
+        ]
+        return self._compute_weighted_gap_deciles(
+            neighbor_arrivals, [1.0] * len(neighbor_arrivals), min_gaps
+        )  # Returns None if still insufficient -> caller uses uniform fallback.
+
+    @staticmethod
+    def _compute_weighted_gap_deciles(
+        per_day_arrivals: list[np.ndarray],
+        per_day_weights: list[float],
+        min_gaps_required: int,
+        min_gap_s: float = 0.001,
+        n_quantiles: int = 10,
+    ) -> np.ndarray | None:
+        """
+        Compute n_quantiles+1 interarrival-gap decile boundaries from pooled
+        historical arrivals.
+
+        For each source day, gaps are the consecutive differences starting from 0
+        (i.e. the gap from the start of the hour to the first arrival is included).
+        Each gap in day k is assigned weight w_k / N_k so that day k's total
+        contribution to the pool equals w_k exactly.
+
+        Returns an array of shape (n_quantiles + 1,), or None when the total gap
+        count is below min_gaps_required.
+        """
+        all_gaps: list[float] = []
+        all_weights: list[float] = []
+
+        for arrivals, day_weight in zip(per_day_arrivals, per_day_weights):
+            if len(arrivals) == 0:
+                continue
+            sorted_arrivals = np.sort(arrivals)
+            gaps = np.diff(np.concatenate([[0.0], sorted_arrivals]))
+            gaps = np.clip(gaps, min_gap_s, 3600.0)
+            n_gaps = len(gaps)
+            gap_weight = (
+                day_weight / n_gaps
+            )  # each gap shares this day's weight equally
+            all_gaps.extend(float(g) for g in gaps)
+            all_weights.extend([gap_weight] * n_gaps)
+
+        if len(all_gaps) < min_gaps_required:
+            return None
+
+        gaps_arr = np.array(all_gaps)
+        weights_arr = np.array(all_weights)
+
+        # Weighted quantiles via sorted cumulative-weight interpolation.
+        sort_idx = np.argsort(gaps_arr)
+        sorted_gaps = gaps_arr[sort_idx]
+        sorted_weights = weights_arr[sort_idx]
+        cumw = np.cumsum(sorted_weights)
+        cumw /= cumw[-1]  # normalize to [0, 1]
+        # Prepend so that quantile 0 maps to the minimum observed gap.
+        cumw_ext = np.concatenate([[0.0], cumw])
+        sorted_gaps_ext = np.concatenate([[sorted_gaps[0]], sorted_gaps])
+
+        quantile_levels = np.linspace(0.0, 1.0, n_quantiles + 1)
+        deciles = np.interp(quantile_levels, cumw_ext, sorted_gaps_ext)
+        # Guard against floating-point non-monotonicity.
+        deciles = np.maximum.accumulate(deciles)
+        return deciles
+
+    def _sample_hour_from_deciles(
+        self,
+        deciles: np.ndarray,
+        rng: np.random.Generator,
+        min_gap_s: float = 0.001,
+    ) -> list[float]:
+        """
+        Sample within-hour arrival offsets (seconds) from a gap decile model.
+
+        Gaps are interpolated in log-space to handle right-skewed distributions.
+        Arrivals accumulate until the running total reaches 3600 s.  The hourly
+        count emerges naturally — it is not fixed in advance.
+        """
+        n_quantiles = len(deciles) - 1
+        # Pre-log the boundaries; clip to avoid log(0).
+        log_deciles = np.log(np.clip(deciles, min_gap_s, None))
+
+        t = 0.0
+        arrivals: list[float] = []
+        safety_cap = self.forecaster_config.max_arrivals_per_hour_safety_cap
+        for _ in range(safety_cap):
+            u = rng.uniform(0.0, 1.0)
+            k = min(int(u * n_quantiles), n_quantiles - 1)
+            alpha = u * n_quantiles - k
+            log_gap = log_deciles[k] + alpha * (
+                log_deciles[k + 1] - log_deciles[k]
+            )
+            gap = float(np.exp(log_gap))
+            t += gap
+            if t >= 3600.0:
+                break
+            arrivals.append(t)
+        else:
+            logger.warning(
+                "max_arrivals_per_hour_safety_cap (%d) reached. "
+                "Consider increasing the cap or inspecting the gap distribution.",
+                safety_cap,
+            )
+        return arrivals

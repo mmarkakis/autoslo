@@ -5,6 +5,7 @@ from typing import Any, Optional, Self
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.filesystem.yaml_helpers import load_yaml
+from autoslo.forecasting.forecast_policy import ArrivalTimePolicy
 from autoslo.slo.slo_metric import SloMetric
 
 # An "execution config" is the YAML config file that a user provides to run
@@ -154,6 +155,9 @@ class ForecasterConfig(_PartialConfig):
     decay_factor: float = 0.5
     fixed_queries_per_hour: int = 100
     rescale_factor: float = 1.0
+    arrival_time_policy_name: str = "uniform"
+    min_gaps_for_deciles: int = 20
+    max_arrivals_per_hour_safety_cap: int = 10_000
     reservoir_config: Optional[ReservoirConfig] = None
 
     @classmethod
@@ -179,6 +183,26 @@ class ForecasterConfig(_PartialConfig):
             raise ValueError(
                 f"fixed_queries_per_hour must be positive, got "
                 f"{self.fixed_queries_per_hour}"
+            )
+
+        valid_arrival_time_policies = [p.value for p in ArrivalTimePolicy]
+        if self.arrival_time_policy_name not in valid_arrival_time_policies:
+            raise ValueError(
+                f"arrival_time_policy_name must be one of "
+                f"{valid_arrival_time_policies}, got "
+                f"{self.arrival_time_policy_name!r}"
+            )
+
+        if self.min_gaps_for_deciles <= 0:
+            raise ValueError(
+                f"min_gaps_for_deciles must be positive, got "
+                f"{self.min_gaps_for_deciles}"
+            )
+
+        if self.max_arrivals_per_hour_safety_cap <= 0:
+            raise ValueError(
+                f"max_arrivals_per_hour_safety_cap must be positive, got "
+                f"{self.max_arrivals_per_hour_safety_cap}"
             )
 
 

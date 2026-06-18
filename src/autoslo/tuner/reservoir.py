@@ -22,11 +22,13 @@ class QueryReservoir:
     """
 
     BIN_DF_COLUMNS = ["date", "hour", "query_text_id", "count"]
+    ARRIVALS_DF_COLUMNS = ["date", "hour", "second_of_hour"]
 
     def __init__(
         self,
         reservoir_config: Optional[ReservoirConfig] = None,
         count_df: Optional[pd.DataFrame] = None,
+        arrivals_df: Optional[pd.DataFrame] = None,
     ) -> None:
         if (reservoir_config is None) == (count_df is None):
             raise ValueError(
@@ -67,6 +69,14 @@ class QueryReservoir:
                 .size()
                 .reset_index(name="count")
             )
+
+            # Build per-arrival timing table from raw timestamps.
+            _arrivals = df[["date", "hour"]].copy()
+            _arrivals["second_of_hour"] = (
+                df["abs_start_time"] - df["abs_start_time"].dt.floor("h")
+            ).dt.total_seconds()
+            arrivals_df = _arrivals[self.ARRIVALS_DF_COLUMNS].reset_index(drop=True)
+
             console.print(
                 f"  Built reservoir based on workload "
                 f"{reservoir_config.workload_name} based on "
@@ -75,6 +85,7 @@ class QueryReservoir:
             )
         assert count_df is not None
         self._count_df = count_df
+        self._arrivals_df = arrivals_df
 
     @property
     def min_date(self) -> date:
@@ -83,6 +94,21 @@ class QueryReservoir:
     @property
     def count_df(self) -> pd.DataFrame:
         return self._count_df
+
+    @property
+    def has_arrivals(self) -> bool:
+        """True if per-arrival timing data is available."""
+        return self._arrivals_df is not None
+
+    @property
+    def arrivals_df(self) -> pd.DataFrame:
+        """The full arrivals DataFrame. Raises RuntimeError if unavailable."""
+        if self._arrivals_df is None:
+            raise RuntimeError(
+                "Arrivals data is not available for this reservoir. "
+                "Build the reservoir from a workload file or provide arrivals_df."
+            )
+        return self._arrivals_df
 
     def save(self, directory: Path) -> None:
         """
@@ -94,6 +120,10 @@ class QueryReservoir:
         count_df_path = directory / "reservoir.parquet"
         self._count_df.to_parquet(count_df_path, index=False)
 
+        if self._arrivals_df is not None:
+            arrivals_path = directory / "reservoir_arrivals.parquet"
+            self._arrivals_df.to_parquet(arrivals_path, index=False)
+
     @classmethod
     def load(cls, directory: Path) -> "QueryReservoir":
         directory = Path(directory)
@@ -103,7 +133,13 @@ class QueryReservoir:
                 f"Reservoir file not found at {count_df_path}"
             )
         count_df = pd.read_parquet(count_df_path)
-        return cls(count_df=count_df)
+
+        arrivals_df = None
+        arrivals_path = directory / "reservoir_arrivals.parquet"
+        if arrivals_path.exists():
+            arrivals_df = pd.read_parquet(arrivals_path)
+
+        return cls(count_df=count_df, arrivals_df=arrivals_df)
 
     def bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
         if not (0 <= hour < 24):
@@ -113,3 +149,19 @@ class QueryReservoir:
             self._count_df["hour"] == hour
         )
         return self._count_df.loc[mask].reset_index(drop=True)
+
+    def arrivals_bin_df(self, target_date: date, hour: int) -> pd.DataFrame:
+        """
+        Return the per-arrival second_of_hour values for the given (date, hour)
+        bin. Raises RuntimeError if has_arrivals is False.
+        """
+        if not (0 <= hour < 24):
+            raise ValueError(f"Invalid hour: {hour}. Must be in [0, 23].")
+        if self._arrivals_df is None:
+            raise RuntimeError(
+                "Arrivals data is not available for this reservoir."
+            )
+        mask = (self._arrivals_df["date"] == target_date) & (
+            self._arrivals_df["hour"] == hour
+        )
+        return self._arrivals_df.loc[mask].reset_index(drop=True)

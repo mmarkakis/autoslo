@@ -8,3 +8,8 @@ class ForecastPolicy(Enum):
     SEVEN_DAYS_FLAT = "seven_days_flat"
     SAME_DAY_ONCE = "same_day_once"
     SAME_DAY_EXPONENTIAL = "same_day_exponential"
+
+
+class ArrivalTimePolicy(Enum):
+    UNIFORM = "uniform"
+    INTERARRIVAL_DECILES = "interarrival_deciles"
