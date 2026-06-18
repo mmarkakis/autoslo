@@ -1,0 +1,4 @@
+featurizer_id: '1781802426'
+cache_model_id: '1781802435'
+xgboost_model_id: '1781802436'
+stage_model_id: /home/markakis/chunkbench/data/stage_models/1781802445
