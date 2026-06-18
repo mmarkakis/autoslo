@@ -279,6 +279,8 @@ class ConcurrentQueryDataset(Dataset):
         targets: dict[ClusterAwareQueryId, float] | None = None,
         is_lower_bound: dict[ClusterAwareQueryId, bool] | None = None,
         use_log_runtime: bool = True,
+        censored_observation_sample_prob: float = 0.0,
+        censored_observation_rng_seed: int = 0,
     ) -> "ConcurrentQueryDataset":
         """
         Build a dataset from base queries and their pre-computed neighbors.
@@ -296,6 +298,14 @@ class ConcurrentQueryDataset(Dataset):
                 the target is a censored (lower-bound) observation.  When
                 *None*, defaults to False.
             use_log_runtime: Whether to use log(runtime) as the target variable.
+            censored_observation_sample_prob: Probability in [0, 1] of emitting
+                each candidate right-censored observation derived from a future
+                neighbor arrival event.  0.0 disables augmentation entirely;
+                1.0 keeps every candidate.  Has no effect during inference
+                (when *targets* is None).
+            censored_observation_rng_seed: Seed for the RNG used to sample
+                censored observations.  Changing the seed produces a different
+                random subset of candidates.
 
         Returns:
             A ConcurrentQueryDataset ready for training or inference.
@@ -313,6 +323,7 @@ class ConcurrentQueryDataset(Dataset):
             )
 
         # Build dataset components
+        rng = np.random.default_rng(censored_observation_rng_seed)
         x = []
         y = []
         pinch_points = []
@@ -332,39 +343,124 @@ class ConcurrentQueryDataset(Dataset):
 
             for base_query in base_to_neighbors.keys():
 
-                # Build qb_entries: self-interaction first, then neighbors.
+                # Compute the base query's identifier up-front — needed both
+                # for the main observation and the eligibility check below.
+                base_cluster_aware_query_id = ClusterAwareQueryId.for_query(
+                    cluster_name, base_query
+                )
+                base_stage_prediction = _stage_pred(base_query)
+
+                # Build qb_entries incrementally.  Past neighbors (arrived at
+                # or before the base query) are appended immediately.  Future
+                # neighbors (arrived strictly after) are collected into a list
+                # and processed in arrival-time order below, so each prefix
+                # can emit a censored observation before the neighbor is added.
                 qb_entries: list[tuple[float, QueryTextId, float, bool]] = [
                     (
                         base_query.rel_start_time_s,
                         base_query.query_text_id,
-                        _stage_pred(base_query),
+                        base_stage_prediction,
                         True,  # is_self
                     )
                 ]
+                future_nbrs: list[Query] = []
                 for neighbor in base_to_neighbors[base_query]:
                     if neighbor.query_id != base_query.query_id:
-                        qb_entries.append(
-                            (
-                                neighbor.rel_start_time_s,
-                                neighbor.query_text_id,
-                                _stage_pred(neighbor),
-                                False,  # is_self
+                        if (
+                            neighbor.rel_start_time_s
+                            <= base_query.rel_start_time_s
+                        ):
+                            # Past neighbor: always in context, add now.
+                            qb_entries.append(
+                                (
+                                    neighbor.rel_start_time_s,
+                                    neighbor.query_text_id,
+                                    _stage_pred(neighbor),
+                                    False,
+                                )
                             )
-                        )
+                        else:
+                            # Future neighbor: defer to sorted loop below.
+                            future_nbrs.append(neighbor)
 
+                future_nbrs.sort(key=lambda n: n.rel_start_time_s)
+
+                # Determine once whether this base query is eligible for
+                # censored augmentation (has a real target; respects any
+                # upstream ignore_aborted_queries filtering).
+                _eligible = (
+                    censored_observation_sample_prob > 0.0
+                    and targets is not None
+                    and base_cluster_aware_query_id in targets
+                )
+                n_future = len(future_nbrs)
+
+                # Process future neighbors in arrival order.  For each one
+                # except the last, emit a right-censored lower-bound
+                # observation with the context built so far (before this
+                # neighbor is added), then extend the context.  The last
+                # future neighbor is only added to the context; its lower
+                # bound is dominated by the actual-runtime target emitted
+                # after the loop.
+                for j, nbr in enumerate(future_nbrs):
+                    # Extend the context with this neighbor before the next step.
+                    qb_entries.append(
+                        (
+                            nbr.rel_start_time_s,
+                            nbr.query_text_id,
+                            _stage_pred(nbr),
+                            False,
+                        )
+                    )
+
+                    # Optionally emit a censored observation (sampled stochastically).
+                    if (
+                        _eligible
+                        and j < n_future - 1
+                        and rng.random() < censored_observation_sample_prob
+                    ):
+                        delta_s = (
+                            nbr.rel_start_time_s - base_query.rel_start_time_s
+                        )
+                        if delta_s >= 1e-9:
+                            censor_arr, censor_pinch_idx = (
+                                iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
+                                    rpu=rpu,
+                                    qa_query_text_id=base_query.query_text_id,
+                                    qa_start_time_s=base_query.rel_start_time_s,
+                                    qa_latency_prediction=base_stage_prediction,
+                                    qb_entries=qb_entries,
+                                )
+                            )
+                            floored = max(delta_s, 0.001)
+                            x.append(torch.from_numpy(censor_arr))
+                            y.append(
+                                floored
+                                if not use_log_runtime
+                                else np.log(floored)
+                            )
+                            pinch_points.append(censor_pinch_idx)
+                            cluster_aware_query_ids_out.append(
+                                ClusterAwareQueryId.make(
+                                    cluster_name,
+                                    f"{base_cluster_aware_query_id.query_id}"
+                                    f"__censor_{j}",
+                                )
+                            )
+                            query_text_id_out.append(base_query.query_text_id)
+                            y_is_lower_bound_out.append(True)
+
+                # Emit the main (full-context) observation.
                 arr, pinch_idx = (
                     iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
                         rpu=rpu,
                         qa_query_text_id=base_query.query_text_id,
                         qa_start_time_s=base_query.rel_start_time_s,
-                        qa_latency_prediction=_stage_pred(base_query),
+                        qa_latency_prediction=base_stage_prediction,
                         qb_entries=qb_entries,
                     )
                 )
                 x.append(torch.from_numpy(arr))
-                base_cluster_aware_query_id = ClusterAwareQueryId.for_query(
-                    cluster_name, base_query
-                )
                 if (
                     targets is not None
                     and base_cluster_aware_query_id in targets

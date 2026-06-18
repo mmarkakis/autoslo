@@ -265,6 +265,17 @@ class IconqModel:
         else:
             self._loss_type = LossType.SENSITIVE_Q_ERROR
 
+        if (
+            self._train_config is not None
+            and self._train_config.neighbor_derived_censored_observation_prob > 0.0
+            and self._loss_type != LossType.SENSITIVE_Q_ERROR
+        ):
+            raise ValueError(
+                "neighbor_derived_censored_observation_prob requires "
+                "LossType.SENSITIVE_Q_ERROR (is_mdn=False, is_bayesian=False). "
+                f"Current loss type: {self._loss_type}."
+            )
+
         # Initialize the dataset and split indices.
         self._idxs_for_split: dict[DataSplit, list[int]] = {}
         self._populate_dataset_and_split_idxs()
@@ -1580,6 +1591,12 @@ class IconqModel:
             targets=targets,
             is_lower_bound=is_lower_bound,
             use_log_runtime=self.trained_on_log_runtime,
+            censored_observation_sample_prob=(
+                self._train_config.neighbor_derived_censored_observation_prob
+            ),
+            censored_observation_rng_seed=(
+                self._train_config.neighbor_derived_censored_observation_seed
+            ),
         )
 
     @staticmethod

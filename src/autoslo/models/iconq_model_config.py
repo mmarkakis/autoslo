@@ -151,3 +151,20 @@ class IconqModelTrainConfig:
         # as *neighbors* of other queries in the IconqModel dataset.
         # The same flag is forwarded to the CacheModel and XGBoostModel.
     )
+
+    neighbor_derived_censored_observation_prob: float = (
+        0.0  # Probability in [0, 1] of sampling each candidate censored
+        # observation derived from a future neighbor arrival event.
+        # 0.0 disables augmentation entirely; 1.0 keeps every candidate.
+        # Requires ignore_aborted_queries=False and
+        # LossType.SENSITIVE_Q_ERROR (is_mdn=False, is_bayesian=False).
+        # For future neighbor j arriving at a_j, the synthetic sample has
+        # context = [self + all neighbors with start time ≤ a_j] and
+        # target = a_j − base_start_time_s, with is_lower_bound=True.
+    )
+
+    neighbor_derived_censored_observation_seed: int = (
+        0  # RNG seed used when sampling censored observations according to
+        # neighbor_derived_censored_observation_prob.  Changing the seed
+        # produces a different random subset of the candidate observations.
+    )
