@@ -225,7 +225,7 @@ class IconqModel:
             )
         self._iconq_interaction_featurizer = IconqInteractionFeaturizer(
             schema_name=init_config.schema_name,
-            iconq_query_featurizer_id=self._iconq_query_featurizer_id,
+            iconq_query_featurizer=self._iconq_query_featurizer,
             ignore_cluster_size=init_config.ignore_cluster_size,
             interaction_feature_version=init_config.interaction_feature_version,
         )

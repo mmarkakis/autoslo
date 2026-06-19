@@ -28,6 +28,7 @@ class IconqInteractionFeaturizer:
     def __init__(
         self,
         schema_name: str,
+        iconq_query_featurizer: Optional["IconqQueryFeaturizer"] = None,
         iconq_query_featurizer_id: Optional[str] = None,
         iconq_query_featurizer_init_params: Optional[dict[str, Any]] = None,
         ignore_cluster_size: bool = False,
@@ -38,6 +39,10 @@ class IconqInteractionFeaturizer:
 
         Parameters:
             schema_name: The schema name.
+            iconq_query_featurizer: A pre-loaded :class:`IconqQueryFeaturizer`
+                instance.  When provided, neither *iconq_query_featurizer_id*
+                nor *iconq_query_featurizer_init_params* is used, avoiding a
+                redundant disk read.
             iconq_query_featurizer_id: The identifier of the
                 IconqQueryFeaturizer to use for featurizing queries. If not
                 provided, must provide iconq_query_featurizer_init_params, with
@@ -53,18 +58,20 @@ class IconqInteractionFeaturizer:
                 version. "v1" reproduces legacy behavior (single raw RPU
                 feature). "v2" appends additional RPU-derived features.
         """
-        if iconq_query_featurizer_id is None:
-            if iconq_query_featurizer_init_params is None:
-                raise ValueError(
-                    "Must provide either iconq_query_featurizer_id or "
-                    "iconq_query_featurizer_init_params."
-                )
+        if iconq_query_featurizer is not None:
+            self._iconq_query_featurizer = iconq_query_featurizer
+        elif iconq_query_featurizer_id is not None:
+            self._iconq_query_featurizer = IconqQueryFeaturizer.load(
+                schema_name, iconq_query_featurizer_id
+            )
+        elif iconq_query_featurizer_init_params is not None:
             self._iconq_query_featurizer = IconqQueryFeaturizer(
                 **iconq_query_featurizer_init_params
             )
         else:
-            self._iconq_query_featurizer = IconqQueryFeaturizer.load(
-                schema_name, iconq_query_featurizer_id
+            raise ValueError(
+                "Must provide one of: iconq_query_featurizer, "
+                "iconq_query_featurizer_id, or iconq_query_featurizer_init_params."
             )
         self._ignore_cluster_size = ignore_cluster_size
         if interaction_feature_version not in self.SUPPORTED_FEATURE_VERSIONS:

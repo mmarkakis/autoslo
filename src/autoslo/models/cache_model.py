@@ -1,4 +1,5 @@
 import os
+import pickle
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Optional
@@ -421,9 +422,9 @@ class CacheModel:
             )
 
         # Save the model itself
-        cache_yml_path = os.path.join(save_dir, "model.yml")
-        with open(cache_yml_path, "w") as f:
-            yaml.safe_dump(self._cache, f)
+        cache_pkl_path = os.path.join(save_dir, "model.pkl")
+        with open(cache_pkl_path, "wb") as f:
+            pickle.dump(self._cache, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         return timestamp
 
@@ -499,27 +500,36 @@ class CacheModel:
             )
         )
 
-        # Load the model itself
+        # Load the model itself.  Prefer the binary pickle format; fall back
+        # to the legacy YAML and auto-migrate on the way out.
+        cache_pkl_path = os.path.join(load_dir, "model.pkl")
         cache_yml_path = os.path.join(load_dir, "model.yml")
-        with open(cache_yml_path, "r") as f:
-            raw_cache = yaml.safe_load(f)
+        if os.path.exists(cache_pkl_path):
+            with open(cache_pkl_path, "rb") as f:
+                model._cache = pickle.load(f)
+        else:
+            with open(cache_yml_path, "r") as f:
+                raw_cache = yaml.safe_load(f)
 
-        if raw_cache is None:
-            raw_cache = {}
+            if raw_cache is None:
+                raw_cache = {}
 
-        normalized_cache: dict[int, dict[int, dict[int, dict[str, Any]]]] = {}
-        for rpu, template_dict in raw_cache.items():
-            irpu = int(rpu)
-            normalized_cache[irpu] = {}
-            for template_id, query_dict in template_dict.items():
-                itemplate_id = int(template_id)
-                normalized_cache[irpu][itemplate_id] = {}
-                for qidx, bucket in query_dict.items():
-                    iqidx = int(qidx)
-                    nb = model._normalize_bucket(bucket)
-                    nb = model._refresh_bucket_summary(nb)
-                    normalized_cache[irpu][itemplate_id][iqidx] = nb
+            normalized_cache: dict[int, dict[int, dict[int, dict[str, Any]]]] = {}
+            for rpu, template_dict in raw_cache.items():
+                irpu = int(rpu)
+                normalized_cache[irpu] = {}
+                for template_id, query_dict in template_dict.items():
+                    itemplate_id = int(template_id)
+                    normalized_cache[irpu][itemplate_id] = {}
+                    for qidx, bucket in query_dict.items():
+                        iqidx = int(qidx)
+                        nb = model._normalize_bucket(bucket)
+                        nb = model._refresh_bucket_summary(nb)
+                        normalized_cache[irpu][itemplate_id][iqidx] = nb
 
-        model._cache = normalized_cache
+            model._cache = normalized_cache
+            # Auto-migrate to pickle so future loads skip YAML parsing.
+            with open(cache_pkl_path, "wb") as f:
+                pickle.dump(model._cache, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         return model

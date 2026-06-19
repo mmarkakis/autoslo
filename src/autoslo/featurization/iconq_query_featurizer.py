@@ -3,6 +3,7 @@ Some code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
 import os
+import pickle
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional, TypeAlias, cast
@@ -532,17 +533,12 @@ class IconqQueryFeaturizer:
             param_path,
         )
 
-        # Save featurzation cache.
-        cache_path = os.path.join(save_dir, "featurizations.yml")
-        l = []
-        for query_text_id, featurization in self._featurization_cache.items():
-            l.append(
-                {
-                    "query_text_id": query_text_id,
-                    "featurization": featurization,
-                }
+        # Save featurization cache as pickle (fast binary format).
+        cache_path = os.path.join(save_dir, "featurizations.pkl")
+        with open(cache_path, "wb") as f:
+            pickle.dump(
+                dict(self._featurization_cache), f, protocol=pickle.HIGHEST_PROTOCOL
             )
-        dump_yaml(l, cache_path)
 
         return iconq_query_featurizer_id
 
@@ -569,14 +565,28 @@ class IconqQueryFeaturizer:
         param_path = os.path.join(load_dir, "params.yml")
         params = load_yaml(param_path)
 
-        # Load featurization cache.
-        cache_path = os.path.join(load_dir, "featurizations.yml")
-        cache_list = load_yaml(cache_path)
-
-        precomputed_featurization_cache = {
-            QueryTextId(item["query_text_id"]): item["featurization"]
-            for item in cache_list
-        }
+        # Load featurization cache.  Prefer the binary pickle format; fall
+        # back to the legacy YAML file and auto-migrate on the way out.
+        pkl_path = os.path.join(load_dir, "featurizations.pkl")
+        yml_path = os.path.join(load_dir, "featurizations.yml")
+        if os.path.exists(pkl_path):
+            with open(pkl_path, "rb") as f:
+                precomputed_featurization_cache: dict[
+                    QueryTextId, IconqQueryFeaturizer.IconqQueryFeaturization
+                ] = pickle.load(f)
+        else:
+            cache_list = load_yaml(yml_path)
+            precomputed_featurization_cache = {
+                QueryTextId(item["query_text_id"]): item["featurization"]
+                for item in cache_list
+            }
+            # Auto-migrate to pickle so future loads skip YAML parsing.
+            with open(pkl_path, "wb") as f:
+                pickle.dump(
+                    precomputed_featurization_cache,
+                    f,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
 
         featurizer = IconqQueryFeaturizer(
             schema_name=params["schema_name"],
