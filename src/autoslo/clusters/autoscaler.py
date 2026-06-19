@@ -76,7 +76,9 @@ class Autoscaler:
         self._iconq_model = (
             iconq_model
             if iconq_model is not None
-            else IconqModel.load(query_router_config.iconq_model_id)
+            else IconqModel.load(
+                query_router_config.iconq_model_id, inference_mode=True
+            )
         )
         self._query_router_config = query_router_config
         self._out_dir = out_dir

@@ -171,7 +171,7 @@ class IconqModel:
         device: torch.device = torch.device("cpu"),
         parent_save_dir: Optional[str] = None,
         model_id: Optional[str] = None,
-        _skip_save: bool = False,
+        inference_mode: bool = False,
     ) -> None:
         """
         Initializes the LSTM model.
@@ -183,10 +183,14 @@ class IconqModel:
             parent_save_dir: The parent directory to save the model.
             model_id: The identifier of the model. If None, a new model ID
                 will be generated.
+            inference_mode: When ``True``, skip loading ``dataset.pkl`` and
+                the split-index files.  Use this for inference-only contexts
+                where the training dataset is never needed.
         """
         self._device = device
         self._init_config = init_config
         self._train_config: Optional[IconqModelTrainConfig] = train_config
+        self._inference_mode = inference_mode
 
         # Create save directory and set model ID.
         if model_id is None:
@@ -267,7 +271,8 @@ class IconqModel:
 
         if (
             self._train_config is not None
-            and self._train_config.neighbor_derived_censored_observation_prob > 0.0
+            and self._train_config.neighbor_derived_censored_observation_prob
+            > 0.0
             and self._loss_type != LossType.SENSITIVE_Q_ERROR
         ):
             raise ValueError(
@@ -278,12 +283,16 @@ class IconqModel:
 
         # Initialize the dataset and split indices.
         self._idxs_for_split: dict[DataSplit, list[int]] = {}
-        self._populate_dataset_and_split_idxs()
-
-        # Save initial model parameters (skip when loading from disk to
-        # avoid a write that races with concurrent readers).
-        if not _skip_save:
+        if not self._inference_mode:
+            self._populate_dataset_and_split_idxs()
             self._save_params()
+        else:
+            self._dataset: Optional[ConcurrentQueryDataset] = None
+
+    @property
+    def init_config(self) -> "IconqModelInitConfig":
+        """The initialisation config this model was constructed with."""
+        return self._init_config
 
     @property
     def stage_model(self) -> StageModel:
@@ -704,7 +713,9 @@ class IconqModel:
 
     @staticmethod
     def load(
-        model_id: str, parent_load_dir: Optional[str] = None
+        model_id: str,
+        parent_load_dir: Optional[str] = None,
+        inference_mode: bool = True,
     ) -> "IconqModel":
         """
         Load the given IconqModel.
@@ -752,7 +763,7 @@ class IconqModel:
             device=torch.device(params["device"]),
             parent_save_dir=parent_load_dir,
             model_id=model_id,
-            _skip_save=True,
+            inference_mode=inference_mode,
         )
 
         # Load the model checkpoint
@@ -770,8 +781,6 @@ class IconqModel:
             print(f"Loading model checkpoint from {checkpoint_path}")
             state_dict = torch.load(checkpoint_path, map_location=model._device)
             model._load_nn_state_dict_with_feature_guard(state_dict)
-
-       
 
         return model
 
@@ -1169,7 +1178,8 @@ class IconqModel:
         total_batches = len(dataloader)
         total_loss = 0.0
         all_pred_v_true: list[tuple] = []
-        self._nn.eval()
+        if self._nn.training:
+            self._nn.eval()
         with torch.no_grad():
             for batch in dataloader:
                 batch_loss, batch_pred_v_true = self._process_batch(
@@ -1455,14 +1465,14 @@ class IconqModel:
                 loaded_from_disk = True
             else:
                 if model is None:
-                    model = IconqModel.load(model_id)
+                    model = IconqModel.load(model_id, inference_mode=True)
                 model.eval_on_split(split=split, out_filename=str(csv_path))
                 df = pd.read_csv(csv_path)
 
             # Backfill cluster_rpu metadata for older final_*.csv/parquet files.
             if "rpu" not in df.columns or "model_source" not in df.columns:
                 if model is None:
-                    model = IconqModel.load(model_id)
+                    model = IconqModel.load(model_id, inference_mode=True)
                 model.eval_on_split(split=split, out_filename=str(csv_path))
                 df = pd.read_csv(csv_path)
 
