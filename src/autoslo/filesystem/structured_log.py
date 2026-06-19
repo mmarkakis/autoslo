@@ -47,6 +47,11 @@ from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
 
 LOGGER_NAME = "autoslo.structured"
 
+# Module-level reference to the active handler.  Set by
+# setup_structured_logging so that emit_structured can call the handler
+# directly without going through Python's logging machinery.
+_active_handler: "StructuredLogHandler | None" = None
+
 
 def emit_structured(event: BaseStructuredEvent) -> None:
     """Convenience: emit a structured event through the canonical logger.
@@ -56,11 +61,10 @@ def emit_structured(event: BaseStructuredEvent) -> None:
     event :
         A :class:`BaseStructuredEvent` subclass instance.
 
-    Short-circuits silently when no handler is attached to the
-    structured logger, eliminating the need for per-call-site guards.
+    Short-circuits silently when no handler is active, eliminating the
+    need for per-call-site guards.
     """
-    _logger = logging.getLogger(LOGGER_NAME)
-    if not _logger.handlers:
+    if _active_handler is None:
         return
     record = event.to_dict()
     missing = REQUIRED_KEYS - record.keys()
@@ -68,7 +72,7 @@ def emit_structured(event: BaseStructuredEvent) -> None:
         raise ValueError(
             f"Structured log record missing required key(s): {sorted(missing)}"
         )
-    _logger.info(record)
+    _active_handler._emit_direct(record)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +128,22 @@ class StructuredLogHandler(logging.Handler):
         with self._lock:
             return len(self._buffer)
 
-    # -- logging.Handler interface -----------------------------------------
+    # -- fast direct path (used by emit_structured) -----------------------
+
+    def _emit_direct(self, record: dict[str, Any]) -> None:
+        """Append *record* to the buffer without Python logging overhead.
+
+        Called by :func:`emit_structured`.  The ``details`` value must be
+        a plain ``dict`` (serialisation to JSON happens in
+        :meth:`_flush_locked`).
+        """
+        with self._lock:
+            self._all_columns.update(record.keys())
+            self._buffer.append(record)
+            if len(self._buffer) >= self._flush_threshold:
+                self._flush_locked()
+
+    # -- logging.Handler interface (fallback for direct logger.info usage) --
 
     def emit(self, log_record: logging.LogRecord) -> None:
         """Accept a :class:`logging.LogRecord` whose ``msg`` is a dict.
@@ -157,6 +176,13 @@ class StructuredLogHandler(logging.Handler):
         os.makedirs(self._out_dir, exist_ok=True)
         cols = sorted(self._all_columns)
         df = pd.DataFrame(self._buffer, columns=cols)
+        # Serialise details dicts to JSON strings for Parquet storage.
+        # Done here in bulk rather than per-event in the hot path.
+        if "details" in df.columns:
+            df["details"] = [
+                json.dumps(d, default=str) if isinstance(d, dict) and d else (d or "")
+                for d in df["details"]
+            ]
         shard_path = os.path.join(
             self._out_dir,
             f"_shard_{self._shard_idx:04d}.parquet",
@@ -266,6 +292,8 @@ def setup_structured_logging(
     if logger.level == logging.NOTSET or logger.level > logging.DEBUG:
         logger.setLevel(logging.DEBUG)
 
+    global _active_handler
+    _active_handler = handler
     return handler
 
 

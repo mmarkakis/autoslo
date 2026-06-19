@@ -13,7 +13,6 @@ Parquet.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
@@ -200,11 +199,11 @@ class BaseStructuredEvent:
                 )
 
     def to_dict(self) -> dict[str, Any]:
-        d = {f.name: getattr(self, f.name) for f in fields(self)}
+        # vars(self) is a direct __dict__ lookup — faster than iterating
+        # dataclass fields.  details is kept as a plain dict; the log
+        # handler serialises it to JSON in bulk at flush time.
+        d = vars(self).copy()
         d["event_type"] = self.event_type.value
-        d["details"] = (
-            json.dumps(d["details"], default=str) if d["details"] else ""
-        )
         return d
 
 
