@@ -113,10 +113,11 @@ class MicrobenchmarkRunner:
     SCATTER_LEGEND_TEXT_FONT_SIZE = BASE_FONT_SIZE
     SCATTER_COLORBAR_LABEL_FONT_SIZE = BASE_FONT_SIZE
     SCATTER_COLORBAR_TICK_FONT_SIZE = BASE_FONT_SIZE
+    SCATTER_ANNOTATION_FONT_SIZE = BASE_FONT_SIZE
     LEGEND_LABEL_SPACING = 0.1
-    LEGEND_BORDER_PAD = 0.15 # padding between legend content and legend frame
-    LEGEND_HANDLE_TEXT_PAD = 0.1 # space between legend marker and text
-    LEGEND_BORDER_AXES_PAD = 0.2 # space between legend and axes edge
+    LEGEND_BORDER_PAD = 0.15  # padding between legend content and legend frame
+    LEGEND_HANDLE_TEXT_PAD = 0.1  # space between legend marker and text
+    LEGEND_BORDER_AXES_PAD = 0.2  # space between legend and axes edge
     LEGNED_HANDLE_LENGTH = 1.25
     LEGEND_HANDLE_HEIGHT = 1.0
     LEGEND_FRAME_ALPHA = 0.2
@@ -230,8 +231,10 @@ class MicrobenchmarkRunner:
         mcp = ManagedClusterPool(
             provisioner=SimulatedProvisioner(
                 ProvisionerConfig(
-                    **cls.DEFAULT_PROVISIONER_CONFIG_ARGS
-                    | {"cluster_cache_state_dim": cache_state_dim},
+                    **(
+                        cls.DEFAULT_PROVISIONER_CONFIG_ARGS
+                        | {"cluster_cache_state_dim": cache_state_dim}
+                    ),
                 )
             ),
             config=ManagedClusterPoolConfig(
@@ -270,6 +273,8 @@ class MicrobenchmarkRunner:
         log_x: bool = False,
         log_y: bool = False,
         log_color_base: Optional[int] = None,
+        show_error_bars: bool = False,
+        annotate_extremes: bool = True,
     ) -> None:
         df = pd.read_csv(cls.csv_path())
         fig, ax = plt.subplots(figsize=cls.SCATTER_FIGSIZE)
@@ -290,12 +295,38 @@ class MicrobenchmarkRunner:
             vmax = float(color_values.max())
             norm = Normalize(vmin=vmin, vmax=vmax)
 
+        # Prepare the data such that for each unique combination of shape and color,
+        # we plot the median y value with error bars at 25th and 75th percentiles.
+        group_cols = list(dict.fromkeys([shape_col, x_col, color_col]))
+        agg = (
+            df.groupby(group_cols)[y_col]
+            .agg(
+                y_median=lambda s: s.median(),
+                y_q25=lambda s: s.quantile(0.25),
+                y_q75=lambda s: s.quantile(0.75),
+            )
+            .reset_index()
+        )
+
+        x_extent = float(agg[x_col].max() - agg[x_col].min())
+        cap_hw = (
+            0.015 * x_extent
+            if x_extent > 0
+            else float(agg[x_col].iloc[0]) * 0.02
+        )
+        cap_factor = (
+            1.02  # multiplicative half-width used when x axis is log-scaled
+        )
+
         for idx, shape_value in enumerate(shape_values):
             marker = markers[idx % len(markers)]
-            subset = df[df[shape_col] == shape_value]
+            subset = agg[agg[shape_col] == shape_value]
+            x_vals = subset[x_col]
+            xmin_caps = x_vals / cap_factor if log_x else x_vals - cap_hw
+            xmax_caps = x_vals * cap_factor if log_x else x_vals + cap_hw
             ax.scatter(
-                subset[x_col],
-                subset[y_col],
+                x_vals,
+                subset["y_median"],
                 c=subset[color_col],
                 cmap=cmap,
                 norm=norm,
@@ -304,6 +335,71 @@ class MicrobenchmarkRunner:
                 edgecolors=Palette.gray,
                 linewidths=cls.SCATTER_EDGE_LINEWIDTH,
                 alpha=cls.SCATTER_POINT_ALPHA,
+            )
+            if show_error_bars:
+                ax.vlines(
+                    x=x_vals,
+                    ymin=subset["y_q25"],
+                    ymax=subset["y_q75"],
+                    colors=Palette.gray,
+                    linewidth=cls.SCATTER_EDGE_LINEWIDTH,
+                    alpha=cls.SCATTER_POINT_ALPHA,
+                )
+                for cap_y in ("y_q25", "y_q75"):
+                    ax.hlines(
+                        y=subset[cap_y],
+                        xmin=xmin_caps,
+                        xmax=xmax_caps,
+                        colors=Palette.gray,
+                        linewidth=cls.SCATTER_EDGE_LINEWIDTH,
+                        alpha=cls.SCATTER_POINT_ALPHA,
+                    )
+
+        if annotate_extremes:
+            max_row = agg.loc[agg["y_median"].idxmax()]
+            min_row = agg.loc[agg["y_median"].idxmin()]
+
+            def _point_color(row: pd.Series) -> str:
+                rgba = cmap(norm(float(row[color_col])))
+                return "#{:02x}{:02x}{:02x}".format(
+                    int(rgba[0] * 255), int(rgba[1] * 255), int(rgba[2] * 255)
+                )
+
+            # Max annotation: text placed in data coords at (x_max, y_min) so it
+            # shares the same y level as the min annotation text.
+            ax.annotate(
+                f"{max_row['y_median']:.3f}",
+                xy=(max_row[x_col], max_row["y_median"]),
+                xytext=(max_row[x_col], min_row["y_median"]),
+                textcoords="data",
+                fontsize=cls.SCATTER_ANNOTATION_FONT_SIZE,
+                color=_point_color(max_row),
+                ha="right",
+                va="center",
+                arrowprops=dict(
+                    arrowstyle="-",
+                    color=_point_color(max_row),
+                    lw=0.8,
+                    relpos=(1.0, 1.0),
+                ),
+            )
+
+            # Min annotation: text offset horizontally from the min point.
+            ax.annotate(
+                f"{min_row['y_median']:.3f}",
+                xy=(min_row[x_col], min_row["y_median"]),
+                xytext=(120, 0),
+                textcoords="offset points",
+                fontsize=cls.SCATTER_ANNOTATION_FONT_SIZE,
+                color=_point_color(min_row),
+                ha="left",
+                va="center",
+                arrowprops=dict(
+                    arrowstyle="-",
+                    color=_point_color(min_row),
+                    lw=0.8,
+                    relpos=(0.0, 0.5),
+                ),
             )
 
         shape_handles = [
@@ -320,7 +416,7 @@ class MicrobenchmarkRunner:
             )
             for idx, shape_value in enumerate(shape_values)
         ]
-        
+
         shape_legend = ax.legend(
             handles=shape_handles,
             title=shape_legend_title,
@@ -330,7 +426,7 @@ class MicrobenchmarkRunner:
             title_fontsize=cls.SCATTER_LEGEND_TITLE_FONT_SIZE,
             fontsize=cls.SCATTER_LEGEND_TEXT_FONT_SIZE,
             labelspacing=cls.LEGEND_LABEL_SPACING,
-            borderpad=cls.LEGEND_BORDER_PAD,      
+            borderpad=cls.LEGEND_BORDER_PAD,
             handletextpad=cls.LEGEND_HANDLE_TEXT_PAD,
             borderaxespad=cls.LEGEND_BORDER_AXES_PAD,
             handlelength=cls.LEGNED_HANDLE_LENGTH,
