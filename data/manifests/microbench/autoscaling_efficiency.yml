@@ -1,8 +1,8 @@
 workload_seed: 42
 
-reps: 1
+reps: 5
 candidate_rpu_values: [4, 8, 16, 32]
-arrival_rate_qps_values: [0.1, 0.25, 0.5, 0.75, 1]
+queries_per_observation_window_values: [16, 32, 64, 128, 256]
 
 initial_rpus: [16, 16, 16, 16]
 
@@ -15,9 +15,9 @@ slo_objective_config:
 
 query_router_config:
   routing_policy_name: use_iconq_model
-  iconq_model_id: all_66_and_99_template_runs
+  iconq_model_id: model_v6
 
 autoscaler_config:
   autoscaling_policy: add_single_best_forward
-  observation_window_s: 120.0
+  observation_window_s: 300.0
   min_finished_queries_in_counterfactual: 30

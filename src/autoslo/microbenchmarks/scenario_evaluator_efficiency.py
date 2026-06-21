@@ -99,6 +99,7 @@ class ScenarioEvaluatorEfficiencyBenchmark(MicrobenchmarkRunner):
                         out_dir=trial_out_dir,
                         workload_configs=[workload_config],
                         configs=[base_config] * n_parallel,
+                        verbose_progress=False,
                     )
                     elapsed_s = time.perf_counter() - t0
                     rows.append(
@@ -133,5 +134,5 @@ class ScenarioEvaluatorEfficiencyBenchmark(MicrobenchmarkRunner):
             ],
             log_x=True,
             log_y=True,
-            log_color_base=10,
+            log_color_base=2,
         )

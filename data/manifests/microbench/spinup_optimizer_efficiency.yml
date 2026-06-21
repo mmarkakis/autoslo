@@ -1,8 +1,8 @@
 workload_seed: 42
 
-reps: 3
+reps: 5
 n_scenarios_values: [10, 20, 50]
-queries_per_scenario_values: [100, 1000, 10000]
+queries_per_scenario_values: [64, 1024, 16384]
 
 latency_multiplier: 1.5
 

@@ -159,6 +159,6 @@ class SpinupOptimizerEfficiencyBenchmark(MicrobenchmarkRunner):
                 Palette.light_purple_sat,
             ],
             log_x=True,
-            log_color_base=10,
+            log_color_base=2,
             log_y=True,
         )

@@ -34,7 +34,7 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
             "workload_seed",
             "reps",
             "candidate_rpu_values",
-            "arrival_rate_qps_values",
+            "queries_per_observation_window_values",
             "initial_rpus",
             "slo_resolver_config",
             "slo_objective_config",
@@ -49,11 +49,13 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
         candidate_rpu_values = [
             int(v) for v in manifest["candidate_rpu_values"]
         ]
-        arrival_rates = [float(v) for v in manifest["arrival_rate_qps_values"]]
-        for rate in arrival_rates:
-            if rate <= 0:
+        queries_per_obs_window_values = [
+            float(v) for v in manifest["queries_per_observation_window_values"]
+        ]
+        for q in queries_per_obs_window_values:
+            if q <= 0:
                 raise ValueError(
-                    "arrival_rate_qps_values must contain only "
+                    "queries_per_observation_window_values must contain only "
                     "positive values."
                 )
         reps = int(manifest["reps"])
@@ -78,10 +80,18 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
         # Run.
         rows: list[dict[str, float | int]] = []
         with cls.make_progress() as progress:
-            total_steps = len(candidate_rpu_values) * len(arrival_rates) * reps
+            total_steps = (
+                len(candidate_rpu_values)
+                * len(queries_per_obs_window_values)
+                * reps
+            )
             task = progress.add_task("Autoscaling benchmark", total=total_steps)
 
-            for arrival_rate_qps in arrival_rates:
+            for queries_per_obs_window in queries_per_obs_window_values:
+                arrival_rate_qps = (
+                    queries_per_obs_window
+                    / base_autoscaler_config.observation_window_s
+                )
 
                 # Set up workload with the given arrival rate.
                 total_queries_needed = 2 * int(
@@ -115,7 +125,7 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
 
                 for last_candidate_rpu_idx in range(len(candidate_rpu_values)):
                     candidate_rpu = candidate_rpu_values[
-                        :last_candidate_rpu_idx + 1
+                        : last_candidate_rpu_idx + 1
                     ]
                     autoscaler_config = replace(
                         base_autoscaler_config,
@@ -151,7 +161,7 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
                         rows.append(
                             {
                                 "candidate_rpu": f"[{','.join(map(str, sorted(candidate_rpu)))}]",
-                                "arrival_rate_qps": arrival_rate_qps,
+                                "queries_per_obs_window": queries_per_obs_window,
                                 "simulated_queries": total_simulated_queries,
                                 "rep": rep,
                                 "elapsed_s": elapsed_s,
@@ -168,9 +178,9 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
             x_col="simulated_queries",
             y_col="elapsed_s",
             shape_col="candidate_rpu",
-            color_col="arrival_rate_qps",
+            color_col="queries_per_obs_window",
             shape_legend_title="Candidate RPU",
-            colorbar_label="Arrival Rate (Queries/s)",
+            colorbar_label="Queries / Obs. Window",
             cmap_colors=[
                 Palette.light_gray,
                 Palette.light_green,
@@ -178,4 +188,5 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
             ],
             log_x=True,
             log_y=True,
+            log_color_base=2,
         )
