@@ -138,7 +138,12 @@ class StructuredLogHandler(logging.Handler):
         :meth:`_flush_locked`).
         """
         with self._lock:
-            self._all_columns.update(record.keys())
+            # Skip the set.update call when all keys are already known
+            # (the common case once the first few distinct event types have
+            # been emitted).  The subset check is O(k) like update, but
+            # avoids internal set-resize bookkeeping on no-op inserts.
+            if not record.keys() <= self._all_columns:
+                self._all_columns.update(record.keys())
             self._buffer.append(record)
             if len(self._buffer) >= self._flush_threshold:
                 self._flush_locked()
@@ -156,7 +161,8 @@ class StructuredLogHandler(logging.Handler):
             return
 
         with self._lock:
-            self._all_columns.update(msg.keys())
+            if not msg.keys() <= self._all_columns:
+                self._all_columns.update(msg.keys())
             self._buffer.append(msg)
             if len(self._buffer) >= self._flush_threshold:
                 self._flush_locked()
