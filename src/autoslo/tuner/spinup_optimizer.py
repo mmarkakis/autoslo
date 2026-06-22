@@ -17,6 +17,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 from rich.table import Table
 
@@ -150,131 +151,113 @@ def find_next_spinup_time_df(
     """
     # Create events per scenario and form a single timeline.
     n_scenarios = len(completion_structured_logs)
-    events = []
+    all_starts: list[pd.DataFrame] = []
+    all_ends: list[pd.DataFrame] = []
     for scenario_id, completions in enumerate(completion_structured_logs):
-
         completions["slo_s"] = (
             completions["query_text_id"].map(slo_resolver.resolve).fillna(0.0)
         )
-
-        for _, row in completions.iterrows():
-            events.append(
-                {
-                    "time": row["arrival_s"],
-                    "event_type": "start",
-                    "latency_s": row["latency_s"],
-                    "slo_s": row["slo_s"],
-                    "scenario_id": scenario_id,
-                    "query_id": row["query_id"],
-                }
+        # Precompute per-query violation now so latency_s/slo_s need not be
+        # carried through the sort.
+        violation_col = np.array(
+            slo_objective.slo_metric.calculate_batch(
+                [
+                    LatencySlo(lat, slo)
+                    for lat, slo in zip(
+                        completions["latency_s"].to_numpy(),
+                        completions["slo_s"].to_numpy(),
+                    )
+                ]
+            ),
+            dtype=float,
+        )
+        base = pd.DataFrame(
+            {"scenario_id": scenario_id, "violation": violation_col}
+        )
+        all_starts.append(
+            base.assign(time=completions["arrival_s"].to_numpy(), is_start=True)
+        )
+        all_ends.append(
+            base.assign(
+                time=completions["completion_s"].to_numpy(), is_start=False
             )
-            events.append(
-                {
-                    "time": row["completion_s"],
-                    "event_type": "end",
-                    "latency_s": row["latency_s"],
-                    "slo_s": row["slo_s"],
-                    "scenario_id": scenario_id,
-                    "query_id": row["query_id"],
-                }
-            )
-    events.sort(key=lambda x: x["time"])
+        )
+    events_df = pd.concat(all_starts + all_ends)
+    times_raw = events_df["time"].to_numpy()
+    order = np.argsort(times_raw, kind="stable")
+    times = times_raw[order]
+    is_start_arr = events_df["is_start"].to_numpy()[order]
+    scenario_ids = events_df["scenario_id"].to_numpy()[order]
+    violation_arr = events_df["violation"].to_numpy()[order]
 
     # Walk the timeline, accumulating (a, b, delinquency_count) for every
     # non-zero-length interval.
-    active_queries: dict[int, dict[str, LatencySlo]] = defaultdict(dict)
+    violation_sum: dict[int, float] = defaultdict(float)
+    active_count: dict[int, int] = defaultdict(int)
     delinquency_per_workload: dict[int, bool] = {
         scenario_id: False for scenario_id in range(n_scenarios)
     }
-    intervals: list[tuple[float, float, int]] = []  # (a, b, count)
-
-    for i in range(len(events) - 1):
-        event = events[i]
-        if event["event_type"] == "start":
-            active_queries[event["scenario_id"]][event["query_id"]] = (
-                LatencySlo(event["latency_s"], event["slo_s"])
-            )
-        else:
-            active_queries[event["scenario_id"]].pop(event["query_id"], None)
-
-        scenario_active_queries = list(
-            active_queries[event["scenario_id"]].values()
-        )
-        if scenario_active_queries:
-            delinquency_per_workload[event["scenario_id"]] = (
-                not slo_objective.is_met(
-                    per_query_latency_slo=scenario_active_queries
-                )
-            )
-        else:
-            delinquency_per_workload[event["scenario_id"]] = False
-
-        a = event["time"]
-        b = events[i + 1]["time"]
-        if b == a:
-            continue  # skip zero-length intervals
-
-        num_delinquent = sum(delinquency_per_workload.values())
-        intervals.append((a, b, num_delinquent))
-
-    # Identify congestion epochs and derive one placement time per epoch.
-    epoch_placement_times: list[float] = []
-    idx = 0
-    while idx < len(intervals):
-        a, b, count = intervals[idx]
-        if count >= min_delinquent_workloads:
-            epoch_start = a
-            while (
-                idx < len(intervals)
-                and intervals[idx][2] >= min_delinquent_workloads
-            ):
-                idx += 1
-            epoch_placement_times.append(max(0.0, epoch_start - lead_time_s))
-        else:
-            idx += 1
-
-    # Deduplicate while preserving first-occurrence order.
-    unique_placement_times: list[float] = list(
-        dict.fromkeys(epoch_placement_times)
-    )
-
-    if not unique_placement_times:
-        console.print(
-            f"[green]No violating interval found with at least "
-            f"{min_delinquent_workloads} delinquent workloads."
-        )
-        return []
-
-    candidates = unique_placement_times
-
-    # Greedy spacing deduplication: discard candidates within
-    # min_candidate_spacing_s of an already-retained candidate.
+    num_delinquent = 0
     spacing = (
         lead_time_s
         if min_candidate_spacing_s is None
         else min_candidate_spacing_s
     )
+    candidates: list[float] = []
+    in_epoch = False
+    epoch_start = 0.0
 
-    if spacing > 0.0:
-        retained: list[float] = []
-        for t_p in candidates:
-            if all(abs(t_p - r_t) >= spacing for r_t in retained):
-                retained.append(t_p)
-        candidates = retained
+    def _try_add(t_p: float) -> None:
+        if spacing == 0.0 or not candidates or t_p - candidates[-1] >= spacing:
+            candidates.append(t_p)
 
-    if not candidates:
-        if verbose:
-            console.print(
-                "[green]No viable candidate times remain after spacing "
-                f"deduplication (min_candidate_spacing_s={spacing:.1f}s)."
+    for i in range(len(times) - 1):
+        s_id = int(scenario_ids[i])
+        v = float(violation_arr[i])
+        if is_start_arr[i]:
+            violation_sum[s_id] += v
+            active_count[s_id] += 1
+        else:
+            violation_sum[s_id] -= v
+            active_count[s_id] -= 1
+
+        was_delinquent = delinquency_per_workload[s_id]
+        is_now_delinquent = not slo_objective.is_met_from_aggregated(
+            slo_objective.slo_metric.aggregate_from_running_sum(
+                violation_sum[s_id], active_count[s_id]
             )
-        return []
+        )
+        if was_delinquent != is_now_delinquent:
+            num_delinquent += 1 if is_now_delinquent else -1
+            delinquency_per_workload[s_id] = is_now_delinquent
+
+        a = times[i]
+        b = times[i + 1]
+        if b == a:
+            continue  # skip zero-length intervals
+
+        if num_delinquent >= min_delinquent_workloads:
+            if not in_epoch:
+                in_epoch = True
+                epoch_start = a
+        elif in_epoch:
+            _try_add(max(0.0, epoch_start - lead_time_s))
+            in_epoch = False
+
+    if in_epoch:
+        _try_add(max(0.0, epoch_start - lead_time_s))
 
     if verbose:
-        console.print(
-            f"[green]Found {len(candidates)} candidate placement time(s). "
-            f"First candidate: t_p={candidates[0]:.1f}s."
-        )
+        if not candidates:
+            console.print(
+                f"[green]No violating interval found with at least "
+                f"{min_delinquent_workloads} delinquent workloads."
+            )
+        else:
+            console.print(
+                f"[green]Found {len(candidates)} candidate placement time(s). "
+                f"First candidate: t_p={candidates[0]:.1f}s."
+            )
     return candidates
 
 
