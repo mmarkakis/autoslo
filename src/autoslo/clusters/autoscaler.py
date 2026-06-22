@@ -718,6 +718,7 @@ class Autoscaler:
                     selected_cluster_name,
                     new_predicted_latencies_for_cluster,
                     new_cache_state,
+                    new_lstm_states_for_cluster,
                 ) = query_router.route_query(
                     query=routed_query,
                     snapshot=snapshot_for_routing,
@@ -727,6 +728,7 @@ class Autoscaler:
                     routed_query,
                     new_predicted_latencies_for_cluster,
                     new_cache_state,
+                    new_lstm_states_for_cluster,
                 )
                 arrivals_processed += 1
 

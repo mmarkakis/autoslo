@@ -28,6 +28,7 @@ from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
+from autoslo.nn.lstm_state import AfterLSTMState
 from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
@@ -453,6 +454,7 @@ class ManagedClusterPool:
         query: Query,
         new_predicted_latencies_on_selected: dict[str, float],
         new_cluster_cache_state: np.ndarray,
+        new_lstm_states: dict[str, AfterLSTMState],
     ) -> None:
         """Register *query* as actively running on *cluster_name*."""
         with self._lock:
@@ -461,6 +463,7 @@ class ManagedClusterPool:
                 query,
                 new_predicted_latencies_on_selected,
                 new_cache_state=new_cluster_cache_state,
+                new_lstm_states_on_selected=new_lstm_states,
             )
 
     def on_query_finish(

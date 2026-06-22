@@ -61,6 +61,7 @@ def route_and_update_bookkeeping(
         selected_cluster_name,
         new_predicted_latencies_on_selected,
         new_cluster_cache_state,
+        new_lstm_states,
     ) = router.route_query(
         query=query,
         snapshot=snapshot,
@@ -148,6 +149,7 @@ def route_and_update_bookkeeping(
         cluster_name=selected_cluster_name,
         new_predicted_latencies_on_selected=new_predicted_latencies_on_selected,
         new_cluster_cache_state=new_cluster_cache_state,
+        new_lstm_states=new_lstm_states,
     )
     post_snapshot = pool.snapshot(only_ready=False)
     actions: list[ScalingAction] = []

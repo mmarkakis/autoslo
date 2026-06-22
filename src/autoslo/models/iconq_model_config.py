@@ -54,6 +54,15 @@ class IconqModelInitConfig:
         "v1"  # Version of interaction features used by IconqInteractionFeaturizer.
     )
 
+    forward_after_lstm: bool = (
+        False  # When True, the after-direction LSTM processes future queries in
+        # forward chronological order instead of reverse order.  This enables
+        # O(1) incremental hidden-state resumption via register_query /
+        # update_query when new concurrent queries arrive.  Models trained with
+        # forward_after_lstm=True are not weight-compatible with those trained
+        # with False.  Requires is_bayesian=False.
+    )
+
 
 @dataclass
 class IconqModelTrainConfig:

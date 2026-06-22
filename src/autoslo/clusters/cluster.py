@@ -9,6 +9,7 @@ import numpy as np
 
 from autoslo.clusters.billing import BillingAccumulator, BillingInterval
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
+from autoslo.nn.lstm_state import AfterLSTMState
 from autoslo.workload_definition.query import Query
 
 # Cluster names must match "autoslo-{rpu}-{suffix}" where rpu is a positive integer.
@@ -162,6 +163,7 @@ class Cluster:
         self.queries = {}
         self.id_to_neighbors = {}
         self.predicted_latencies: dict[str, float] = {}
+        self.lstm_states: dict[str, AfterLSTMState] = {}
 
     # --- Derived properties ----------------------------------------------
 
@@ -203,6 +205,7 @@ class Cluster:
         query: "Query",
         new_predicted_latencies: dict[str, float],
         new_cache_state: np.ndarray,
+        new_lstm_states_on_selected: dict[str, AfterLSTMState],
     ) -> None:
         """
         Register a query as actively running.
@@ -221,6 +224,7 @@ class Cluster:
 
         self.predicted_latencies = dict(new_predicted_latencies)
         self.cache_state = new_cache_state.copy()
+        self.lstm_states = dict(new_lstm_states_on_selected)
 
     def finish_query(
         self,
@@ -250,6 +254,7 @@ class Cluster:
         q = self.queries.pop(query_id)
         self.id_to_neighbors.pop(query_id, None)
         self.predicted_latencies.pop(query_id, None)
+        self.lstm_states.pop(query_id, None)
 
         # Close the current active-service window when the cluster becomes
         # idle. Billing threshold/granularity is applied by Billing.billed_s.
@@ -389,7 +394,9 @@ class ClusterView:
         default_factory=dict, repr=False
     )
     cache_state: np.ndarray
-    
+    lstm_states: dict[str, AfterLSTMState] = field(
+        default_factory=dict, repr=False
+    )
 
     @classmethod
     def from_cluster(cls, cluster: Cluster) -> "ClusterView":
@@ -415,6 +422,7 @@ class ClusterView:
                 if cluster.cache_state is not None
                 else None
             ),
+            lstm_states=dict(cluster.lstm_states),
         )
 
     # --- Read-only properties ---
@@ -479,4 +487,5 @@ class ClusterView:
             qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
         }
         c.predicted_latencies = dict(self.predicted_latencies)
+        c.lstm_states = dict(self.lstm_states)
         return c

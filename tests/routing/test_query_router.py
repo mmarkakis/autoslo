@@ -68,13 +68,10 @@ def _make_iconq_stub(
     predictions: dict[ClusterAwareQueryId, ModelPrediction] | None = None,
 ) -> MagicMock:
     stub = MagicMock(spec=IconqModel)
-    featurizer = MagicMock()
-    # featurize_one_vs_many_to_numpy must return (ndarray, int) not a MagicMock
-    featurizer.featurize_one_vs_many_to_numpy.return_value = (np.zeros((1, n)), 0)
-    stub.iconq_interaction_featurizer = featurizer
+    stub.supports_stateful_inference = False
     stub.iconq_query_featurizer.num_tables = n
     stub.iconq_query_featurizer.table_vector_for.return_value = np.zeros(n)
-    stub.predict_from_dataset.return_value = predictions or {}
+    stub.predict_from_query_groups.return_value = predictions or {}
     return stub
 
 
@@ -120,6 +117,7 @@ def _make_cluster(
                 q,
                 {qq.query_id: lat.get(qq.query_id, 5.0) for qq in ([q] + c.active_queries)},
                 np.zeros(n),
+                {},
             )
     return ClusterView(c)
 
@@ -485,7 +483,7 @@ class TestRouteQuery:
             name=cluster_name,
             state=ClusterState.READY,
         )
-        c.add_query(existing, {"existing": 10.0}, np.zeros(_N))
+        c.add_query(existing, {"existing": 10.0}, np.zeros(_N), {})
         view = ClusterView(c)
         snapshot = {cluster_name: view}
 
@@ -541,7 +539,7 @@ class TestRouteQuery:
         emitted2: list[Any] = []
         with patch("autoslo.routing.query_router.emit_structured", side_effect=emitted1.append):
             cn1 = router.route_query(q1, snapshot, 0.0)[0]
-        router._iconq_model.predict_from_dataset.return_value = {
+        router._iconq_model.predict_from_query_groups.return_value = {
             ClusterAwareQueryId.make("autoslo-16-A-0", "q2"): pred2,
             ClusterAwareQueryId.make("autoslo-16-B-0", "q2"): pred2,
         }

@@ -14,12 +14,13 @@ from autoslo.filesystem.structured_events import EventType, QueryRelatedEvent
 from autoslo.filesystem.structured_log import emit_structured
 from autoslo.forecasting.forecaster import Forecaster
 from autoslo.models.iconq_model import IconqModel
-from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
+from autoslo.models.model_prediction import ModelPrediction
+from autoslo.nn.lstm_state import AfterLSTMState
 from autoslo.routing.query_router_policy import QueryRouterPolicy
 from autoslo.slo.slo_metric import LatencySlo
 from autoslo.slo.slo_objective import SloObjective, ViolationCost
 from autoslo.slo.slo_resolver import SloResolver
-from autoslo.workload_definition.query import Query
+from autoslo.workload_definition.query import ClusterAwareQueryId, Query
 from autoslo.workload_definition.workload import Workload
 
 logger = logging.getLogger(__name__)
@@ -136,7 +137,7 @@ class QueryRouter:
         query: Query,
         snapshot: dict[str, ClusterView],
         rel_time_s: float,
-    ) -> tuple[str, dict[str, float], np.ndarray]:
+    ) -> tuple[str, dict[str, float], np.ndarray, dict[str, AfterLSTMState]]:
 
         use_stage = self._routing_policy == QueryRouterPolicy.USE_STAGE_MODEL
 
@@ -186,12 +187,25 @@ class QueryRouter:
             )
 
         # Perform the prediction and constraint to non-decreasing latency.
-        dataset = ConcurrentQueryDataset.build_from_query_groups(
-            iconq_interaction_featurizer=self._iconq_model.iconq_interaction_featurizer,
-            cluster_to_base_to_neighbors=cluster_name_to_queries_to_neighbors,
+        incremental_inference_possible = (
+            self._iconq_model.supports_stateful_inference
+            and all(
+                q.query_id in cv.lstm_states
+                for cv in snapshot.values()
+                for q in cv.active_queries
+            )
         )
-        iconq_predictions = self._iconq_model.predict_from_dataset(dataset)
+        new_states: dict[ClusterAwareQueryId, AfterLSTMState] = {}
+        if incremental_inference_possible:
+            iconq_predictions, new_states = self._predict_stateful(
+                snapshot, query
+            )
+        else:
+            iconq_predictions = self._iconq_model.predict_from_query_groups(
+                cluster_name_to_queries_to_neighbors
+            )
         iconq_predicted_latencies: dict[str, dict[str, float]] = {}
+        iconq_new_states: dict[str, dict[str, AfterLSTMState]] = {}
         for cluster_aware_query_id, pred in iconq_predictions.items():
             cluster_name = cluster_aware_query_id.cluster_name
             if cluster_name not in iconq_predicted_latencies:
@@ -201,6 +215,13 @@ class QueryRouter:
                 pred.overall_mean_s(),
                 snapshot[cluster_name].predicted_latencies.get(query_id, 0.0),
             )
+        for cluster_aware_query_id, state in new_states.items():
+            cluster_name = cluster_aware_query_id.cluster_name
+            if cluster_name not in iconq_new_states:
+                iconq_new_states[cluster_name] = {}
+            query_id = cluster_aware_query_id.query_id
+            iconq_new_states[cluster_name][query_id] = state
+
         # Retrieve the appropriate forecasted query vecs for this time.
         forecasted_table_vecs: Optional[np.ndarray] = None
         if self._routing_policy == QueryRouterPolicy.CACHE_AWARE:
@@ -321,7 +342,64 @@ class QueryRouter:
             selected_cluster_name,
             iconq_predicted_latencies[selected_cluster_name],
             all_new_cache_states[selected_cluster_name],
+            iconq_new_states.get(selected_cluster_name, {}),
         )
+
+    def _predict_stateful(
+        self,
+        snapshot: dict[str, ClusterView],
+        query: Query,
+    ) -> tuple[
+        dict[ClusterAwareQueryId, ModelPrediction],
+        dict[ClusterAwareQueryId, AfterLSTMState],
+    ]:
+        """Score phase of the stateful routing path.
+
+        For each candidate cluster:
+          * Each already-active query is scored via one incremental
+            ``predict_incremental`` call (O(1) LSTM step).
+          * The newly arriving *query* is scored via a full
+            ``compute_initial_state`` call (requires full forward+after pass).
+
+        Returns a dict in the same shape as ``predict_from_dataset``.
+        State is **not mutated** here; the commit phase runs later in
+        ``route_query`` after ``select_best`` has been called.
+        """
+        predictions: dict[ClusterAwareQueryId, ModelPrediction] = {}
+        new_states: dict[ClusterAwareQueryId, AfterLSTMState] = {}
+
+        # Batch all incremental steps across every cluster into one GPU call.
+        incremental_items: list[tuple[AfterLSTMState, ClusterAwareQueryId]] = []
+        for cluster_name, cluster in snapshot.items():
+            for q_active in cluster.active_queries:
+                caqi = ClusterAwareQueryId.make(cluster_name, q_active.query_id)
+                incremental_items.append(
+                    (cluster.lstm_states[q_active.query_id], caqi)
+                )
+        for caqi, (pred, state) in self._iconq_model.predict_incremental_batch(
+            incremental_items, query
+        ).items():
+            predictions[caqi] = pred
+            new_states[caqi] = state
+
+        # Initial pass: batch all clusters into one GPU call.  Sequences are
+        # padded to a common length; pack_padded_sequence in get_after_final_state
+        # ensures each cluster's state is taken at its true last position.
+        initial_items = [
+            (
+                ClusterAwareQueryId.make(cluster_name, query.query_id),
+                query,
+                cluster.active_queries,
+            )
+            for cluster_name, cluster in snapshot.items()
+        ]
+        for caqi, (pred, state) in self._iconq_model.predict_initial_batch(
+            initial_items
+        ).items():
+            predictions[caqi] = pred
+            new_states[caqi] = state
+
+        return predictions, new_states
 
     def _collect_cluster_pairs(
         self,

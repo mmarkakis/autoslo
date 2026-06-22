@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 import torch
@@ -6,7 +7,7 @@ from torch import nn
 
 from autoslo.nn.bayesian_linear import BayesianLinear
 from autoslo.nn.bayesian_pinch_lstm import BayesianPinchLSTM
-import logging
+from autoslo.nn.lstm_state import LSTMTensorState
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
         bayesian_samples: int = 5,
         is_mdn: bool = False,
         mdn_num_gaussians: int = 3,
+        forward_after_lstm: bool = False,
         device: torch.device = torch.device("cpu"),
     ):
         """
@@ -68,6 +70,9 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
                 each inference, to account for model uncertainty.
             is_mdn: Whether to use the model as a Mixture Density Network (MDN).
             mdn_num_gaussians: The number of MDN Gaussian mixture components.
+            forward_after_lstm: When True, the after-direction LSTM processes
+                future queries in forward chronological order instead of reverse.
+                See BayesianPinchLSTM for details.
             device: The device to use for the model.
         """
         super().__init__()
@@ -107,18 +112,19 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
             num_layers_reverse=self._lstm_num_layers,
             dropout=self._lstm_dropout,
             is_bayesian=False,  # self._is_bayesian,
+            forward_after=forward_after_lstm,
             device=device,
         ).to(device)
         xavier_init(self._mid_model)
 
         # Output model(s):
         #
-        # - If the model is not an MDN, we have two single-output models with 
-        #   two linear layers each, which output the mean and log variance of 
+        # - If the model is not an MDN, we have two single-output models with
+        #   two linear layers each, which output the mean and log variance of
         #   the runtime, respectively.
-        # - If the model is a MDN, we have three, M-output models with two 
-        #   linear layers each, where M is the number of MDN Gaussian mixture 
-        #   components. The models output the means, log variances, and mixing 
+        # - If the model is a MDN, we have three, M-output models with two
+        #   linear layers each, where M is the number of MDN Gaussian mixture
+        #   components. The models output the means, log variances, and mixing
         #   coefficients of the Gaussian components, respectively.
         linear_layer = BayesianLinear if self._is_bayesian else nn.Linear
         mean_dims = 1 if not self._is_mdn else self._mdn_num_gaussians
@@ -160,6 +166,197 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
             )
         )
 
+    def fold_batch_norm(self) -> None:
+        """Fold the input BatchNorm1d parameters into the first linear layer.
+
+        In eval mode, BatchNorm1d applies a fixed per-channel affine transform:
+
+            y[i] = (x[i] - mean[i]) / sqrt(var[i] + eps) * gamma[i] + beta[i]
+
+        This is equivalent to a linear operation that can be absorbed into
+        ``_in_model[0]`` (a :class:`torch.nn.Linear`), after which ``_bn`` is
+        replaced with :class:`torch.nn.Identity` so :meth:`_embed` continues to
+        work without any code-path changes.
+
+        The transformation is lossless: numerical output is bit-for-bit
+        identical to running BN in eval mode with the original weights.
+
+        Call once after loading the model checkpoint and before the first
+        forward pass.  Subsequent calls are no-ops.
+        """
+        if isinstance(self._bn, nn.Identity):
+            return
+
+        bn = self._bn
+        linear = self._in_model[0]
+
+        # scale[i] = gamma[i] / sqrt(var[i] + eps)
+        # shift[i] = beta[i] - mean[i] * scale[i]
+        scale = bn.weight / torch.sqrt(bn.running_var + bn.eps)  # (C,)
+        shift = bn.bias - bn.running_mean * scale  # (C,)
+
+        # Fold into the Linear:
+        #   new_W[j, :] = W[j, :] * scale        (broadcast over output dim)
+        #   new_b[j]    = b[j]    + W[j, :] @ shift
+        W = linear.weight.data.clone()
+        linear.weight.data = W * scale.unsqueeze(0)
+        linear.bias.data = linear.bias.data + W @ shift
+
+        self._bn = nn.Identity()
+
+    def _embed(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply batch normalization and embedding layers to a raw feature tensor.
+
+        Parameters:
+            x: Shape (batch_size, seq_len, input_size).
+
+        Returns:
+            Shape (batch_size, seq_len, embedding_size).
+
+        Internal entry point for input normalization and embedding, used by
+        :meth:`forward`, :meth:`forward_pinch_state`, and
+        :meth:`step_after_state`.
+        """
+        x = x.permute(0, 2, 1)
+        x_norm = self._bn(x)
+        x_norm = x_norm.permute(0, 2, 1)
+        return self._in_model(x_norm)
+
+    def _finalize(
+        self,
+        fwd_out: torch.Tensor,
+        after_out: torch.Tensor,
+        after_h: torch.Tensor,
+        after_c: torch.Tensor,
+        fwd_out_for_state: torch.Tensor,
+        mdn_mix_softmax_temperature: float = 1.0,
+    ) -> tuple[
+        torch.Tensor, torch.Tensor, Optional[torch.Tensor], LSTMTensorState
+    ]:
+        """Run the output MLP heads on a pre-computed LSTM embedding.
+
+        Parameters:
+            lstm_out: Shape (batch_size, lstm_hidden_size).
+            mdn_mix_softmax_temperature: Softmax temperature for MDN mixing
+                coefficients (ignored when is_mdn=False).
+
+        Returns:
+            (output_mean, output_logvar, output_mix) — same semantics as
+            the main ``forward`` method.
+
+        Used by stateful inference helpers to produce a prediction from a
+        cached + incrementally updated LSTM embedding.
+        """
+        lstm_out = torch.cat([fwd_out, after_out], dim=1)
+        y_mean = self._out_model_mean(lstm_out)
+        y_logvar = self._out_model_logvar(lstm_out)
+        y_mix = (
+            F.softmax(
+                self._out_model_mix(lstm_out) / mdn_mix_softmax_temperature,
+                dim=-1,
+            )
+            if self._is_mdn
+            else None
+        )
+
+        return (
+            y_mean,
+            y_logvar,
+            y_mix,
+            LSTMTensorState(
+                fwd_out=fwd_out_for_state,
+                after_h=after_h.detach(),
+                after_c=after_c.detach(),
+            ),
+        )
+
+    # ── Stateful inference (forward_after_lstm=True only) ─────────────────────
+    #
+    # These methods encapsulate all BayesianPinchLSTM access so that callers
+    # never need to reach through the private ``_mid_model`` attribute.
+
+    def forward_and_get_lstm_state(
+        self,
+        x: torch.Tensor,
+        pinch_t: torch.Tensor,
+        x_len: torch.Tensor | None = None,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        Optional[torch.Tensor],
+        LSTMTensorState,
+    ]:
+        """Embed *x* then run the forward + after LSTM, returning prediction
+        outputs together with a detached :class:`LSTMTensorState`.
+
+        Parameters:
+            x: Shape ``(batch_size, seq_len, input_size)`` — raw (un-embedded)
+                features.  May be zero-padded when *x_len* is provided.
+            pinch_t: Shape ``(batch_size,)`` — index of the pinch point for
+                each sequence.
+            x_len: True sequence lengths, shape ``(batch_size,)``.  When
+                provided, ``get_after_final_state`` uses
+                ``pack_padded_sequence`` so that the returned states correspond
+                to each sequence's last valid timestep.  When ``None`` the
+                input is assumed to be unpadded (single-query use).
+
+        Returns:
+            ``(y_mean, y_logvar, y_mix, state)`` — same conventions as
+            :meth:`predict_from_lstm_out`, plus a :class:`LSTMTensorState`
+            whose tensors are detached and ready for caching.  When
+            ``batch_size > 1`` the state tensors carry the batch dimension and
+            must be split by the caller.
+
+        Only valid when ``forward_after_lstm=True``.
+        """
+        x_emb = self._embed(x)
+        fwd_out = self._mid_model.pass_through_forward_lstm(x_emb, pinch_t)
+        after_out, after_h, after_c = self._mid_model.pass_through_after_lstm(
+            x_emb, pinch_t, x_len
+        )
+        return self._finalize(
+            fwd_out, after_out, after_h, after_c, fwd_out.detach()
+        )
+
+    def forward_step_from_existing_lstm_state(
+        self,
+        x_tok: torch.Tensor,
+        state: LSTMTensorState,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        Optional[torch.Tensor],
+        LSTMTensorState,
+    ]:
+        """Embed *x_tok* and advance *state* by one incremental after-LSTM step,
+        returning prediction outputs together with the updated
+        :class:`LSTMTensorState`.
+
+        Parameters:
+            x_tok: Shape ``(batch_size, 1, input_size)`` — raw (un-embedded)
+                tokens with a time dimension.  ``batch_size`` may be 1 (single
+                query) or N > 1 (batched call from
+                :meth:`IconqModel.predict_incremental_batch`).
+            state: :class:`LSTMTensorState` whose tensors match the batch size:
+                ``fwd_out`` is ``(batch_size, H)``, ``after_h/after_c`` are
+                ``(num_layers, batch_size, H)``.
+
+        Returns:
+            ``(y_mean, y_logvar, y_mix, new_state)`` — same conventions as
+            :meth:`predict_from_lstm_out`, plus an updated
+            :class:`LSTMTensorState`.  ``new_state.fwd_out`` is the same
+            tensor object as ``state.fwd_out`` (the forward pass is frozen).
+
+        Only valid when ``forward_after_lstm=True``.
+        """
+        x_emb_token = self._embed(x_tok).squeeze(1)  # (1, E)
+        after_out, new_h, new_c = self._mid_model.step_after(
+            x_emb_token, state.after_h, state.after_c
+        )
+        return self._finalize(
+            state.fwd_out, after_out, new_h, new_c, state.fwd_out
+        )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -172,44 +369,41 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
 
         Parameters:
             x: The input tensor, of shape (batch_size, max_seq_len, input_size).
-            x_len: The actual lengths of the sequences in the batch, even though 
+            x_len: The actual lengths of the sequences in the batch, even though
                 they are 0-padded to max_seq_len in `x`.
-            pinch_points: The indices of the pinch points in each of the 
+            pinch_points: The indices of the pinch points in each of the
                 sequences in the batch. This tensor has shape (batch_size,).
-            mdn_mix_softmax_temperature: The temperature parameter for the 
-                softmax function used to compute the mixing coefficients in the 
+            mdn_mix_softmax_temperature: The temperature parameter for the
+                softmax function used to compute the mixing coefficients in the
                 MDN. Only used if the model is an MDN.
 
         Returns:
-            output_mean: The output tensor of mean values, of shape 
-                (batch_size, N). N is 1 if the model is not an MDN, and equal to 
+            output_mean: The output tensor of mean values, of shape
+                (batch_size, N). N is 1 if the model is not an MDN, and equal to
                 the number of Gaussian components if it is.
-            output_logvar: The output tensor of log variances, of shape 
-                (batch_size, N). N is 1 if the model is not an MDN, and equal 
+            output_logvar: The output tensor of log variances, of shape
+                (batch_size, N). N is 1 if the model is not an MDN, and equal
                 to the number of Gaussian components if it is.
-            output_mix: The output tensor of Gaussian mixture parameters, of 
-                shape (batch_size, num_gaussians). Only returned if the model is 
+            output_mix: The output tensor of Gaussian mixture parameters, of
+                shape (batch_size, num_gaussians). Only returned if the model is
                 an MDN.
         """
-        # Apply batch normalization. BatchNorm1d expects an input shape of
-        # (batch_size, num_features, seq_len), so we permute the input tensor.
-
-        x = x.permute(0, 2, 1)
-        x_norm = self._bn(x)
-        x_norm = x_norm.permute(0, 2, 1)
+        # Embed once here; both _forward_impl_bayesian and _forward_impl_mdn
+        # receive the pre-embedded tensor and skip their own in_model call.
+        x_emb = self._embed(x)
 
         if not self._is_mdn:
-            return self._forward_impl_bayesian(x_norm, x_len, pinch_points) + (
+            return self._forward_impl_bayesian(x_emb, x_len, pinch_points) + (
                 None,
             )
         else:  # self._is_mdn
             return self._forward_impl_mdn(
-                x_norm, x_len, pinch_points, mdn_mix_softmax_temperature
+                x_emb, x_len, pinch_points, mdn_mix_softmax_temperature
             )
 
     def _forward_impl_bayesian(
         self,
-        x_norm: torch.Tensor,
+        x_emb: torch.Tensor,
         x_len: torch.Tensor,
         pinch_points: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -217,29 +411,27 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
         An implementation of the forward pass when the model is not an MDN.
 
         Parameters:
-            x_norm: The input tensor, which after batch normalization is of 
-                shape (batch_size, max_seq_len, input_size).
-            x_len: The actual lengths of the sequences in the batch, even though 
+            x_emb: Embedded input of shape
+                (batch_size, max_seq_len, embedding_size), as produced by
+                :meth:`embed`.
+            x_len: The actual lengths of the sequences in the batch, even though
                 they are 0-padded to max_seq_len in `x`.
-            pinch_points: The indices of the pinch points in each of the 
+            pinch_points: The indices of the pinch points in each of the
                 sequences in the batch. This tensor has shape (batch_size,).
 
         Returns:
-            output_mean: The output tensor of mean values, of shape 
+            output_mean: The output tensor of mean values, of shape
                 (batch_size, 1).
-            output_logvar: The output tensor of standard deviations, of shape 
+            output_logvar: The output tensor of standard deviations, of shape
                 (batch_size, 1).
         """
 
         mean_predictions = []
         variance_predictions = []
 
-        # Pass through the layers
-        in_model_output = self._in_model(
-            x_norm
-        )  # Output shape: (batch_size, seq_len, embedding_size)
+        # Pass through the LSTM and output heads.
         mid_model_output = self._mid_model(
-            in_model_output, x_len, pinch_points
+            x_emb, x_len, pinch_points
         )  # Output shape: (batch_size, lstm_hidden_size)
 
         for _ in range(self._bayesian_samples):
@@ -251,7 +443,7 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
             )  # Output shape: (batch_size, 1)
 
             if not self._is_bayesian:
-                # If the model is not Bayesian, we only need to sample once, 
+                # If the model is not Bayesian, we only need to sample once,
                 # since the predictions will be deterministic.
                 return out_model_mean_output, out_model_logvar_output
 
@@ -285,7 +477,7 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
 
     def _forward_impl_mdn(
         self,
-        x_norm: torch.Tensor,
+        x_emb: torch.Tensor,
         x_len: torch.Tensor,
         pinch_points: torch.Tensor,
         mdn_mix_softmax_temperature: float,
@@ -294,34 +486,32 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
         An implementation of the forward pass when the model is an MDN.
 
         Parameters:
-            x_norm: The input tensor, which after batch normalization is of 
-                shape (batch_size, max_seq_len, input_size).
-            x_len: The actual lengths of the sequences in the batch, even though 
+            x_emb: Embedded input of shape
+                (batch_size, max_seq_len, embedding_size), as produced by
+                :meth:`embed`.
+            x_len: The actual lengths of the sequences in the batch, even though
                 they are 0-padded to max_seq_len in `x`.
-            pinch_points: The indices of the pinch points in each of the 
+            pinch_points: The indices of the pinch points in each of the
                 sequences in the batch. This tensor has shape (batch_size,).
-            mdn_mix_softmax_temperature: The temperature parameter for the 
-                softmax function used to compute the mixing coefficients in the 
+            mdn_mix_softmax_temperature: The temperature parameter for the
+                softmax function used to compute the mixing coefficients in the
                 MDN.
 
         Returns:
-            output_mean: The output tensor of mean values, of shape 
+            output_mean: The output tensor of mean values, of shape
                 (batch_size, num_gaussians).
-            output_logvar: The output tensor of standard deviations, of shape 
+            output_logvar: The output tensor of standard deviations, of shape
                 (batch_size, num_gaussians).
-            output_mix: The output tensor of mixing coefficients, of shape 
+            output_mix: The output tensor of mixing coefficients, of shape
                 (batch_size, num_gaussians).
         """
 
         if self._out_model_mix is None:
             raise ValueError("The model must be an MDN to use this method.")
 
-        # Pass through the layers
-        in_model_output = self._in_model(
-            x_norm
-        )  # Output shape: (batch_size, seq_len, embedding_size)
+        # Pass through the LSTM and output heads.
         mid_model_output = self._mid_model(
-            in_model_output, x_len, pinch_points
+            x_emb, x_len, pinch_points
         )  # Output shape: (batch_size, lstm_hidden_size)
         out_model_mean_output = F.softplus(
             self._out_model_mean(mid_model_output), beta=100

@@ -53,6 +53,7 @@ from autoslo.nn.loss_functions import (
     negative_log_likelihood_loss,
     sensitive_q_error_loss,
 )
+from autoslo.nn.lstm_state import AfterLSTMState, LSTMTensorState
 from autoslo.nn.runtime_net import RuntimeNet
 from autoslo.workload_definition.query import ClusterAwareQueryId, Query
 from autoslo.workload_execution.trace import Trace
@@ -256,6 +257,7 @@ class IconqModel:
             "bayesian_samples": init_config.bayesian_samples,
             "is_mdn": init_config.is_mdn,
             "mdn_num_gaussians": init_config.mdn_num_gaussians,
+            "forward_after_lstm": init_config.forward_after_lstm,
             "device": self._device,
         }
         self._nn = RuntimeNet(**self._nn_args).to(self._device)  # type: ignore
@@ -333,6 +335,40 @@ class IconqModel:
             The IconqInteractionFeaturizer instance.
         """
         return self._iconq_interaction_featurizer
+
+    @property
+    def supports_stateful_inference(self) -> bool:
+        """True when the model was built with forward_after_lstm=True and
+        therefore supports :meth:`predict_initial` / :meth:`predict_incremental`.
+        """
+        return self._init_config.forward_after_lstm
+
+    def predict_from_query_groups(
+        self,
+        cluster_to_base_to_neighbors: dict[str, dict],
+    ) -> dict[ClusterAwareQueryId, ModelPrediction]:
+        """Build a dataset from pre-grouped queries and return predictions.
+
+        This is the primary batch-inference entry point for the router: it
+        wraps the dataset construction and the forward pass so that callers
+        do not need to reference the interaction featurizer directly.
+
+        Parameters:
+            cluster_to_base_to_neighbors: Maps each cluster name to a dict of
+                base :class:`~autoslo.workload_definition.query.Query` objects
+                and their neighbor lists, as returned by
+                :meth:`~autoslo.clusters.cluster.ClusterView.hypothetical_neighbors_with`.
+
+        Returns:
+            Flat dict mapping each :class:`ClusterAwareQueryId` to its
+            :class:`ModelPrediction`.
+        """
+        dataset = ConcurrentQueryDataset.build_from_query_groups(
+            iconq_interaction_featurizer=self._iconq_interaction_featurizer,
+            cluster_to_base_to_neighbors=cluster_to_base_to_neighbors,
+            censored_observation_sample_prob=0.0,  # Disable explicitly
+        )
+        return self.predict_from_dataset(dataset)
 
     def predict_from_dataset(
         self,
@@ -709,7 +745,280 @@ class IconqModel:
             expected_input_size=cast(int, self._nn_args["input_size"]),
             interaction_feature_version=self._init_config.interaction_feature_version,
         )
+        # Remap legacy key names produced by older checkpoints.
+        state_dict = {
+            k.replace("._reverse_lstm.", "._after_lstm."): v
+            for k, v in state_dict.items()
+        }
         self._nn.load_state_dict(state_dict)
+
+    # ── Stateful inference (forward_after_lstm=True only) ─────────────────────
+    #
+    # IconqModel is stateless with respect to per-query LSTM state: it only
+    # performs computation.  All AfterLSTMState objects live in
+    # Cluster.lstm_states (owned by ManagedClusterPool) and are passed in
+    # and returned by these methods.  The pool's add_query / finish_query
+    # handle creation and eviction.
+
+    def predict_initial_batch(
+        self,
+        items: list[tuple[ClusterAwareQueryId, Query, list[Query]]],
+    ) -> dict[ClusterAwareQueryId, tuple[ModelPrediction, AfterLSTMState]]:
+        """
+        Featurizes every (caqi, incoming_query, neighbors) triple individually
+        on the CPU, pads the resulting sequences to a common length, then
+        issues a single batched ``forward_pinch_state`` call on the GPU and
+        splits the output back per item.
+
+        Parameters:
+            items: List of ``(incoming_caqi, incoming_query, existing_neighbors)``
+                triples; typically one per candidate cluster.
+
+        Returns:
+            Dict mapping each caqi to ``(prediction, state)``.
+
+        Raises:
+            RuntimeError: If ``forward_after_lstm`` is not enabled.
+        """
+        if not self.supports_stateful_inference:
+            raise RuntimeError(
+                "predict_initial_batch requires forward_after_lstm=True "
+                "in IconqModelInitConfig."
+            )
+        if not items:
+            return {}
+
+        if self._nn.training:
+            self._nn.eval()
+
+        feat_list: list[np.ndarray] = []
+        pinch_list: list[int] = []
+        rpu_list: list[int] = []
+        stage_pred_list: list[float] = []
+
+        for caqi, query, neighbors in items:
+            rpu = Cluster.rpu_for_cluster_name(caqi.cluster_name)
+            stage_pred = query.stage_predictions_per_rpu.get(rpu, -1.0)
+            qb_entries = [
+                (
+                    query.rel_start_time_s,
+                    query.query_text_id,
+                    stage_pred,
+                    True,
+                )
+            ]
+            for nb in neighbors:
+                if nb.query_id != query.query_id:
+                    qb_entries.append(
+                        (
+                            nb.rel_start_time_s,
+                            nb.query_text_id,
+                            nb.stage_predictions_per_rpu.get(rpu, -1.0),
+                            False,
+                        )
+                    )
+            feat_np, pinch_idx = (
+                self._iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
+                    rpu=rpu,
+                    qa_query_text_id=query.query_text_id,
+                    qa_start_time_s=query.rel_start_time_s,
+                    qa_latency_prediction=stage_pred,
+                    qb_entries=qb_entries,
+                )
+            )
+            feat_list.append(feat_np)
+            pinch_list.append(pinch_idx)
+            rpu_list.append(rpu)
+            stage_pred_list.append(stage_pred)
+
+        # Pad sequences to max length.
+        n = len(feat_list)
+        f_dim = feat_list[0].shape[1]
+        seq_lens = [f.shape[0] for f in feat_list]
+        max_len = max(seq_lens)
+        x_padded = np.zeros((n, max_len, f_dim), dtype=np.float32)
+        for i, feat_np in enumerate(feat_list):
+            x_padded[i, : feat_np.shape[0], :] = feat_np
+
+        with torch.no_grad():
+            x = torch.from_numpy(x_padded).to(self._device)  # (N, max_L, F)
+            pinch_t = torch.tensor(pinch_list, device=self._device)
+            x_len = torch.tensor(seq_lens, device=self._device)
+
+            y_mean, _y_logvar, _y_mix, batched_tensor_state = (
+                self._nn.forward_and_get_lstm_state(x, pinch_t, x_len)
+            )
+            if self._trained_on_log_runtime:
+                y_mean = torch.exp(y_mean)
+
+        # Split results back per item.
+        # forward_pinch_state already returns detached tensors inside the
+        # LSTMTensorState, so per-slice .detach() calls are redundant.
+        y_mean_cpu = y_mean.detach().cpu().numpy()  # (N, 1)
+        new_h = batched_tensor_state.after_h  # (num_layers, N, H) — detached
+        new_c = batched_tensor_state.after_c  # (num_layers, N, H) —  detached
+        new_fwd = batched_tensor_state.fwd_out  # (N, H)            —  detached
+
+        result: dict[
+            ClusterAwareQueryId, tuple[ModelPrediction, AfterLSTMState]
+        ] = {}
+        for i, (caqi, query, neighbors) in enumerate(items):
+            rpu = rpu_list[i]
+            state = AfterLSTMState(
+                tensor_state=LSTMTensorState(
+                    fwd_out=new_fwd[i : i + 1],  # (1, H)
+                    after_h=new_h[:, i : i + 1, :],  # (num_layers, 1, H)
+                    after_c=new_c[:, i : i + 1, :],  # (num_layers, 1, H)
+                ),
+                rpu=rpu,
+                qa_query_text_id=query.query_text_id,
+                qa_start_time_s=query.rel_start_time_s,
+                qa_latency_prediction=stage_pred_list[i],
+            )
+            result[caqi] = (
+                ModelPrediction(
+                    mean_s=y_mean_cpu[i],
+                    metadata={
+                        "model_source": "lstm",
+                        "rpu": rpu,
+                        "run_id": Cluster.run_id_for_cluster_name(
+                            caqi.cluster_name
+                        ),
+                        "query_id": caqi.query_id,
+                        "query_text_id": query.query_text_id,
+                        "num_other_concurrent_queries": len(neighbors),
+                    },
+                ),
+                state,
+            )
+        return result
+
+    def predict_incremental_batch(
+        self,
+        items: list[tuple[AfterLSTMState, ClusterAwareQueryId]],
+        incoming_query: Query,
+    ) -> dict[ClusterAwareQueryId, tuple[ModelPrediction, AfterLSTMState]]:
+        """
+        Featurizes every (existing_state, caqi) pair individually on the CPU,
+        then issues a single batched ``step_after_state`` call on the GPU and
+        splits the outputs back per item.
+
+        Parameters:
+            items: List of (existing_state, caqi) pairs; may span multiple
+                clusters.
+            incoming_query: The hypothetical new concurrent query.
+
+        Returns:
+            Dict mapping each caqi to ``(prediction, new_state)``.
+
+        Raises:
+            RuntimeError: If ``forward_after_lstm`` is not enabled.
+        """
+        if not self.supports_stateful_inference:
+            raise RuntimeError(
+                "predict_incremental_batch requires forward_after_lstm=True "
+                "in IconqModelInitConfig."
+            )
+        if not items:
+            return {}
+
+        if self._nn.training:
+            self._nn.eval()
+
+        # Featurize every pair on the CPU (sequential, but cheap).
+        feat_list: list[np.ndarray] = []
+        for state, _ in items:
+            rpu = state.rpu
+            incoming_stage_pred = incoming_query.stage_predictions_per_rpu.get(
+                rpu, -1.0
+            )
+            feat_np, _ = (
+                self._iconq_interaction_featurizer.featurize_one_vs_many_to_numpy(
+                    rpu=rpu,
+                    qa_query_text_id=state.qa_query_text_id,
+                    qa_start_time_s=state.qa_start_time_s,
+                    qa_latency_prediction=state.qa_latency_prediction,
+                    qb_entries=[
+                        (
+                            incoming_query.rel_start_time_s,
+                            incoming_query.query_text_id,
+                            incoming_stage_pred,
+                            False,
+                        )
+                    ],
+                )
+            )
+            feat_list.append(feat_np)
+
+        with torch.no_grad():
+            # x_batch: (N, 1, F)
+            x_batch = torch.from_numpy(np.stack(feat_list, axis=0)).to(
+                self._device
+            )
+            # Stack LSTM states along the batch dimension.
+            # after_h: (num_layers, 1, H) each → (num_layers, N, H)
+            after_h_batch = torch.cat(
+                [s.tensor_state.after_h for s, _ in items], dim=1
+            )
+            after_c_batch = torch.cat(
+                [s.tensor_state.after_c for s, _ in items], dim=1
+            )
+            # fwd_out: (1, H) each → (N, H)
+            fwd_out_batch = torch.cat(
+                [s.tensor_state.fwd_out for s, _ in items], dim=0
+            )
+            batched_tensor_state = LSTMTensorState(
+                fwd_out=fwd_out_batch,
+                after_h=after_h_batch,
+                after_c=after_c_batch,
+            )
+            y_mean, _y_logvar, _y_mix, new_tensor_state = (
+                self._nn.forward_step_from_existing_lstm_state(
+                    x_batch, batched_tensor_state
+                )
+            )
+            if self._trained_on_log_runtime:
+                y_mean = torch.exp(y_mean)
+
+        # Split results back per item.
+        # step_after_state already returns detached tensors inside the
+        # LSTMTensorState, so per-slice .detach() calls are redundant.
+        y_mean_cpu = y_mean.detach().cpu().numpy()  # (N, 1)
+        new_h = new_tensor_state.after_h  # (num_layers, N, H) —  detached
+        new_c = new_tensor_state.after_c  # (num_layers, N, H) —  detached
+        new_fwd = new_tensor_state.fwd_out  # (N, H)            —  detached
+
+        result: dict[
+            ClusterAwareQueryId, tuple[ModelPrediction, AfterLSTMState]
+        ] = {}
+        for i, (state, caqi) in enumerate(items):
+            new_state = AfterLSTMState(
+                tensor_state=LSTMTensorState(
+                    fwd_out=new_fwd[i : i + 1],  # (1, H)
+                    after_h=new_h[:, i : i + 1, :],  # (num_layers, 1, H)
+                    after_c=new_c[:, i : i + 1, :],  # (num_layers, 1, H)
+                ),
+                rpu=state.rpu,
+                qa_query_text_id=state.qa_query_text_id,
+                qa_start_time_s=state.qa_start_time_s,
+                qa_latency_prediction=state.qa_latency_prediction,
+            )
+            result[caqi] = (
+                ModelPrediction(
+                    mean_s=y_mean_cpu[i],
+                    metadata={
+                        "model_source": "lstm_incremental",
+                        "rpu": state.rpu,
+                        "run_id": Cluster.run_id_for_cluster_name(
+                            caqi.cluster_name
+                        ),
+                        "query_id": caqi.query_id,
+                        "query_text_id": state.qa_query_text_id,
+                    },
+                ),
+                new_state,
+            )
+        return result
 
     @staticmethod
     def load(
@@ -781,6 +1090,9 @@ class IconqModel:
             print(f"Loading model checkpoint from {checkpoint_path}")
             state_dict = torch.load(checkpoint_path, map_location=model._device)
             model._load_nn_state_dict_with_feature_guard(state_dict)
+            if inference_mode:
+                model._nn.eval()
+                model._nn.fold_batch_norm()
 
         return model
 
