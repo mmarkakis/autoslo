@@ -6,45 +6,54 @@ locals:
 
 main_content:
   # Common baselines
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:handmade/main_eval_round_robin_v4.yml
-  #   params:
-  #     TARGET_DATE: "2024-05-27"
-  #     INITIAL_RPU: [16,16]
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:handmade/main_eval_round_robin_v4.yml
-  #   params:
-  #     TARGET_DATE: "2024-05-27"
-  #     INITIAL_RPU: [32]
-
-  # Kappa=8
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k8_thresh5_nocache_v4.yml
   - workload_config: *may27_workload_config
-    execution_config: exec:tuned/may27_oracle_k8_thresh5_nocache_v4.yml
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k8_thresh10_nocache_v4.yml
+    execution_config: exec:handmade/main_eval_round_robin_v4.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      INITIAL_RPU: [16,16]
   - workload_config: *may27_workload_config
-    execution_config: exec:tuned/may27_oracle_k8_thresh10_nocache_v4.yml
+    execution_config: exec:handmade/main_eval_round_robin_v4.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      INITIAL_RPU: [32]
 
-
-  # Kappa=4
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k4_thresh5_nocache_v4.yml
+  # Kappa=4, threshold=0.05
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k4_thresh5_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1week_k4_thresh5_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1day_k4_thresh5_nocache_v4.yml
   - workload_config: *may27_workload_config
     execution_config: exec:tuned/may27_oracle_k4_thresh5_nocache_v4.yml
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v4.yml
+
+  # Kappa=4, threshold=0.10
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1week_k4_thresh10_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1day_k4_thresh10_nocache_v4.yml
   - workload_config: *may27_workload_config
     execution_config: exec:tuned/may27_oracle_k4_thresh10_nocache_v4.yml
 
-  # Kappa=2
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v4.yml
+  # Kappa=2, threshold=0.05
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1week_k2_thresh5_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1day_k2_thresh5_nocache_v4.yml
   - workload_config: *may27_workload_config
     execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v4.yml
-  # - workload_config: *may27_workload_config
-  #   execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v4.yml
+
+  # Kappa=2, threshold=0.10
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1week_k2_thresh10_nocache_v4.yml
+  - workload_config: *may27_workload_config
+    execution_config: exec:tuned/may27_1day_k2_thresh10_nocache_v4.yml
   - workload_config: *may27_workload_config
     execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v4.yml
 
