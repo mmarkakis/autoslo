@@ -285,13 +285,14 @@ class PolicyTuner:
     ]:
         """Phase 4: Find promising spin-ups via greedy optimization.
 
-        When ``tuner_config.initial_rpu_candidates`` is provided, runs
-        spin-up optimization independently for each candidate initial
-        RPU set, then selects the best (initial_rpus, spinup_schedule)
-        pair on the validation set using threshold-aware selection.
+        Runs spin-up optimization for all initial-RPU candidates in parallel
+        using :class:`SpinupOptimizer`, which batches
+        evaluations across candidates at every sub-step to maximise
+        process-pool utilisation.  Validation rollouts for all candidates
+        are also batched into a single pool call.
 
-        When the key is absent, behaves as before (single candidate
-        from ``managed_cluster_pool_config.initial_rpus``).
+        Returns the ``(config, train_agg, val_agg)`` triple for the best
+        candidate on the validation set.
         """
         spinup_root = self._out_dir / "04_spinups"
 
@@ -301,60 +302,55 @@ class PolicyTuner:
         )
         candidates = spinup_optimizer_config.initial_rpu_candidates
 
-        # Run spin-up optimization for each candidate.
-        candidate_configs: list[dict[str, Any]] = []
-        candidate_val_aggs: list[AggregatedExecutionResults] = []
-        candidate_train_aggs: list[AggregatedExecutionResults] = []
-
-        for i, rpus in enumerate(candidates):
-            tag = f"candidate_{i}"
-            console.rule(f"[bold yellow]Candidate {i}: initial_rpus={rpus}[/]")
-
-            # Stamp this candidate's initial_rpus into the config.
-            candidate_config = copy_and_apply_overrides(
+        # Build per-candidate configs (stamp initial_rpus).
+        all_candidate_configs = [
+            copy_and_apply_overrides(
                 self._initial_execution_config,
                 {"managed_cluster_pool_config.initial_rpus": rpus},
             )
-            candidate_config = self._apply_simulation_constraints(
-                candidate_config
-            )
+            for rpus in candidates
+        ]
 
-            # Each candidate gets its own subdirectory.
-            candidate_dir = spinup_root / tag
-            train_summary_path = candidate_dir / "spinups" / "train_summary.yml"
+        # Run synchronized multi-candidate spin-up optimization.
+        multi_optimizer = SpinupOptimizer(
+            evaluator=self._evaluator,
+            initial_configs=all_candidate_configs,
+            run_root=spinup_root,
+            spinup_optimizer_config=spinup_optimizer_config,
+            agg_method=self._agg_method,
+            tuning_slo_objective=self._tuning_slo_objective,
+            verbose_progress=self._verbose_progress,
+        )
+        candidate_results = multi_optimizer.optimize(
+            train_workload_configs=train_workload_configs,
+        )
+        candidate_configs = [r[0] for r in candidate_results]
+        candidate_train_aggs = [r[1] for r in candidate_results]
 
-            optimizer = SpinupOptimizer(
-                evaluator=self._evaluator,
-                config=candidate_config,
-                spinup_optimizer_config=spinup_optimizer_config,
-                run_dir=candidate_dir,
-                agg_method=self._agg_method,
-                tuning_slo_objective=self._tuning_slo_objective,
-                verbose_progress=self._verbose_progress,
-            )
-            post_spinups_config, train_agg = optimizer.optimize(
-                train_workload_configs=train_workload_configs,
+        # Save per-candidate train summaries.
+        for i, train_agg in enumerate(candidate_train_aggs):
+            train_summary_path = (
+                spinup_root / f"candidate_{i}" / "spinups" / "train_summary.yml"
             )
             dump_yaml(train_agg, train_summary_path)
 
-            # Evaluate on validation data.
-            val_out = candidate_dir / "final" / "val"
-            nested = self._evaluator.evaluate_batch_from_configs(
-                progress_bar_label=f"{tag}_spinup_val",
-                workload_configs=val_workload_configs,
-                configs=[post_spinups_config],
-                out_dir=val_out,
-                workload_first=False,
-                verbose_progress=self._verbose_progress,
+        # Batched validation rollout for all candidates in one pool call.
+        val_config_labels = [f"candidate_{i}" for i in range(len(candidates))]
+        nested_all_val = self._evaluator.evaluate_batch_from_configs(
+            progress_bar_label="spinup_val",
+            workload_configs=val_workload_configs,
+            configs=candidate_configs,
+            config_labels=val_config_labels,
+            out_dir=spinup_root / "val",
+            workload_first=False,
+            verbose_progress=self._verbose_progress,
+        )
+        candidate_val_aggs = [
+            AggregatedExecutionResults.aggregate_from(
+                nested_all_val[i], self._agg_method
             )
-            val_results = nested[0]
-            val_agg = AggregatedExecutionResults.aggregate_from(
-                val_results, self._agg_method
-            )
-
-            candidate_configs.append(post_spinups_config)
-            candidate_train_aggs.append(train_agg)
-            candidate_val_aggs.append(val_agg)
+            for i in range(len(candidates))
+        ]
 
         # Print candidate comparison on training data.
         console.rule(f"[bold yellow]Candidate Comparison on Training Data[/]")

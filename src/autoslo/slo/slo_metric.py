@@ -64,6 +64,16 @@ class SloMetric(Enum):
             return 0.0
         return sum(violations) / len(violations)
 
+    def aggregate_from_running_sum(
+        self, violation_sum: float, active_count: int
+    ) -> float:
+        """Equivalent to ``aggregate(calculate_batch(queries))`` but computed
+        from a precomputed running sum and query count, avoiding re-iteration.
+        """
+        if active_count == 0:
+            return 0.0
+        return violation_sum / active_count
+
     def aggregate_batch(self, lat_and_slos: Iterable[LatencySlo]) -> float:
         """Convenience: calculate and aggregate in one step."""
         return self.aggregate(self.calculate_batch(lat_and_slos))

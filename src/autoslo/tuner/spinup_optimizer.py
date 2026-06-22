@@ -14,6 +14,7 @@ import copy
 import logging
 import math
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,7 +25,6 @@ from rich.table import Table
 import autoslo.config.utils as cfgu
 from autoslo.clusters.scheduled_spinup import ScheduledSpinUp
 from autoslo.config.component_configs import (
-    SloObjectiveConfig,
     SloResolverConfig,
     SpinupOptimizerConfig,
     WorkloadConfig,
@@ -262,52 +262,105 @@ def find_next_spinup_time_df(
 
 
 # ---------------------------------------------------------------------------
+# _CandidateState — mutable per-candidate state for synchronized optimization
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CandidateState:
+    """Mutable state for one initial-RPU candidate during synchronized
+    multi-candidate spin-up optimization."""
+
+    idx: int
+    tag: str
+    run_dir: Path
+    current_config: dict[str, Any]
+    current_train_results: list[ExecutionResult] | None = None
+    current_train_agg: AggregatedExecutionResults | None = None
+    done: bool = False
+    spinup_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# _AttemptProgress — per-candidate progress through placement-time attempts
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _AttemptProgress:
+    """Per-candidate progress through attempts within one round."""
+
+    times: list[float]
+    attempt_idx: int = 0
+
+
+# ---------------------------------------------------------------------------
 # SpinupOptimizer
 # ---------------------------------------------------------------------------
 
 
 class SpinupOptimizer:
-    """Greedy scheduled spin-up placement.
+    """
+    Synchronized greedy spin-up placement across multiple initial-RPU
+    candidates.
+
+    Instead of running each candidate to completion before starting the next
+    (as a serial loop over :class:`SpinupOptimizer` does), this class advances
+    all candidates in lock-step, batching their evaluations into single
+    :class:`ScenarioEvaluator` calls at every sub-step.  The process pool
+    therefore stays fully utilised rather than cycling between single-config
+    pool invocations.
+
+    The baseline evaluation, RPU-size attempt evaluations, and (via the
+    caller) validation rollouts are all eligible for cross-candidate batching.
 
     Parameters
     ----------
     evaluator :
         The shared scenario evaluator.
-    config :
-        The configuration dict loaded from the YAML file for this tuner run,
-        which is used to configure the simulator and tuner parameters.
-    run_dir :
-        Root directory for the current tuner run.
+    initial_configs :
+        One full config dict per candidate.  Candidates typically differ only
+        in ``managed_cluster_pool_config.initial_rpus``.
+    run_root :
+        Root directory for output. Each candidate writes under
+        ``run_root / candidate_{i}``.
+    spinup_optimizer_config :
+        Shared hyper-parameters for spin-up placement.
+    agg_method :
+        Aggregation method forwarded to
+        :class:`~autoslo.workload_execution.aggregated_execution_results.AggregatedExecutionResults`.
+    tuning_slo_objective :
+        SLO objective used for candidate ranking.
+    verbose_progress :
+        Whether to emit per-config rich progress bars inside the evaluator.
     """
 
     def __init__(
         self,
         evaluator: ScenarioEvaluator,
         spinup_optimizer_config: SpinupOptimizerConfig,
-        config: dict[str, Any],
-        run_dir: Path,
+        initial_configs: list[dict[str, Any]],
+        run_root: Path,
         agg_method: str,
-        tuning_slo_objective: SloObjective | None = None,
+        tuning_slo_objective: SloObjective,
         verbose_progress: bool = True,
     ) -> None:
+        if not initial_configs:
+            raise ValueError("initial_configs must be non-empty.")
         self._evaluator = evaluator
         self._verbose_progress = verbose_progress
-        self._config = config
-        self._run_dir = run_dir
+        self._initial_configs = initial_configs
+        self._run_root = run_root
         self._agg_method = agg_method
         self._spinup_optimizer_config = spinup_optimizer_config
         self._lead_time_s = spinup_optimizer_config.lead_time_s
 
         # SLO Resolver
-        slo_resolver_config = SloResolverConfig.from_config(config)
+        slo_resolver_config = SloResolverConfig.from_config(initial_configs[0])
         self._slo_resolver = SloResolver(slo_resolver_config)
 
         # SLO objective for threshold-aware candidate selection.
-        if tuning_slo_objective is None:
-            slo_objective_config = SloObjectiveConfig.from_config(config)
-            self._slo_objective = SloObjective(slo_objective_config)
-        else:
-            self._slo_objective = tuning_slo_objective
+        self._tuning_slo_objective = tuning_slo_objective
 
     # ------------------------------------------------------------------
     # Public API
@@ -316,11 +369,12 @@ class SpinupOptimizer:
     def optimize(
         self,
         train_workload_configs: list[WorkloadConfig],
-    ) -> tuple[dict[str, Any], AggregatedExecutionResults]:
-        """Run the greedy spin-up placement loop.
+    ) -> list[tuple[dict[str, Any], AggregatedExecutionResults]]:
+        """Run synchronized greedy spin-up placement for all candidates.
 
-        Spin-ups are placed greedily using training data only.
-        Validation is deferred to the caller.
+        Advances every candidate one round at a time, batching their
+        evaluations at each sub-step so that the process pool runs at
+        maximum utilisation.
 
         Parameters
         ----------
@@ -329,252 +383,368 @@ class SpinupOptimizer:
 
         Returns
         -------
-        A tuple of ``(config, train_agg)`` where *config* is the full
-        config dict with the best spin-up schedule applied and
-        *train_agg* is the aggregated training results for that config.
+        A list of ``(final_config, train_agg)`` tuples, one per candidate,
+        in the same order as *initial_configs*.
         """
-        max_spinups = self._spinup_optimizer_config.max_spinups
-        min_delinquent_workload_fraction = (
-            self._spinup_optimizer_config.min_delinquent_workload_fraction
-        )
+        cfg = self._spinup_optimizer_config
+        max_spinups = cfg.max_spinups
         min_delinquent_workloads = math.ceil(
-            min_delinquent_workload_fraction * len(train_workload_configs)
+            cfg.min_delinquent_workload_fraction * len(train_workload_configs)
         )
-        max_attempts_per_round = (
-            self._spinup_optimizer_config.max_attempts_per_round
-        )
+        max_attempts_per_round = cfg.max_attempts_per_round
+        n_rpus = len(cfg.allowed_rpu_sizes)
+        sm = self._tuning_slo_objective.slo_metric
 
-        spinup_dir = self._run_dir / "spinups"
+        # Initialise per-candidate state.
+        states: list[_CandidateState] = [
+            _CandidateState(
+                idx=i,
+                tag=f"candidate_{i}",
+                run_dir=self._run_root / f"candidate_{i}",
+                current_config=copy.deepcopy(initial_cfg),
+            )
+            for i, initial_cfg in enumerate(self._initial_configs)
+        ]
 
-        current_config = copy.deepcopy(self._config)
-        dump_yaml(current_config, spinup_dir / "initial_config.yml")
-
-        # Track evaluation results for the current config to avoid
-        # re-evaluation across rounds.  When a candidate is accepted,
-        # its results carry forward as the next round's baseline.
-        current_train_results: list[ExecutionResult] | None = None
-        current_train_agg: AggregatedExecutionResults | None = None
+        # Persist initial configs.
+        for s in states:
+            spinup_dir = s.run_dir / "spinups"
+            spinup_dir.mkdir(parents=True, exist_ok=True)
+            dump_yaml(s.current_config, spinup_dir / "initial_config.yml")
 
         for round_idx in range(max_spinups):
-            console.rule(f"[dim]Spin-up round {round_idx}[/]", characters="-")
-            round_dir = spinup_dir / f"round_{round_idx:03d}"
-            dump_yaml(current_config, round_dir / "initial_config.yml")
-
-            # 1. Get baseline results (reuse from previous round if available).
-            if current_train_results is not None:
-                train_results = current_train_results
-                assert current_train_agg is not None
-                agg_train_results = current_train_agg
-            else:
-                nested_train_results = (
-                    self._evaluator.evaluate_batch_from_configs(
-                        progress_bar_label=f"round_{round_idx:03d}_baseline",
-                        workload_configs=train_workload_configs,
-                        configs=[current_config],
-                        out_dir=round_dir / "baseline",
-                        workload_first=False,
-                        verbose_progress=self._verbose_progress,
-                    )
-                )
-                train_results = nested_train_results[0]
-                agg_train_results = AggregatedExecutionResults.aggregate_from(
-                    train_results, self._agg_method
-                )
-                current_train_agg = agg_train_results
-
-            # 2. Rank all viable candidate placement times.
-            candidate_times = find_next_spinup_time(
-                train_results,
-                slo_resolver=self._slo_resolver,
-                slo_objective=self._slo_objective,
-                min_delinquent_workloads=min_delinquent_workloads,
-                lead_time_s=self._lead_time_s,
-                min_candidate_spacing_s=self._spinup_optimizer_config.min_candidate_spacing_s,
-                verbose=self._verbose_progress,
+            active = [s for s in states if not s.done]
+            console.rule(
+                f"[dim]Spin-up round {round_idx} "
+                f"(active candidates: {len(active)})[/]",
+                characters="-",
             )
-
-            if not candidate_times:
-                console.print(
-                    "[green]No promising spin-up time found — stopping."
-                )
+            if not active:
                 break
 
-            # 3. Check cluster budget before trying any candidate.
-            initial_rpus = cfgu.getd(
-                current_config, "managed_cluster_pool_config.initial_rpus", []
-            )
-            existing_spinups = cfgu.getd(
-                current_config, "scheduled_spinups", []
-            )
-            max_clusters = cfgu.getd(
-                current_config,
-                "managed_cluster_pool_config.max_clusters",
-                None,
-            )
-            if max_clusters is not None:
-                max_clusters = int(max_clusters)
-            total_clusters_needed = (
-                len(initial_rpus) + len(existing_spinups) + 1
-            )
-            if (
-                max_clusters is not None
-                and total_clusters_needed > max_clusters
-            ):
-                console.print(
-                    f"[yellow]Cannot place new spin-up: initial setup requires "
-                    f"{len(initial_rpus)} clusters, existing spin-ups reserve "
-                    f"{len(existing_spinups)}, max_clusters={max_clusters}."
-                )
-                break
-
-            sm = self._slo_objective.slo_metric
-            baseline_vc = ViolationCost(
-                agg_train_results.primary_violation(sm),
-                agg_train_results.cost,
-            )
-
-            accepted_in_round = False
-            attempt_records: list[dict] = []
-            candidates_to_try = candidate_times[:max_attempts_per_round]
-
-            for attempt_idx, placement_time in enumerate(candidates_to_try):
-                attempt_dir = round_dir / f"attempt_{attempt_idx:03d}"
-
-                # 4. Try each RPU size at this placement time.
-                spinups = []
-                all_configs = []
-                for rpu in self._spinup_optimizer_config.allowed_rpu_sizes:
-                    spinup = ScheduledSpinUp(
-                        rel_time_s=max(0.0, placement_time),
-                        rpu=rpu,
-                    )
-                    spinups.append(spinup)
-                    all_configs.append(
-                        add_spinup_to_config(
-                            config=current_config, spinup=spinup
-                        )
-                    )
-
-                all_trial_results = self._evaluator.evaluate_batch_from_configs(
-                    progress_bar_label=(
-                        f"round_{round_idx:03d}_attempt_{attempt_idx:03d}"
-                    ),
+            # ── Step 1: Batch baseline for any state that needs it ────────
+            needs_baseline = [
+                s for s in active if s.current_train_results is None
+            ]
+            if needs_baseline:
+                batch_baseline = self._evaluator.evaluate_batch_from_configs(
+                    progress_bar_label=f"round_{round_idx:03d}_baselines",
                     workload_configs=train_workload_configs,
-                    configs=all_configs,
-                    out_dir=attempt_dir / "train",
+                    configs=[s.current_config for s in needs_baseline],
+                    config_labels=[s.tag for s in needs_baseline],
+                    out_dir=(
+                        self._run_root / f"round_{round_idx:03d}" / "baselines"
+                    ),
                     workload_first=False,
                     verbose_progress=self._verbose_progress,
                 )
-                cands: list[
-                    tuple[ScheduledSpinUp, AggregatedExecutionResults]
-                ] = []
-                for spinup, trial_results in zip(spinups, all_trial_results):
-                    agg = AggregatedExecutionResults.aggregate_from(
-                        trial_results, self._agg_method
+                for s, results in zip(needs_baseline, batch_baseline):
+                    s.current_train_results = results
+                    s.current_train_agg = (
+                        AggregatedExecutionResults.aggregate_from(
+                            results, self._agg_method
+                        )
                     )
-                    cands.append((spinup, agg))
 
-                # 5. Pick best on training set.
-                best_idx = self._slo_objective.idx_of_best(
-                    [
-                        ViolationCost(agg.primary_violation(sm), agg.cost)
-                        for _, agg in cands
-                    ]
+            # Write per-round initial configs for active candidates.
+            for s in active:
+                round_dir = s.run_dir / "spinups" / f"round_{round_idx:03d}"
+                round_dir.mkdir(parents=True, exist_ok=True)
+                dump_yaml(s.current_config, round_dir / "initial_config.yml")
+
+            # ── Step 2: Find candidate spin-up times (CPU-only) ──────────
+            candidate_times_per_state: dict[int, list[float]] = {}
+            for s in active:
+                assert s.current_train_results is not None
+                candidate_times_per_state[s.idx] = find_next_spinup_time(
+                    s.current_train_results,
+                    slo_resolver=self._slo_resolver,
+                    slo_objective=self._tuning_slo_objective,
+                    min_delinquent_workloads=min_delinquent_workloads,
+                    lead_time_s=self._lead_time_s,
+                    min_candidate_spacing_s=cfg.min_candidate_spacing_s,
+                    verbose=self._verbose_progress,
                 )
-                best_su, best_agg = cands[best_idx]
-                best_vc = ViolationCost(
-                    best_agg.primary_violation(sm), best_agg.cost
+
+            # ── Step 3: Mark done — no viable times or budget exceeded ────
+            for s in active:
+                if not candidate_times_per_state[s.idx]:
+                    console.print(
+                        f"  [green][candidate {s.idx}] No promising spin-up "
+                        f"time found — stopping."
+                    )
+                    s.done = True
+                    continue
+                initial_rpus = cfgu.getd(
+                    s.current_config,
+                    "managed_cluster_pool_config.initial_rpus",
+                    [],
+                )
+                existing_spinups = cfgu.getd(
+                    s.current_config, "scheduled_spinups", []
+                )
+                max_clusters_val = cfgu.getd(
+                    s.current_config,
+                    "managed_cluster_pool_config.max_clusters",
+                    None,
+                )
+                if max_clusters_val is not None:
+                    max_clusters_val = int(max_clusters_val)
+                    total_needed = len(initial_rpus) + len(existing_spinups) + 1
+                    if total_needed > max_clusters_val:
+                        console.print(
+                            f"  [yellow][candidate {s.idx}] Cannot place new "
+                            f"spin-up: initial_rpus={len(initial_rpus)}, "
+                            f"existing_spinups={len(existing_spinups)}, "
+                            f"max_clusters={max_clusters_val}."
+                        )
+                        s.done = True
+
+            active = [s for s in states if not s.done]
+            if not active:
+                break
+
+            # ── Step 4: Attempt-wave loop ─────────────────────────────────
+            attempt_pending: dict[int, _AttemptProgress] = {
+                s.idx: _AttemptProgress(times=candidate_times_per_state[s.idx])
+                for s in active
+            }
+            baseline_vcs: dict[int, ViolationCost] = {}
+            for s in active:
+                assert s.current_train_agg is not None
+                baseline_vcs[s.idx] = ViolationCost(
+                    s.current_train_agg.primary_violation(sm),
+                    s.current_train_agg.cost,
+                )
+            accepted_in_round: dict[int, bool] = {s.idx: False for s in active}
+            # Per-state attempt records accumulated across waves.
+            round_attempt_records: dict[int, list[dict]] = {
+                s.idx: [] for s in active
+            }
+            # Snapshot before the wave loop — some states may get marked
+            # done inside the loop; we still need to write their summaries.
+            active_for_summary = list(active)
+            attempt_wave_idx = 0
+
+            while attempt_pending:
+                sorted_pending_ids = sorted(attempt_pending.keys())
+
+                # Build combined batch: for each pending state, A configs
+                # (one per allowed RPU size at that state's current attempt).
+                batch_items: list[
+                    tuple[int, ScheduledSpinUp, dict[str, Any]]
+                ] = []
+                for s_idx in sorted_pending_ids:
+                    ap = attempt_pending[s_idx]
+                    t_p = ap.times[ap.attempt_idx]
+                    state = states[s_idx]
+                    for rpu in cfg.allowed_rpu_sizes:
+                        spinup = ScheduledSpinUp(
+                            rel_time_s=max(0.0, t_p), rpu=rpu
+                        )
+                        batch_items.append(
+                            (
+                                s_idx,
+                                spinup,
+                                add_spinup_to_config(
+                                    config=state.current_config,
+                                    spinup=spinup,
+                                ),
+                            )
+                        )
+
+                wave_configs = [item[2] for item in batch_items]
+                wave_labels = [
+                    f"c{s_idx}_a{attempt_pending[s_idx].attempt_idx:03d}_rpu{su.rpu}"
+                    for (s_idx, su, _) in batch_items
+                ]
+                wave_out_dir = (
+                    self._run_root
+                    / f"round_{round_idx:03d}"
+                    / f"attempt_wave_{attempt_wave_idx:03d}"
+                )
+                wave_results = self._evaluator.evaluate_batch_from_configs(
+                    progress_bar_label=(
+                        f"round_{round_idx:03d}_wave_{attempt_wave_idx:03d}"
+                    ),
+                    workload_configs=train_workload_configs,
+                    configs=wave_configs,
+                    config_labels=wave_labels,
+                    out_dir=wave_out_dir,
+                    workload_first=False,
+                    verbose_progress=self._verbose_progress,
                 )
 
-                # 6. Accept if the best candidate improves on the baseline.
-                accepted = self._slo_objective.cmp(best_vc, baseline_vc) < 0
+                # Process results per state, in the same sorted order used
+                # when building batch_items so that slice offsets are correct.
+                offset = 0
+                next_pending: dict[int, _AttemptProgress] = {}
+                for s_idx in sorted_pending_ids:
+                    ap = attempt_pending[s_idx]
+                    times, attempt_idx = ap.times, ap.attempt_idx
+                    state = states[s_idx]
+                    t_p = times[attempt_idx]
+                    baseline_vc = baseline_vcs[s_idx]
 
-                attempt_records.append(
-                    {
+                    # Slice the n_rpus results for this state.
+                    state_results = wave_results[offset : offset + n_rpus]
+                    state_items = batch_items[offset : offset + n_rpus]
+                    offset += n_rpus
+
+                    cands: list[
+                        tuple[ScheduledSpinUp, AggregatedExecutionResults]
+                    ] = []
+                    for (_, su, _), trial_results in zip(
+                        state_items, state_results
+                    ):
+                        agg = AggregatedExecutionResults.aggregate_from(
+                            trial_results, self._agg_method
+                        )
+                        cands.append((su, agg))
+
+                    best_local_idx = self._tuning_slo_objective.idx_of_best(
+                        [
+                            ViolationCost(agg.primary_violation(sm), agg.cost)
+                            for _, agg in cands
+                        ]
+                    )
+                    best_su, best_agg = cands[best_local_idx]
+                    best_vc = ViolationCost(
+                        best_agg.primary_violation(sm), best_agg.cost
+                    )
+                    accepted = (
+                        self._tuning_slo_objective.cmp(best_vc, baseline_vc) < 0
+                    )
+
+                    record: dict = {
                         "attempt_idx": attempt_idx,
-                        "placement_time": placement_time,
+                        "placement_time": t_p,
                         "outcome": "accepted" if accepted else "rejected",
                         "best_rpu": best_su.rpu,
                         "best_violation": best_vc.violation,
                         "best_cost": best_vc.cost,
                     }
-                )
+                    round_attempt_records[s_idx].append(record)
 
-                if accepted:
-                    self._print_candidate_table(
-                        round_idx,
-                        attempt_idx,
-                        placement_time,
-                        cands,
-                        best_su,
-                    )
-                    AggregatedExecutionResults.print_comparison(
-                        ("Current config", agg_train_results),
-                        ("Best candidate", best_agg),
-                        agg_method=self._agg_method,
-                        slo_metric=sm,
-                        console=console,
-                    )
-                    console.print(
-                        f"  [green][round {round_idx} / attempt {attempt_idx}] "
-                        f"Accepted: violation "
-                        f"{baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
-                        f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
-                    )
-                    current_config = all_configs[best_idx]
-                    current_train_results = all_trial_results[best_idx]
-                    current_train_agg = best_agg
-                    accepted_in_round = True
-                    break
-                else:
-                    console.print(
-                        f"  [red][round {round_idx} / attempt {attempt_idx}] "
-                        f"Rejected t_p={placement_time:.1f}s: "
-                        f"best RPU={best_su.rpu}, "
-                        f"violation {baseline_vc.violation:.6f} → {best_vc.violation:.6f}, "
-                        f"cost {baseline_vc.cost:.4f} → {best_vc.cost:.4f}."
-                    )
+                    if accepted:
+                        self._print_candidate_table(
+                            s_idx,
+                            round_idx,
+                            attempt_idx,
+                            t_p,
+                            cands,
+                            best_su,
+                        )
+                        assert state.current_train_agg is not None
+                        AggregatedExecutionResults.print_comparison(
+                            (
+                                f"[candidate {s_idx}] Current",
+                                state.current_train_agg,
+                            ),
+                            (
+                                f"[candidate {s_idx}] Best candidate",
+                                best_agg,
+                            ),
+                            agg_method=self._agg_method,
+                            slo_metric=sm,
+                            console=console,
+                        )
+                        console.print(
+                            f"  [green][candidate {s_idx} / "
+                            f"round {round_idx} / attempt {attempt_idx}] "
+                            f"Accepted: violation "
+                            f"{baseline_vc.violation:.6f} \u2192 "
+                            f"{best_vc.violation:.6f}, "
+                            f"cost {baseline_vc.cost:.4f} \u2192 "
+                            f"{best_vc.cost:.4f}."
+                        )
+                        # Carry the winning results forward to the next round.
+                        state.current_config = wave_configs[
+                            offset - n_rpus + best_local_idx
+                        ]
+                        state.current_train_results = wave_results[
+                            offset - n_rpus + best_local_idx
+                        ]
+                        state.current_train_agg = best_agg
+                        state.spinup_count += 1
+                        accepted_in_round[s_idx] = True
+                        # Accepted — do not add to next_pending.
+                    else:
+                        console.print(
+                            f"  [red][candidate {s_idx} / "
+                            f"round {round_idx} / attempt {attempt_idx}] "
+                            f"Rejected t_p={t_p:.1f}s: "
+                            f"best RPU={best_su.rpu}, "
+                            f"violation "
+                            f"{baseline_vc.violation:.6f} \u2192 "
+                            f"{best_vc.violation:.6f}, "
+                            f"cost {baseline_vc.cost:.4f} \u2192 "
+                            f"{best_vc.cost:.4f}."
+                        )
+                        next_attempt_idx = attempt_idx + 1
+                        if next_attempt_idx < min(
+                            len(times), max_attempts_per_round
+                        ):
+                            next_pending[s_idx] = _AttemptProgress(
+                                times=times, attempt_idx=next_attempt_idx
+                            )
+                        else:
+                            # All attempts for this candidate exhausted.
+                            console.print(
+                                f"  [red][candidate {s_idx}] "
+                                f"Round {round_idx}: all "
+                                f"{attempt_idx + 1} attempt(s) exhausted "
+                                f"\u2014 stopping."
+                            )
+                            state.done = True
 
-            self._write_round_summary(
-                round_idx, attempt_records, accepted_in_round
+                attempt_pending = next_pending
+                attempt_wave_idx += 1
+
+            # ── Step 5: Persist per-round summaries and final configs ─────
+            for s in active_for_summary:
+                round_dir = s.run_dir / "spinups" / f"round_{round_idx:03d}"
+                summary = {
+                    "round_idx": round_idx,
+                    "outcome": (
+                        "accepted"
+                        if accepted_in_round.get(s.idx, False)
+                        else "rejected"
+                    ),
+                    "attempts": round_attempt_records.get(s.idx, []),
+                }
+                dump_yaml(summary, round_dir / "round_summary.yml")
+                dump_yaml(s.current_config, round_dir / "final_config.yml")
+
+        # Write the final config for every candidate and build the return list.
+        out: list[tuple[dict[str, Any], AggregatedExecutionResults]] = []
+        for s in states:
+            spinup_dir = s.run_dir / "spinups"
+            dump_yaml(s.current_config, spinup_dir / "final_config.yml")
+            assert s.current_train_agg is not None, (
+                f"Candidate {s.idx}: current_train_agg is None after the "
+                f"optimization loop.  Ensure max_spinups > 0."
             )
-            dump_yaml(current_config, round_dir / "final_config.yml")
-
-            if not accepted_in_round:
-                console.print(
-                    f"[red]Round {round_idx}: all {len(candidates_to_try)} "
-                    f"candidate(s) exhausted without acceptance — stopping."
-                )
-                break
-
-        # Write the final config.
-        dump_yaml(current_config, spinup_dir / "final_config.yml")
-        assert (
-            current_train_agg is not None
-        ), "No spin-up rounds were configured (max_spinups=0)."
-        return current_config, current_train_agg
+            out.append((s.current_config, s.current_train_agg))
+        return out
 
     # ------------------------------------------------------------------
     # Rich output helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
     def _print_candidate_table(
-        self,
+        candidate_idx: int,
         round_idx: int,
         attempt_idx: int,
         placement_time: float,
-        candidates: list[
-            tuple[
-                ScheduledSpinUp,
-                AggregatedExecutionResults,
-            ]
-        ],
+        candidates: list[tuple[ScheduledSpinUp, AggregatedExecutionResults]],
         best_su: ScheduledSpinUp,
     ) -> None:
         table = Table(
             title=(
-                f"Round {round_idx} / Attempt {attempt_idx} — Candidate RPU Sizes "
-                f"(t_p={placement_time:.0f}s)"
+                f"Candidate {candidate_idx} / Round {round_idx} / "
+                f"Attempt {attempt_idx} (t_p={placement_time:.0f}s)"
             ),
             show_lines=True,
         )
@@ -600,22 +770,3 @@ class SpinupOptimizer:
                 style=style,
             )
         console.print(table)
-
-    # ------------------------------------------------------------------
-    # Persistence helpers
-    # ------------------------------------------------------------------
-
-    def _write_round_summary(
-        self,
-        round_idx: int,
-        attempts: list[dict],
-        accepted: bool,
-    ) -> None:
-        round_dir = self._run_dir / "spinups" / f"round_{round_idx:03d}"
-        round_dir.mkdir(parents=True, exist_ok=True)
-        summary = {
-            "round_idx": round_idx,
-            "outcome": "accepted" if accepted else "rejected",
-            "attempts": attempts,
-        }
-        dump_yaml(summary, round_dir / "round_summary.yml")
