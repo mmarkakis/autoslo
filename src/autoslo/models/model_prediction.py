@@ -1,9 +1,20 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any, Optional
 
 import numpy as np
 from scipy.optimize import root_scalar  # type: ignore[import]
 from scipy.stats import norm  # type: ignore[import]
+
+
+class ModelPredictionKind(Enum):
+    """Discriminant for ModelPrediction computed once at construction time."""
+
+    CONSTANT = auto()  # len(mean)==1, no std, no mix
+    NORM = auto()  # len(mean)==1, std present, no mix
+    CONSTANT_MIX = auto()  # len(mean)>1, no std, mix present
+    NORM_MIX = auto()  # len(mean)>1, std and mix present
+    INVALID = auto()  # anything else
 
 
 @dataclass(frozen=True)
@@ -22,54 +33,53 @@ class ModelPrediction:
     std_dev_s: Optional[list[float]] = None
     mix_coeffs: Optional[list[float]] = None
     metadata: Optional[dict[str, Any]] = None
+    # Computed once at construction; excluded from __eq__, __hash__, __repr__.
+    _kind: ModelPredictionKind = field(
+        default=ModelPredictionKind.INVALID,
+        init=False,
+        compare=False,
+        repr=False,
+        hash=False,
+    )
 
-    def _c_constant(self) -> bool:
-        """
-        True if the model represents a single constant latency, False otherwise.
-        """
-        return (
-            (self.mean_s is not None)
-            and (len(self.mean_s) == 1)
-            and (self.std_dev_s is None)
-            and (self.mix_coeffs is None)
-        )
-
-    def _c_norm(self) -> bool:
-        """
-        True if the model represents a single Gaussian, False otherwise.
-        """
-        return (
-            (self.mean_s is not None)
-            and (len(self.mean_s) == 1)
-            and (self.std_dev_s is not None)
-            and (len(self.std_dev_s) == 1)
-            and (self.mix_coeffs is None)
-        )
-
-    def _c_constant_mix(self) -> bool:
-        """
-        True if the model represents a mixture of discrete latencies, False otherwise.
-        """
-        return (
-            (self.mean_s is not None)
-            and (len(self.mean_s) > 1)
-            and (self.std_dev_s is None)
-            and (self.mix_coeffs is not None)
-            and (len(self.mean_s) == len(self.mix_coeffs))
-        )
-
-    def _c_norm_mix(self) -> bool:
-        """
-        True if the model represents a mixture of Gaussians, False otherwise.
-        """
-        return (
-            (self.mean_s is not None)
-            and (len(self.mean_s) > 1)
-            and (self.std_dev_s is not None)
-            and (len(self.std_dev_s) == len(self.mean_s))
-            and (self.mix_coeffs is not None)
-            and (len(self.mean_s) == len(self.mix_coeffs))
-        )
+    def __post_init__(self) -> None:
+        # frozen=True prevents normal attribute assignment, so we use
+        # object.__setattr__ to set the derived field.
+        if self.mean_s is None:
+            return  # _kind stays INVALID
+        n = len(self.mean_s)
+        msg = "Could not determine the kind of the model prediction."
+        if n == 1:
+            if self.std_dev_s is None and self.mix_coeffs is None:
+                object.__setattr__(self, "_kind", ModelPredictionKind.CONSTANT)
+            elif (
+                self.std_dev_s is not None
+                and len(self.std_dev_s) == 1
+                and self.mix_coeffs is None
+            ):
+                object.__setattr__(self, "_kind", ModelPredictionKind.NORM)
+            else:
+                raise ValueError(msg)
+        elif n > 1:
+            if (
+                self.std_dev_s is None
+                and self.mix_coeffs is not None
+                and len(self.mix_coeffs) == n
+            ):
+                object.__setattr__(
+                    self, "_kind", ModelPredictionKind.CONSTANT_MIX
+                )
+            elif (
+                self.std_dev_s is not None
+                and len(self.std_dev_s) == n
+                and self.mix_coeffs is not None
+                and len(self.mix_coeffs) == n
+            ):
+                object.__setattr__(self, "_kind", ModelPredictionKind.NORM_MIX)
+            else:
+                raise ValueError(msg)
+        else:
+            raise ValueError(msg)
 
     def overall_mean_s(self) -> float:
         """
@@ -82,11 +92,16 @@ class ModelPrediction:
         Raises:
             ValueError: If the model prediction is not well-formed.
         """
-
-        if self._c_constant() or self._c_norm():
+        if (
+            self._kind is ModelPredictionKind.CONSTANT
+            or self._kind is ModelPredictionKind.NORM
+        ):
             return max(self.mean_s[0], self.MINIMUM_OUTPUT_LATENCY_S)  # type: ignore
 
-        if self._c_constant_mix() or self._c_norm_mix():
+        if (
+            self._kind is ModelPredictionKind.CONSTANT_MIX
+            or self._kind is ModelPredictionKind.NORM_MIX
+        ):
             unnormalized_mean = sum(
                 mu * w for mu, w in zip(self.mean_s, self.mix_coeffs)  # type: ignore
             )
@@ -106,13 +121,13 @@ class ModelPrediction:
             ValueError: If the model prediction is not well-formed.
         """
 
-        if self._c_constant():
+        if self._kind is ModelPredictionKind.CONSTANT:
             return 0.0
 
-        if self._c_norm():
+        if self._kind is ModelPredictionKind.NORM:
             return self.std_dev_s[0]  # type: ignore
 
-        if self._c_constant_mix():
+        if self._kind is ModelPredictionKind.CONSTANT_MIX:
             overall_mean = self.overall_mean_s()
             unnormalized_variance = sum(
                 ((mean - overall_mean) ** 2) * mix_coeff  # type: ignore
@@ -121,7 +136,7 @@ class ModelPrediction:
             variance = unnormalized_variance / sum(self.mix_coeffs)  # type: ignore
             return np.sqrt(variance)
 
-        if self._c_norm_mix():
+        if self._kind is ModelPredictionKind.NORM_MIX:
             overall_mean = self.overall_mean_s()
             variance = (
                 sum(
@@ -152,22 +167,22 @@ class ModelPrediction:
         """
 
         # Case 1: Single constant latency.
-        if self._c_constant():
+        if self._kind is ModelPredictionKind.CONSTANT:
             return 1.0 if self.mean_s[0] == latency else 0.0  # type: ignore
 
         # Case 2: Single Gaussian.
-        if self._c_norm():
+        if self._kind is ModelPredictionKind.NORM:
             return norm.pdf(latency, loc=self.mean_s[0], scale=self.std_dev_s[0])  # type: ignore
 
         # Case 3: Mix of constant latencies.
-        if self._c_constant_mix():
+        if self._kind is ModelPredictionKind.CONSTANT_MIX:
             for mean, mix_coeff in zip(self.mean_s, self.mix_coeffs):  # type: ignore
                 if mean == latency:
                     return mix_coeff / sum(self.mix_coeffs)  # type: ignore
             return 0.0
 
         # Case 4: Multiple means, multiple standard deviations, correct mixing coefficients.
-        if self._c_norm_mix():
+        if self._kind is ModelPredictionKind.NORM_MIX:
             unnomralized_likelihood = sum(
                 mix_coeff * norm.pdf(latency, loc=mean, scale=std_dev)
                 for mean, std_dev, mix_coeff in zip(
@@ -223,17 +238,17 @@ class ModelPrediction:
             raise ValueError(f"Percentile {percentile} is out of bounds.")
 
         # Case 1: Single constant latency.
-        if self._c_constant():
+        if self._kind is ModelPredictionKind.CONSTANT:
             return self.mean_s[0]  # type: ignore
 
         # Case 2: Single Gaussian.
-        if self._c_norm():
+        if self._kind is ModelPredictionKind.NORM:
             return norm.ppf(
                 q=(percentile / 100), loc=self.mean_s[0], scale=self.std_dev_s[0]  # type: ignore
             )
 
         # Case 3: Mix of constant latencies.
-        if self._c_constant_mix():
+        if self._kind is ModelPredictionKind.CONSTANT_MIX:
             sort_order = np.argsort(self.mean_s)  # type: ignore
             sorted_means = [self.mean_s[i] for i in sort_order]  # type: ignore
             sorted_mix_coeffs = [self.mix_coeffs[i] for i in sort_order]  # type: ignore
@@ -243,7 +258,7 @@ class ModelPrediction:
                     return mean
 
         # Case 4: Mixture of distributions with standard deviations.
-        if self._c_norm_mix():
+        if self._kind is ModelPredictionKind.NORM_MIX:
             func = lambda x: np.sum(
                 self.mix_coeffs
                 * norm.cdf(x, loc=self.mean_s, scale=self.std_dev_s)
@@ -280,15 +295,15 @@ class ModelPrediction:
         """
 
         # Case 1: Single constant latency.
-        if self._c_constant():
+        if self._kind is ModelPredictionKind.CONSTANT:
             return 0.0 if latency < self.mean_s[0] else 1.0  # type: ignore
 
         # Case 2: Single Gaussian.
-        if self._c_norm():
+        if self._kind is ModelPredictionKind.NORM:
             return norm.cdf(latency, loc=self.mean_s[0], scale=self.std_dev_s[0])  # type: ignore
 
         # Case 3: Mix of constant latencies.
-        if self._c_constant_mix():
+        if self._kind is ModelPredictionKind.CONSTANT_MIX:
             sort_order = np.argsort(self.mean_s)  # type: ignore
             sorted_means = [self.mean_s[i] for i in sort_order]  # type: ignore
             sorted_mix_coeffs = [self.mix_coeffs[i] for i in sort_order]  # type: ignore
@@ -301,7 +316,7 @@ class ModelPrediction:
             return 1.0
 
         # Case 4: Mixture of distributions with standard deviations.
-        if self._c_norm_mix():
+        if self._kind is ModelPredictionKind.NORM_MIX:
             running_cumulative = 0.0
             for mean, std_dev, mix_coeff in zip(self.mean_s, self.std_dev_s, self.mix_coeffs):  # type: ignore
                 running_cumulative += mix_coeff * norm.cdf(

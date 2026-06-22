@@ -174,66 +174,96 @@ class IconqInteractionFeaturizer:
         """
         q_dim = self._iconq_query_featurizer.num_dims
         feat_dim = self.num_dims
-
-        # Sort by qb start time once.
-        qb_entries_sorted = sorted(qb_entries, key=lambda e: e[0])
-
-        arr = np.empty((len(qb_entries_sorted), feat_dim), dtype=np.float32)
-
-        # qa columns are identical for every row — broadcast-assign once.
+        rpu_value = np.float32(0.0 if self._ignore_cluster_size else float(rpu))
+        rpu_dim = self.rpu_dim_idx
         qa_np = (
             self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
                 qa_query_text_id
             )
         )
+
+        # ── Fast path for the single-neighbor case (N == 1) ──────────────────
+        # Most calls come from predict_incremental_batch,
+        # where qb_entries always contains exactly one entry (the incoming
+        # query). 
+        if len(qb_entries) == 1:
+            qb_t, qb_idx, qb_lat, is_self = qb_entries[0]
+            arr = np.empty((1, feat_dim), dtype=np.float32)
+            arr[0, :q_dim] = qa_np
+            arr[0, q_dim] = qa_latency_prediction
+            arr[0, q_dim + 1 : 2 * q_dim + 1] = (
+                self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
+                    qb_idx
+                )
+            )
+            arr[0, 2 * q_dim + 1] = qb_lat
+            arr[0, 2 * q_dim + 2] = abs(qb_t - qa_start_time_s)
+            arr[0, 2 * q_dim + 3] = float(qa_start_time_s < qb_t)
+            arr[0, rpu_dim] = rpu_value
+            if self._interaction_feature_version == "v2":
+                if self._ignore_cluster_size:
+                    arr[0, rpu_dim + 1 : rpu_dim + 6] = 0.0
+                else:
+                    log2_rpu = np.float32(np.log2(rpu_value))
+                    inv_rpu = np.float32(1.0 / rpu_value)
+                    arr[0, rpu_dim + 1] = log2_rpu
+                    arr[0, rpu_dim + 2] = inv_rpu
+                    arr[0, rpu_dim + 3] = (
+                        np.float32(qa_latency_prediction) * rpu_value
+                    )
+                    arr[0, rpu_dim + 4] = np.float32(qb_lat) * rpu_value
+                    arr[0, rpu_dim + 5] = (
+                        np.float32(qa_latency_prediction) + np.float32(qb_lat)
+                    ) * inv_rpu
+            # pinch_idx is 0 in both cases:
+            #   - initial isolated query  (is_self=True):  only row is the self row
+            #   - incremental call        (is_self=False):  caller discards pinch_idx
+            return arr, 0
+
+        # ── General path for N > 1 ────────────────────────────────────────────
+        # Sort by qb start time once.
+        qb_entries_sorted = sorted(qb_entries, key=lambda e: e[0])
+        N = len(qb_entries_sorted)
+
+        arr = np.empty((N, feat_dim), dtype=np.float32)
+
+        # qa columns are identical for every row — broadcast-assign once.
         arr[:, :q_dim] = qa_np
         arr[:, q_dim] = qa_latency_prediction
 
-        # Extract columns from the sorted entries in one pass, then assign
-        # each column to the array in bulk instead of writing row-by-row.
-        N = len(qb_entries_sorted)
-        qb_times = np.empty(N, dtype=np.float32)
-        qb_lats = np.empty(N, dtype=np.float32)
+        # Fill qb columns row-by-row, writing feature vectors, latency,
+        # time-difference, and time-sign directly into arr.
         pinch_idx = 0
         for j, (qb_t, qb_idx, qb_lat, is_self) in enumerate(qb_entries_sorted):
-            qb_times[j] = qb_t
-            qb_lats[j] = qb_lat
+            arr[j, q_dim + 1 : 2 * q_dim + 1] = (
+                self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
+                    qb_idx
+                )
+            )
+            arr[j, 2 * q_dim + 1] = qb_lat
+            arr[j, 2 * q_dim + 2] = abs(qb_t - qa_start_time_s)
+            arr[j, 2 * q_dim + 3] = float(qa_start_time_s < qb_t)
             if is_self:
                 pinch_idx = j
 
-        # qb feature matrix: stack all neighbor vectors in one numpy call.
-        qb_vecs = np.stack([
-            self._iconq_query_featurizer.featurize_from_query_text_id_as_numpy(
-                e[1]
-            )
-            for e in qb_entries_sorted
-        ])  # (N, q_dim)
-
-        arr[:, q_dim + 1 : 2 * q_dim + 1] = qb_vecs
-        arr[:, 2 * q_dim + 1] = qb_lats
-        arr[:, 2 * q_dim + 2] = np.abs(qb_times - qa_start_time_s)
-        arr[:, 2 * q_dim + 3] = (qa_start_time_s < qb_times).astype(np.float32)
-
-        rpu_value = np.float32(0.0 if self._ignore_cluster_size else float(rpu))
-        rpu_dim = self.rpu_dim_idx
         arr[:, rpu_dim] = rpu_value
 
         if self._interaction_feature_version == "v2":
             if self._ignore_cluster_size:
                 arr[:, rpu_dim + 1 : rpu_dim + 6] = 0.0
             else:
+                # arr[:, 2 * q_dim + 1] already holds qb_lats — reuse as a view
+                # to avoid a separate array allocation.
+                qb_lats_view = arr[:, 2 * q_dim + 1]
                 log2_rpu = np.float32(np.log2(rpu_value))
                 inv_rpu = np.float32(1.0 / rpu_value)
                 qa_work_proxy = np.float32(qa_latency_prediction) * rpu_value
-                qb_work_proxy = qb_lats * rpu_value
-                pair_pressure_proxy = (
-                    np.float32(qa_latency_prediction) + qb_lats
-                ) * inv_rpu
-
                 arr[:, rpu_dim + 1] = log2_rpu
                 arr[:, rpu_dim + 2] = inv_rpu
                 arr[:, rpu_dim + 3] = qa_work_proxy
-                arr[:, rpu_dim + 4] = qb_work_proxy
-                arr[:, rpu_dim + 5] = pair_pressure_proxy
+                arr[:, rpu_dim + 4] = qb_lats_view * rpu_value
+                arr[:, rpu_dim + 5] = (
+                    np.float32(qa_latency_prediction) + qb_lats_view
+                ) * inv_rpu
 
         return arr, pinch_idx
