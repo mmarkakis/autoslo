@@ -380,12 +380,14 @@ class ClusterView:
     cost_per_rpu_hour: float = field(
         default=Cluster.US_EAST_1_COST_PER_RPU_HOUR
     )
-    state: ClusterState
+    state: ClusterState = field(default=ClusterState.PENDING)
     billing_window_start_s: Optional[float] = field(default=None, repr=False)
     billing_accumulator: BillingAccumulator = field(
         default_factory=BillingAccumulator, repr=False
     )
-    most_recent_query_completion_rel_time_s: Optional[float]
+    most_recent_query_completion_rel_time_s: Optional[float] = field(
+        default=None
+    )
     queries: dict[str, "Query"] = field(default_factory=dict, repr=False)
     id_to_neighbors: dict[str, list["Query"]] = field(
         default_factory=dict, repr=False
@@ -393,7 +395,9 @@ class ClusterView:
     predicted_latencies: dict[str, float] = field(
         default_factory=dict, repr=False
     )
-    cache_state: np.ndarray
+    cache_state: np.ndarray = field(
+        default_factory=lambda: np.zeros(0), repr=False
+    )
     lstm_states: dict[str, AfterLSTMState] = field(
         default_factory=dict, repr=False
     )
