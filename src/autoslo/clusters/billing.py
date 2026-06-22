@@ -1,5 +1,5 @@
 import math
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import pandas as pd
 
@@ -168,3 +168,96 @@ class Billing:
         billed_intervals.append(billed_interval)
 
         return billed_intervals
+
+
+class BillingAccumulator:
+    """Incrementally maintains the total billed seconds for a sequence of
+    chronologically ordered, non-overlapping raw billing intervals.
+
+    All threshold extension and merge logic lives here; callers never touch
+    those details.  Every public method is O(1).
+    """
+
+    def __init__(
+        self,
+        threshold_s: float = Billing.REDSHIFT_BILLING_THRESHOLD_S,
+        granularity_s: float = Billing.REDSHIFT_BILLING_GRANULARITY_S,
+    ) -> None:
+        self._threshold_s = threshold_s
+        self._granularity_s = granularity_s
+        self._closed_billed_s: float = 0.0
+        self._open_start: Optional[float] = None
+        self._open_raw_end: float = 0.0
+        # max(_open_raw_end, _open_start + threshold_s) — used for merge detection
+        self._open_threshold_end: float = 0.0
+
+    def add_interval(self, start: float, end: float) -> None:
+        """Record a new closed billing interval.
+
+        Must be called in chronological order: *start* must be >= the end
+        of every previously added interval.
+        """
+        if self._open_start is None:
+            self._open_start = start
+            self._open_raw_end = end
+            self._open_threshold_end = max(end, start + self._threshold_s)
+        elif start <= self._open_threshold_end:
+            # Merges into the current open group.
+            self._open_raw_end = max(self._open_raw_end, end)
+            self._open_threshold_end = max(
+                self._open_raw_end, self._open_start + self._threshold_s
+            )
+        else:
+            # Closes the open group; starts a new one.
+            self._closed_billed_s += self._billed_duration(
+                self._open_start, self._open_raw_end
+            )
+            self._open_start = start
+            self._open_raw_end = end
+            self._open_threshold_end = max(end, start + self._threshold_s)
+
+    def billed_s(self) -> float:
+        """Total billed seconds for all intervals recorded so far."""
+        if self._open_start is None:
+            return self._closed_billed_s
+        return self._closed_billed_s + self._billed_duration(
+            self._open_start, self._open_raw_end
+        )
+
+    def billed_s_with_window(
+        self, window_start: float, window_end: float
+    ) -> float:
+        """Total billed seconds if a hypothetical additional interval
+        [window_start, window_end] is included.
+
+        Does not mutate the accumulator.
+        """
+        if self._open_start is None:
+            return self._billed_duration(window_start, window_end)
+        if window_start <= self._open_threshold_end:
+            # The window merges with the open group.
+            merged_raw_end = max(self._open_raw_end, window_end)
+            return self._closed_billed_s + self._billed_duration(
+                self._open_start, merged_raw_end
+            )
+        # The window is a standalone interval.
+        return (
+            self._closed_billed_s
+            + self._billed_duration(self._open_start, self._open_raw_end)
+            + self._billed_duration(window_start, window_end)
+        )
+
+    def copy(self) -> "BillingAccumulator":
+        """Return an independent copy of this accumulator."""
+        c = BillingAccumulator(self._threshold_s, self._granularity_s)
+        c._closed_billed_s = self._closed_billed_s
+        c._open_start = self._open_start
+        c._open_raw_end = self._open_raw_end
+        c._open_threshold_end = self._open_threshold_end
+        return c
+
+    def _billed_duration(self, start: float, raw_end: float) -> float:
+        return max(
+            self._threshold_s,
+            Billing._round_up(raw_end - start, self._granularity_s),
+        )

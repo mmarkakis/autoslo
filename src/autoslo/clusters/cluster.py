@@ -3,11 +3,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, Optional
+from typing import ClassVar, Optional
 
 import numpy as np
 
-from autoslo.clusters.billing import Billing, BillingInterval
+from autoslo.clusters.billing import BillingAccumulator, BillingInterval
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.workload_definition.query import Query
 
@@ -43,7 +43,7 @@ class ClusterState(Enum):
 def cluster_cost_until_drained(
     queries: list[Query],
     predicted_latencies: dict[str, float],
-    past_billing_intervals: list[BillingInterval],
+    billing_accumulator: BillingAccumulator,
     billing_window_start_s: Optional[float],
     cost_per_second: float,
     current_rel_time_s: float,
@@ -61,15 +61,15 @@ def cluster_cost_until_drained(
         )
         end_s = max(end_s, current_rel_time_s)
 
-    billed_intervals_until_end = list(past_billing_intervals)
     if (billing_window_start_s is not None) and (
         current_rel_time_s > billing_window_start_s
     ):
-        billed_intervals_until_end.append(
-            BillingInterval(billing_window_start_s, end_s)
+        billed_seconds = billing_accumulator.billed_s_with_window(
+            billing_window_start_s, end_s
         )
-    billed_seconds_until_end = Billing.billed_s(billed_intervals_until_end)
-    return cost_per_second * billed_seconds_until_end
+    else:
+        billed_seconds = billing_accumulator.billed_s()
+    return cost_per_second * billed_seconds
 
 
 @dataclass(eq=False)
@@ -107,8 +107,8 @@ class Cluster:
     #
     state: ClusterState = ClusterState.PENDING
     billing_window_start_s: Optional[float] = field(default=None, repr=False)
-    past_billing_intervals: list[BillingInterval] = field(
-        default_factory=list, repr=False
+    billing_accumulator: BillingAccumulator = field(
+        default_factory=BillingAccumulator, repr=False
     )
 
     queries: dict[str, Query] = field(default_factory=dict, repr=False)
@@ -149,7 +149,9 @@ class Cluster:
         self.cost_per_rpu_hour = cost_per_rpu_hour
         self.state = state
         self.billing_window_start_s = billing_window_start_s
-        self.past_billing_intervals = list(past_billing_intervals or [])
+        self.billing_accumulator = BillingAccumulator()
+        for iv in past_billing_intervals or []:
+            self.billing_accumulator.add_interval(iv.start, iv.end)
         self.most_recent_query_completion_rel_time_s: float = (
             most_recent_query_completion_rel_time_s
             if most_recent_query_completion_rel_time_s is not None
@@ -160,32 +162,6 @@ class Cluster:
         self.queries = {}
         self.id_to_neighbors = {}
         self.predicted_latencies: dict[str, float] = {}
-
-    def clone(self) -> Cluster:
-        """
-        Deep-copy. Relies on `Query` and `ClusterConnInfo` being
-        immutable/frozen dataclasses.
-        """
-        c = Cluster(
-            creation_time_s=self.creation_time_s,
-            rpu=self.rpu,
-            name=self.name,
-            conn_info=self.conn_info,
-            cost_per_rpu_hour=self.cost_per_rpu_hour,
-            state=self.state,
-            billing_window_start_s=self.billing_window_start_s,
-            past_billing_intervals=self.past_billing_intervals,
-            most_recent_query_completion_rel_time_s=(
-                self.most_recent_query_completion_rel_time_s
-            ),
-            cache_state=self.cache_state.copy(),
-        )
-        c.queries = dict(self.queries)
-        c.id_to_neighbors = {
-            qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
-        }
-        c.predicted_latencies = dict(self.predicted_latencies)
-        return c
 
     # --- Derived properties ----------------------------------------------
 
@@ -280,8 +256,8 @@ class Cluster:
         if (len(self.queries) == 0) and (
             self.billing_window_start_s is not None
         ):
-            self.past_billing_intervals.append(
-                BillingInterval(self.billing_window_start_s, rel_time_s)
+            self.billing_accumulator.add_interval(
+                self.billing_window_start_s, rel_time_s
             )
             self.billing_window_start_s = None
 
@@ -363,7 +339,7 @@ class Cluster:
         raise ValueError(
             f"Cannot parse run ID from cluster name: {cluster_name!r}"
         )
-    
+
     @staticmethod
     def counter_for_cluster_name(cluster_name: str) -> Optional[int]:
         """Parse counter from a cluster name.
@@ -378,7 +354,7 @@ class Cluster:
             except ValueError:
                 pass
         return None
-          
+
     @staticmethod
     def cost_per_second_for_rpu(
         rpu: int,
@@ -388,47 +364,57 @@ class Cluster:
         return cost_per_rpu_hour * rpu / Cluster.ONE_HOUR_S
 
 
+@dataclass(frozen=True, slots=True)
 class ClusterView:
     """Immutable, deep-copied view of a Cluster for safe read-only use."""
 
-    __slots__ = (
-        "creation_time_s",
-        "rpu",
-        "name",
-        "conn_info",
-        "cost_per_rpu_hour",
-        "state",
-        "billing_window_start_s",
-        "past_billing_intervals",
-        "most_recent_query_completion_rel_time_s",
-        "queries",
-        "id_to_neighbors",
-        "predicted_latencies",
-        "cache_state",
+    creation_time_s: float
+    rpu: int
+    name: str
+    conn_info: Optional[ClusterConnInfo] = field(default=None, repr=False)
+    cost_per_rpu_hour: float = field(
+        default=Cluster.US_EAST_1_COST_PER_RPU_HOUR
     )
+    state: ClusterState
+    billing_window_start_s: Optional[float] = field(default=None, repr=False)
+    billing_accumulator: BillingAccumulator = field(
+        default_factory=BillingAccumulator, repr=False
+    )
+    most_recent_query_completion_rel_time_s: Optional[float]
+    queries: dict[str, "Query"] = field(default_factory=dict, repr=False)
+    id_to_neighbors: dict[str, list["Query"]] = field(
+        default_factory=dict, repr=False
+    )
+    predicted_latencies: dict[str, float] = field(
+        default_factory=dict, repr=False
+    )
+    cache_state: np.ndarray
+    
 
-    def __init__(self, cluster: "Cluster"):
-        self.creation_time_s = cluster.creation_time_s
-        self.rpu = cluster.rpu
-        self.name = cluster.name
-        self.conn_info = cluster.conn_info
-        self.cost_per_rpu_hour = cluster.cost_per_rpu_hour
-        self.state = cluster.state
-        self.billing_window_start_s = cluster.billing_window_start_s
-        self.past_billing_intervals = list(cluster.past_billing_intervals)
-        self.most_recent_query_completion_rel_time_s = (
-            cluster.most_recent_query_completion_rel_time_s
-        )
-        # Deep copy all mutable state
-        self.queries = dict(cluster.queries)
-        self.id_to_neighbors = {
-            qid: list(nbs) for qid, nbs in cluster.id_to_neighbors.items()
-        }
-        self.predicted_latencies = dict(cluster.predicted_latencies)
-        self.cache_state = (
-            cluster.cache_state.copy()
-            if cluster.cache_state is not None
-            else None
+    @classmethod
+    def from_cluster(cls, cluster: Cluster) -> "ClusterView":
+        return cls(
+            creation_time_s=cluster.creation_time_s,
+            rpu=cluster.rpu,
+            name=cluster.name,
+            conn_info=cluster.conn_info,
+            cost_per_rpu_hour=cluster.cost_per_rpu_hour,
+            state=cluster.state,
+            billing_window_start_s=cluster.billing_window_start_s,
+            billing_accumulator=cluster.billing_accumulator.copy(),
+            most_recent_query_completion_rel_time_s=(
+                cluster.most_recent_query_completion_rel_time_s
+            ),
+            queries=dict(cluster.queries),
+            id_to_neighbors={
+                qid: list(nbs) for qid, nbs in cluster.id_to_neighbors.items()
+            },
+            predicted_latencies=dict(cluster.predicted_latencies),
+            cache_state=(
+                cluster.cache_state.copy()
+                if cluster.cache_state is not None
+                else None
+            ),
         )
 
     # --- Read-only properties ---
@@ -478,7 +464,6 @@ class ClusterView:
             cost_per_rpu_hour=self.cost_per_rpu_hour,
             state=self.state,
             billing_window_start_s=self.billing_window_start_s,
-            past_billing_intervals=self.past_billing_intervals,
             most_recent_query_completion_rel_time_s=(
                 self.most_recent_query_completion_rel_time_s
             ),
@@ -488,18 +473,10 @@ class ClusterView:
                 else None
             ),
         )
+        c.billing_accumulator = self.billing_accumulator.copy()
         c.queries = dict(self.queries)
         c.id_to_neighbors = {
             qid: list(nbs) for qid, nbs in self.id_to_neighbors.items()
         }
         c.predicted_latencies = dict(self.predicted_latencies)
         return c
-
-    # --- Block all mutation ---
-    def __setattr__(self, name: str, value: Any) -> None:
-        if hasattr(self, name):
-            raise AttributeError(f"ClusterView is immutable: cannot set {name}")
-        super().__setattr__(name, value)
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError(f"ClusterView is immutable: cannot delete {name}")

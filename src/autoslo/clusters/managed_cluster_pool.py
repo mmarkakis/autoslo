@@ -309,8 +309,8 @@ class ManagedClusterPool:
                     len(active_queries),
                 )
                 if cluster.billing_window_start_s is not None:
-                    cluster.past_billing_intervals.append(
-                        (cluster.billing_window_start_s, rel_time_s)
+                    cluster.billing_accumulator.add_interval(
+                        cluster.billing_window_start_s, rel_time_s
                     )
                     cluster.billing_window_start_s = None
                 cluster.queries.clear()
@@ -541,7 +541,7 @@ class ManagedClusterPool:
                 else (lambda c: True)
             )
             return {
-                cluster_name: ClusterView(cluster)
+                cluster_name: ClusterView.from_cluster(cluster)
                 for cluster_name, cluster in self._clusters.items()
                 if cond(cluster)
             }

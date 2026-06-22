@@ -633,7 +633,7 @@ class Autoscaler:
                             replay_type="pre_spinup",
                             arrivals_processed=arrivals_processed,
                             pool_snapshot={
-                                name: ClusterView(c)
+                                name: ClusterView.from_cluster(c)
                                 for name, c in local_cluster_pool.items()
                             },
                             query_router_state=query_router.get_state(),
@@ -704,7 +704,7 @@ class Autoscaler:
                     )
                 )
                 snapshot_for_routing = {
-                    cluster_name: ClusterView(cluster)
+                    cluster_name: ClusterView.from_cluster(cluster)
                     for cluster_name, cluster in local_cluster_pool.items()
                     if cluster.state == ClusterState.READY
                 }
@@ -753,7 +753,7 @@ class Autoscaler:
             cluster_cost = cluster_cost_until_drained(
                 queries=cluster.active_queries,
                 predicted_latencies=cluster.predicted_latencies,
-                past_billing_intervals=cluster.past_billing_intervals,
+                billing_accumulator=cluster.billing_accumulator,
                 billing_window_start_s=cluster.billing_window_start_s,
                 cost_per_second=cluster.cost_per_second,
                 current_rel_time_s=last_seen_rel_start_time_s,

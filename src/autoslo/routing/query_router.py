@@ -172,7 +172,7 @@ class QueryRouter:
             cost = cluster_cost_until_drained(
                 queries=cluster.active_queries,
                 predicted_latencies=before_latencies,
-                past_billing_intervals=cluster.past_billing_intervals,
+                billing_accumulator=cluster.billing_accumulator,
                 billing_window_start_s=cluster.billing_window_start_s,
                 cost_per_second=cluster.cost_per_second,
                 current_rel_time_s=rel_time_s,
@@ -234,7 +234,7 @@ class QueryRouter:
             after_cost = cluster_cost_until_drained(
                 queries=after_queries,
                 predicted_latencies=after_latencies,
-                past_billing_intervals=cluster.past_billing_intervals,
+                billing_accumulator=cluster.billing_accumulator,
                 billing_window_start_s=cluster.billing_window_start_s,
                 cost_per_second=cluster.cost_per_second,
                 current_rel_time_s=rel_time_s,
