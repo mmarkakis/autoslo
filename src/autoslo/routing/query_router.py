@@ -384,16 +384,14 @@ class QueryRouter:
                         cost=base_cost + added_cost,
                     )
                 )
-            best_local_idx = self._slo_objective.idx_of_best(
-                adjusted_tups, ignore_threshold=True
-            )
+            best_local_idx = self._slo_objective.idx_of_best(adjusted_tups)
             return cluster_names[best_local_idx]
 
         # Default: USE_ICONQ_MODEL or USE_STAGE_MODEL. Both score using the
         # raw (violation, cost) tuples; they differ only in which model
         # supplies the latencies populating those tuples upstream.
         best_local_idx = self._slo_objective.idx_of_best(
-            [viols_and_costs[cn] for cn in cluster_names], ignore_threshold=True
+            [viols_and_costs[cn] for cn in cluster_names]
         )
         return cluster_names[best_local_idx]
 
