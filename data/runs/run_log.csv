@@ -187,3 +187,7 @@ run_id,config_id,workload_id,started_at
 1781598789564,may27_oracle_k4_thresh10_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-16T08:33:13Z
 1781669564806,may27_oracle_k4_thresh5_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-17T04:12:48Z
 1781684679016,may27_oracle_k4_thresh10_nocache_v4,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-17T08:24:43Z
+1782013311299,may27_oracle_k4_thresh5_nocache_v6,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-21T03:41:51Z
+1782028198479,may27_oracle_k4_thresh10_nocache_v6,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-21T07:49:59Z
+1782043009624,may27_oracle_k2_thresh5_nocache_v6,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-21T11:56:50Z
+1782058210997,may27_oracle_k2_thresh10_nocache_v6,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-21T16:10:11Z
