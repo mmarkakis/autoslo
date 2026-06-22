@@ -11,6 +11,10 @@ sampling_config:
       last_day_date_inclusive: "<LAST_DAY_DATE_INCLUSIVE>"
       num_days: <NUM_DAYS>
 
+slo_objective_config:
+  slo_metric: binary
+  slo_threshold: <SLO_THRESHOLD>
+
 spinup_optimizer_config:
   max_spinups: 3  
   min_delinquent_workload_fraction: 0.5

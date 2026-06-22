@@ -6,9 +6,8 @@ slo_objective_config:
   slo_metric: binary
   slo_threshold: <SLO_THRESHOLD>
 
-
 spinup_optimizer_config:
-  max_spinups: 9
+  max_spinups: 5
   min_delinquent_workload_fraction: 0.5
   lead_time_s: 360.0
   allowed_rpu_sizes: [4, 8, 16, 32]

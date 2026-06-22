@@ -24,7 +24,7 @@ from autoslo.slo.slo_metric import SloMetric
 # A "tuner config" is the YAML config file that a user provides to run the
 # policy tuner, alongisde an initial execution config. It contains:
 # - sampling_config
-# - [tuning_constraints_config]
+# - slo_objective_config
 # - spinup_optimizer_config
 # - [autoscaling_param_sweep.param_sweep_config]
 # - [query_routing_param_sweep.param_sweep_config]
@@ -230,29 +230,6 @@ class SamplingConfig(_PartialConfig):
         except (KeyError, ValueError):
             forecaster_config = None
         return super().from_config(cfg, forecaster_config=forecaster_config)
-
-
-@dataclass(frozen=True)
-class TuningConstraintsConfig(_PartialConfig):
-    """Optional constraints that apply only while tuning simulations."""
-
-    simulation_max_clusters: Optional[int] = None
-    slo_threshold_adjustment_factor: float = 1.0
-
-    def __post_init__(self):
-        if (
-            self.simulation_max_clusters is not None
-            and self.simulation_max_clusters < 0
-        ):
-            raise ValueError(
-                "simulation_max_clusters must be >= 0 when provided, got "
-                f"{self.simulation_max_clusters}"
-            )
-        if self.slo_threshold_adjustment_factor <= 0:
-            raise ValueError(
-                "slo_threshold_adjustment_factor must be positive, got "
-                f"{self.slo_threshold_adjustment_factor}"
-            )
 
 
 @dataclass(frozen=True)

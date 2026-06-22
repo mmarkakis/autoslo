@@ -15,7 +15,6 @@ from autoslo.config.component_configs import (
     SloObjectiveConfig,
     SloResolverConfig,
     SpinupOptimizerConfig,
-    TuningConstraintsConfig,
     WorkloadConfig,
 )
 from autoslo.config.utils import copy_and_apply_overrides, make_run_id
@@ -116,11 +115,12 @@ class PolicyTuner:
         self._evaluator = ScenarioEvaluator()
         self._verbose_progress = verbose_progress
 
-        # SLO objective — drives metric routing and threshold-aware selection.
+        # SLO objective — sourced from the tuner config and used for
+        # candidate ranking/selection throughout all tuning phases.
         slo_objective_config = SloObjectiveConfig.from_config(
-            self._initial_execution_config
+            self._tuner_config
         )
-        self._slo_objective = SloObjective(slo_objective_config)
+        self._tuning_slo_objective = SloObjective(slo_objective_config)
 
         # SLO Resolver - shared by all phases for consistent SLO evaluation.
         slo_resolver_config = SloResolverConfig.from_config(
@@ -131,36 +131,6 @@ class PolicyTuner:
         # Aggregation metric — shared by all phases.
         self._sampling_config = SamplingConfig.from_config(self._tuner_config)
         self._agg_method = self._sampling_config.aggregation_method
-
-        # Optional simulation-only constraints.
-        try:
-            tuning_constraints = TuningConstraintsConfig.from_config(
-                self._tuner_config
-            )
-            self._simulation_max_clusters = (
-                tuning_constraints.simulation_max_clusters
-            )
-            self._slo_threshold_adjustment_factor = (
-                tuning_constraints.slo_threshold_adjustment_factor
-            )
-        except ValueError:
-            self._simulation_max_clusters = None
-            self._slo_threshold_adjustment_factor = 1.0
-
-        # Tuning-only SLO objective used for candidate ranking/selection.
-        # This does not mutate persisted execution configs.
-        adjusted_slo_threshold = (
-            self._slo_objective.slo_threshold
-            * self._slo_threshold_adjustment_factor
-        )
-        self._tuning_slo_objective = SloObjective(
-            SloObjectiveConfig(
-                slo_metric=self._slo_objective.slo_metric,
-                slo_threshold=adjusted_slo_threshold,
-            )
-        )
-
-        
 
         # Timing instrumentation.
         self._timer = PolicyTunerTimer()
@@ -283,11 +253,7 @@ class PolicyTuner:
         all_results_nested = self._evaluator.evaluate_batch_from_configs(
             progress_bar_label="baseline",
             workload_configs=all_workload_configs,
-            configs=[
-                self._apply_simulation_constraints(
-                    self._initial_execution_config
-                )
-            ],
+            configs=[self._initial_execution_config],
             out_dir=summary_dir / "results",
             workload_first=False,
             verbose_progress=self._verbose_progress,
@@ -400,7 +366,7 @@ class PolicyTuner:
             *comparison_entries,
             console=console,
             agg_method=self._agg_method,
-            slo_metric=self._slo_objective.slo_metric,
+            slo_metric=self._tuning_slo_objective.slo_metric,
             highlight_best=True,
         )
 
@@ -414,14 +380,15 @@ class PolicyTuner:
             *comparison_entries,
             console=console,
             agg_method=self._agg_method,
-            slo_metric=self._slo_objective.slo_metric,
+            slo_metric=self._tuning_slo_objective.slo_metric,
             highlight_best=True,
         )
 
         # Select the best candidate on validation data and print.
         val_scores = [
             ViolationCost(
-                agg.primary_violation(self._slo_objective.slo_metric), agg.cost
+                agg.primary_violation(self._tuning_slo_objective.slo_metric),
+                agg.cost,
             )
             for agg in candidate_val_aggs
         ]
@@ -462,7 +429,7 @@ class PolicyTuner:
 
         sweeper = ParamSweep(
             evaluator=self._evaluator,
-            initial_config=self._apply_simulation_constraints(initial_config),
+            initial_config=initial_config,
             run_dir=self._out_dir,
             phase_name=phase_name,
             slo_objective=self._tuning_slo_objective,
@@ -485,20 +452,6 @@ class PolicyTuner:
 
         Returns the path to the final optimised config file.
         """
-        if self._simulation_max_clusters is not None:
-            console.print(
-                "Applying tuning-only constraint: "
-                f"simulation_max_clusters={self._simulation_max_clusters}."
-            )
-        if self._slo_threshold_adjustment_factor != 1.0:
-            console.print(
-                "Applying tuning-only constraint: "
-                f"slo_threshold_adjustment_factor="
-                f"{self._slo_threshold_adjustment_factor} "
-                f"(decision threshold "
-                f"{self._slo_objective.slo_threshold:.6f} -> "
-                f"{self._tuning_slo_objective.slo_threshold:.6f})."
-            )
         final_path = self._out_dir / "final_execution_config.yml"
         console.start_file_logging(self._out_dir / "console.log")
         try:
@@ -524,7 +477,7 @@ class PolicyTuner:
                     ("Baseline (val)", baseline_val),
                     console=console,
                     agg_method=self._agg_method,
-                    slo_metric=self._slo_objective.slo_metric,
+                    slo_metric=self._tuning_slo_objective.slo_metric,
                     highlight_best=False,
                 )
 
@@ -545,14 +498,14 @@ class PolicyTuner:
                     ("Post-spinups (train)", post_spinups_train),
                     console=console,
                     agg_method=self._agg_method,
-                    slo_metric=self._slo_objective.slo_metric,
+                    slo_metric=self._tuning_slo_objective.slo_metric,
                 )
                 AggregatedExecutionResults.print_comparison(
                     ("Baseline (val)", baseline_val),
                     ("Post-spinups (val)", post_spinups_val),
                     console=console,
                     agg_method=self._agg_method,
-                    slo_metric=self._slo_objective.slo_metric,
+                    slo_metric=self._tuning_slo_objective.slo_metric,
                 )
 
             ### Phase 5: Autoscaler parameter sweep
@@ -560,7 +513,7 @@ class PolicyTuner:
                 "05_autoscaling_param_sweep", "Phase 5: Autoscaler param sweep"
             ):
                 self._print_banner("Phase 5: Autoscaler parameter sweep")
-                post_first_sweep_config, _, _ = self.param_sweep(
+                post_sweep_config, tuned_train, tuned_val = self.param_sweep(
                     train_workload_configs=train_workload_configs,
                     val_workload_configs=val_workload_configs,
                     initial_config=post_spinups_config,
@@ -569,19 +522,19 @@ class PolicyTuner:
                 )
 
             ### Phase 6: Routing parameter sweep
-            with self._timer.timed_phase(
-                "06_routing_param_sweep", "Phase 6: Routing param sweep"
-            ):
-                self._print_banner("Phase 6: Routing parameter sweep")
-                post_second_sweep_config, tuned_train, tuned_val = (
-                    self.param_sweep(
-                        train_workload_configs=train_workload_configs,
-                        val_workload_configs=val_workload_configs,
-                        initial_config=post_first_sweep_config,
-                        phase_name="06_routing_param_sweep",
-                        config_key="query_routing_param_sweep",
-                    )
-                )
+            # with self._timer.timed_phase(
+            #     "06_routing_param_sweep", "Phase 6: Routing param sweep"
+            # ):
+            #     self._print_banner("Phase 6: Routing parameter sweep")
+            #     post_sweep_config, tuned_train, tuned_val = (
+            #         self.param_sweep(
+            #             train_workload_configs=train_workload_configs,
+            #             val_workload_configs=val_workload_configs,
+            #             initial_config=post_sweep_config,
+            #             phase_name="06_routing_param_sweep",
+            #             config_key="query_routing_param_sweep",
+            #         )
+            #     )
 
             ### Phase 7: Persist final config and final comparison
             with self._timer.timed_phase(
@@ -590,9 +543,7 @@ class PolicyTuner:
                 self._print_banner(
                     "Phase 7: Final comparison with tuned config"
                 )
-                final_config = self._restore_runtime_cluster_cap(
-                    post_second_sweep_config
-                )
+                final_config = post_sweep_config
                 dump_yaml(final_config, final_path)
                 console.print(
                     f"  Final config written to [bold]{final_path}[/]"
@@ -606,14 +557,14 @@ class PolicyTuner:
                     ("Final (train)", tuned_train),
                     console=console,
                     agg_method=self._agg_method,
-                    slo_metric=self._slo_objective.slo_metric,
+                    slo_metric=self._tuning_slo_objective.slo_metric,
                 )
                 AggregatedExecutionResults.print_comparison(
                     ("Initial (val)", baseline_val),
                     ("Final (val)", tuned_val),
                     console=console,
                     agg_method=self._agg_method,
-                    slo_metric=self._slo_objective.slo_metric,
+                    slo_metric=self._tuning_slo_objective.slo_metric,
                 )
 
             shutil.copy2(final_path, self._publication_path)
@@ -630,30 +581,3 @@ class PolicyTuner:
         console.print()
         console.rule(f"[bold cyan]{message}")
         console.print()
-
-    def _apply_simulation_constraints(
-        self, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Apply tuner-only constraints to a simulation config copy."""
-        if self._simulation_max_clusters is None:
-            return config
-        return copy_and_apply_overrides(
-            config,
-            {
-                "managed_cluster_pool_config.max_clusters": (
-                    self._simulation_max_clusters
-                )
-            },
-        )
-
-    def _restore_runtime_cluster_cap(
-        self, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Restore runtime max_clusters before persisting published config."""
-        runtime_max_clusters = self._initial_execution_config[
-            "managed_cluster_pool_config"
-        ]["max_clusters"]
-        return copy_and_apply_overrides(
-            config,
-            {"managed_cluster_pool_config.max_clusters": runtime_max_clusters},
-        )

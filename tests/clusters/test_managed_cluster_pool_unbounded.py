@@ -6,7 +6,6 @@ from autoslo.clusters.managed_cluster_pool import ManagedClusterPool
 from autoslo.config.component_configs import (
     ManagedClusterPoolConfig,
     ProvisionerConfig,
-    TuningConstraintsConfig,
 )
 
 
@@ -43,18 +42,6 @@ class TestManagedClusterPoolConfigValidation:
         except ValueError as exc:
             assert "too low" in str(exc)
 
-
-class TestTuningConstraintsConfigValidation:
-    def test_accepts_none(self):
-        cfg = TuningConstraintsConfig(simulation_max_clusters=None)
-        assert cfg.simulation_max_clusters is None
-
-    def test_rejects_negative(self):
-        try:
-            TuningConstraintsConfig(simulation_max_clusters=-1)
-            assert False, "Expected ValueError"
-        except ValueError as exc:
-            assert "simulation_max_clusters" in str(exc)
 
 
 class TestManagedClusterPoolUnboundedMode:
