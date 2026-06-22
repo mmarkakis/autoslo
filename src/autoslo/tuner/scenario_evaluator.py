@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import cProfile
+import io
 import itertools
 import logging
 import os
+import pstats
+import tempfile
+import threading
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from multiprocessing import Manager, get_context
 from pathlib import Path
@@ -53,11 +58,25 @@ def from_combination_idx(
     return config_idx, workload_idx
 
 
+# Worker-process global: populated by _init_worker_with_configs before any
+# task runs, so configs do not need to be pickled per task submission.
+_worker_configs: list[dict[str, Any]] | None = None
+
+
+def _init_worker_with_configs(
+    inner_cpus: int, configs: list[dict[str, Any]]
+) -> None:
+    """Extend :func:`_init_worker` by pre-loading configs into a worker-global."""
+    _init_worker(inner_cpus)
+    global _worker_configs
+    _worker_configs = configs
+
+
 def _run_one_combination(
     sim_out_dir: Path,
     combination_idx: int,
     workload_config: WorkloadConfig,
-    config: dict[str, Any],
+    config_idx: int,
     render_log: bool,
     progress_dict,
 ) -> ExecutionResult:
@@ -90,12 +109,14 @@ def _run_one_combination(
 
     # Overwrite the workload in the config with the one we want to run.
     config = cfgu.copy_and_apply_overrides(
-        config, {"workload_config": workload_config.to_dict()}
+        _worker_configs[config_idx],  # type: ignore[index]
+        {"workload_config": workload_config.to_dict()},
     )
 
     # Build and run the simulator.
     def _progress_cb(current: int, total: int) -> None:
-        progress_dict[combination_idx] = (current, total)
+        if progress_dict is not None:
+            progress_dict[combination_idx] = (current, total)
 
     with (
         open(os.devnull, "w") as _devnull,
@@ -106,6 +127,31 @@ def _run_one_combination(
             config, out_dir=sim_out_dir, write_text_log=False
         )
         result = sim.run(progress_callback=_progress_cb, render_log=render_log)
+    return result
+
+
+def _run_one_combination_profiled(
+    sim_out_dir: Path,
+    combination_idx: int,
+    workload_config: WorkloadConfig,
+    config_idx: int,
+    render_log: bool,
+    progress_dict,
+    profile_file: str,
+) -> ExecutionResult:
+    """Thin wrapper around :func:`_run_one_combination` that runs it under
+    ``cProfile`` and dumps the stats to *profile_file* before returning."""
+    profiler = cProfile.Profile()
+    result = profiler.runcall(
+        _run_one_combination,
+        sim_out_dir,
+        combination_idx,
+        workload_config,
+        config_idx,
+        render_log,
+        progress_dict,
+    )
+    profiler.dump_stats(profile_file)
     return result
 
 
@@ -145,6 +191,7 @@ class ScenarioEvaluator:
         workload_first: bool = True,
         render_log: bool = False,
         verbose_progress: bool = True,
+        profile_path: str | Path | None = None,
     ) -> list[list[ExecutionResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
@@ -166,6 +213,7 @@ class ScenarioEvaluator:
             workload_first=workload_first,
             render_log=render_log,
             verbose_progress=verbose_progress,
+            profile_path=profile_path,
         )
 
     def evaluate_batch_from_configs(
@@ -178,6 +226,7 @@ class ScenarioEvaluator:
         workload_first: bool = True,
         render_log: bool = False,
         verbose_progress: bool = True,
+        profile_path: str | Path | None = None,
     ) -> list[list[ExecutionResult]]:
         """
         Evaluate the cross-product of *workload_configs* and *configs* in
@@ -220,19 +269,30 @@ class ScenarioEvaluator:
             config_labels = [f"config_{i}" for i in range(len(configs))]
 
         # Set up parallel execution.
-        mgr = Manager()
-        progress_dict = mgr.dict()
+        if verbose_progress:
+            mgr = Manager()
+            progress_dict = mgr.dict()
+        else:
+            mgr = None
+            progress_dict = None
         ctx = get_context("spawn")
         num_workloads = len(workload_configs)
         results: dict[int, dict[int, ExecutionResult]] = {}
         out_dir = Path(out_dir)
 
         # Execute in parallel.
+        _prof_tmpdir = (
+            tempfile.TemporaryDirectory() if profile_path is not None else None
+        )
+        prof_dir: str | None = (
+            _prof_tmpdir.name if _prof_tmpdir is not None else None
+        )
+        profile_files: list[str] = []
         with ProcessPoolExecutor(
             max_workers=self._max_workers,
             mp_context=ctx,
-            initializer=_init_worker,
-            initargs=(inner_level_num_cpus(),),
+            initializer=_init_worker_with_configs,
+            initargs=(inner_level_num_cpus(), configs),
         ) as pool:
             futures: dict[Any, int] = {}
             for workload_idx, config_idx in itertools.product(
@@ -247,15 +307,31 @@ class ScenarioEvaluator:
                     sim_out_dir = out_dir / workload_config.id() / config_label
                 else:
                     sim_out_dir = out_dir / config_label / workload_config.id()
-                f = pool.submit(
-                    _run_one_combination,
-                    sim_out_dir,
-                    combination_idx,
-                    workload_config,
-                    configs[config_idx],
-                    render_log,
-                    progress_dict,
-                )
+                if prof_dir is not None:
+                    prof_file = str(
+                        Path(prof_dir) / f"profile_{combination_idx}.prof"
+                    )
+                    profile_files.append(prof_file)
+                    f = pool.submit(
+                        _run_one_combination_profiled,
+                        sim_out_dir,
+                        combination_idx,
+                        workload_config,
+                        config_idx,
+                        render_log,
+                        progress_dict,
+                        prof_file,
+                    )
+                else:
+                    f = pool.submit(
+                        _run_one_combination,
+                        sim_out_dir,
+                        combination_idx,
+                        workload_config,
+                        config_idx,
+                        render_log,
+                        progress_dict,
+                    )
                 futures[f] = combination_idx
 
             # Add a timer column with projected remaining time.
@@ -283,31 +359,49 @@ class ScenarioEvaluator:
                     else {}
                 )
                 sub_tasks: dict[int, int] = {}
+                sub_tasks_lock = threading.Lock()
+                completed_combos: set[int] = set()
                 pending = set(futures.keys())
 
-                while pending:
-                    done, pending = wait(
-                        pending, timeout=0.3, return_when=FIRST_COMPLETED
-                    )
+                # Background thread refreshes per-simulation sub-task bars so
+                # the main loop can block on wait() without a polling timeout,
+                # eliminating result-collection latency for fast simulations.
+                stop_poll = threading.Event()
 
-                    if verbose_progress:
-                        for combination_idx, (current, total) in list(
+                def _poll_sub_task_progress() -> None:
+                    while not stop_poll.wait(0.3):
+                        assert progress_dict is not None
+                        for combo_idx, (current, total) in list(
                             progress_dict.items()
                         ):
-                            if combination_idx not in sub_tasks:
-                                config_idx, workload_idx = from_combination_idx(
-                                    combination_idx,
-                                    num_workloads=num_workloads,
+                            with sub_tasks_lock:
+                                if combo_idx in completed_combos:
+                                    continue
+                                if combo_idx not in sub_tasks:
+                                    ci, wi = from_combination_idx(
+                                        combo_idx, num_workloads=num_workloads
+                                    )
+                                    sub_tasks[combo_idx] = progress.add_task(
+                                        f"    config {ci} - workload {wi}",
+                                        total=total,
+                                    )
+                                task_id = sub_tasks[combo_idx]
+                            try:
+                                progress.update(
+                                    task_id, completed=current, total=total
                                 )
-                                sub_tasks[combination_idx] = progress.add_task(
-                                    f"    config {config_idx} - workload {workload_idx}",
-                                    total=total,
-                                )
-                            progress.update(
-                                sub_tasks[combination_idx],
-                                completed=current,
-                                total=total,
-                            )
+                            except KeyError:
+                                pass  # task removed between lock release and update
+
+                poll_thread: threading.Thread | None = None
+                if verbose_progress:
+                    poll_thread = threading.Thread(
+                        target=_poll_sub_task_progress, daemon=True
+                    )
+                    poll_thread.start()
+
+                while pending:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
 
                     for future in done:
                         combination_idx = futures[future]
@@ -332,18 +426,36 @@ class ScenarioEvaluator:
 
                         if verbose_progress:
                             progress.advance(per_config_tasks[config_idx])
-                            if combination_idx in sub_tasks:
-                                progress.remove_task(
-                                    sub_tasks.pop(combination_idx)
-                                )
-                        progress_dict.pop(combination_idx, None)
+                            with sub_tasks_lock:
+                                completed_combos.add(combination_idx)
+                                task_id = sub_tasks.pop(combination_idx, None)
+                            if task_id is not None:
+                                progress.remove_task(task_id)
+                        if progress_dict is not None:
+                            progress_dict.pop(combination_idx, None)
 
-                        if verbose_progress and len(
-                            results[config_idx]
-                        ) == num_workloads:
+                        if (
+                            verbose_progress
+                            and len(results[config_idx]) == num_workloads
+                        ):
                             progress.remove_task(per_config_tasks[config_idx])
 
-        mgr.shutdown()
+                if poll_thread is not None:
+                    stop_poll.set()
+                    poll_thread.join()
+
+        # All workers finished; merge per-process profiles if requested.
+        if _prof_tmpdir is not None:
+            existing = [f for f in profile_files if Path(f).exists()]
+            if existing:
+                combined = pstats.Stats(existing[0], stream=io.StringIO())
+                for f in existing[1:]:
+                    combined.add(f)
+                combined.dump_stats(str(profile_path))
+            _prof_tmpdir.cleanup()
+
+        if mgr is not None:
+            mgr.shutdown()
 
         # Convert the sparse dict-of-dicts into a list-of-lists ordered
         # by config index (outer) and workload index (inner).
