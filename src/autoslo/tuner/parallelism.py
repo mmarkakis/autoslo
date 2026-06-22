@@ -18,7 +18,7 @@ class ParallelismConfig:
     override the default before any workers are spawned.
     """
 
-    _inner_cpus: int = 2
+    _inner_cpus: int = 1
 
     @classmethod
     def set_inner_cpus(cls, n: int) -> None:

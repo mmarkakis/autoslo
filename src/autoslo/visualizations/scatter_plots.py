@@ -92,6 +92,12 @@ FORMATTING = {
     "main_eval_past7_thresh10": (Palette.dark_blue, "s"),
     "main_eval_past1_thresh10": (Palette.dark_blue, "o"),
     "main_eval_oracle_thresh10": (Palette.dark_blue, "*"),
+    "main_eval_past30_thresh1": (Palette.dark_blue, "^"),
+    "main_eval_past7_thresh1": (Palette.dark_blue, "s"),
+    "main_eval_past1_thresh1": (Palette.dark_blue, "o"),
+    "main_eval_oracle_thresh1": (Palette.dark_blue, "*"),
+    "main_eval_rais50": (Palette.light_purple, "o"),
+    "main_eval_rais100": (Palette.dark_purple, "o"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
@@ -222,7 +228,7 @@ def cost_vs_compliance_scatter(
                 tl.value,
                 color=resolved_color,
                 linestyle="--",
-                linewidth=1.2,
+                linewidth=0.7,
                 zorder=1,
             )
             if tl.label is not None:

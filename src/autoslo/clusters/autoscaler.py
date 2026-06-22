@@ -430,6 +430,11 @@ class Autoscaler:
             ]
             return (
                 max(ready_rpus) if ready_rpus else max(self._allowed_rpu_sizes)
+            ), SelectRpuStats(
+                pre_spinup_arrivals_processed=0,
+                post_spinup_arrivals_processed={
+                    rpu: 0 for rpu in self._allowed_rpu_sizes   
+                },
             )
 
         viol_and_costs: list[ViolationCost] = []
@@ -573,6 +578,7 @@ class Autoscaler:
 
         # Add the hypothetical cluster, if this is the post-spinup phase.
         if is_post_spinup:
+            assert candidate_rpu is not None
             hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
             local_cluster_pool[hyp_cluster_name] = Cluster(
                 creation_time_s=overall_replay_start_rel_time_s,

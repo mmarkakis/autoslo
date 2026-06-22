@@ -1,4 +1,5 @@
 import argparse
+import cProfile
 import heapq
 import logging
 import os
@@ -517,6 +518,16 @@ if __name__ == "__main__":
             "May be repeated: --param TARGET_DATE=2024-05-27."
         ),
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Whether to run the simulator with cProfile ",
+    )
+    parser.add_argument(
+        "--skip_render_log",
+        action="store_true",
+        help="Whether to skip rendering the simulation log.",
+    )
     args = parser.parse_args()
 
     params = parse_params(args.param)
@@ -541,5 +552,11 @@ if __name__ == "__main__":
             )
     os.makedirs(out_dir, exist_ok=False)
 
+    profiler = cProfile.Profile()
+    if args.profile:
+        profiler.enable()
     sim = WorkloadSimulator(cfg=cfg, out_dir=out_dir, write_text_log=True)
-    sim.run(render_log=True)
+    sim.run(render_log=not args.skip_render_log)
+    if args.profile:
+        profiler.disable()
+        profiler.dump_stats(out_dir / "simulator_profile.prof")
