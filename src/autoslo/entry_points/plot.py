@@ -24,6 +24,7 @@ from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_objective import SloObjective
 from autoslo.slo.slo_resolver import SloResolver
+from autoslo.visualizations.bar_charts import violation_rate_bar_chart
 from autoslo.visualizations.scatter_plots import (
     ImprovementArrow,
     ScatterPoint,
@@ -408,6 +409,24 @@ def _annotate_ax(ax: Axes, panel_data: _PanelData, live: bool) -> None:
         )
 
 
+def _render_and_save_bar_figure(
+    panel_data: _PanelData,
+    plot_path: Path,
+    live: bool,
+) -> None:
+    """Render panel_data as a horizontal bar chart and save it."""
+    fig, ax = violation_rate_bar_chart(
+        panel_data.scatter_points,
+        x_metric=panel_data.slo_obj.slo_metric,
+        threshold_lines=panel_data.threshold_lines or None,
+        title=panel_data.title,
+    )
+    _annotate_ax(ax, panel_data, live)
+    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    console.print(f"[green]Saved:[/] {plot_path}")
+
+
 def _render_and_save_figure(
     panel_data: _PanelData,
     plot_path: Path,
@@ -455,6 +474,11 @@ def _generate_single_panel_plot(
         return
 
     _render_and_save_figure(panel_data, plot_path, live)
+    _render_and_save_bar_figure(
+        panel_data,
+        plot_path.with_name(plot_path.stem + "_bars.png"),
+        live,
+    )
     export_panels: list[tuple[int | None, int | None, _PanelData]] = [
         (None, None, panel_data)
     ]
@@ -577,6 +601,45 @@ def _generate_multi_panel_plot(
     fig.savefig(plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     console.print(f"[green]Saved:[/] {plot_path}")
+
+    # --- Multi-panel bar chart grid -------------------------------------------
+    bar_n_pts = max(
+        (len(pd.scatter_points) for pd in panel_data_list), default=1
+    )
+    bar_panel_h = max(2.0, 0.55 * bar_n_pts + 0.9)
+    bar_fig, bar_axes_2d = plt.subplots(
+        rows,
+        cols,
+        figsize=(cols * 7, bar_panel_h * rows),
+        squeeze=False,
+    )
+    for panel, pd in zip(panels_spec, panel_data_list):
+        bar_ax = bar_axes_2d[panel["row"]][panel["col"]]
+        export_pd = replace(pd, title=None) if suppress_subplot_titles else pd
+        violation_rate_bar_chart(
+            pd.scatter_points,
+            x_metric=pd.slo_obj.slo_metric,
+            threshold_lines=pd.threshold_lines or None,
+            title=pd.title,
+            ax=bar_ax,
+        )
+        _annotate_ax(bar_ax, export_pd, live)
+        # Suppress y-axis labels on every column except the leftmost so the
+        # method names are shown only once across the row.
+        if panel["col"] != 0:
+            bar_ax.tick_params(labelleft=False)
+            bar_ax.set_ylabel("")
+    for r in range(rows):
+        for c in range(cols):
+            if (r, c) not in seen_positions:
+                bar_axes_2d[r][c].set_visible(False)
+    bar_fig.tight_layout()
+    bars_plot_path = plot_path.with_name(plot_path.stem + "_bars.png")
+    bar_fig.savefig(bars_plot_path, dpi=150, bbox_inches="tight")
+    plt.close(bar_fig)
+    console.print(f"[green]Saved:[/] {bars_plot_path}")
+    # --------------------------------------------------------------------------
+
     _save_points_csv(
         plot_path.with_suffix(".csv"),
         [
@@ -613,6 +676,11 @@ def _generate_multi_panel_plot(
         panel_path = plots_dir / f"{multi_stem}#{suffix}.png"
         _render_and_save_figure(
             export_data, panel_path, live, xlim=final_xlim, ylim=final_ylim
+        )
+        _render_and_save_bar_figure(
+            export_data,
+            plots_dir / f"{multi_stem}#{suffix}_bars.png",
+            live,
         )
 
 
