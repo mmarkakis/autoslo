@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TypeAlias
+import functools
 
 QueryFeaturization: TypeAlias = list[float]
 
@@ -12,17 +13,17 @@ class QueryTextId(str):
     Example: "ext_tpcds1000#42#001"
     """
 
-    @property
+    @functools.cached_property
     def schema_name(self) -> str:
         """Extracts the schema name from the query text ID."""
         return self.split("#")[0]
 
-    @property
+    @functools.cached_property
     def template_id(self) -> str:
         """Extracts the template ID from the query text ID."""
         return self.split("#")[1]
 
-    @property
+    @functools.cached_property
     def query_index(self) -> str:
         """Extracts the query index from the query text ID."""
         return self.split("#")[2]
@@ -60,12 +61,12 @@ class ClusterAwareQueryId(str):
         """
         return [cls.make(cluster_name, q.query_id) for q in queries]
 
-    @property
+    @functools.cached_property
     def cluster_name(self) -> str:
         """The cluster name embedded in this identifier."""
         return self.split("#")[0]
 
-    @property
+    @functools.cached_property
     def query_id(self) -> str:
         """The workload-level query ID (e.g. ``"query_42"``)."""
         return self.split("#")[1]

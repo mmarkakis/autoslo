@@ -1,3 +1,4 @@
+import functools
 from typing import Any, Optional
 
 import numpy as np
@@ -87,17 +88,17 @@ class IconqInteractionFeaturizer:
         """Returns the interaction feature schema version in use."""
         return self._interaction_feature_version
 
-    @property
+    @functools.cached_property
     def _base_dim(self) -> int:
         """Number of dimensions before interaction-specific scalar features."""
         return 2 * self._iconq_query_featurizer.num_dims
 
-    @property
+    @functools.cached_property
     def _rpu_block_num_dims(self) -> int:
         """Number of dimensions allocated to RPU-related interaction features."""
         return 1 if self._interaction_feature_version == "v1" else 6
 
-    @property
+    @functools.cached_property
     def num_dims(self) -> int:
         """
         Returns the number of dimensions in the interaction feature vector,
@@ -108,7 +109,7 @@ class IconqInteractionFeaturizer:
         """
         return self._base_dim + 4 + self._rpu_block_num_dims
 
-    @property
+    @functools.cached_property
     def arrival_time_diff_dim_idx(self) -> int:
         """
         Returns the index of the arrival time difference feature in the
@@ -119,7 +120,7 @@ class IconqInteractionFeaturizer:
         """
         return self._base_dim + 2
 
-    @property
+    @functools.cached_property
     def arrival_time_sign_dim_idx(self) -> int:
         """
         Returns the index of the arrival time sign feature in the interaction
@@ -130,7 +131,7 @@ class IconqInteractionFeaturizer:
         """
         return self._base_dim + 3
 
-    @property
+    @functools.cached_property
     def rpu_dim_idx(self) -> int:
         """
         Returns the index of the RPU feature in the interaction feature vector.

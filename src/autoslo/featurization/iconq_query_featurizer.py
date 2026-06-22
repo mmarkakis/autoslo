@@ -2,6 +2,7 @@
 Some code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
+import functools
 import os
 import pickle
 from collections import defaultdict
@@ -13,12 +14,12 @@ import pandas as pd
 from rich.console import Console
 from tqdm.auto import tqdm
 
-_console = Console()
-
 import autoslo.filesystem.path_utils as pu
 from autoslo.filesystem.yaml_helpers import dump_yaml, load_yaml
 from autoslo.workload_definition.query import ClusterAwareQueryId, QueryTextId
 from autoslo.workload_execution.trace import Trace
+
+_console = Console()
 
 
 class IconqQueryFeaturizer:
@@ -141,7 +142,7 @@ class IconqQueryFeaturizer:
                     )
                     self._featurization_cache[query_text_id] = featurization
 
-    @property
+    @functools.cached_property
     def num_dims(self) -> int:
         """
         Returns the number of dimensions in the featurization vector.
@@ -537,7 +538,9 @@ class IconqQueryFeaturizer:
         cache_path = os.path.join(save_dir, "featurizations.pkl")
         with open(cache_path, "wb") as f:
             pickle.dump(
-                dict(self._featurization_cache), f, protocol=pickle.HIGHEST_PROTOCOL
+                dict(self._featurization_cache),
+                f,
+                protocol=pickle.HIGHEST_PROTOCOL,
             )
 
         return iconq_query_featurizer_id
