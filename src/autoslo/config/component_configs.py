@@ -233,6 +233,16 @@ class SamplingConfig(_PartialConfig):
 
 
 @dataclass(frozen=True)
+class SloObjectiveConfig(_PartialConfig):
+    """
+    Configuration for the SLO objective, including the metric and threshold.
+    """
+
+    slo_metric: str | SloMetric = "binary"
+    slo_threshold: float = 0.05
+
+
+@dataclass(frozen=True)
 class AutoscalerConfig(_PartialConfig):
     """
     Configuration for the autoscaler, including the target SLO and scaling
@@ -253,12 +263,14 @@ class AutoscalerConfig(_PartialConfig):
     # this fraction of the workload's queries have been routed.
 
     max_replay_copies: int = 30  # Max acceptable replays of obs. window.
+    trigger_slo_objective_config: Optional[SloObjectiveConfig] = None
 
     @classmethod
     def from_config(cls, cfg: dict, **kwargs) -> Self:
         """
         Parse autoscaler config while tolerating the removed
-        ``min_observations_to_act`` key in existing YAML files.
+        ``min_observations_to_act`` key and the nested
+        ``trigger_slo_objective_config`` dict in YAML files.
         """
         try:
             autoscaler_cfg = dict(cfg["autoscaler_config"])
@@ -266,8 +278,18 @@ class AutoscalerConfig(_PartialConfig):
             return super().from_config(cfg, **kwargs)
 
         autoscaler_cfg.pop("min_observations_to_act", None)
+        trigger_cfg_dict = autoscaler_cfg.pop(
+            "trigger_slo_objective_config", None
+        )
+        trigger_slo_objective_config = (
+            SloObjectiveConfig(**trigger_cfg_dict) if trigger_cfg_dict else None
+        )
         new_cfg = {**cfg, "autoscaler_config": autoscaler_cfg}
-        return super().from_config(new_cfg, **kwargs)
+        return super().from_config(
+            new_cfg,
+            trigger_slo_objective_config=trigger_slo_objective_config,
+            **kwargs,
+        )
 
 
 @dataclass(frozen=True)
@@ -327,16 +349,6 @@ class SloResolverConfig(_PartialConfig):
 
     slo_s: float = 10.0
     slo_dict_filename: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class SloObjectiveConfig(_PartialConfig):
-    """
-    Configuration for the SLO objective, including the metric and threshold.
-    """
-
-    slo_metric: str | SloMetric = "binary"
-    slo_threshold: float = 0.05
 
 
 @dataclass(frozen=True)

@@ -72,6 +72,11 @@ class Autoscaler:
     ) -> None:
         self._slo_resolver = slo_resolver
         self._slo_objective = slo_objective
+        self._trigger_slo_objective: SloObjective = (
+            SloObjective(autoscaler_config.trigger_slo_objective_config)
+            if autoscaler_config.trigger_slo_objective_config is not None
+            else slo_objective
+        )
         self._allowed_rpu_sizes = sorted(autoscaler_config.allowed_rpu_sizes)
         self._iconq_model = (
             iconq_model
@@ -303,10 +308,12 @@ class Autoscaler:
                     pred_lat = cluster.predicted_latencies[q.query_id]
                     slo = self._trigger_slo_resolver.resolve(q.query_text_id)
                     lat_and_slos.append(LatencySlo(pred_lat, slo))
-            slo_metric_value = self._slo_objective.slo_metric.aggregate_batch(
-                lat_and_slos
+            slo_metric_value = (
+                self._trigger_slo_objective.slo_metric.aggregate_batch(
+                    lat_and_slos
+                )
             )
-            slo_is_met = self._slo_objective.is_met_from_aggregated(
+            slo_is_met = self._trigger_slo_objective.is_met_from_aggregated(
                 slo_metric_value
             )
             if slo_is_met:
@@ -316,9 +323,10 @@ class Autoscaler:
                 f"observation_window_start_s={cutoff:.4f}, "
                 f"most_recent_cluster_ready_rel_time_s="
                 f"{self._most_recent_cluster_ready_rel_time_s}, "
-                f"slo_metric={self._slo_objective.slo_metric}, "
+                f"trigger_slo_metric={self._trigger_slo_objective.slo_metric}, "
                 f"slo_metric_value={slo_metric_value:.4f}, "
-                f"slo_threshold={self._slo_objective.slo_threshold:.4f}, "
+                f"trigger_slo_threshold="
+                f"{self._trigger_slo_objective.slo_threshold:.4f}, "
                 f"slo_tightening_factor={self._slo_tightening_factor}"
             )
 
@@ -433,7 +441,7 @@ class Autoscaler:
             ), SelectRpuStats(
                 pre_spinup_arrivals_processed=0,
                 post_spinup_arrivals_processed={
-                    rpu: 0 for rpu in self._allowed_rpu_sizes   
+                    rpu: 0 for rpu in self._allowed_rpu_sizes
                 },
             )
 
