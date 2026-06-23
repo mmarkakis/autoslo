@@ -1,0 +1,29 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[ht]
+\centering
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{c c c || c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{Round Robin} & \multicolumn{2}{c|}{Stage + Cost.Opt.} & \multicolumn{2}{c}{Iconq + Cost.Opt.} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+0.1 & 4 & [32, 16] & \underline{0.0000} & \$12.91 & 0.0135 & \$7.64 & \textbf{0.0000} & \$8.37 \\
+0.1 & 4 & [16, 16] & \underline{0.0000} & \$8.47 & 0.0135 & \$6.14 & \textbf{0.0000} & \$6.38 \\
+0.1 & 2 & [32, 16] & \underline{0.0135} & \$12.91 & 0.0909 & \$7.64 & \textbf{0.0034} & \$8.77 \\
+0.1 & 2 & [16, 16] & \underline{0.0202} & \$8.47 & 0.0909 & \$6.14 & \textbf{0.0067} & \$6.59 \\
+0.2 & 4 & [32, 16] & 0.1313 & \$7.88 & \underline{0.1246} & \$6.08 & \textbf{0.0000} & \$6.48 \\
+0.2 & 4 & [16, 16] & 0.1448 & \$5.48 & \underline{0.1279} & \$4.33 & \textbf{0.0000} & \$4.52 \\
+0.2 & 2 & [32, 16] & 0.3165 & \$7.88 & \underline{0.2997} & \$6.08 & \textbf{0.0067} & \$6.79 \\
+0.2 & 2 & [16, 16] & 0.3704 & \$5.48 & \underline{0.3401} & \$4.33 & \textbf{0.0539} & \$4.63 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \underline{+149.1\%} & -28.1\% & \textbf{-87.5\%} & -22.3\% \\
+\bottomrule
+\end{tabular}}
+\caption{Mean improvement is relative to Round Robin.}
+\label{tab:TODO}
+\end{table}
+\end{document}
