@@ -1,0 +1,40 @@
+workload_config:
+  workload_name: poisson_99_1_3_0.1_42
+  workload_dir: /home/markakis/chunkbench/data/workloads
+  target_date: '2026-01-01'
+  rescale_factor: 1
+slo_resolver_config:
+  slo_s: 30.0
+  slo_dict_filename: 1778469201294_p100_k4.yml
+slo_objective_config:
+  slo_metric: binary
+  slo_threshold: 0
+provisioner_config:
+  aws_config_path: data/config/aws.yml
+  spin_up_delay_s: 300.0
+workload_runner_config:
+  max_threads: 512
+  schema_name: ext_tpcds1000
+  closed_loop: false
+managed_cluster_pool_config:
+  maxconns: 1000
+  max_clusters: 2
+  initial_rpus:
+  - 16
+scheduled_spinups: []
+query_router_config:
+  routing_policy_name: use_iconq_model
+  iconq_model_id: model_v8
+autoscaler_config:
+  autoscaling_policy: add_single_best_forward
+  allowed_rpu_sizes:
+  - 4
+  - 8
+  - 16
+  - 32
+  min_cluster_lifetime_s: 3600.0
+  idle_time_before_tear_down_s: 1200.0
+  observation_window_s: 600.0
+  slo_tightening_factor: 1.0
+  force_one_decision_after_query_fraction: 0.2
+  min_finished_queries_in_counterfactual: 30
