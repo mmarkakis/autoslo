@@ -7,8 +7,10 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from rich.console import Console
+from rich.prompt import Confirm
 from rich.table import Table
 
 import autoslo.filesystem.path_utils as pu
@@ -21,6 +23,7 @@ from autoslo.filesystem.path_utils import (
 )
 from autoslo.filesystem.yaml_helpers import load_yaml, load_yaml_with_params
 from autoslo.tuner.scenario_evaluator import ScenarioEvaluator
+from autoslo.workload_definition.workload import Workload
 from autoslo.workload_execution.execution_result import ExecutionResult
 from autoslo.workload_execution.workload_runner import WorkloadRunner
 
@@ -63,6 +66,56 @@ def _print_summary(records: list[_RunRecord], wall_elapsed_s: float) -> None:
     console.print(table)
 
 
+def _fmt_duration(t_s: float) -> str:
+    h = int(t_s) // 3600
+    m = (int(t_s) % 3600) // 60
+    s = int(t_s) % 60
+    return f"{t_s:,.0f}s ({h}h {m}m {s}s)"
+
+
+def _print_preflight_table(
+    rows: list[tuple[str, str, str, Optional[float]]],
+) -> None:
+    table = Table(title="Execute Preflight Summary")
+    table.add_column("Config", style="cyan", no_wrap=True)
+    table.add_column("Workload", no_wrap=True)
+    table.add_column("Action", no_wrap=True)
+    table.add_column("Max rel_time_s", justify="right")
+    for config_label, wid, action, duration in rows:
+        if action == "Run":
+            action_str = "[green]Run[/]"
+        elif action == "Skip — exists":
+            action_str = "[yellow]Skip \u2014 exists[/]"
+        else:
+            action_str = "[dim]Skip \u2014 split[/]"
+        dur_str = (
+            _fmt_duration(duration)
+            if duration is not None
+            else "[dim]\u2014[/]"
+        )
+        table.add_row(config_label, wid, action_str, dur_str)
+    run_total = sum(
+        t for _, _, action, t in rows if action == "Run" and t is not None
+    )
+    if run_total > 0:
+        table.add_section()
+        table.add_row(
+            "",
+            "[bold]TOTAL (to run)[/]",
+            "",
+            f"[bold]{_fmt_duration(run_total)}[/]",
+        )
+    console.print(table)
+
+
+def _confirm_execution(num_to_run: int, num_to_skip: int) -> bool:
+    console.print(
+        f"Planned actions: [green]{num_to_run} to run[/], "
+        f"[yellow]{num_to_skip} to skip[/]."
+    )
+    return Confirm.ask("Proceed?", default=True)
+
+
 def main():
     t_start = time.monotonic()
     # Argument parsing.
@@ -96,7 +149,7 @@ def main():
         type=int,
         default=1,
         help=(
-            "Total number of parallel splits. Use with --split-index. Only "
+            "Total number of parallel splits. Use with --split_index. Only "
             "used for live runs."
         ),
     )
@@ -131,21 +184,85 @@ def main():
     entries = manifest.get("main_content", [])
     data_path = Path(pu.get_data_path())
 
-    if not args.live:
-        records = _run_simulator(entries, data_path, force=args.force)
-    else:
-        split_entries = [
+    # Apply split filter for live runs.
+    if args.live and args.splits > 1:
+        effective_entries = [
             e
             for i, e in enumerate(entries)
             if i % args.splits == args.split_index
         ]
-        if args.splits > 1:
-            console.print(
-                f"[bold]Split {args.split_index} of {args.splits}:[/] "
-                f"{len(split_entries)} of {len(entries)} entries assigned to "
-                f"this split."
-            )
-        records = _run_live(split_entries, force=args.force)
+        console.print(
+            f"[bold]Split {args.split_index} of {args.splits}:[/] "
+            f"{len(effective_entries)} of {len(entries)} entries assigned to "
+            f"this split."
+        )
+    else:
+        effective_entries = entries
+
+    # ── Preflight ───────────────────────────────────────────────────────────────────
+    sim_runs_dir = data_path / "simulator_runs"
+    runs_path = Path(pu.get_runs_path())
+    preflight_rows: list[tuple[str, str, str, Optional[float]]] = []
+
+    for i, entry in enumerate(entries):
+        workload_config = WorkloadConfig.from_config(entry)
+        exec_cfg_path = resolve_config(entry["execution_config"])
+        params = entry.get("params", {})
+        config_label = make_run_id([exec_cfg_path.stem], params)
+        wid = workload_config.id()
+
+        # Priority 1: entry not assigned to this split.
+        if (
+            args.live
+            and args.splits > 1
+            and i % args.splits != args.split_index
+        ):
+            action = "Skip \u2014 split"
+        else:
+            # Priority 2: output already exists.
+            if not args.live:
+                out_dir = sim_runs_dir / wid / config_label
+                would_skip = (
+                    not args.force
+                    and (out_dir / "execution_config.yml").exists()
+                )
+            else:
+                recent_run_id = find_most_recent_live_run_id(config_label, wid)
+                would_skip = (
+                    not args.force
+                    and recent_run_id is not None
+                    and (
+                        runs_path / recent_run_id / "execution_config.yml"
+                    ).exists()
+                )
+            action = "Skip \u2014 exists" if would_skip else "Run"
+
+        try:
+            _, max_t = Workload(workload_config).rel_start_time_range()
+            duration: Optional[float] = max_t
+        except Exception:
+            duration = None
+
+        preflight_rows.append((config_label, wid, action, duration))
+
+    _print_preflight_table(preflight_rows)
+
+    num_to_run = sum(1 for _, _, action, _ in preflight_rows if action == "Run")
+    num_to_skip = len(preflight_rows) - num_to_run
+
+    if num_to_run == 0:
+        console.print("[dim]No pending runs. Nothing to do.[/]")
+        return
+
+    if not _confirm_execution(num_to_run=num_to_run, num_to_skip=num_to_skip):
+        console.print("[yellow]Cancelled by user.[/]")
+        return
+
+    # ── Execute ──────────────────────────────────────────────────────────────────
+    if not args.live:
+        records = _run_simulator(effective_entries, data_path, force=args.force)
+    else:
+        records = _run_live(effective_entries, force=args.force)
 
     console.print("\n[bold green]Execution complete.[/]")
     _print_summary(records, wall_elapsed_s=time.monotonic() - t_start)
