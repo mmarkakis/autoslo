@@ -276,9 +276,11 @@ def _save_points_latex_table(
         r"\usepackage{amsmath}",
         r"\usepackage[landscape, margin=1cm]{geometry}",
         r"\begin{document}",
-        r"\begin{table}[ht]",
+        r"\begin{table}[t]",
         r"\centering",
-        r"\resizebox{\columnwidth}{!}{",
+        r"\footnotesize",
+        r"\setlength{\tabcolsep}{2.5pt}",
+        rf"\caption{{Mean improvement is relative to {_table_tex_escape(reference_label)}. Bold/underline indicate first/second best per row, respectively.}}\label{{tab:todo}}",
         r"\begin{tabular}{" + col_spec + r"}",
         r"\toprule",
     ]
@@ -299,9 +301,12 @@ def _save_points_latex_table(
 
     for panel_key, points_by_method in panel_entries:
         lam, kap, c = _table_parse_panel(panel_key)
-        ranked = sorted(points_by_method.items(), key=lambda item: item[1])
-        best = ranked[0][0] if len(ranked) >= 1 else None
-        second = ranked[1][0] if len(ranked) >= 2 else None
+        rounded_vr = {
+            method: round(x, 4) for method, (x, _y) in points_by_method.items()
+        }
+        sorted_vr_vals = sorted(rounded_vr.values())
+        best_vr = sorted_vr_vals[0] if len(sorted_vr_vals) >= 1 else None
+        second_vr = sorted_vr_vals[1] if len(sorted_vr_vals) >= 2 else None
 
         cells: list[str] = [
             _table_tex_escape(lam),
@@ -311,10 +316,11 @@ def _save_points_latex_table(
         for method in method_order:
             if method in points_by_method:
                 x, y = points_by_method[method]
+                rvr = rounded_vr[method]
                 vr_cell = f"{x:.4f}"
-                if method == best:
+                if rvr == best_vr:
                     vr_cell = rf"\textbf{{{vr_cell}}}"
-                elif method == second:
+                elif rvr == second_vr:
                     vr_cell = rf"\underline{{{vr_cell}}}"
                 cells.append(vr_cell)
                 cells.append(rf"\${y:.2f}")
@@ -379,9 +385,7 @@ def _save_points_latex_table(
 
     lines += [
         r"\bottomrule",
-        r"\end{tabular}}",
-        rf"\caption{{Mean improvement is relative to {_table_tex_escape(reference_label)}.}}",
-        r"\label{tab:TODO}",
+        r"\end{tabular}",
         r"\end{table}",
         r"\end{document}",
     ]
