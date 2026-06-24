@@ -18,7 +18,10 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
 )
 from autoslo.config.utils import make_run_id
-from autoslo.filesystem.config_resolver import get_exec_config_ref, resolve_config
+from autoslo.filesystem.config_resolver import (
+    get_exec_config_ref,
+    resolve_config,
+)
 from autoslo.filesystem.path_utils import find_most_recent_live_run_id
 from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import load_yaml
@@ -93,6 +96,7 @@ def _load_panel_data(
     slo_obj = SloObjective(SloObjectiveConfig.from_config(panel))
     slo_resolver = SloResolver(SloResolverConfig.from_config(panel))
     tail_fraction: float = panel.get("tail_fraction", 1.0)
+    min_cluster_index: int | None = panel.get("min_cluster_index")
     show_target_region = layout_show_target_region or panel.get(
         "show_target_region", False
     )
@@ -155,7 +159,10 @@ def _load_panel_data(
                 )
                 continue
         result = ExecutionResult.load(
-            run_dir, slo_resolver=slo_resolver, tail_fraction=tail_fraction
+            run_dir,
+            slo_resolver=slo_resolver,
+            tail_fraction=tail_fraction,
+            min_cluster_index=min_cluster_index,
         )
         annotation = (
             _cluster_annotation(run_dir) if annotate_cluster_sizes else None

@@ -538,6 +538,25 @@ class StructuredLog:
             .rename("success")
         )
 
+    def cluster_ready_times(self) -> dict[str, float]:
+        """Return a mapping from cluster name to the time it became ready.
+
+        Scans ``CLUSTER_READY`` events in the log and returns
+        ``{cluster_name: rel_time_s}``.
+        Returns an empty dict if no such events are present.
+        """
+        df = self.df
+        if "cluster_name" not in df.columns:
+            return {}
+        ready = df[
+            (df["event_type"] == EventType.CLUSTER_READY.value)
+            & df["cluster_name"].notna()
+            & (df["cluster_name"] != "")
+        ][["cluster_name", "rel_time_s"]]
+        if ready.empty:
+            return {}
+        return dict(zip(ready["cluster_name"], ready["rel_time_s"]))
+
     def prediction_accuracy_df(self) -> pd.DataFrame:
         """
         Return a DataFrame with one row per query containing actual latency,
