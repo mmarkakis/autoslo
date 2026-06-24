@@ -34,63 +34,67 @@ main_content:
       - label: "RoundRobin16+16"
         formatting_id: main_eval_16_16
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [16,16]
       - label: "Single32"
         formatting_id: main_eval_32
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [32]
       - label: "RoundRobin32+32"
         formatting_id: main_eval_32_32
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [32,32]
       - label: "Single64"
         formatting_id: main_eval_64
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [64]
       - label: "Past1, τ=0.05"
         formatting_id: main_eval_past1_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k4_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_1day_k4_thresh5_nocache_v8.yml
       - label: "Past7, τ=0.05"
         formatting_id: main_eval_past7_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k4_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_1week_k4_thresh5_nocache_v8.yml
       - label: "Past30, τ=0.05"
         formatting_id: main_eval_past30_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k4_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_1month_k4_thresh5_nocache_v8.yml
       - label: "Oracle, τ=0.05"
         formatting_id: main_eval_oracle_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k4_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_oracle_k4_thresh5_nocache_v8.yml
       - label: "Past1, τ=0.01"
         formatting_id: main_eval_past1_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k4_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_1day_k4_thresh1_nocache_v8.yml
       - label: "Past7, τ=0.01"
         formatting_id: main_eval_past7_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k4_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_1week_k4_thresh1_nocache_v8.yml
       - label: "Past30, τ=0.01"
         formatting_id: main_eval_past30_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k4_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_1month_k4_thresh1_nocache_v8.yml
       - label: "Oracle, τ=0.01"
         formatting_id: main_eval_oracle_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k4_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_oracle_k4_thresh1_nocache_v8.yml
 
   - row: 0
     col: 1
@@ -111,61 +115,65 @@ main_content:
       - label: "RoundRobin16+16"
         formatting_id: main_eval_16_16
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [16,16]
       - label: "Single32"
         formatting_id: main_eval_32
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [32]
       - label: "RoundRobin32+32"
         formatting_id: main_eval_32_32
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [32,32]
       - label: "Single64"
         formatting_id: main_eval_64
         workload_config: *may27_workload_config
-        execution_config: exec:handmade/main_eval_round_robin.yml
+        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        live_execution_config: exec:handmade/main_eval_round_robin.yml
         params:
           TARGET_DATE: "2024-05-27"
           INITIAL_RPU: [64]
       - label: "Past1, τ=0.05"
         formatting_id: main_eval_past1_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k2_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_1day_k2_thresh5_nocache_v8.yml
       - label: "Past7, τ=0.05"
         formatting_id: main_eval_past7_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k2_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_1week_k2_thresh5_nocache_v8.yml
       - label: "Past30, τ=0.05"
         formatting_id: main_eval_past30_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v8.yml
       - label: "Oracle, τ=0.05"
         formatting_id: main_eval_oracle_thresh5
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v6.yml
+        execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v8.yml
       - label: "Past1, τ=0.01"
         formatting_id: main_eval_past1_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k2_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_1day_k2_thresh1_nocache_v8.yml
       - label: "Past7, τ=0.01"
         formatting_id: main_eval_past7_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k2_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_1week_k2_thresh1_nocache_v8.yml
       - label: "Past30, τ=0.01"
         formatting_id: main_eval_past30_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k2_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_1month_k2_thresh1_nocache_v8.yml
       - label: "Oracle, τ=0.01"
         formatting_id: main_eval_oracle_thresh1
         workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k2_thresh1_nocache_v6.yml
+        execution_config: exec:tuned/may27_oracle_k2_thresh1_nocache_v8.yml
  

@@ -16,7 +16,7 @@ from rich.table import Table
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.config.utils import copy_and_apply_overrides, make_run_id
-from autoslo.filesystem.config_resolver import resolve_config
+from autoslo.filesystem.config_resolver import get_exec_config_ref, resolve_config
 from autoslo.filesystem.path_utils import (
     append_to_run_log,
     find_most_recent_live_run_id,
@@ -86,6 +86,8 @@ def _print_preflight_table(
             action_str = "[green]Run[/]"
         elif action == "Skip — exists":
             action_str = "[yellow]Skip \u2014 exists[/]"
+        elif action == "Skip — missing":
+            action_str = "[red]Skip \u2014 missing[/]"
         else:
             action_str = "[dim]Skip \u2014 split[/]"
         dur_str = (
@@ -203,49 +205,91 @@ def main():
     sim_runs_dir = data_path / "simulator_runs"
     runs_path = Path(pu.get_runs_path())
     preflight_rows: list[tuple[str, str, str, Optional[float]]] = []
+    missing_entry_indices: set[int] = set()
 
     for i, entry in enumerate(entries):
-        workload_config = WorkloadConfig.from_config(entry)
-        exec_cfg_path = resolve_config(entry["execution_config"])
-        params = entry.get("params", {})
-        config_label = make_run_id([exec_cfg_path.stem], params)
-        wid = workload_config.id()
-
-        # Priority 1: entry not assigned to this split.
-        if (
+        is_split_excluded = (
             args.live
             and args.splits > 1
             and i % args.splits != args.split_index
-        ):
-            action = "Skip \u2014 split"
+        )
+
+        # Try to resolve the config path and workload identity.  Either can
+        # fail if a required file is absent or the entry is malformed.
+        try:
+            workload_config = WorkloadConfig.from_config(entry)
+            exec_cfg_path = resolve_config(get_exec_config_ref(entry, args.live))
+            if not exec_cfg_path.exists():
+                raise FileNotFoundError(
+                    f"Execution config not found: {exec_cfg_path}"
+                )
+            params = entry.get("params", {})
+            config_label = make_run_id([exec_cfg_path.stem], params)
+            wid = workload_config.id()
+        except Exception:
+            mode_key = "live_execution_config" if args.live else "sim_execution_config"
+            raw_cfg = str(
+                entry.get(mode_key) or entry.get("execution_config", "?")
+            )
+            raw_wl = (
+                entry.get("workload_config", {}).get("workload_name", "?")
+                if isinstance(entry.get("workload_config"), dict)
+                else "?"
+            )
+            action = "Skip \u2014 split" if is_split_excluded else "Skip \u2014 missing"
+            if not is_split_excluded:
+                missing_entry_indices.add(i)
+            preflight_rows.append((raw_cfg, raw_wl, action, None))
+            continue
+
+        # Priority 1: entry not assigned to this split.
+        if is_split_excluded:
+            preflight_rows.append((config_label, wid, "Skip \u2014 split", None))
+            continue
+
+        # Priority 2: output already exists.
+        if not args.live:
+            out_dir = sim_runs_dir / wid / config_label
+            would_skip = (
+                not args.force
+                and (out_dir / "execution_config.yml").exists()
+            )
         else:
-            # Priority 2: output already exists.
-            if not args.live:
-                out_dir = sim_runs_dir / wid / config_label
-                would_skip = (
-                    not args.force
-                    and (out_dir / "execution_config.yml").exists()
-                )
-            else:
-                recent_run_id = find_most_recent_live_run_id(config_label, wid)
-                would_skip = (
-                    not args.force
-                    and recent_run_id is not None
-                    and (
-                        runs_path / recent_run_id / "execution_config.yml"
-                    ).exists()
-                )
-            action = "Skip \u2014 exists" if would_skip else "Run"
+            recent_run_id = find_most_recent_live_run_id(config_label, wid)
+            would_skip = (
+                not args.force
+                and recent_run_id is not None
+                and (
+                    runs_path / recent_run_id / "execution_config.yml"
+                ).exists()
+            )
+        action = "Skip \u2014 exists" if would_skip else "Run"
 
         try:
             _, max_t = Workload(workload_config).rel_start_time_range()
             duration: Optional[float] = max_t
+        except FileNotFoundError:
+            action = "Skip \u2014 missing"
+            missing_entry_indices.add(i)
+            duration = None
         except Exception:
             duration = None
 
         preflight_rows.append((config_label, wid, action, duration))
 
     _print_preflight_table(preflight_rows)
+
+    # Remove missing entries from the execution set.
+    if missing_entry_indices:
+        effective_entries = [
+            e for i, e in enumerate(entries)
+            if (
+                not args.live
+                or args.splits == 1
+                or i % args.splits == args.split_index
+            )
+            and i not in missing_entry_indices
+        ]
 
     num_to_run = sum(1 for _, _, action, _ in preflight_rows if action == "Run")
     num_to_skip = len(preflight_rows) - num_to_run
@@ -283,7 +327,7 @@ def _run_simulator(
 
     for entry in entries:
         workload_config = WorkloadConfig.from_config(entry)
-        exec_cfg_path = resolve_config(entry["execution_config"])
+        exec_cfg_path = resolve_config(get_exec_config_ref(entry, live=False))
         params = entry.get("params", {})
         config_label = make_run_id([exec_cfg_path.stem], params)
         wid = workload_config.id()
@@ -334,7 +378,7 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
     records: list[_RunRecord] = []
     for entry in entries:
         workload_config = WorkloadConfig.from_config(entry)
-        exec_cfg_path = resolve_config(entry["execution_config"])
+        exec_cfg_path = resolve_config(get_exec_config_ref(entry, live=True))
         params = entry.get("params", {})
         config_label = make_run_id([exec_cfg_path.stem], params)
         wid = workload_config.id()

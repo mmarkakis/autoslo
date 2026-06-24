@@ -18,7 +18,7 @@ from autoslo.config.component_configs import (
     WorkloadConfig,
 )
 from autoslo.config.utils import make_run_id
-from autoslo.filesystem.config_resolver import resolve_config
+from autoslo.filesystem.config_resolver import get_exec_config_ref, resolve_config
 from autoslo.filesystem.path_utils import find_most_recent_live_run_id
 from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.filesystem.yaml_helpers import load_yaml
@@ -124,7 +124,7 @@ def _load_panel_data(
     runs_dir = Path(pu.get_runs_path())
     for point in panel["points"]:
         workload_config = WorkloadConfig.from_config(point)
-        exec_cfg_path = resolve_config(point["execution_config"])
+        exec_cfg_path = resolve_config(get_exec_config_ref(point, live))
         params = point.get("params", {})
         config_label = make_run_id([exec_cfg_path.stem], params)
         if live:

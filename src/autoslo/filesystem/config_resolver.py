@@ -39,6 +39,46 @@ def resolve_config(ref: str) -> Path:
     return data / sub_dir / (path_part + ".yml")
 
 
+def get_exec_config_ref(entry: dict, live: bool) -> str:
+    """Return the execution-config reference for *entry* in the given run mode.
+
+    Exactly one of the following two styles must be used — mixing them is an
+    error:
+
+    * ``execution_config`` — a single reference used for both sim and live.
+    * ``sim_execution_config`` **and** ``live_execution_config`` — both keys
+      must be present together; one without the other is an error.
+
+    Raises ``KeyError`` if no applicable key is present.
+    Raises ``ValueError`` for invalid combinations.
+    """
+    has_unified = "execution_config" in entry
+    has_sim = "sim_execution_config" in entry
+    has_live = "live_execution_config" in entry
+
+    if has_unified and (has_sim or has_live):
+        raise ValueError(
+            "Manifest entry mixes 'execution_config' with "
+            "'sim_execution_config'/'live_execution_config'. "
+            "Use exactly one style."
+        )
+    if (has_sim or has_live) and not (has_sim and has_live):
+        missing = (
+            "sim_execution_config" if has_live else "live_execution_config"
+        )
+        raise ValueError(
+            f"Manifest entry has {'live' if has_live else 'sim'} execution config, "
+            f"but is missing '{missing}'. Both must be provided together."
+        )
+    if has_sim:
+        return (
+            entry["live_execution_config"]
+            if live
+            else entry["sim_execution_config"]
+        )
+    return entry["execution_config"]
+
+
 def resolve_trial_spec_path(ref: str) -> Path:
     """Resolve a ``trial:<path>`` reference to the trial_spec.yml Path.
 
@@ -47,9 +87,7 @@ def resolve_trial_spec_path(ref: str) -> Path:
     """
     scheme, _, path_part = ref.partition(":")
     if scheme.lower() != "trial":
-        raise ValueError(
-            f"Expected 'trial:' scheme in '{ref}'."
-        )
+        raise ValueError(f"Expected 'trial:' scheme in '{ref}'.")
     root = Path(pu.AUTOSLO_ROOT)
     return root / "experiments" / path_part / "trial_spec.yml"
 
@@ -91,9 +129,7 @@ def resolve_series_exec_config_id(
                     ],
                     params,
                 )
-        warnings.warn(
-            f"trial_id '{trial_id}' not found in {trial_spec_path}"
-        )
+        warnings.warn(f"trial_id '{trial_id}' not found in {trial_spec_path}")
         return None
 
     if "baseline" in entry:
