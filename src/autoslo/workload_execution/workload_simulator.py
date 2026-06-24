@@ -397,6 +397,11 @@ class WorkloadSimulator:
             cluster_name=cluster_name,
             rel_time_s=self._current_sim_time_s,
         )
+        self._autoscaler.record_completion(
+            query=event.details["query"],
+            latency_s=latency_s_from_event,
+            rel_time_s=self._current_sim_time_s,
+        )
 
         self._completed_queries += 1
         if (

@@ -253,6 +253,8 @@ class AutoscalerConfig(_PartialConfig):
         default_factory=Cluster.all_allowed_rpu_sizes
     )
     autoscaling_policy: str = "add_single_best_forward"
+    autoscaling_trigger_policy: str = "predicted_violations"
+    trigger_threshold: int = 10  # The "N" in Queue@N and Observed@N.
     min_cluster_lifetime_s: float = 1200.0
     idle_time_before_tear_down_s: float = 300.0
     observation_window_s: float = 120.0

@@ -92,6 +92,7 @@ def route_and_update_bookkeeping(
                     "cluster_name": selected_cluster_name,
                     "latency_s": self_latency_s,
                     "query_text_id": query.query_text_id,
+                    "query": query,
                 },
             ),
         )
@@ -139,6 +140,7 @@ def route_and_update_bookkeeping(
                         "cluster_name": selected_cluster_name,
                         "latency_s": updated_latency_s,
                         "query_text_id": affected_query.query_text_id,
+                        "query": affected_query,
                     },
                 ),
             )

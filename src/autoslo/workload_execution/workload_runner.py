@@ -7,7 +7,7 @@ import queue
 import threading
 from functools import partial
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypeAlias
 
 from tqdm.auto import tqdm
 
@@ -37,9 +37,10 @@ from autoslo.workload_definition.workload import Workload
 # ---------------------------------------------------------------------------
 
 
-class _AutoscalerWorkItem:
+class _ArrivalForAutoscalerProxy:
     """
-    Payload enqueued by _AutoscalerProxy for the background autoscaler thread.
+    Enqueued by _AutoscalerProxy when a query arrives; forwarded to
+    ``Autoscaler.inform()`` on the background thread.
     """
 
     __slots__ = ("rel_time_s", "query", "snapshot")
@@ -55,6 +56,32 @@ class _AutoscalerWorkItem:
         self.snapshot = snapshot
 
 
+class _CompletionForAutoscalerProxy:
+    """
+    Enqueued when a query finishes (successfully or not); forwarded to
+    ``Autoscaler.record_completion()`` on the background thread.
+
+    ``latency_s`` is ``None`` for failed queries.
+    """
+
+    __slots__ = ("rel_time_s", "query", "latency_s")
+
+    def __init__(
+        self,
+        rel_time_s: float,
+        query: "Query",
+        latency_s: Optional[float],
+    ) -> None:
+        self.rel_time_s = rel_time_s
+        self.query = query
+        self.latency_s = latency_s
+
+
+_AutoscalerProxyEvent: TypeAlias = (
+    _CompletionForAutoscalerProxy | _ArrivalForAutoscalerProxy | None
+)
+
+
 class _AutoscalerProxy:
     """Passed to route_and_update_bookkeeping in place of the real Autoscaler.
 
@@ -63,9 +90,7 @@ class _AutoscalerProxy:
     SpinUp/TearDown actions are dispatched by the background thread instead.
     """
 
-    def __init__(
-        self, q: "queue.SimpleQueue[_AutoscalerWorkItem | None]"
-    ) -> None:
+    def __init__(self, q: queue.SimpleQueue[_AutoscalerProxyEvent]) -> None:
         self._queue = q
 
     def inform(
@@ -75,7 +100,7 @@ class _AutoscalerProxy:
         pool_snapshot_with_current_query: "dict[str, ClusterView]",
     ) -> list[ScalingAction]:
         self._queue.put(
-            _AutoscalerWorkItem(
+            _ArrivalForAutoscalerProxy(
                 rel_time_s, current_query, pool_snapshot_with_current_query
             )
         )
@@ -134,9 +159,9 @@ class WorkloadRunner:
         self._routing_lock = threading.Lock()
         self._spin_ups_lock = threading.Lock()
         self._pending_spin_ups: list[concurrent.futures.Future] = []
-        self._autoscaler_queue: queue.SimpleQueue[
-            Optional[_AutoscalerWorkItem]
-        ] = queue.SimpleQueue()
+        self._autoscaler_queue: queue.SimpleQueue[_AutoscalerProxyEvent] = (
+            queue.SimpleQueue()
+        )
 
     @property
     def workload(self) -> Workload:
@@ -267,29 +292,48 @@ class WorkloadRunner:
             item = self._autoscaler_queue.get()
             if item is None:  # sentinel — time to exit
                 break
-            try:
-                actions = self._autoscaler.inform(
-                    rel_time_s=item.rel_time_s,
-                    current_query=item.query,
-                    pool_snapshot_with_current_query=item.snapshot,
-                )
-                for action in actions:
-                    if isinstance(action, SpinUpAction):
-                        self._on_live_spin_up(action)
-                    elif isinstance(action, TearDownAction):
-                        self._pool.request_tear_down(action, self._rel_time_s())
-                    elif self._write_text_log:
-                        logging.warning(
-                            "Unknown autoscaling action type: %s", type(action)
-                        )
-            except Exception:
-                logging.exception(
-                    (
-                        "Autoscaler background thread failed for query %s; "
-                        "continuing."
-                    ),
-                    item.query.query_id,
-                )
+            if isinstance(item, _CompletionForAutoscalerProxy):
+                try:
+                    self._autoscaler.record_completion(
+                        query=item.query,
+                        latency_s=item.latency_s,
+                        rel_time_s=item.rel_time_s,
+                    )
+                except Exception:
+                    logging.exception(
+                        (
+                            "Autoscaler background thread failed to record "
+                            "completion for query %s; continuing."
+                        ),
+                        item.query.query_id,
+                    )
+            else:
+                try:
+                    actions = self._autoscaler.inform(
+                        rel_time_s=item.rel_time_s,
+                        current_query=item.query,
+                        pool_snapshot_with_current_query=item.snapshot,
+                    )
+                    for action in actions:
+                        if isinstance(action, SpinUpAction):
+                            self._on_live_spin_up(action)
+                        elif isinstance(action, TearDownAction):
+                            self._pool.request_tear_down(
+                                action, self._rel_time_s()
+                            )
+                        elif self._write_text_log:
+                            logging.warning(
+                                "Unknown autoscaling action type: %s",
+                                type(action),
+                            )
+                except Exception:
+                    logging.exception(
+                        (
+                            "Autoscaler background thread failed for query %s; "
+                            "continuing."
+                        ),
+                        item.query.query_id,
+                    )
 
     def _run_query_sync(
         self,
@@ -457,6 +501,13 @@ class WorkloadRunner:
                         details={"success": (latency_s is not None)},
                         query_id=query.query_id,
                         query_text_id=query.query_text_id,
+                    )
+                )
+                self._autoscaler_queue.put(
+                    _CompletionForAutoscalerProxy(
+                        rel_time_s=self._rel_time_s(),
+                        query=query,
+                        latency_s=latency_s,
                     )
                 )
                 loop.run_in_executor(
