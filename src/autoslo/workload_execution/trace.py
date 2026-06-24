@@ -345,8 +345,7 @@ class Trace:
     @property
     def costs(self) -> list[float]:
         """
-        Placeholder method to return costs associated with each cluster used
-        in the trace.
+        Return costs associated with each cluster used in the trace.
 
         Returns:
             A list of costs associated with each cluster used in the trace.
