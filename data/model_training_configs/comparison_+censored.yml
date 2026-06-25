@@ -1,0 +1,113 @@
+# ── IconQ model init config ─────────────────────────────────────────────────
+# Fields map directly to IconqModelInitConfig (omit to use dataclass defaults).
+iconq_model_init_config:
+  schema_name: ext_tpcds1000
+  embedding_size: 64
+  lstm_hidden_size: 128
+  lstm_num_layers: 1
+  lstm_dropout: 0.2
+  is_bayesian: false
+  is_mdn: false
+  train_on_log_runtime: true
+  ignore_cluster_size: false
+  interaction_feature_version: 'v2'
+  forward_after_lstm: false
+
+# ── IconQ model train config ─────────────────────────────────────────────────
+# Fields map directly to IconqModelTrainConfig.
+iconq_model_train_config:
+  run_ids:
+    - "1778822197626"
+    - "1778822203993"
+    - "1778821888613"
+    - "1778822227786"
+    - "1778827732917"
+    - "1778824254808"
+    - "1778823665762"
+    - "1778824038818"
+    - "1778833176612"
+    - "1778827275022"
+    - "1778826668997"
+    - "1778827099259"
+    - "1778839357246"
+    - "1778830455527"
+    - "1778829317324"
+    - "1778829721533"
+    - "1778846572149"
+    - "1778835128511"
+    - "1778833931287"
+    - "1778834328135"
+    - "1778852891136"
+    - "1778839631928"
+    - "1778836790029"
+    - "1778836931383"
+    - "1778861305520"
+    - "1778844782091"
+    - "1778841575338"
+    - "1778841695519"
+    - "1778868881242"
+    - "1778850918197"
+    - "1778845281053"
+    - "1778845494039"
+    - "1781477913882"
+    - "1781477958362"
+    - "1781477985974"
+    - "1781478035304"
+    - "1781480102927"
+    - "1781480803735"
+    - "1781481662816"
+    - "1781483184926"
+    - "1781483786331"
+    - "1781483837349"
+    - "1781484238915"
+    - "1781486891893"
+    - "1781488939845"
+    - "1781489356247"
+    - "1781489438980"
+    - "1781493005580"
+    - "1781493737133"
+    - "1781494395969"
+    - "1781494595660"
+    - "1781498169086"
+    - "1781500015795"
+    - "1781500482985"
+    - "1781504082664"
+    - "1781504195418"
+    - "1781505894196"
+    - "1781511937938"
+    - "1781513174670"
+    - "1781522879274"
+
+
+  train_stage_only_on_isolated_queries: true
+  use_client_side_latencies: true
+  ignore_aborted_queries: false
+
+  split_seed: 42
+
+  training_dataloader_shuffle_seed: 42
+  test_frac: 0.2
+  test_split_type: random
+  val_frac: 0.2
+  val_split_type: random
+
+  learning_rate: 0.001
+  learning_rate_gamma: 0.9
+  weight_decay: 2.0e-05
+  var_reg_weight: 0.01
+  num_epochs: 100
+  batch_size: 32
+  grad_clip_max_norm: 2.0
+
+  patience: 5
+  min_loss_improvement: 0.001
+  optuna_trials: 100
+  mdn_mix_softmax_temperature: 1.0
+
+  use_stage_for_isolated_queries: false
+  sensitive_q_error_loss_small_val: 5.0
+  penalize_based_on_overlap: false
+  sensitive_q_error_loss_version: 4
+
+  neighbor_derived_censored_observation_prob: 0.005
+  neighbor_derived_censored_observation_seed: 0

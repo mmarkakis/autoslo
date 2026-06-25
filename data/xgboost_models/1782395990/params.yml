@@ -1,0 +1,12 @@
+early_stopping_rounds: 100
+eta: 0.2
+eval_metric: aft-nloglik
+iconq_query_featurizer_id: '1782395980'
+ignore_cluster_size: false
+max_depth: 8
+n_estimators: 100
+only_non_overlapping_queries: true
+random_seed: 42
+train_on_log_runtime: true
+trained_with_ignore_aborted_queries: false
+xgb_training_mode: aft_censored
