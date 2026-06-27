@@ -77,8 +77,8 @@ class Palette:
     @staticmethod
     def rpu_to_color() -> Mapping[int, str]:
         return {
-            4: Palette.light_green,
-            8: Palette.light_blue,
+            4: Palette.light_blue,
+            8: Palette.light_green,
             16: Palette.light_red,
             32: Palette.light_purple,
         }

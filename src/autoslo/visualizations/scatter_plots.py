@@ -82,10 +82,10 @@ FORMATTING = {
     "autoscaler_duplicate_largest": (Palette.light_blue, "^"),
     "autoscaler_ours": (Palette.dark_green, "o"),
     "autoscaler_ours_forward": (Palette.light_green, "o"),
-    "main_eval_16_16": (Palette.light_red, "D"),
-    "main_eval_32": (Palette.light_red, "s"),
-    "main_eval_32_32": (Palette.light_purple, "D"),
-    "main_eval_64": (Palette.light_purple, "s"),
+    "main_eval_16_16": (Palette.light_red, "P"),
+    "main_eval_32": (Palette.light_red, "X"),
+    "main_eval_32_32": (Palette.light_purple, "P"),
+    "main_eval_64": (Palette.light_purple, "X"),
     "main_eval_past30_thresh5": (Palette.dark_green, "^"),
     "main_eval_past7_thresh5": (Palette.dark_green, "s"),
     "main_eval_past1_thresh5": (Palette.dark_green, "o"),
@@ -100,6 +100,10 @@ FORMATTING = {
     "main_eval_oracle_thresh1": (Palette.dark_blue, "*"),
     "main_eval_rais50": (Palette.light_purple, "o"),
     "main_eval_rais100": (Palette.dark_purple, "o"),
+    "trigger_noop": (Palette.light_gray, "s"),
+    "trigger_queue_depth": (Palette.light_blue, "^"),
+    "trigger_observed_violations": (Palette.light_red, "D"),
+    "trigger_combined_violations": (Palette.light_green, "o"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
