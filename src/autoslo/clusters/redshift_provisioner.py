@@ -46,8 +46,6 @@ _DEFAULT_AWS_REGION = "us-east-1"
 _DEFAULT_SCHEMA_SCALES = [1, 10, 100, 1000, 3000, 10000]
 _DEFAULT_DB_NAME = "dev"
 _DEFAULT_PORT = 5439
-_DEFAULT_MAX_CAPACITY_RATIO = 1
-_DEFAULT_PRICE_PERFORMANCE_TARGET_LEVEL = None
 
 
 class RedshiftServerlessProvisioner(ClusterProvisioner):
@@ -93,12 +91,9 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
         self._schema_scales = cfg.get("schema_scales", _DEFAULT_SCHEMA_SCALES)
         self._db_name = cfg.get("db_name", _DEFAULT_DB_NAME)
         self._port = cfg.get("port", _DEFAULT_PORT)
-        self._max_capacity_ratio = cfg.get(
-            "max_capacity_ratio", _DEFAULT_MAX_CAPACITY_RATIO
-        )
-        self._price_performance_target_level = cfg.get(
-            "price_performance_target_level",
-            _DEFAULT_PRICE_PERFORMANCE_TARGET_LEVEL,
+        self._max_capacity_ratio = config.max_capacity_ratio
+        self._price_performance_target_level = (
+            config.price_performance_target_level
         )
 
         self._seq_counter = itertools.count()
@@ -496,9 +491,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
     # ClusterProvisioner interface
     # ------------------------------------------------------------------
 
-    def _workgroup_and_namespace_names(
-        self, rpu: int
-    ) -> tuple[str, str]:
+    def _workgroup_and_namespace_names(self, rpu: int) -> tuple[str, str]:
         """Generate a DNS-compatible, globally unique workgroup name."""
         seq = next(self._seq_counter)
 

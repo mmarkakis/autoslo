@@ -376,6 +376,8 @@ class ProvisionerConfig(_PartialConfig):
     cluster_cache_state_dim: int
     run_id: str
     spin_up_delay_s: float = 300.0
+    max_capacity_ratio: float = 1.0
+    price_performance_target_level: Optional[int] = None
 
 
 @dataclass(frozen=True)
