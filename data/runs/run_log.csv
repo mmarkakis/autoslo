@@ -281,3 +281,7 @@ run_id,config_id,workload_id,started_at
 1782385605541,trigger_eval_v8__AUTOSCALING_TRIGGER_POLICY=combined_violations__INITIAL_RPU=8__KAPPA=4__OBSERVATION_WINDOW_S=300.0,poisson_99_1_3_0.2_42__2026-01-01__rf1.000,2026-06-25T11:06:45Z
 1782387959298,trigger_eval_v8__AUTOSCALING_TRIGGER_POLICY=combined_violations__INITIAL_RPU=8__KAPPA=2__OBSERVATION_WINDOW_S=600.0,poisson_99_1_3_0.1_42__2026-01-01__rf1.000,2026-06-25T11:45:59Z
 1782388496344,trigger_eval_v8__AUTOSCALING_TRIGGER_POLICY=combined_violations__INITIAL_RPU=8__KAPPA=4__OBSERVATION_WINDOW_S=600.0,poisson_99_1_3_0.1_42__2026-01-01__rf1.000,2026-06-25T11:54:56Z
+1782665950071,may27_1month_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-28T16:59:10Z
+1782666360111,may27_1week_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-28T17:06:00Z
+1782666783328,may27_1day_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-28T17:13:03Z
+1782667285888,may27_oracle_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-28T17:21:26Z
