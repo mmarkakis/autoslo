@@ -579,15 +579,15 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
             raise RuntimeError(f"Workgroup {wg_name} did not become available")
 
         if not self._attach_tpcds_database(wg_name):
-            logger.warning(
-                "TPC-DS datashare attach failed for %s — continuing.",
-                wg_name,
+            self._best_effort_cleanup(wg_name, ns_name)
+            raise RuntimeError(
+                f"TPC-DS datashare attach failed for {wg_name}"
             )
 
         if not self._create_external_schemas(wg_name):
-            logger.warning(
-                "Some external schemas failed for %s — continuing.",
-                wg_name,
+            self._best_effort_cleanup(wg_name, ns_name)
+            raise RuntimeError(
+                f"External schema creation failed for {wg_name}"
             )
 
         # Build Cluster with conn_info
