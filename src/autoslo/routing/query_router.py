@@ -211,9 +211,18 @@ class QueryRouter:
             if cluster_name not in iconq_predicted_latencies:
                 iconq_predicted_latencies[cluster_name] = {}
             query_id = cluster_aware_query_id.query_id
+            cluster_view = snapshot[cluster_name]
+            prev_latency_prediction_s = cluster_view.predicted_latencies.get(
+                query_id, 0.0
+            )
+            query_entry = cluster_view.queries.get(query_id, None)
+            latency_so_far_s = 0.0
+            if query_entry is not None:
+                latency_so_far_s = rel_time_s - query_entry.rel_start_time_s
             iconq_predicted_latencies[cluster_name][query_id] = max(
                 pred.overall_mean_s(),
-                snapshot[cluster_name].predicted_latencies.get(query_id, 0.0),
+                prev_latency_prediction_s,
+                latency_so_far_s,
             )
         for cluster_aware_query_id, state in new_states.items():
             cluster_name = cluster_aware_query_id.cluster_name
@@ -278,9 +287,11 @@ class QueryRouter:
                     total_after_cost += before_costs[other_name]
                     after_cache_states.append(before_cache_states[other_name])
 
-            after_violation = self._slo_objective.slo_metric.aggregate_batch(
-                all_after_pairs
+            after_violation = round(
+                self._slo_objective.slo_metric.aggregate_batch(all_after_pairs),
+                3,
             )
+            total_after_cost = round(total_after_cost, 3)
             cache_risk = self._score_cache_risk(
                 caches_per_cluster=np.stack(after_cache_states, axis=0),
                 forecasted_table_vecs=forecasted_table_vecs,
@@ -291,7 +302,7 @@ class QueryRouter:
             all_new_cache_states[candidate_name] = new_cache_state
             all_cache_risks[candidate_name] = cache_risk
 
-            latency_s = after_latencies[query.query_id]
+            latency_s = round(after_latencies[query.query_id], 3)
             emit_structured(
                 QueryRelatedEvent(
                     rel_time_s=rel_time_s,
@@ -314,12 +325,15 @@ class QueryRouter:
             all_after_viols_and_costs, all_cache_risks
         )
         selected = all_after_viols_and_costs[selected_cluster_name]
-        selected_latency = (
-            query.stage_predictions_per_rpu[snapshot[selected_cluster_name].rpu]
-            if use_stage
-            else iconq_predicted_latencies[selected_cluster_name][
-                query.query_id
-            ]
+        selected_latency = round(
+            (
+                query.stage_predictions_per_rpu[snapshot[selected_cluster_name].rpu]
+                if use_stage
+                else iconq_predicted_latencies[selected_cluster_name][
+                    query.query_id
+                ]
+            ),
+            3,
         )
         emit_structured(
             QueryRelatedEvent(
