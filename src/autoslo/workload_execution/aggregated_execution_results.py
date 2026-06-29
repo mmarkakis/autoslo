@@ -174,7 +174,7 @@ class AggregatedExecutionResults:
         results :
             Per-scenario results to aggregate.
         metric :
-            ``"mean"``, ``"max"``, ``"p90"``, ``"p99"``, or any ``"pNN"`` quantile.
+            ``"mean"``, ``"max"``, or any ``"pNN"`` quantile.
 
         Returns
         -------

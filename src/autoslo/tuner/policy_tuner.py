@@ -50,7 +50,6 @@ class PolicyTuner:
         self,
         initial_execution_config_path: str,
         tuner_config_path: str,
-        force: bool = False,
         params: dict[str, str] | None = None,
         run_id: str | None = None,
         verbose_progress: bool = True,
@@ -86,31 +85,7 @@ class PolicyTuner:
             self._run_id + ".yml",
         )
 
-        # Without --force, skip if the published tuned config already exists.
-        if not force and os.path.exists(self._publication_path):
-            raise AlreadyCompleteError(
-                f"Tuned config '{self._publication_path}' already exists; "
-                f"skipping. Pass --force to re-run regardless."
-            )
-
-        # Wipe any existing outputs before re-running (stale or --force).
-        if self._out_dir.exists():
-            shutil.rmtree(self._out_dir)
-        if os.path.exists(self._publication_path):
-            os.remove(self._publication_path)
-        os.makedirs(self._out_dir, exist_ok=True)
-        os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
-
-        # Persist substituted configs for reproducibility.
-        initial_execution_config_out_path = (
-            self._out_dir / "initial_execution_config.yml"
-        )
-        dump_yaml(
-            self._initial_execution_config, initial_execution_config_out_path
-        )
-        tuner_config_out_path = self._out_dir / "tuner_config.yml"
-        dump_yaml(self._tuner_config, tuner_config_out_path)
-
+       
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator()
         self._verbose_progress = verbose_progress
@@ -134,6 +109,15 @@ class PolicyTuner:
 
         # Timing instrumentation.
         self._timer = PolicyTunerTimer()
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def out_dir(self) -> Path:
+        """Return the output directory for this tuning run."""
+        return self._out_dir
 
     # ------------------------------------------------------------------
     # Pipeline steps
@@ -443,11 +427,36 @@ class PolicyTuner:
         dump_yaml(val_agg, val_summary_path)
         return post_sweep_config, train_agg, val_agg
 
-    def tune(self) -> None:
+    def tune(self, force: bool = False) -> None:
         """Execute the full tuning pipeline end-to-end.
 
         Returns the path to the final optimised config file.
         """
+        # Without force, skip if the published tuned config already exists.
+        if not force and os.path.exists(self._publication_path):
+            raise AlreadyCompleteError(
+                f"Tuned config '{self._publication_path}' already exists; "
+                f"skipping. Pass --force to re-run regardless."
+            )
+
+        # Wipe any existing outputs before re-running (stale or --force).
+        if self._out_dir.exists():
+            shutil.rmtree(self._out_dir)
+        if os.path.exists(self._publication_path):
+            os.remove(self._publication_path)
+        os.makedirs(self._out_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
+
+        # Persist substituted configs for reproducibility.
+        initial_execution_config_out_path = (
+            self._out_dir / "initial_execution_config.yml"
+        )
+        dump_yaml(
+            self._initial_execution_config, initial_execution_config_out_path
+        )
+        tuner_config_out_path = self._out_dir / "tuner_config.yml"
+        dump_yaml(self._tuner_config, tuner_config_out_path)
+
         final_path = self._out_dir / "final_execution_config.yml"
         console.start_file_logging(self._out_dir / "console.log")
         try:

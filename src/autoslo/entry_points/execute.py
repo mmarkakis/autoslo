@@ -10,13 +10,17 @@ from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
+from rich.progress import BarColumn, Progress, TimeRemainingColumn
 from rich.prompt import Confirm
 from rich.table import Table
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadConfig
 from autoslo.config.utils import copy_and_apply_overrides, make_run_id
-from autoslo.filesystem.config_resolver import get_exec_config_ref, resolve_config
+from autoslo.filesystem.config_resolver import (
+    get_exec_config_ref,
+    resolve_config,
+)
 from autoslo.filesystem.path_utils import (
     append_to_run_log,
     find_most_recent_live_run_id,
@@ -164,6 +168,16 @@ def main():
             "(0 <= K < --splits). Only used for live runs."
         ),
     )
+    parser.add_argument(
+        "--delay_s",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "If set, pause for this many seconds after the user confirms "
+            "the preflight table before actually starting execution."
+        ),
+    )
     args = parser.parse_args()
 
     if args.splits < 1:
@@ -218,7 +232,9 @@ def main():
         # fail if a required file is absent or the entry is malformed.
         try:
             workload_config = WorkloadConfig.from_config(entry)
-            exec_cfg_path = resolve_config(get_exec_config_ref(entry, args.live))
+            exec_cfg_path = resolve_config(
+                get_exec_config_ref(entry, args.live)
+            )
             if not exec_cfg_path.exists():
                 raise FileNotFoundError(
                     f"Execution config not found: {exec_cfg_path}"
@@ -227,7 +243,9 @@ def main():
             config_label = make_run_id([exec_cfg_path.stem], params)
             wid = workload_config.id()
         except Exception:
-            mode_key = "live_execution_config" if args.live else "sim_execution_config"
+            mode_key = (
+                "live_execution_config" if args.live else "sim_execution_config"
+            )
             raw_cfg = str(
                 entry.get(mode_key) or entry.get("execution_config", "?")
             )
@@ -236,7 +254,11 @@ def main():
                 if isinstance(entry.get("workload_config"), dict)
                 else "?"
             )
-            action = "Skip \u2014 split" if is_split_excluded else "Skip \u2014 missing"
+            action = (
+                "Skip \u2014 split"
+                if is_split_excluded
+                else "Skip \u2014 missing"
+            )
             if not is_split_excluded:
                 missing_entry_indices.add(i)
             preflight_rows.append((raw_cfg, raw_wl, action, None))
@@ -244,15 +266,16 @@ def main():
 
         # Priority 1: entry not assigned to this split.
         if is_split_excluded:
-            preflight_rows.append((config_label, wid, "Skip \u2014 split", None))
+            preflight_rows.append(
+                (config_label, wid, "Skip \u2014 split", None)
+            )
             continue
 
         # Priority 2: output already exists.
         if not args.live:
             out_dir = sim_runs_dir / wid / config_label
             would_skip = (
-                not args.force
-                and (out_dir / "execution_config.yml").exists()
+                not args.force and (out_dir / "execution_config.yml").exists()
             )
         else:
             recent_run_id = find_most_recent_live_run_id(config_label, wid)
@@ -282,7 +305,8 @@ def main():
     # Remove missing entries from the execution set.
     if missing_entry_indices:
         effective_entries = [
-            e for i, e in enumerate(entries)
+            e
+            for i, e in enumerate(entries)
             if (
                 not args.live
                 or args.splits == 1
@@ -301,6 +325,26 @@ def main():
     if not _confirm_execution(num_to_run=num_to_run, num_to_skip=num_to_skip):
         console.print("[yellow]Cancelled by user.[/]")
         return
+
+    if args.delay_s and args.delay_s > 0:
+        console.print(
+            f"[yellow]Delaying execution by {args.delay_s:.0f}s "
+            f"(use Ctrl-C to abort).[/]"
+        )
+        total = int(args.delay_s)
+        with Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            TimeRemainingColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Waiting...", total=total)
+            for _ in range(total):
+                time.sleep(1)
+                progress.advance(task, 1)
+        console.print("[green]Delay complete. Starting execution.[/]")
 
     # ── Execute ──────────────────────────────────────────────────────────────────
     if not args.live:

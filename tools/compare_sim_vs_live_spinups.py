@@ -316,6 +316,7 @@ def _half_rows(
                 _fmt_t(cs.teardown_s),
                 str(cs.n_queries),
                 str(cs.n_slo_met),
+                str(cs.n_queries - cs.n_slo_met),
                 _fmt_pct(cs.n_queries - cs.n_slo_met, cs.n_queries),
                 _fmt_cost(cs.cost),
             ]
@@ -331,6 +332,7 @@ def _half_rows(
         "",
         f"[bold]{total_q}[/]",
         f"[bold]{total_met}[/]",
+        f"[bold]{total_q - total_met}[/]",
         f"[bold]{_fmt_pct(total_q - total_met, total_q)}[/]",
         f"[bold]{_fmt_cost(total_cost)}[/]",
     ]
@@ -344,6 +346,7 @@ _HALF_HEADERS = [
     "Tear-down",
     "Queries",
     "SLO met",
+    "SLO viol.",
     "SLO viol. rate",
     "Cost",
 ]

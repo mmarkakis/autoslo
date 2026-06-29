@@ -218,7 +218,19 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
         :meth:`step_after_state`.
         """
         x = x.permute(0, 2, 1)
-        x_norm = self._bn(x)
+        # BatchNorm1d requires batch_size > 1 when computing batch statistics.
+        # For singleton batches during training, fall back to eval mode so it
+        # uses running statistics instead of raising an error.
+        if (
+            self._bn.training
+            and isinstance(self._bn, nn.BatchNorm1d)
+            and x.size(0) == 1
+        ):
+            self._bn.eval()
+            x_norm = self._bn(x)
+            self._bn.train()
+        else:
+            x_norm = self._bn(x)
         x_norm = x_norm.permute(0, 2, 1)
         return self._in_model(x_norm)
 
