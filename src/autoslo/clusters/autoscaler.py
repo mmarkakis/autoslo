@@ -61,7 +61,7 @@ class ReplayEndCheckpoint:
 @dataclass(frozen=True)
 class SelectRpuStats:
     pre_spinup_arrivals_processed: int
-    post_spinup_arrivals_processed: dict[int, int]
+    post_spinup_arrivals_processed: dict[Optional[int], int]
 
 
 class Autoscaler:
@@ -140,6 +140,10 @@ class Autoscaler:
         # recommendations during the provisioning window (which can be minutes
         # in live mode, during which no PENDING cluster is visible in the pool).
         self._spin_up_in_flight: bool = False
+        # Cooldown timestamp after a "do nothing" decision. Blocks re-evaluation
+        # for spin_up_delay_s seconds to prevent the trigger from immediately
+        # re-firing when the counterfactual found no useful spinup.
+        self._do_nothing_cooldown_until_rel_time_s: float = 0.0
 
         # Forced mode (set when force_one_decision_after_query_count is
         # provided).
@@ -292,6 +296,10 @@ class Autoscaler:
         if self._spin_up_in_flight:
             return []
 
+        # Gate 1b: do-nothing cooldown.
+        if rel_time_s < self._do_nothing_cooldown_until_rel_time_s:
+            return []
+
         if self.forced_decision_mode:
             ### IN FORCED MODE: Gate 2 ###
             if self._inform_count != self._force_one_decision_after_query_count:
@@ -331,6 +339,29 @@ class Autoscaler:
             rel_time_s,
             pool_snapshot_with_current_query,
         )
+        if best_rpu is None:
+            # The counterfactual found no RPU size that beats doing nothing.
+            # Apply a cooldown identical to the spin-up delay so the trigger
+            # cannot immediately re-fire, then return without spinning up.
+            self._do_nothing_cooldown_until_rel_time_s = (
+                rel_time_s + self._spin_up_delay_s
+            )
+            emit_structured(
+                BaseStructuredEvent(
+                    rel_time_s=rel_time_s,
+                    event_type=EventType.SPIN_UP_DECISION,
+                    source="Autoscaler",
+                    details={
+                        "rpu": None,
+                        "reason": reason,
+                        "autoscaling_policy": self._autoscaling_policy.value,
+                        "autoscaling_trigger_policy": (
+                            self._autoscaling_trigger_policy.value
+                        ),
+                    },
+                )
+            )
+            return []
         deferred_teardowns: tuple[str, ...] = ()
         if (
             self._autoscaling_policy
@@ -703,9 +734,12 @@ class Autoscaler:
         self,
         rel_time_s: float,
         pool_snapshot_with_current_query: dict[str, ClusterView],
-    ) -> tuple[int, SelectRpuStats]:
+    ) -> tuple[Optional[int], SelectRpuStats]:
         """
         Select the RPU size for a new cluster based on the current window.
+
+        Returns ``None`` as the RPU when the no-spinup baseline is at least as
+        good as every candidate, signalling that no cluster should be added.
         """
         if self._autoscaling_policy == AutoscalingPolicy.DUPLICATE_LARGEST:
             ready_rpus = [
@@ -723,7 +757,9 @@ class Autoscaler:
             )
 
         viol_and_costs: list[ViolationCost] = []
-        post_spinup_replay_end_checkpoints: dict[int, ReplayEndCheckpoint] = {}
+        post_spinup_replay_end_checkpoints: dict[
+            Optional[int], ReplayEndCheckpoint
+        ] = {}
 
         # Run the spin-up-delay portion of the replay once; it is identical
         # for every RPU candidate because the hypothetical cluster is PENDING
@@ -750,9 +786,39 @@ class Autoscaler:
                 overall_replay_start_rel_time_s=rel_time_s,
                 prev_replay_end_checkpoint=initial_checkpoint,
                 candidate_rpu=None,
+                is_post_spinup=False,
             )
         )
 
+        # Run the no-spinup baseline: same post-spinup window, no new cluster.
+        # Placed first in the comparison so that ties resolve to "do nothing".
+        baseline_checkpoint, baseline_viol_and_cost = (
+            self._partial_counterfactual_replay(
+                query_router=query_router,
+                overall_replay_start_rel_time_s=rel_time_s,
+                prev_replay_end_checkpoint=pre_spinup_replay_end_checkpoint,
+                candidate_rpu=None,
+                is_post_spinup=True,
+            )
+        )
+        post_spinup_replay_end_checkpoints[None] = baseline_checkpoint
+        viol_and_costs.append(baseline_viol_and_cost)
+        emit_structured(
+            BaseStructuredEvent(
+                rel_time_s=rel_time_s,
+                event_type=EventType.RPU_COUNTERFACTUAL,
+                source="Autoscaler",
+                cluster_name="no-spinup-baseline",
+                details={
+                    "rpu": None,
+                    "slo_violation": baseline_viol_and_cost.violation,
+                    "cost": baseline_viol_and_cost.cost,
+                    "slo_threshold": self._slo_objective.slo_threshold,
+                },
+            )
+        )
+
+        # Now hypothesize each size.
         for rpu in self._allowed_rpu_sizes:
             post_spinup_replay_end_checkpoint, slo_viol_and_cost = (
                 self._partial_counterfactual_replay(
@@ -760,6 +826,7 @@ class Autoscaler:
                     overall_replay_start_rel_time_s=rel_time_s,
                     prev_replay_end_checkpoint=pre_spinup_replay_end_checkpoint,
                     candidate_rpu=rpu,
+                    is_post_spinup=True,
                 )
             )
             post_spinup_replay_end_checkpoints[rpu] = (
@@ -783,9 +850,47 @@ class Autoscaler:
                 )
             )
 
+        # Baseline is first so idx_of_best returns it on any tie (prefer
+        # doing nothing when no candidate is strictly better).
         best_local_idx = self._slo_objective.idx_of_best(viol_and_costs)
-        best_rpu = self._allowed_rpu_sizes[best_local_idx]
         best_viol_and_cost = viol_and_costs[best_local_idx]
+
+        common_stats = SelectRpuStats(
+            pre_spinup_arrivals_processed=(
+                pre_spinup_replay_end_checkpoint.arrivals_processed
+            ),
+            post_spinup_arrivals_processed={
+                rpu: post_spinup_replay_end_checkpoints[rpu].arrivals_processed
+                for rpu in {self._allowed_rpu_sizes}.union({None})
+            },
+        )
+
+        if best_local_idx == 0:
+            # Baseline is (tied) best — signal "do nothing" to the caller.
+            emit_structured(
+                BaseStructuredEvent(
+                    rel_time_s=rel_time_s,
+                    event_type=EventType.RPU_SELECTION,
+                    source="Autoscaler",
+                    cluster_name="no-spinup-baseline",
+                    details={
+                        "rpu": None,
+                        "slo_violation": baseline_viol_and_cost.violation,
+                        "cost": baseline_viol_and_cost.cost,
+                        "slo_threshold": self._slo_objective.slo_threshold,
+                    },
+                )
+            )
+            return None, common_stats
+
+        # Something beats the baseline.  Among tied non-baseline candidates,
+        # pick the largest RPU: when uncertain about size, go conservative.
+        best_rpu = max(
+            rpu
+            for i, rpu in enumerate(self._allowed_rpu_sizes)
+            if self._slo_objective.cmp(viol_and_costs[i], best_viol_and_cost)
+            == 0
+        )
 
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
         emit_structured(
@@ -802,16 +907,7 @@ class Autoscaler:
                 },
             )
         )
-
-        return best_rpu, SelectRpuStats(
-            pre_spinup_arrivals_processed=(
-                pre_spinup_replay_end_checkpoint.arrivals_processed
-            ),
-            post_spinup_arrivals_processed={
-                rpu: post_spinup_replay_end_checkpoints[rpu].arrivals_processed
-                for rpu in self._allowed_rpu_sizes
-            },
-        )
+        return best_rpu, common_stats
 
     def _partial_counterfactual_replay(
         self,
@@ -819,6 +915,7 @@ class Autoscaler:
         overall_replay_start_rel_time_s: float,
         prev_replay_end_checkpoint: ReplayEndCheckpoint,
         candidate_rpu: Optional[int] = None,
+        is_post_spinup: bool = False,
     ) -> tuple[ReplayEndCheckpoint, Optional[ViolationCost]]:
         """Replay part of the trailing window with a hypothetical new cluster of
         *candidate_rpu*. Allows for independent replay before/after the new
@@ -856,14 +953,13 @@ class Autoscaler:
         queries_list = list(self._trailing_queries)
         arrivals_processed = 0
         last_seen_rel_start_time_s = overall_replay_start_rel_time_s
-        is_post_spinup = candidate_rpu is not None
         lat_and_slos: list[LatencySlo] = []
         finished_after_ready = 0
         organic_done = False
 
-        # Add the hypothetical cluster, if this is the post-spinup phase.
-        if is_post_spinup:
-            assert candidate_rpu is not None
+        # Add the hypothetical cluster for real post-spinup phases only
+        # (not the no-spinup baseline).
+        if is_post_spinup and (candidate_rpu is not None):
             hyp_cluster_name = f"autoslo-{candidate_rpu}-hypothetical"
             local_cluster_pool[hyp_cluster_name] = Cluster(
                 creation_time_s=overall_replay_start_rel_time_s,

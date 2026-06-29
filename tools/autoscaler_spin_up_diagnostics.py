@@ -18,7 +18,7 @@ from autoslo.filesystem.structured_log import StructuredLog
 
 @dataclass(frozen=True)
 class CandidateDiagnostics:
-    rpu: int
+    rpu: Optional[int]
     slo_violation: Optional[float]
     projected_cost: Optional[float]
 
@@ -80,6 +80,10 @@ def process_log(structured_log_path: Path) -> list[DecisionDiagnostics]:
         axis=1,
     )
 
+    # Save the raw (pre-ffill) candidate_rpu so baseline SIM events
+    # (phase="post_spinup", candidate_rpu=NaN) can be isolated later.
+    spinup_df["raw_candidate_rpu"] = spinup_df["candidate_rpu"].copy()
+
     # For "routing_score" and "routing" events, fill in the most recent phase
     # and candidate RPU from the same decision block.
     spinup_df[["phase", "candidate_rpu"]] = spinup_df.groupby(
@@ -122,6 +126,7 @@ def process_block(block: pd.DataFrame) -> DecisionDiagnostics:
         arrivals_per_phase[candidate_rpu] = block[
             (block["event_type"] == EventType.SIM_QUERY_ARRIVAL.value)
             & (block["candidate_rpu"] == candidate_rpu)
+            & (block["phase"] == "post_spinup")
         ].shape[0]
 
     # Count completions in pre-spinup and in each post-spinup candidate phase.
@@ -140,10 +145,12 @@ def process_block(block: pd.DataFrame) -> DecisionDiagnostics:
         completions_per_phase[candidate_rpu] = block[
             (block["event_type"] == EventType.SIM_QUERY_COMPLETION.value)
             & (block["candidate_rpu"] == candidate_rpu)
+            & (block["phase"] == "post_spinup")
         ].shape[0]
         completions_of_simulated_per_phase[candidate_rpu] = block[
             (block["event_type"] == EventType.SIM_QUERY_COMPLETION.value)
             & (block["candidate_rpu"] == candidate_rpu)
+            & (block["phase"] == "post_spinup")
             & (block["query_id"].str.startswith("fwd-"))
         ].shape[0]
 
@@ -166,12 +173,22 @@ def process_block(block: pd.DataFrame) -> DecisionDiagnostics:
     # Extract candidate metrics from "rpu_counterfactual" events in the block.
     slo_violation_per_rpu = {}
     cost_per_rpu = {}
+    baseline_slo_violation: Optional[float] = None
+    baseline_cost: Optional[float] = None
     cf_rows = block[block["event_type"] == "rpu_counterfactual"]
     for _, row in cf_rows.iterrows():
-        slo_violation_per_rpu[row["candidate_rpu"]] = row["details"].get(
-            "slo_violation"
-        )
-        cost_per_rpu[row["candidate_rpu"]] = row["details"].get("cost")
+        if not isinstance(row["details"], dict):
+            continue
+        rpu = row["details"].get("rpu")
+        if rpu is None:
+            # no-spinup baseline entry
+            v = row["details"].get("slo_violation")
+            c = row["details"].get("cost")
+            baseline_slo_violation = float(v) if v is not None else None
+            baseline_cost = float(c) if c is not None else None
+        else:
+            slo_violation_per_rpu[rpu] = row["details"].get("slo_violation")
+            cost_per_rpu[rpu] = row["details"].get("cost")
 
     candidate_diagnostics: list[CandidateDiagnostics] = []
     for candidate_rpu in block["candidate_rpu"].dropna().unique():
@@ -205,6 +222,43 @@ def process_block(block: pd.DataFrame) -> DecisionDiagnostics:
                 fraction_routed_to_hypothetical=fraction_routed_to_hypothetical_per_rpu.get(
                     candidate_rpu, 0
                 ),
+            )
+        )
+
+    # Add baseline row if a no-spinup baseline was run.
+    # Baseline SIM events are identified by phase="post_spinup" and
+    # raw_candidate_rpu=NaN (before the ffill propagated an RPU value into them).
+    if baseline_slo_violation is not None or baseline_cost is not None:
+        is_baseline_sim = block["raw_candidate_rpu"].isna() & (
+            block["phase"] == "post_spinup"
+        )
+        baseline_arrivals = block[
+            (block["event_type"] == EventType.SIM_QUERY_ARRIVAL.value)
+            & is_baseline_sim
+        ].shape[0]
+        baseline_completions = block[
+            (block["event_type"] == EventType.SIM_QUERY_COMPLETION.value)
+            & is_baseline_sim
+        ].shape[0]
+        baseline_completions_simulated = block[
+            (block["event_type"] == EventType.SIM_QUERY_COMPLETION.value)
+            & is_baseline_sim
+            & block["query_id"].str.startswith("fwd-")
+        ].shape[0]
+        candidate_diagnostics.append(
+            CandidateDiagnostics(
+                rpu=None,
+                slo_violation=baseline_slo_violation,
+                projected_cost=baseline_cost,
+                arrivals_pre_spinup=arrivals_per_phase.get("pre_spinup", 0),
+                completions_pre_spinup=completions_per_phase.get("pre_spinup", 0),
+                completions_of_simulated_pre_spinup=(
+                    completions_of_simulated_per_phase.get("pre_spinup", 0)
+                ),
+                arrivals_post_spinup=baseline_arrivals,
+                completions_post_spinup=baseline_completions,
+                completions_of_simulated_post_spinup=baseline_completions_simulated,
+                fraction_routed_to_hypothetical=0.0,
             )
         )
 
@@ -264,10 +318,14 @@ def _print_summary(
         table.add_column("Post Completions", justify="right")
         table.add_column("Fraction Routed to Hypothetical", justify="right")
 
-        for c in sorted(decision.candidates, key=lambda x: x.rpu):
+        for c in sorted(
+            decision.candidates,
+            key=lambda x: (x.rpu is None, x.rpu if x.rpu is not None else 0),
+        ):
             mark = "*" if decision.selected_rpu == c.rpu else ""
+            rpu_label = "baseline" if c.rpu is None else str(c.rpu)
             table.add_row(
-                f"{c.rpu}{mark}",
+                f"{rpu_label}{mark}",
                 (
                     f"{c.slo_violation:.6f}"
                     if c.slo_violation is not None
