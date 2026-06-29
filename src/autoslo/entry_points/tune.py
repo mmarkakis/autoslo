@@ -1,6 +1,9 @@
 import argparse
+import csv
 import sys
+from pathlib import Path
 
+import autoslo.filesystem.path_utils as pu
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -33,6 +36,161 @@ def _confirm_execution(num_to_run: int, num_to_skip: int) -> bool:
         f"[yellow]{num_to_skip} to skip[/]."
     )
     return Confirm.ask("Proceed?", default=True)
+
+
+def _fmt_duration(elapsed_s: float) -> str:
+    """Format seconds as a compact human-readable string (e.g. '1m 15s')."""
+    total = int(elapsed_s)
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes > 0:
+        return f"{minutes}m {seconds}s"
+    return f"{elapsed_s:.1f}s"
+
+
+def _timing_cell(elapsed_s: float, total_s: float) -> str:
+    """White duration + light-gray '- XX%' in a single Rich markup string."""
+    pct = f"{elapsed_s / total_s * 100:.0f}%" if total_s > 0 else "–"
+    return f"[white]{_fmt_duration(elapsed_s)}[/] [dim]- {pct}[/]"
+
+
+def _load_timing_rows(out_dir: Path) -> list[dict] | None:
+    """Read timing_report.csv from a tuner run directory (excluding TOTAL row)."""
+    csv_path = out_dir / "timing_report.csv"
+    if not csv_path.exists():
+        return None
+    with csv_path.open(newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r["phase_key"] != "TOTAL"]
+    return rows or None
+
+
+# (run_name, preflight_action, out_dir, completed)
+_PostflightEntry = tuple[str, str, Path, bool]
+
+
+def _print_postflight_table(entries: list[_PostflightEntry]) -> None:
+    """Print a per-run timing breakdown after all runs finish (or are skipped)."""
+    # Load timing CSV for each run.
+    timing: dict[str, list[dict] | None] = {
+        name: _load_timing_rows(out_dir) for name, _, out_dir, _ in entries
+    }
+
+    # Collect unique phases in the order they first appear across all runs.
+    phase_keys: list[str] = []
+    phase_names: dict[str, str] = {}
+    seen: set[str] = set()
+    for name, _, _, _ in entries:
+        for row in timing.get(name) or []:
+            k = row["phase_key"]
+            if k not in seen:
+                phase_keys.append(k)
+                phase_names[k] = row["phase_name"]
+                seen.add(k)
+
+    table = Table(title="Tune Postflight Summary")
+    table.add_column("Run", style="cyan", no_wrap=True)
+    table.add_column("Action", no_wrap=True)
+    for k in phase_keys:
+        table.add_column(phase_names[k], justify="right")
+    table.add_column("Total", justify="right")
+
+    for name, preflight_action, _, completed in entries:
+        if preflight_action == "Skip":
+            action_cell = "[yellow]Pre-existing[/]"
+        elif completed:
+            action_cell = "[green]Re-run[/]"
+        else:
+            action_cell = "[red]Missing[/]"
+
+        rows = timing.get(name)
+        if rows:
+            total_s = sum(float(r["elapsed_s"]) for r in rows)
+            by_key = {r["phase_key"]: r for r in rows}
+            phase_cells = [
+                (
+                    _timing_cell(float(by_key[k]["elapsed_s"]), total_s)
+                    if k in by_key
+                    else "[dim]–[/]"
+                )
+                for k in phase_keys
+            ]
+            total_cell = f"[white]{_fmt_duration(total_s)}[/]"
+        else:
+            phase_cells = ["[dim]–[/]"] * len(phase_keys)
+            total_cell = "[dim]–[/]"
+
+        table.add_row(name, action_cell, *phase_cells, total_cell)
+
+    console.print()
+    console.print(table)
+
+    # --- Action-grouped summary -------------------------------------------
+    # Derive the action label for each entry (same logic as above).
+    def _action_label(preflight_action: str, completed: bool) -> str:
+        if preflight_action == "Skip":
+            return "Pre-existing"
+        return "Re-run" if completed else "Missing"
+
+    # Preserve first-seen label order.
+    label_order: list[str] = []
+    seen_labels: set[str] = set()
+    for _, pa, _, comp in entries:
+        lbl = _action_label(pa, comp)
+        if lbl not in seen_labels:
+            label_order.append(lbl)
+            seen_labels.add(lbl)
+
+    # Accumulate totals per (label, phase_key).
+    group_counts: dict[str, int] = {lbl: 0 for lbl in label_order}
+    group_phase_s: dict[str, dict[str, float]] = {
+        lbl: {k: 0.0 for k in phase_keys} for lbl in label_order
+    }
+    group_total_s: dict[str, float] = {lbl: 0.0 for lbl in label_order}
+
+    for name, pa, _, comp in entries:
+        lbl = _action_label(pa, comp)
+        group_counts[lbl] += 1
+        rows = timing.get(name)
+        if rows:
+            run_total = sum(float(r["elapsed_s"]) for r in rows)
+            group_total_s[lbl] += run_total
+            for r in rows:
+                k = r["phase_key"]
+                if k in group_phase_s[lbl]:
+                    group_phase_s[lbl][k] += float(r["elapsed_s"])
+
+    _LABEL_STYLE = {
+        "Re-run": "green",
+        "Pre-existing": "yellow",
+        "Missing": "red",
+    }
+
+    summary = Table(title="Tune Postflight — Action Summary")
+    summary.add_column("Action", no_wrap=True)
+    summary.add_column("Count", justify="right")
+    for k in phase_keys:
+        summary.add_column(phase_names[k], justify="right")
+    summary.add_column("Total", justify="right")
+
+    for lbl in label_order:
+        style = _LABEL_STYLE.get(lbl, "")
+        action_cell = f"[{style}]{lbl}[/]" if style else lbl
+        count_cell = str(group_counts[lbl])
+        grp_total = group_total_s[lbl]
+        if grp_total > 0:
+            phase_cells = [
+                _timing_cell(group_phase_s[lbl][k], grp_total)
+                for k in phase_keys
+            ]
+            total_cell = f"[white]{_fmt_duration(grp_total)}[/]"
+        else:
+            phase_cells = ["[dim]–[/]"] * len(phase_keys)
+            total_cell = "[dim]–[/]"
+        summary.add_row(action_cell, count_cell, *phase_cells, total_cell)
+
+    console.print(summary)
 
 
 def _print_run_header(
@@ -107,6 +265,8 @@ def main():
         manifest = load_yaml(args.tuning_manifest_path)
         preflight_rows: list[tuple[str, str, str]] = []
         planned_runs: list[tuple[str, str, PolicyTuner]] = []
+        postflight_entries: list[_PostflightEntry] = []
+        tuner_runs_dir = Path(pu.get_data_path()) / "tuner_runs"
 
         for tuning_run_name, tuning_run_spec in manifest.get(
             "main_content", {}
@@ -124,7 +284,6 @@ def main():
                 pt = PolicyTuner(
                     initial_execution_config_path=initial_execution_config_path,
                     tuner_config_path=tuner_config_path,
-                    force=args.force,
                     params=tuning_run_spec.get("params", {}),
                     run_id=tuning_run_name,
                     verbose_progress=args.verbose_progress,
@@ -149,23 +308,45 @@ def main():
                         pt,
                     )
                 )
+                postflight_entries.append(
+                    (
+                        tuning_run_name,
+                        "Run",
+                        tuner_runs_dir / tuning_run_name,
+                        False,
+                    )
+                )
             except AlreadyCompleteError as exc:
                 preflight_rows.append((tuning_run_name, "Skip", str(exc)))
+                postflight_entries.append(
+                    (
+                        tuning_run_name,
+                        "Skip",
+                        tuner_runs_dir / tuning_run_name,
+                        True,
+                    )
+                )
                 continue
 
         _print_preflight_table(preflight_rows)
 
-        num_to_run = sum(1 for _, action, _ in preflight_rows if action == "Run")
+        num_to_run = sum(
+            1 for _, action, _ in preflight_rows if action == "Run"
+        )
         num_to_skip = len(preflight_rows) - num_to_run
 
         if num_to_run == 0:
             console.print("[dim]No pending runs. Nothing to do.[/]")
             return
 
-        if not _confirm_execution(num_to_run=num_to_run, num_to_skip=num_to_skip):
+        if not _confirm_execution(
+            num_to_run=num_to_run, num_to_skip=num_to_skip
+        ):
             console.print("[yellow]Cancelled by user.[/]")
+            _print_postflight_table(postflight_entries)
             return
 
+        completed_run_names: set[str] = set()
         for run_index, (run_name, details, pt) in enumerate(
             planned_runs, start=1
         ):
@@ -175,17 +356,26 @@ def main():
                 run_index=run_index,
                 total_runs=num_to_run,
             )
-            pt.tune()
+            pt.tune(
+                force=args.force,
+            )
+            completed_run_names.add(run_name)
+
+        postflight_entries = [
+            (n, a, d, True if a == "Skip" else n in completed_run_names)
+            for n, a, d, _ in postflight_entries
+        ]
+        _print_postflight_table(postflight_entries)
         return
 
     # If no manifest, run a single tuner with the provided config paths and
     # params.
     preflight_rows: list[tuple[str, str, str]] = []
+    single_pt: PolicyTuner | None = None
     try:
-        pt = PolicyTuner(
+        single_pt = PolicyTuner(
             initial_execution_config_path=args.initial_execution_config_path,
             tuner_config_path=args.tuner_config_path,
-            force=args.force,
             params=parse_params(args.param),
             verbose_progress=args.verbose_progress,
         )
@@ -215,6 +405,10 @@ def main():
 
     if not _confirm_execution(num_to_run=num_to_run, num_to_skip=num_to_skip):
         console.print("[yellow]Cancelled by user.[/]")
+        assert single_pt is not None
+        _print_postflight_table(
+            [("single-run", "Run", single_pt.out_dir, False)]
+        )
         sys.exit(0)
 
     _print_run_header(
@@ -223,7 +417,11 @@ def main():
         run_index=1,
         total_runs=num_to_run,
     )
-    pt.tune()
+    assert single_pt is not None
+    single_pt.tune(
+        force=args.force,
+    )
+    _print_postflight_table([("single-run", "Run", single_pt.out_dir, True)])
 
 
 if __name__ == "__main__":
