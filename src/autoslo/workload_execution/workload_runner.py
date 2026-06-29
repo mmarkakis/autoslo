@@ -9,7 +9,14 @@ from functools import partial
 from pathlib import Path
 from typing import Optional, TypeAlias
 
-from tqdm.auto import tqdm
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TaskProgressColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from autoslo.clusters.actions import ScalingAction, SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
@@ -519,7 +526,7 @@ class WorkloadRunner:
                         rel_time_s=self._rel_time_s(),
                     ),
                 )
-            self._pbar.update(1)
+            self._pbar.update(self._pbar_task, advance=1)
 
     async def run(self) -> None:
         """
@@ -573,9 +580,18 @@ class WorkloadRunner:
                 asyncio.ensure_future(self._execute_scheduled_spinup_async(su))
             )
 
-        self._pbar = tqdm(
-            total=self._workload.num_queries, desc="Queries", unit="q"
+        self._pbar = Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
         )
+        self._pbar_task = self._pbar.add_task(
+            "Queries", total=self._workload.num_queries
+        )
+        self._pbar.start()
 
         # Start the background autoscaler thread.  It will drain
         # _autoscaler_queue until it sees the None sentinel in finally.
@@ -624,7 +640,7 @@ class WorkloadRunner:
             self._autoscaler_queue.put(None)
             autoscaler_thread.join()
 
-            self._pbar.close()
+            self._pbar.stop()
 
             # Graceful cleanup: tear down every remaining READY cluster.
             # request_tear_down transitions to DRAINING; _finalize_removal
