@@ -254,12 +254,13 @@ class AutoscalerConfig(_PartialConfig):
     )
     autoscaling_policy: str = "add_single_best_forward"
     autoscaling_trigger_policy: str = "predicted_violations"
-    trigger_threshold: int = 10  # The "N" in Queue@N and Observed@N.
+    queue_length_for_trigger_policy: int = 30  # The "N" in Queue@N.
     min_cluster_lifetime_s: float = 1200.0
     idle_time_before_tear_down_s: float = 300.0
     observation_window_s: float = 120.0
     slo_tightening_factor: float = 1.0
     min_finished_queries_in_counterfactual: int = 30
+    min_observations_to_act: int = 30
     force_one_decision_after_query_fraction: Optional[float] = None  # When set,
     # disables reactive autoscaling and fires a single forced decision after
     # this fraction of the workload's queries have been routed.
@@ -279,7 +280,6 @@ class AutoscalerConfig(_PartialConfig):
         except (KeyError, TypeError):
             return super().from_config(cfg, **kwargs)
 
-        autoscaler_cfg.pop("min_observations_to_act", None)
         trigger_cfg_dict = autoscaler_cfg.pop(
             "trigger_slo_objective_config", None
         )

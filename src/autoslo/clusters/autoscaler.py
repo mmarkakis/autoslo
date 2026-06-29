@@ -44,7 +44,8 @@ class AutoscalerCompletionRecord:
     """
 
     completion_rel_time_s: float
-    slo_violated: bool
+    arrival_rel_time_s: float
+    latency_slo: LatencySlo
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,9 @@ class Autoscaler:
         self._autoscaling_trigger_policy = AutoscalingTriggerPolicy(
             autoscaler_config.autoscaling_trigger_policy
         )
-        self._trigger_threshold: int = autoscaler_config.trigger_threshold
+        self._queue_length_for_trigger_policy: int = (
+            autoscaler_config.queue_length_for_trigger_policy
+        )
         self._trigger_slo_resolver = slo_resolver.tightened(
             autoscaler_config.slo_tightening_factor
         )
@@ -121,6 +124,9 @@ class Autoscaler:
             autoscaler_config.min_finished_queries_in_counterfactual
         )
         self._max_replay_copies = autoscaler_config.max_replay_copies
+        self._min_observations_to_act: int = (
+            autoscaler_config.min_observations_to_act
+        )
 
         # Internal mutable state (guarded by _lock)
         self._lock = threading.Lock()
@@ -265,8 +271,7 @@ class Autoscaler:
         Gate 0a – AutoscalingTriggerPolicy.NOOP check.
         Gate 1  – Budget guards (no allowed RPUs / disabled / in-flight).
         Gate 2  – Forced-decision mode (bypass normal trigger checks).
-        Gate 3  – Observation window cool-down guard.
-        Gate 4  – Trigger-policy-specific condition check.
+        Gate 3  – Trigger-policy-specific condition check.
         """
 
         # Gate 0: legacy NOOP guard (backward compatibility with configs that
@@ -311,15 +316,9 @@ class Autoscaler:
                 f"autoscaling_policy={self._autoscaling_policy.value}"
             )
         else:
-            ### NOT IN FORCED MODE: Gates 3 & 4 ###
-
-            # Gate 3: only act once the trailing window is fully after the
-            # most recent READY cluster observed by the autoscaler.
-            cutoff = rel_time_s - self._observation_window_s
-            if self._most_recent_cluster_ready_rel_time_s > cutoff:
-                return []
-
-            # Gate 4: trigger-policy-specific condition.
+            ### NOT IN FORCED MODE: Gate 3 ###
+            # Gate 3: trigger-policy-specific condition.  Each policy applies
+            # its own post-spinup observation guard internally.
             triggered, reason = self._evaluate_trigger(
                 rel_time_s, pool_snapshot_with_current_query
             )
@@ -397,6 +396,11 @@ class Autoscaler:
             == AutoscalingTriggerPolicy.OBSERVED_VIOLATIONS
         ):
             return self._check_observed_violations(rel_time_s)
+        if (
+            self._autoscaling_trigger_policy
+            == AutoscalingTriggerPolicy.COMBINED_VIOLATIONS
+        ):
+            return self._check_combined_violations(rel_time_s, pool_snapshot)
         # NOOP is handled before _evaluate_trigger is ever called.
         return False, ""
 
@@ -405,15 +409,34 @@ class Autoscaler:
         rel_time_s: float,
         pool_snapshot: dict[str, ClusterView],
     ) -> tuple[bool, str]:
-        """Trigger when the (tightened) SLO objective is violated on the
-        current predicted-latency snapshot."""
-        cutoff = rel_time_s - self._observation_window_s
-        lat_and_slos = []
+        """Trigger when the (tightened) SLO objective is violated over
+        currently active queries (predicted latency only), restricted to
+        queries that arrived after the most recent cluster became ready."""
+        cutoff_s = rel_time_s - self._observation_window_s
+        ready_since = self._most_recent_cluster_ready_rel_time_s
+        lat_and_slos: list[LatencySlo] = []
         for cluster_name, cluster in pool_snapshot.items():
             for q in cluster.active_queries:
+                if q.rel_start_time_s < ready_since:
+                    continue
                 pred_lat = cluster.predicted_latencies[q.query_id]
                 slo = self._trigger_slo_resolver.resolve(q.query_text_id)
                 lat_and_slos.append(LatencySlo(pred_lat, slo))
+        if not lat_and_slos:
+            return False, ""
+        n_completions_since_ready = sum(
+            1
+            for rec in self._trailing_completions
+            if rec.arrival_rel_time_s >= ready_since
+        )
+        total_arrivals_since_ready = (
+            len(lat_and_slos) + n_completions_since_ready
+        )
+        if (
+            self._min_observations_to_act > 0
+            and total_arrivals_since_ready < self._min_observations_to_act
+        ):
+            return False, ""
         slo_metric_value = (
             self._trigger_slo_objective.slo_metric.aggregate_batch(lat_and_slos)
         )
@@ -423,9 +446,79 @@ class Autoscaler:
         if slo_is_met:
             return False, ""
         reason = (
-            f"observation_window_start_s={cutoff:.4f}, "
-            f"most_recent_cluster_ready_rel_time_s="
-            f"{self._most_recent_cluster_ready_rel_time_s}, "
+            f"observation_window_start_s={cutoff_s:.4f}, "
+            f"most_recent_cluster_ready_rel_time_s={ready_since:.4f}, "
+            f"post_spinup_active_queries={len(lat_and_slos)}, "
+            f"total_arrivals_since_ready={total_arrivals_since_ready}, "
+            f"trigger_slo_metric={self._trigger_slo_objective.slo_metric}, "
+            f"slo_metric_value={slo_metric_value:.4f}, "
+            f"trigger_slo_threshold="
+            f"{self._trigger_slo_objective.slo_threshold:.4f}, "
+            f"slo_tightening_factor={self._slo_tightening_factor}"
+        )
+        return True, reason
+
+    def _check_combined_violations(
+        self,
+        rel_time_s: float,
+        pool_snapshot: dict[str, ClusterView],
+    ) -> tuple[bool, str]:
+        """Trigger when the (tightened) SLO objective is violated over the
+        union of active queries (predicted latency) and completed queries
+        within the observation window (actual latency), both restricted to
+        queries that arrived after the most recent cluster became ready."""
+        cutoff_s = rel_time_s - self._observation_window_s
+        ready_since = self._most_recent_cluster_ready_rel_time_s
+
+        # Active queries with predicted latencies.
+        active_lat_and_slos: list[LatencySlo] = []
+        for cluster_name, cluster in pool_snapshot.items():
+            for q in cluster.active_queries:
+                if q.rel_start_time_s < ready_since:
+                    continue
+                pred_lat = cluster.predicted_latencies[q.query_id]
+                slo = self._trigger_slo_resolver.resolve(q.query_text_id)
+                active_lat_and_slos.append(LatencySlo(pred_lat, slo))
+
+        # Completed queries within the observation window with actual latencies.
+        completed_lat_and_slos: list[LatencySlo] = [
+            rec.latency_slo
+            for rec in self._trailing_completions
+            if (rec.completion_rel_time_s >= cutoff_s)
+            and (rec.arrival_rel_time_s >= ready_since)
+        ]
+
+        lat_and_slos = active_lat_and_slos + completed_lat_and_slos
+        if not lat_and_slos:
+            return False, ""
+        n_completions_since_ready = sum(
+            1
+            for rec in self._trailing_completions
+            if rec.arrival_rel_time_s >= ready_since
+        )
+        total_arrivals_since_ready = (
+            len(active_lat_and_slos) + n_completions_since_ready
+        )
+        if (
+            self._min_observations_to_act > 0
+            and total_arrivals_since_ready < self._min_observations_to_act
+        ):
+            return False, ""
+        slo_metric_value = (
+            self._trigger_slo_objective.slo_metric.aggregate_batch(lat_and_slos)
+        )
+        slo_is_met = self._trigger_slo_objective.is_met_from_aggregated(
+            slo_metric_value
+        )
+        if slo_is_met:
+            return False, ""
+        reason = (
+            f"observation_window_start_s={cutoff_s:.4f}, "
+            f"most_recent_cluster_ready_rel_time_s={ready_since:.4f}, "
+            f"post_spinup_active_queries={len(active_lat_and_slos)}, "
+            f"post_spinup_completions_in_window={len(completed_lat_and_slos)}, "
+            f"total_observations={len(lat_and_slos)}, "
+            f"total_arrivals_since_ready={total_arrivals_since_ready}, "
             f"trigger_slo_metric={self._trigger_slo_objective.slo_metric}, "
             f"slo_metric_value={slo_metric_value:.4f}, "
             f"trigger_slo_threshold="
@@ -438,18 +531,26 @@ class Autoscaler:
         self,
         pool_snapshot: dict[str, ClusterView],
     ) -> tuple[bool, str]:
-        """Trigger when the total number of active queries across all READY
-        clusters reaches *trigger_threshold*."""
-        total_active = sum(
-            len(cluster.active_queries)
+        """Trigger when the number of active queries that arrived after the
+        most recent cluster became ready reaches *queue_length_for_trigger_policy*.
+        """
+        ready_since = self._most_recent_cluster_ready_rel_time_s
+        post_spinup_active = sum(
+            sum(
+                1
+                for q in cluster.active_queries
+                if q.rel_start_time_s >= ready_since
+            )
             for cluster in pool_snapshot.values()
             if cluster.state == ClusterState.READY
         )
-        if total_active < self._trigger_threshold:
+        if post_spinup_active < self._queue_length_for_trigger_policy:
             return False, ""
         reason = (
-            f"queue_depth_trigger: total_active_queries={total_active}, "
-            f"trigger_threshold={self._trigger_threshold}"
+            f"queue_depth_trigger: "
+            f"post_spinup_active_queries={post_spinup_active}, "
+            f"queue_length_for_trigger_policy="
+            f"{self._queue_length_for_trigger_policy}"
         )
         return True, reason
 
@@ -457,19 +558,44 @@ class Autoscaler:
         self,
         rel_time_s: float,
     ) -> tuple[bool, str]:
-        """Trigger when the number of completed queries in the observation
-        window that missed their SLO reaches *trigger_threshold*."""
+        """Trigger when the trigger SLO objective is violated over completed
+        queries in the observation window that arrived after the most recent
+        cluster became ready."""
         cutoff_s = rel_time_s - self._observation_window_s
-        violations = sum(
+        ready_since = self._most_recent_cluster_ready_rel_time_s
+        lat_and_slos = [
+            rec.latency_slo
+            for rec in self._trailing_completions
+            if (rec.completion_rel_time_s >= cutoff_s)
+            and (rec.arrival_rel_time_s >= ready_since)
+        ]
+        if not lat_and_slos:
+            return False, ""
+        total_completions_since_ready = sum(
             1
             for rec in self._trailing_completions
-            if ((rec.completion_rel_time_s >= cutoff_s) and rec.slo_violated)
+            if rec.arrival_rel_time_s >= ready_since
         )
-        if violations < self._trigger_threshold:
+        if (
+            self._min_observations_to_act > 0
+            and total_completions_since_ready < self._min_observations_to_act
+        ):
+            return False, ""
+        slo_metric_value = (
+            self._trigger_slo_objective.slo_metric.aggregate_batch(lat_and_slos)
+        )
+        slo_is_met = self._trigger_slo_objective.is_met_from_aggregated(
+            slo_metric_value
+        )
+        if slo_is_met:
             return False, ""
         reason = (
-            f"observed_violations_trigger: violations_in_window={violations}, "
-            f"trigger_threshold={self._trigger_threshold}, "
+            f"observed_violations_trigger: "
+            f"slo_metric={self._trigger_slo_objective.slo_metric}, "
+            f"slo_metric_value={slo_metric_value:.4f}, "
+            f"trigger_slo_threshold={self._trigger_slo_objective.slo_threshold:.4f}, "
+            f"post_spinup_completions_in_window={len(lat_and_slos)}, "
+            f"total_completions_since_ready={total_completions_since_ready}, "
             f"observation_window_s={self._observation_window_s}"
         )
         return True, reason
@@ -485,27 +611,30 @@ class Autoscaler:
         *latency_s* is ``None`` for failed queries, which are treated as SLO
         violations.
 
-        This is only meaningful for the ``OBSERVED_VIOLATIONS`` trigger policy;
+        This is only meaningful for the ``OBSERVED_VIOLATIONS``,
+        ``PREDICTED_VIOLATIONS``, and ``COMBINED_VIOLATIONS`` trigger policies;
         for all other policies the method returns immediately.
 
         Must be called from the same serialised context as :meth:`inform`
         (i.e. from the autoscaler background thread in the runner, or from the
         simulator's single-threaded event loop).
         """
-        if (
-            self._autoscaling_trigger_policy
-            != AutoscalingTriggerPolicy.OBSERVED_VIOLATIONS
+        if self._autoscaling_trigger_policy in (
+            AutoscalingTriggerPolicy.NOOP,
+            AutoscalingTriggerPolicy.QUEUE_DEPTH,
         ):
             return
 
         with self._lock:
-            slo_violated = (latency_s is None) or (
-                latency_s > self._slo_resolver.resolve(query.query_text_id)
+            effective_latency_s = (
+                latency_s if latency_s is not None else float("inf")
             )
+            slo = self._trigger_slo_resolver.resolve(query.query_text_id)
             self._trailing_completions.append(
                 AutoscalerCompletionRecord(
                     completion_rel_time_s=rel_time_s,
-                    slo_violated=slo_violated,
+                    arrival_rel_time_s=query.rel_start_time_s,
+                    latency_slo=LatencySlo(effective_latency_s, slo),
                 )
             )
             # Prune records older than the observation window.
