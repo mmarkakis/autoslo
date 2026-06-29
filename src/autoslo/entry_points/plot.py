@@ -35,6 +35,11 @@ from autoslo.visualizations.scatter_plots import (
     cost_vs_compliance_scatter,
     plot_legend_to,
 )
+from autoslo.visualizations.spinup_timelines import (
+    SpinupLane,
+    load_spinup_lane,
+    save_spinup_timeline_figure,
+)
 from autoslo.workload_execution.execution_result import ExecutionResult
 
 console = Console()
@@ -508,6 +513,7 @@ def _generate_multi_panel_plot(
     plots_dir: Path,
     force: bool,
     live: bool,
+    per_panel: bool = False,
 ) -> None:
     layout: dict = manifest.get("layout", {})
     panels_spec: list[dict] = manifest["panels"]
@@ -672,31 +678,96 @@ def _generate_multi_panel_plot(
         plot_legend_to(legend_path)
         console.print(f"[green]Saved:[/] {legend_path}")
 
-    # Generate individual panel plots with the same axis limits as the multi-panel.
-    multi_stem = plot_path.stem
-    for panel_data, (final_xlim, final_ylim) in zip(
-        panel_data_list, final_limits
-    ):
-        export_data = (
-            replace(panel_data, title=None)
-            if suppress_subplot_titles
-            else panel_data
-        )
-        title_for_suffix = panel_data.title or "panel"
-        suffix = re.sub(r"\s+", "_", title_for_suffix.lower()).strip("_")
-        panel_path = plots_dir / f"{multi_stem}#{suffix}.png"
-        _render_and_save_figure(
-            export_data, panel_path, live, xlim=final_xlim, ylim=final_ylim
-        )
-        _render_and_save_bar_figure(
-            export_data,
-            plots_dir / f"{multi_stem}#{suffix}_bars.png",
-            live,
-        )
+    # Optionally generate individual panel plots with matching axis limits.
+    if per_panel:
+        multi_stem = plot_path.stem
+        for panel_data, (final_xlim, final_ylim) in zip(
+            panel_data_list, final_limits
+        ):
+            export_data = (
+                replace(panel_data, title=None)
+                if suppress_subplot_titles
+                else panel_data
+            )
+            title_for_suffix = panel_data.title or "panel"
+            suffix = re.sub(r"\s+", "_", title_for_suffix.lower()).strip("_")
+            panel_path = plots_dir / f"{multi_stem}#{suffix}.png"
+            _render_and_save_figure(
+                export_data, panel_path, live, xlim=final_xlim, ylim=final_ylim
+            )
+            _render_and_save_bar_figure(
+                export_data,
+                plots_dir / f"{multi_stem}#{suffix}_bars.png",
+                live,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Timeline visualization — spinup trigger + ready times per method
+# ---------------------------------------------------------------------------
+
+
+def _generate_timeline_plot(
+    manifest: dict,
+    timeline_path: Path,
+    sim_runs_dir: Path,
+    force: bool,
+    live: bool,
+) -> None:
+    """Resolve run directories from the manifest and delegate to spinup_timelines."""
+    if not force and timeline_path.exists():
+        console.print(f"[dim]Skipping (exists):[/] {timeline_path}")
+        return
+
+    content = manifest["main_content"]
+    is_multi = "panels" in content
+    panels_spec: list[dict] = content.get("panels", [content])
+
+    if is_multi:
+        layout = content.get("layout", {})
+        rows = layout.get("rows", max(p["row"] for p in panels_spec) + 1)
+        cols = layout.get("cols", max(p["col"] for p in panels_spec) + 1)
+    else:
+        rows, cols = 1, 1
+
+    runs_dir = Path(pu.get_runs_path())
+
+    panel_lanes: list[tuple[dict, list[SpinupLane]]] = []
+    for panel in panels_spec:
+        lanes: list[SpinupLane] = []
+        for point in panel.get("points", []):
+            workload_config = WorkloadConfig.from_config(point)
+            exec_cfg_path = resolve_config(get_exec_config_ref(point, live))
+            params = point.get("params", {})
+            config_label = make_run_id([exec_cfg_path.stem], params)
+            if live:
+                run_id = find_most_recent_live_run_id(
+                    config_label, workload_config.id()
+                )
+                if run_id is None:
+                    console.print(
+                        f"[yellow]No live run for '{point['label']}' — skipping.[/]"
+                    )
+                    continue
+                run_dir = runs_dir / run_id
+            else:
+                run_dir = sim_runs_dir / workload_config.id() / config_label
+            lane = load_spinup_lane(
+                run_dir, point["label"], point.get("formatting_id", "")
+            )
+            if lane is not None:
+                lanes.append(lane)
+        panel_lanes.append((panel, lanes))
+
+    save_spinup_timeline_figure(panel_lanes, rows, cols, timeline_path)
 
 
 def _generate_plot(
-    manifest_path: Path, force: bool, live: bool = False
+    manifest_path: Path,
+    force: bool,
+    live: bool = False,
+    timeline: bool = False,
+    per_panel: bool = False,
 ) -> None:
     manifest = load_yaml(manifest_path)
     plot_name = manifest_path.stem
@@ -716,6 +787,7 @@ def _generate_plot(
             plots_dir,
             force,
             live,
+            per_panel=per_panel,
         )
     else:
         _generate_single_panel_plot(
@@ -724,6 +796,12 @@ def _generate_plot(
             sim_runs_dir,
             force,
             live,
+        )
+
+    if timeline:
+        timeline_path = plots_dir / f"{stem}_timeline.png"
+        _generate_timeline_plot(
+            manifest, timeline_path, sim_runs_dir, force, live
         )
 
 
@@ -748,6 +826,22 @@ def main() -> None:
         help="Run sequentially using the workload runner, not the simulator.",
     )
     parser.add_argument(
+        "--per_panel",
+        action="store_true",
+        help=(
+            "Also save individual per-panel scatter and bar figures "
+            "(multi-panel manifests only)."
+        ),
+    )
+    parser.add_argument(
+        "--timeline",
+        action="store_true",
+        help=(
+            "Generate a spinup-timeline figure (trigger + ready times per "
+            "method) instead of the regular scatter/bar plots."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-render the plot even if it is already up to date.",
@@ -764,7 +858,13 @@ def main() -> None:
             )
             return
         for manifest_path in manifest_paths:
-            _generate_plot(manifest_path, force=args.force, live=args.live)
+            _generate_plot(
+                manifest_path,
+                force=args.force,
+                live=args.live,
+                timeline=args.timeline,
+                per_panel=args.per_panel,
+            )
         console.print("\n[bold green]Done.[/]")
         return
 
@@ -782,7 +882,13 @@ def main() -> None:
     if not manifest_path.exists():
         parser.error(f"Plot manifest not found: {manifest_path}")
 
-    _generate_plot(manifest_path, force=args.force, live=args.live)
+    _generate_plot(
+        manifest_path,
+        force=args.force,
+        live=args.live,
+        timeline=args.timeline,
+        per_panel=args.per_panel,
+    )
     console.print("\n[bold green]Done.[/]")
 
 
