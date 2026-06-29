@@ -1,0 +1,226 @@
+locals:
+  lambda_point2: &lambda_point2
+    workload_name: poisson_99_1_3_0.2_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  lambda_point1: &lambda_point1
+    workload_name: poisson_99_1_3_0.1_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  set1: &set1
+    KAPPA: 4
+    INITIAL_RPU: 8
+  set2: &set2
+    KAPPA: 4
+    INITIAL_RPU: 16
+  set3: &set3
+    KAPPA: 2
+    INITIAL_RPU: 8
+  set4: &set4
+    KAPPA: 2
+    INITIAL_RPU: 16
+
+
+
+main_content:
+
+  # queue_depth runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  queue_depth
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
+
+  # noop runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/autoscaler_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY:  noop
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
+
+
+  # observed_violations runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  observed_violations
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
+
+  # combined_violations runs.
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point2
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *lambda_point1
+    execution_config: exec:handmade/trigger_eval_v8.yml
+    params:
+      AUTOSCALING_TRIGGER_POLICY:  combined_violations
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
