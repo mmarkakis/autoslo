@@ -1,0 +1,32 @@
+output_dir: data/plots/iconq_comparison   
+min_rpu_samples: 30  
+highlight_best: false
+annotate_best: false  
+show_titles: false    
+q_error_highlight_margin: 0 
+factor_error_margin: 0  
+
+
+workload_config:
+  workload_name: poisson_99_1_3_0.1_42
+  target_date: "2026-01-01"
+  rescale_factor: 1
+inference_rpu: 8             
+
+models:
+  - iconq_model_id: comparison_base
+    label: "Iconq"
+    annotate: false  
+    color: light_gray
+  - iconq_model_id: comparison_+size
+    label: "+Size"
+    annotate: false  
+    color: light_blue
+  - iconq_model_id: comparison_+censored
+    label: "+Censored"
+    annotate: false 
+    color: light_red
+  - iconq_model_id: model_v8
+    label: "Iconq+"
+    annotate: false 
+    color: light_green
