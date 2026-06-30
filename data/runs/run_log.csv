@@ -297,3 +297,11 @@ run_id,config_id,workload_id,started_at
 1782762909231,main_eval_round_robin__INITIAL_RPU=[32]__TARGET_DATE=2024-04-15,redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T19:55:13Z
 1782763515114,"main_eval_round_robin__INITIAL_RPU=[32, 32]__TARGET_DATE=2024-04-15",redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T20:05:15Z
 1782764112199,main_eval_round_robin__INITIAL_RPU=[64]__TARGET_DATE=2024-04-15,redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T20:15:14Z
+1782798096020,may27_1month_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T05:41:36Z
+1782798699174,may27_1week_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T05:51:39Z
+1782799304558,may27_1day_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T06:01:45Z
+1782799902467,may27_oracle_k4_thresh5_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T06:11:44Z
+1782812869716,may27_1month_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T09:47:50Z
+1782813669469,may27_1week_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T10:01:10Z
+1782814188725,may27_1day_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T10:09:49Z
+1782814678200,may27_oracle_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-30T10:17:58Z
