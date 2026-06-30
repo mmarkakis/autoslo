@@ -609,6 +609,10 @@ class StructuredLog:
         results_df["actual_latency"] = (
             results_df["completion_time"] - results_df["arrival_time"]
         )
+        # Coerce to numeric in case any values were stored/parsed as strings.
+        results_df["predicted_latency"] = pd.to_numeric(
+            results_df["predicted_latency"], errors="coerce"
+        )
         results_df = results_df.dropna(
             subset=["actual_latency", "predicted_latency", "rpu"]
         )

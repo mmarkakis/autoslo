@@ -44,6 +44,7 @@ from rich.console import Console
 from rich.table import Table
 
 import autoslo.filesystem.path_utils as pu
+from autoslo.clusters.cluster import Cluster
 from autoslo.config.component_configs import SloResolverConfig, WorkloadConfig
 from autoslo.config.utils import make_run_id
 from autoslo.filesystem.config_resolver import resolve_config
@@ -85,6 +86,7 @@ def _fmt_cost(v: float) -> str:
 class ClusterStats:
     name: str
     spinup_type: str  # "initial" | "scheduled" | "reactive" | "unknown"
+    rpu: int
     spinup_started_s: Optional[float]
     ready_s: Optional[float]
     teardown_s: Optional[float]
@@ -246,10 +248,16 @@ def _extract_cluster_stats(
 
         cost = cost_by_cluster.get(cluster_name, 0.0)
 
+        try:
+            rpu = Cluster.rpu_for_cluster_name(cluster_name)
+        except ValueError:
+            rpu = 0
+
         results.append(
             ClusterStats(
                 name=cluster_name,
                 spinup_type=spinup_type,
+                rpu=rpu,
                 spinup_started_s=t_start,
                 ready_s=ready_s,
                 teardown_s=teardown_s,
@@ -295,12 +303,13 @@ _SPINUP_COLOR = {
 
 def _half_rows(
     stats: list[ClusterStats],
-) -> tuple[list[list[str]], list[str]]:
+) -> tuple[list[list[str]], list[list[str]], list[str]]:
     """
     Build table cell strings for a run half.
 
-    Returns (data_rows, footer_row).
-    Each element of data_rows: [name, spinup_s, ready_s, teardown_s, n_q, n_met, pct, cost]
+    Returns (data_rows, rpu_rows, footer_row).
+    Each element of data_rows: [name, spinup_s, ready_s, teardown_s, n_q, n_met, n_viol, pct, cost]
+    rpu_rows: one row per unique RPU size, aggregated over clusters with that RPU.
     footer_row: same shape, with totals.
     """
     rows: list[list[str]] = []
@@ -322,6 +331,36 @@ def _half_rows(
             ]
         )
 
+    # RPU-aggregated rows
+    rpu_groups: dict[int, list[ClusterStats]] = {}
+    for cs in stats:
+        rpu_groups.setdefault(cs.rpu, []).append(cs)
+    rpu_rows: list[list[str]] = []
+    for rpu_size in sorted(rpu_groups.keys()):
+        group = rpu_groups[rpu_size]
+        n_q = sum(cs.n_queries for cs in group)
+        n_met = sum(cs.n_slo_met for cs in group)
+        n_viol = n_q - n_met
+        cost = sum(cs.cost for cs in group)
+        n_clusters = len(group)
+        label = (
+            f"[bold magenta]{rpu_size} RPU[/] "
+            f"[dim]({n_clusters} cluster{'s' if n_clusters != 1 else ''})[/]"
+        )
+        rpu_rows.append(
+            [
+                label,
+                "",
+                "",
+                "",
+                str(n_q),
+                str(n_met),
+                str(n_viol),
+                _fmt_pct(n_viol, n_q),
+                _fmt_cost(cost),
+            ]
+        )
+
     total_q = sum(cs.n_queries for cs in stats)
     total_met = sum(cs.n_slo_met for cs in stats)
     total_cost = sum(cs.cost for cs in stats)
@@ -336,7 +375,7 @@ def _half_rows(
         f"[bold]{_fmt_pct(total_q - total_met, total_q)}[/]",
         f"[bold]{_fmt_cost(total_cost)}[/]",
     ]
-    return rows, footer
+    return rows, rpu_rows, footer
 
 
 _HALF_HEADERS = [
@@ -376,25 +415,35 @@ def _render_entry_table(
     for h in _HALF_HEADERS:
         table.add_column(f"[green]{h}[/]", no_wrap=True)
 
-    sim_rows, sim_footer = (
+    sim_rows, sim_rpu_rows, sim_footer = (
         _half_rows(sim_stats)
         if sim_stats is not None
-        else ([], ["[dim]—[/]"] * _N_COLS)
+        else ([], [], ["[dim]—[/]"] * _N_COLS)
     )
-    live_rows, live_footer = (
+    live_rows, live_rpu_rows, live_footer = (
         _half_rows(live_stats)
         if live_stats is not None
-        else ([], ["[dim]—[/]"] * _N_COLS)
+        else ([], [], ["[dim]—[/]"] * _N_COLS)
     )
 
-    n_rows = max(len(sim_rows), len(live_rows))
-
     _blank = ["[dim]—[/]"] * _N_COLS
+    _empty = [""] * _N_COLS
 
+    # Per-cluster rows
+    n_rows = max(len(sim_rows), len(live_rows))
     for i in range(n_rows):
         sim_r = sim_rows[i] if i < len(sim_rows) else _blank
         live_r = live_rows[i] if i < len(live_rows) else _blank
         table.add_row(*(sim_r + ["|"] + live_r))
+
+    # RPU-aggregated rows
+    if sim_rpu_rows or live_rpu_rows:
+        table.add_section()
+        n_rpu_rows = max(len(sim_rpu_rows), len(live_rpu_rows))
+        for i in range(n_rpu_rows):
+            sim_r = sim_rpu_rows[i] if i < len(sim_rpu_rows) else _empty
+            live_r = live_rpu_rows[i] if i < len(live_rpu_rows) else _empty
+            table.add_row(*(sim_r + ["|"] + live_r))
 
     # Footer separator + totals
     if sim_stats is not None or live_stats is not None:
