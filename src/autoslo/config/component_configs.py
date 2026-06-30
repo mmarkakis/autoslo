@@ -360,6 +360,7 @@ class SloResolverConfig(_PartialConfig):
 
     slo_s: float = 10.0
     slo_dict_filename: Optional[str] = None
+    slo_tightening_factor: float = 1.0
 
 
 @dataclass(frozen=True)

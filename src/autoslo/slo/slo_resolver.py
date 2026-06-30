@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 import yaml
+from typing import Optional
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import SloResolverConfig
@@ -22,31 +23,35 @@ class SloResolver:
 
     Parameters
     ----------
-    default_slo_s:
-        Fallback SLO used when the query's template has no override.
-    slo_dict_filename:
-        Filename (not full path) of a YAML file under
-        ``data/slos/`` mapping template IDs (zero-padded str) to SLOs
-        (float).  If *None*, only the global default is used.
+    config:
+        Resolver configuration; ``config.slo_tightening_factor`` is used as
+        the default tightening factor.
     slo_tightening_factor:
-        Optional factor to multiply all SLOs by, simulating tighter or looser
-        SLOs without needing multiple YAML files.  A factor of 0.8 means
-        "pretend SLOs are 80% of real". Applied to both the default and all
-        overrides.
+        Optional override for the tightening factor.  When given, this takes
+        precedence over ``config.slo_tightening_factor``.  Used internally by
+        :meth:`tightened` to create a resolver with a different factor without
+        mutating the original config (e.g. for the autoscaler trigger
+        resolver).
     """
 
     def __init__(
-        self, config: SloResolverConfig, slo_tightening_factor: float = 1.0
+        self,
+        config: SloResolverConfig,
+        slo_tightening_factor: Optional[float] = None,
     ) -> None:
         self._config = config
-        self._slo_tightening_factor = slo_tightening_factor
-        if slo_tightening_factor <= 0:
+        factor = (
+            slo_tightening_factor
+            if slo_tightening_factor is not None
+            else config.slo_tightening_factor
+        )
+        self._slo_tightening_factor = factor
+        if factor <= 0:
             raise ValueError(
-                f"Tightening factor must be positive, "
-                f"got {slo_tightening_factor}"
+                f"Tightening factor must be positive, " f"got {factor}"
             )
 
-        self._default = config.slo_s * slo_tightening_factor
+        self._default = config.slo_s * factor
         self._filename: str | None = config.slo_dict_filename
         self._dict: dict[str, float] = {}
 
@@ -55,7 +60,7 @@ class SloResolver:
             with open(path) as f:
                 raw = yaml.safe_load(f) or {}
             self._dict = {
-                str(k).zfill(3): float(v) * slo_tightening_factor
+                str(k).zfill(3): float(v) * factor
                 for k, v in raw["slo_dict"].items()
             }
 
