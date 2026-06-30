@@ -258,7 +258,7 @@ class AutoscalerConfig(_PartialConfig):
     min_cluster_lifetime_s: float = 1200.0
     idle_time_before_tear_down_s: float = 300.0
     observation_window_s: float = 120.0
-    slo_tightening_factor: float = 1.0
+    trigger_slo_tightening_factor: float = 1.0
     min_finished_queries_in_counterfactual: int = 30
     min_observations_to_act: int = 30
     force_one_decision_after_query_fraction: Optional[float] = None  # When set,
@@ -286,6 +286,15 @@ class AutoscalerConfig(_PartialConfig):
         trigger_slo_objective_config = (
             SloObjectiveConfig(**trigger_cfg_dict) if trigger_cfg_dict else None
         )
+        # Backward compat: rename old key from YAML files that predate the
+        # slo_tightening_factor → trigger_slo_tightening_factor rename.
+        if (
+            "slo_tightening_factor" in autoscaler_cfg
+            and "trigger_slo_tightening_factor" not in autoscaler_cfg
+        ):
+            autoscaler_cfg["trigger_slo_tightening_factor"] = autoscaler_cfg.pop(
+                "slo_tightening_factor"
+            )
         new_cfg = {**cfg, "autoscaler_config": autoscaler_cfg}
         return super().from_config(
             new_cfg,

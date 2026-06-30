@@ -42,6 +42,6 @@ autoscaler_config:
   min_cluster_lifetime_s: 3600.0
   idle_time_before_tear_down_s: 1200.0
   observation_window_s: <OBSERVATION_WINDOW_S>
-  slo_tightening_factor: 1.0
+  trigger_slo_tightening_factor: 1.0
   force_one_decision_after_query_fraction: 0.2
   min_finished_queries_in_counterfactual: 30

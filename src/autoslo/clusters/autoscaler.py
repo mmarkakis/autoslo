@@ -103,7 +103,9 @@ class Autoscaler:
             autoscaler_config.idle_time_before_tear_down_s
         )
         self._observation_window_s = autoscaler_config.observation_window_s
-        self._slo_tightening_factor = autoscaler_config.slo_tightening_factor
+        self._trigger_slo_tightening_factor = (
+            autoscaler_config.trigger_slo_tightening_factor
+        )
         self._cluster_cache_state_dim = (
             provisioner_config.cluster_cache_state_dim
         )
@@ -117,7 +119,7 @@ class Autoscaler:
             autoscaler_config.queue_length_for_trigger_policy
         )
         self._trigger_slo_resolver = slo_resolver.tightened(
-            autoscaler_config.slo_tightening_factor
+            autoscaler_config.trigger_slo_tightening_factor
         )
         self._spin_up_delay_s = provisioner_config.spin_up_delay_s
         self._min_finished_queries_in_counterfactual = (
@@ -184,8 +186,8 @@ class Autoscaler:
         return self._observation_window_s
 
     @property
-    def slo_tightening_factor(self) -> float:
-        return self._slo_tightening_factor
+    def trigger_slo_tightening_factor(self) -> float:
+        return self._trigger_slo_tightening_factor
 
     @property
     def forced_decision_mode(self) -> bool:
@@ -485,7 +487,7 @@ class Autoscaler:
             f"slo_metric_value={slo_metric_value:.4f}, "
             f"trigger_slo_threshold="
             f"{self._trigger_slo_objective.slo_threshold:.4f}, "
-            f"slo_tightening_factor={self._slo_tightening_factor}"
+            f"trigger_slo_tightening_factor={self._trigger_slo_tightening_factor}"
         )
         return True, reason
 
@@ -554,7 +556,7 @@ class Autoscaler:
             f"slo_metric_value={slo_metric_value:.4f}, "
             f"trigger_slo_threshold="
             f"{self._trigger_slo_objective.slo_threshold:.4f}, "
-            f"slo_tightening_factor={self._slo_tightening_factor}"
+            f"trigger_slo_tightening_factor={self._trigger_slo_tightening_factor}"
         )
         return True, reason
 

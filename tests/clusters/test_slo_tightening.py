@@ -1,4 +1,4 @@
-"""Tests for SloResolver.tightened(), Autoscaler.slo_tightening_factor,
+"""Tests for SloResolver.tightened(), Autoscaler.trigger_slo_tightening_factor,
 and Autoscaler trigger_slo_objective_config separation."""
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def _autoscaler(
     slo_s: float = 10.0,
     slo_metric: SloMetric | str = SloMetric.RELATIVE,
     slo_threshold: float = 0.0,
-    slo_tightening_factor: float = 1.0,
+    trigger_slo_tightening_factor: float = 1.0,
     trigger_slo_objective_config: SloObjectiveConfig | None = None,
     allowed_rpu_sizes: list[int] | None = None,
     observation_window_s: float = 600.0,
@@ -95,7 +95,7 @@ def _autoscaler(
         autoscaler_config=AutoscalerConfig(
             allowed_rpu_sizes=allowed_rpu_sizes or [8],
             observation_window_s=observation_window_s,
-            slo_tightening_factor=slo_tightening_factor,
+            trigger_slo_tightening_factor=trigger_slo_tightening_factor,
             trigger_slo_objective_config=trigger_slo_objective_config,
         ),
         out_dir="/tmp",
@@ -137,7 +137,7 @@ class TestSloResolverTightened:
 
 
 # ---------------------------------------------------------------------------
-# Autoscaler with slo_tightening_factor
+# Autoscaler with trigger_slo_tightening_factor
 # ---------------------------------------------------------------------------
 
 
@@ -146,7 +146,7 @@ class TestAutoscalerTightening:
 
     def test_factor_1_no_spinup_when_within_slo(self):
         """SLO=10s, pred=8.5s → within SLO, no spin-up with factor=1.0."""
-        scaler = _autoscaler(slo_s=10.0, slo_tightening_factor=1.0)
+        scaler = _autoscaler(slo_s=10.0, trigger_slo_tightening_factor=1.0)
         snapshot, _ = _view_with_query(pred_latency=8.5)
         actions = scaler.consider_spin_up(
             rel_time_s=_REL_TIME_S,
@@ -157,18 +157,18 @@ class TestAutoscalerTightening:
     @patch.object(Autoscaler, "_select_rpu", return_value=(8, MagicMock()))
     def test_tightened_triggers_spinup(self, _):
         """SLO=10s, pred=8.5s, factor=0.8 → tightened SLO=8s → violation → spin-up."""
-        scaler = _autoscaler(slo_s=10.0, slo_tightening_factor=0.8)
+        scaler = _autoscaler(slo_s=10.0, trigger_slo_tightening_factor=0.8)
         snapshot, _ = _view_with_query(pred_latency=8.5)
         actions = scaler.consider_spin_up(
             rel_time_s=_REL_TIME_S,
             pool_snapshot_with_current_query=snapshot,
         )
         assert len(actions) == 1
-        assert "slo_tightening_factor=0.8" in actions[0].reason
+        assert "trigger_slo_tightening_factor=0.8" in actions[0].reason
 
     def test_tightened_no_spinup_when_well_within(self):
         """SLO=10s, pred=5s, factor=0.8 → tightened SLO=8s → still met → no spin-up."""
-        scaler = _autoscaler(slo_s=10.0, slo_tightening_factor=0.8)
+        scaler = _autoscaler(slo_s=10.0, trigger_slo_tightening_factor=0.8)
         snapshot, _ = _view_with_query(pred_latency=5.0)
         actions = scaler.consider_spin_up(
             rel_time_s=_REL_TIME_S,
@@ -179,7 +179,7 @@ class TestAutoscalerTightening:
     @patch.object(Autoscaler, "_select_rpu", return_value=(8, MagicMock()))
     def test_factor_1_still_triggers_on_real_violation(self, _):
         """SLO=10s, pred=12s, factor=1.0 → real violation → spin-up."""
-        scaler = _autoscaler(slo_s=10.0, slo_tightening_factor=1.0)
+        scaler = _autoscaler(slo_s=10.0, trigger_slo_tightening_factor=1.0)
         snapshot, _ = _view_with_query(pred_latency=12.0)
         actions = scaler.consider_spin_up(
             rel_time_s=_REL_TIME_S,
@@ -188,12 +188,12 @@ class TestAutoscalerTightening:
         assert len(actions) == 1
 
     def test_property_exposed(self):
-        scaler = _autoscaler(slo_tightening_factor=0.75)
-        assert scaler.slo_tightening_factor == 0.75
+        scaler = _autoscaler(trigger_slo_tightening_factor=0.75)
+        assert scaler.trigger_slo_tightening_factor == 0.75
 
     def test_default_factor_is_1(self):
         scaler = _autoscaler()
-        assert scaler.slo_tightening_factor == 1.0
+        assert scaler.trigger_slo_tightening_factor == 1.0
 
     @patch.object(Autoscaler, "_select_rpu", return_value=(8, MagicMock()))
     def test_with_binary_metric(self, _):
@@ -203,7 +203,7 @@ class TestAutoscalerTightening:
             slo_s=10.0,
             slo_metric=SloMetric.BINARY,
             slo_threshold=0.0,
-            slo_tightening_factor=0.8,
+            trigger_slo_tightening_factor=0.8,
         )
         snapshot, _ = _view_with_query(pred_latency=8.5)
         actions = scaler.consider_spin_up(
@@ -219,7 +219,7 @@ class TestAutoscalerTightening:
             slo_s=5.0,  # SLO=5s
             slo_metric=SloMetric.RELATIVE,
             slo_threshold=0.0,
-            slo_tightening_factor=0.8,  # effective tightened SLO=4s
+            trigger_slo_tightening_factor=0.8,  # effective tightened SLO=4s
         )
         # pred=4.5s > tightened SLO=4s → violation
         snapshot, _ = _view_with_query(pred_latency=4.5)
@@ -297,7 +297,7 @@ class TestTriggerSloObjective:
         """SpinUpAction.reason logs trigger_slo_metric and trigger_slo_threshold."""
         scaler = _autoscaler(
             slo_s=10.0,
-            slo_tightening_factor=0.8,
+            trigger_slo_tightening_factor=0.8,
             trigger_slo_objective_config=SloObjectiveConfig(
                 slo_metric="binary", slo_threshold=0.0
             ),
@@ -311,15 +311,15 @@ class TestTriggerSloObjective:
         assert len(actions) == 1
         assert "trigger_slo_metric=" in actions[0].reason
         assert "trigger_slo_threshold=" in actions[0].reason
-        assert "slo_tightening_factor=0.8" in actions[0].reason
+        assert "trigger_slo_tightening_factor=0.8" in actions[0].reason
 
     @patch.object(Autoscaler, "_select_rpu", return_value=(8, MagicMock()))
     def test_tightening_and_trigger_objective_combine(self, _):
-        """slo_tightening_factor and trigger_slo_objective_config are orthogonal."""
+        """trigger_slo_tightening_factor and trigger_slo_objective_config are orthogonal."""
         # factor=0.8 tightens per-query SLO; trigger uses binary metric
         scaler = _autoscaler(
             slo_s=10.0,
-            slo_tightening_factor=0.8,
+            trigger_slo_tightening_factor=0.8,
             trigger_slo_objective_config=SloObjectiveConfig(
                 slo_metric="binary", slo_threshold=0.0
             ),
