@@ -293,3 +293,7 @@ run_id,config_id,workload_id,started_at
 1782712063357,may27_1week_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-29T05:47:43Z
 1782712850980,may27_1day_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-29T06:00:51Z
 1782713494964,may27_oracle_k4_thresh10_nocache_v8,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-06-29T06:11:35Z
+1782762306152,"main_eval_round_robin__INITIAL_RPU=[16, 16]__TARGET_DATE=2024-04-15",redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T19:45:06Z
+1782762909231,main_eval_round_robin__INITIAL_RPU=[32]__TARGET_DATE=2024-04-15,redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T19:55:13Z
+1782763515114,"main_eval_round_robin__INITIAL_RPU=[32, 32]__TARGET_DATE=2024-04-15",redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T20:05:15Z
+1782764112199,main_eval_round_robin__INITIAL_RPU=[64]__TARGET_DATE=2024-04-15,redbench_provisioned_157_0__2024-04-15__rf0.167,2026-06-29T20:15:14Z
