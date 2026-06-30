@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from autoslo.config.component_configs import SloObjectiveConfig
 from autoslo.slo.slo_metric import LatencySlo, SloMetric
@@ -138,3 +138,26 @@ class SloObjective:
 
         best = min(candidates, key=functools.cmp_to_key(self.cmp))
         return candidates.index(best)
+
+    def key_of_best(self, candidates: dict[Any, ViolationCost]) -> Any:
+        """Return the key of the best ``(violation, cost)`` candidate.
+
+        Applies the same lexicographic policy as :meth:`is_b_better`:
+        feasible candidates (metric ≤ threshold) are preferred and ranked
+        by cost; if none are feasible, the one with the lowest violation
+        (tiebreak: cost) wins.
+
+        Parameters
+        ----------
+        candidates:
+            Dictionary mapping keys to ``(violation, cost)`` pairs to compare.
+        """
+        if len(candidates) == 0:
+            raise ValueError("No candidates provided")
+
+        best_key = min(
+            candidates.keys(),
+            key=lambda k: functools.cmp_to_key(self.cmp)(candidates[k]),
+        )
+        return best_key
+

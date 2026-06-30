@@ -756,7 +756,7 @@ class Autoscaler:
                 },
             )
 
-        viol_and_costs: list[ViolationCost] = []
+        viol_and_costs: dict[Optional[int], ViolationCost] = {}
         post_spinup_replay_end_checkpoints: dict[
             Optional[int], ReplayEndCheckpoint
         ] = {}
@@ -802,7 +802,7 @@ class Autoscaler:
             )
         )
         post_spinup_replay_end_checkpoints[None] = baseline_checkpoint
-        viol_and_costs.append(baseline_viol_and_cost)
+        viol_and_costs[None] = baseline_viol_and_cost
         emit_structured(
             BaseStructuredEvent(
                 rel_time_s=rel_time_s,
@@ -832,7 +832,7 @@ class Autoscaler:
             post_spinup_replay_end_checkpoints[rpu] = (
                 post_spinup_replay_end_checkpoint
             )
-            viol_and_costs.append(slo_viol_and_cost)
+            viol_and_costs[rpu] = slo_viol_and_cost
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"
             emit_structured(
@@ -850,10 +850,10 @@ class Autoscaler:
                 )
             )
 
-        # Baseline is first so idx_of_best returns it on any tie (prefer
+        # Baseline is first so key_of_best returns it on any tie (prefer
         # doing nothing when no candidate is strictly better).
-        best_local_idx = self._slo_objective.idx_of_best(viol_and_costs)
-        best_viol_and_cost = viol_and_costs[best_local_idx]
+        best_viol_and_cost_rpu = self._slo_objective.key_of_best(viol_and_costs)
+        best_viol_and_cost = viol_and_costs[best_viol_and_cost_rpu]
 
         common_stats = SelectRpuStats(
             pre_spinup_arrivals_processed=(
@@ -861,11 +861,11 @@ class Autoscaler:
             ),
             post_spinup_arrivals_processed={
                 rpu: post_spinup_replay_end_checkpoints[rpu].arrivals_processed
-                for rpu in {self._allowed_rpu_sizes}.union({None})
+                for rpu in [*self._allowed_rpu_sizes, None]
             },
         )
 
-        if best_local_idx == 0:
+        if best_viol_and_cost_rpu is None:
             # Baseline is (tied) best — signal "do nothing" to the caller.
             emit_structured(
                 BaseStructuredEvent(
@@ -887,9 +887,11 @@ class Autoscaler:
         # pick the largest RPU: when uncertain about size, go conservative.
         best_rpu = max(
             rpu
-            for i, rpu in enumerate(self._allowed_rpu_sizes)
-            if self._slo_objective.cmp(viol_and_costs[i], best_viol_and_cost)
-            == 0
+            for rpu in self._allowed_rpu_sizes
+            if (
+                self._slo_objective.cmp(viol_and_costs[rpu], best_viol_and_cost)
+                == 0
+            )
         )
 
         best_hyp_cluster_name = f"autoslo-{best_rpu}-hypothetical"
