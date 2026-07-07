@@ -1,0 +1,146 @@
+locals:
+  may27_workload_config: &may27_workload_config
+    workload_name: redbench_provisioned_157_0
+    target_date: "2024-05-27"
+    rescale_factor: 0.16666667
+  april15_workload_config: &april15_workload_config
+    workload_name: redbench_provisioned_157_0
+    target_date: "2024-04-15"
+    rescale_factor: 0.16666667
+
+main_content:
+  #min_run_id: 1782862567881
+
+  layout:
+    rows: 2
+    cols: 2
+    figsize: [8, 6]
+    shared_xlim: true
+    shared_ylim: true
+    show_target_region: false
+    suppress_subplot_titles: true
+
+  panels:
+  - row: 0
+    col: 0
+    title: "May 27, κ=4"
+    show_legend: lower left
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    threshold_lines:
+      - value: 0.10
+        color: light_green
+    points:
+      - label: "Past 1 Day"
+        formatting_id: main_eval_past1_thresh10
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1day_k4_thresh10_nocache_v8.yml
+      - label: "Past 7 Days"
+        formatting_id: main_eval_past7_thresh10
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1week_k4_thresh10_nocache_v8.yml
+      - label: "Past 30 Days"
+        formatting_id: main_eval_past30_thresh10
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v8.yml
+      # - label: "Target Day"
+      #   formatting_id: main_eval_oracle_thresh10
+      #   workload_config: *may27_workload_config
+      #   execution_config: exec:tuned/may27_oracle_k4_thresh10_nocache_v8.yml
+
+  - row: 1
+    col: 0
+    title: "April 15, κ=4"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    threshold_lines:
+      - value: 0.10
+        color: light_green
+    points:
+      - label: "Past 1 Day"
+        formatting_id: main_eval_past1_thresh10
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1day_k4_thresh10_nocache_v8.yml
+      - label: "Past 7 Days"
+        formatting_id: main_eval_past7_thresh10
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1week_k4_thresh10_nocache_v8.yml
+      - label: "Past 30 Days"
+        formatting_id: main_eval_past30_thresh10
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1month_k4_thresh10_nocache_v8.yml
+      # - label: "Target Day"
+      #   formatting_id: main_eval_oracle_thresh10
+      #   workload_config: *april15_workload_config
+      #   execution_config: exec:tuned/april15_oracle_k4_thresh10_nocache_v8.yml
+
+  - row: 0
+    col: 1
+    title: "May 27, κ=2"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    threshold_lines:
+      - value: 0.10
+        color: light_green
+    points:
+      - label: "Past 1 Day"
+        formatting_id: main_eval_past1_thresh10
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1day_k2_thresh10_nocache_v8.yml
+      - label: "Past 7 Days"
+        formatting_id: main_eval_past7_thresh10
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1week_k2_thresh10_nocache_v8.yml
+      - label: "Past 30 Days"
+        formatting_id: main_eval_past30_thresh10
+        workload_config: *may27_workload_config
+        execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v8.yml
+      # - label: "Target Day"
+      #   formatting_id: main_eval_oracle_thresh10
+      #   workload_config: *may27_workload_config
+      #   execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v8.yml
+
+  - row: 1
+    col: 1
+    title: "April 15, κ=2"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    threshold_lines:
+      - value: 0.10
+        color: light_green
+    points:
+      - label: "Past 1 Day"
+        formatting_id: main_eval_past1_thresh10
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1day_k2_thresh10_nocache_v8.yml
+      - label: "Past 7 Days"
+        formatting_id: main_eval_past7_thresh10
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1week_k2_thresh10_nocache_v8.yml
+      - label: "Past 30 Days"
+        formatting_id: main_eval_past30_thresh10
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1month_k2_thresh10_nocache_v8.yml
+      # - label: "Target Day"
+      #   formatting_id: main_eval_oracle_thresh10
+      #   workload_config: *april15_workload_config
+      #   execution_config: exec:tuned/april15_oracle_k2_thresh10_nocache_v8.yml

@@ -1,0 +1,42 @@
+sampling_config:
+  num_scenarios: 20
+  seed: 42
+  train_fraction: 0.6
+  aggregation_method: p95
+  forecaster_config:
+    forecast_policy_name: same_day_exponential
+    decay_factor: 0.25
+    arrival_time_policy_name: "interarrival_deciles"
+    reservoir_config:
+      workload_name: redbench_provisioned_157_0
+      last_day_date_inclusive: "<LAST_DAY_DATE_INCLUSIVE>"
+      num_days: <NUM_DAYS>
+
+slo_objective_config:
+  slo_metric: binary
+  slo_threshold: <SLO_THRESHOLD>
+
+spinup_optimizer_config:
+  max_spinups: 5
+  min_delinquent_workload_fraction: 0.5
+  lead_time_s: 360.0
+  allowed_rpu_sizes: [16, 32]
+  max_attempts_per_round: 5
+  initial_rpu_candidates:
+    - [16]
+    - [32]
+
+autoscaling_param_sweep:
+ param_sweep_config:
+    strategy: grid
+    params:
+      "autoscaler_config.min_cluster_lifetime_s": [1200.0, 3600.0]
+      "autoscaler_config.idle_time_before_tear_down_s": [600.0, 1200.0]
+      "autoscaler_config.min_observations_to_act": [16, 32]
+      "autoscaler_config.observation_window_s": [300.0, 600.0]
+      "autoscaler_config.min_finished_queries_in_counterfactual": [16, 32]
+      "autoscaler_config.trigger_slo_objective_config.slo_threshold": [0, 0.1]
+
+query_routing_param_sweep:
+  param_sweep_config:
+    params: {}
