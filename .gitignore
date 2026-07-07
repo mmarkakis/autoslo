@@ -33,7 +33,7 @@ data/__query_texts/
 
 docs/
 
-data/tuner_runs/
+data/tuner_runs*/
 data/simulator_runs/TESTTEST/
 
 profile.prof
