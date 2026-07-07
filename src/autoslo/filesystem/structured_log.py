@@ -186,7 +186,11 @@ class StructuredLogHandler(logging.Handler):
         # Done here in bulk rather than per-event in the hot path.
         if "details" in df.columns:
             df["details"] = [
-                json.dumps(d, default=str) if isinstance(d, dict) and d else (d or "")
+                (
+                    json.dumps(d, default=str)
+                    if isinstance(d, dict) and d
+                    else (d or "")
+                )
                 for d in df["details"]
             ]
         shard_path = os.path.join(
@@ -493,9 +497,12 @@ class StructuredLog:
                 "query_text_id": pivoted["query_text_id"].astype(str),
                 "arrival_s": pivoted[EventType.ARRIVAL.value],
                 "completion_s": pivoted[EventType.COMPLETION.value],
-                "latency_s": (
-                    pivoted[EventType.COMPLETION.value]
-                    - pivoted[EventType.ARRIVAL.value]
+                "latency_s": round(
+                    (
+                        pivoted[EventType.COMPLETION.value]
+                        - pivoted[EventType.ARRIVAL.value]
+                    ),
+                    3,
                 ),
             }
         )
@@ -562,7 +569,6 @@ class StructuredLog:
         Return a DataFrame with one row per query containing actual latency,
         predicted latency, RPU, and error metrics.
         """
-        
 
         query_data: dict[Any, dict[str, float | int | None]] = {}
         for _, row in self.df.iterrows():

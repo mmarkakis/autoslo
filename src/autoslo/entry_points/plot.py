@@ -81,6 +81,7 @@ class _PanelData:
     improvement_arrow: ImprovementArrow | None
     tail_fraction: float
     threshold_lines: list[ThresholdLine]
+    outline_left_of: float | None = None
 
 
 def _load_panel_data(
@@ -91,6 +92,7 @@ def _load_panel_data(
     layout_show_target_region: bool = False,
     layout_show_legend: bool | str = False,
     layout_annotate_cluster_sizes: bool = False,
+    min_run_id: str | None = None,
 ) -> _PanelData:
     """Parse a panel config dict into a fully-resolved _PanelData.
 
@@ -136,6 +138,7 @@ def _load_panel_data(
         exec_cfg_path = resolve_config(get_exec_config_ref(point, live))
         params = point.get("params", {})
         config_label = make_run_id([exec_cfg_path.stem], params)
+        point_run_id: str | None = None
         if live:
             run_id = find_most_recent_live_run_id(
                 config_label, workload_config.id()
@@ -147,6 +150,13 @@ def _load_panel_data(
                     f"— skipping point '{point['label']}'.[/]"
                 )
                 continue
+            if min_run_id is not None and int(run_id) < int(min_run_id):
+                console.print(
+                    f"[yellow]Warning: live run '{run_id}' predates "
+                    f"min_run_id '{min_run_id}' "
+                    f"— skipping point '{point['label']}'.[/]"
+                )
+                continue
             run_dir = runs_dir / run_id
             if not (run_dir / "structured_log.parquet").exists():
                 console.print(
@@ -155,6 +165,7 @@ def _load_panel_data(
                     f"'{point['label']}'.[/]"
                 )
                 continue
+            point_run_id = run_id
         else:
             run_dir = sim_runs_dir / workload_config.id() / config_label
             if not (run_dir / "execution_config.yml").exists():
@@ -179,8 +190,11 @@ def _load_panel_data(
                 x=result.violation_for_metric(slo_obj.slo_metric),
                 y=result.total_cost,
                 annotation=annotation,
+                run_id=point_run_id,
             )
         )
+
+    outline_left_of: float | None = panel.get("outline_left_of")
 
     return _PanelData(
         scatter_points=scatter_points,
@@ -191,6 +205,7 @@ def _load_panel_data(
         improvement_arrow=improvement_arrow,
         tail_fraction=tail_fraction,
         threshold_lines=threshold_lines,
+        outline_left_of=outline_left_of,
     )
 
 
@@ -201,7 +216,7 @@ def _save_points_csv(
     with csv_path.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(
-            ["row", "col", "panel_title", "x_metric", "label", "x", "y"]
+            ["row", "col", "panel_title", "x_metric", "label", "x", "y", "run_id"]
         )
         for row, col, panel_data in panels:
             for point in panel_data.scatter_points:
@@ -214,6 +229,7 @@ def _save_points_csv(
                         point.label,
                         point.x,
                         point.y,
+                        point.run_id or "",
                     ]
                 )
     console.print(f"[green]Saved:[/] {csv_path}")
@@ -459,6 +475,7 @@ def _render_and_save_figure(
         title=panel_data.title,
         show_legend=panel_data.show_legend,
         improvement_arrow=panel_data.improvement_arrow,
+        outline_left_of=panel_data.outline_left_of,
     )
     if xlim is not None:
         ax.set_xlim(*xlim)
@@ -481,7 +498,9 @@ def _generate_single_panel_plot(
         console.print(f"[dim]Skipping '{plot_path.stem}' (exists)[/]")
         return
 
-    panel_data = _load_panel_data(content, sim_runs_dir, live)
+    panel_data = _load_panel_data(
+        content, sim_runs_dir, live, min_run_id=content.get("min_run_id")
+    )
     if not panel_data.scatter_points:
         console.print(
             f"[yellow]No data points found for '{plot_path.stem}' — "
@@ -559,6 +578,7 @@ def _generate_multi_panel_plot(
 
     fig, axes_2d = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
 
+    min_run_id: str | None = manifest.get("min_run_id")
     rendered_axes: list[Axes] = []
     rendered_xlims: list[tuple[float, float]] = []
     rendered_ylims: list[tuple[float, float]] = []
@@ -573,6 +593,7 @@ def _generate_multi_panel_plot(
             layout_show_target_region=show_target_region,
             layout_show_legend=show_legend,
             layout_annotate_cluster_sizes=annotate_cluster_sizes,
+            min_run_id=min_run_id,
         )
         _, _, xlims, ylims = cost_vs_compliance_scatter(
             panel_data.scatter_points,
@@ -583,6 +604,7 @@ def _generate_multi_panel_plot(
             ax=ax,
             show_legend=panel_data.show_legend,
             improvement_arrow=panel_data.improvement_arrow,
+            outline_left_of=panel_data.outline_left_of,
         )
         _annotate_ax(ax, panel_data, live)
         rendered_axes.append(ax)

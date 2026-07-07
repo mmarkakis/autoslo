@@ -29,6 +29,7 @@ class ScatterPoint:
     x: float
     y: float
     annotation: str | None = None
+    run_id: str | None = None
 
 
 @dataclass
@@ -82,28 +83,35 @@ FORMATTING = {
     "autoscaler_duplicate_largest": (Palette.light_blue, "^"),
     "autoscaler_ours": (Palette.dark_green, "o"),
     "autoscaler_ours_forward": (Palette.light_green, "o"),
-    "main_eval_16_16": (Palette.light_red, "P"),
-    "main_eval_32": (Palette.light_red, "X"),
-    "main_eval_32_32": (Palette.light_purple, "P"),
-    "main_eval_64": (Palette.light_purple, "X"),
-    "main_eval_past30_thresh5": (Palette.dark_green, "^"),
-    "main_eval_past7_thresh5": (Palette.dark_green, "s"),
-    "main_eval_past1_thresh5": (Palette.dark_green, "o"),
-    "main_eval_oracle_thresh5": (Palette.dark_green, "*"),
-    "main_eval_past30_thresh10": (Palette.dark_blue, "^"),
-    "main_eval_past7_thresh10": (Palette.dark_blue, "s"),
-    "main_eval_past1_thresh10": (Palette.dark_blue, "o"),
-    "main_eval_oracle_thresh10": (Palette.dark_blue, "*"),
-    "main_eval_past30_thresh1": (Palette.dark_blue, "^"),
-    "main_eval_past7_thresh1": (Palette.dark_blue, "s"),
-    "main_eval_past1_thresh1": (Palette.dark_blue, "o"),
-    "main_eval_oracle_thresh1": (Palette.dark_blue, "*"),
-    "main_eval_rais50": (Palette.light_purple, "o"),
-    "main_eval_rais100": (Palette.dark_purple, "o"),
+    
+    "main_eval_past30_thresh5": (Palette.light_blue, "^"),
+    "main_eval_past7_thresh5": (Palette.light_blue, "s"),
+    "main_eval_past1_thresh5": (Palette.light_blue, "o"),
+    "main_eval_oracle_thresh5": (Palette.light_blue, "D"),
+    "main_eval_past30_thresh10": (Palette.light_green, "^"),
+    "main_eval_past7_thresh10": (Palette.light_green, "s"),
+    "main_eval_past1_thresh10": (Palette.light_green, "o"),
+    "main_eval_oracle_thresh10": (Palette.light_green, "D"),
+    "main_eval_past30_thresh1": (Palette.light_orange, "^"),
+    "main_eval_past7_thresh1": (Palette.light_orange, "s"),
+    "main_eval_past1_thresh1": (Palette.light_orange, "o"),
+    "main_eval_oracle_thresh1": (Palette.light_orange, "D"),
+    "main_eval_round_robin": (Palette.light_blue, "o"),
+    
     "trigger_noop": (Palette.light_gray, "s"),
     "trigger_queue_depth": (Palette.light_blue, "^"),
     "trigger_observed_violations": (Palette.light_red, "D"),
     "trigger_combined_violations": (Palette.light_green, "o"),
+
+
+    "main_eval_16_16": (Palette.light_blue, "o"),
+    "main_eval_32": (Palette.light_gray, "o"),
+    "main_eval_32_32": (Palette.light_blue, "s"),
+    "main_eval_64": (Palette.light_gray, "s"),
+    "main_eval_rais50": (Palette.light_red, "o"),
+    "main_eval_rais75": (Palette.light_red, "s"),
+    "main_eval_rais100": (Palette.light_red, "^"),
+    "main_eval_chosen": (Palette.light_green, "*"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
@@ -132,13 +140,14 @@ def cost_vs_compliance_scatter(
     title: str | None = None,
     x_pad: float = 0.05,
     y_bottom: float = 0,
-    figsize: tuple[float, float] = (6, 5),
+    figsize: tuple[float, float] = (4, 3),
     ax: Axes | None = None,
     x_threshold_color: str = Palette.light_green,
     x_threshold_objective: SloObjective | None = None,
     threshold_lines: Sequence[ThresholdLine] | None = None,
     improvement_arrow: ImprovementArrow | None = None,
     show_legend: bool | str = False,
+    outline_left_of: float | None = None,
 ) -> tuple[Figure, Axes, tuple[float, float], tuple[float, float]]:
     """Create a cost-vs-compliance scatter plot.
 
@@ -251,6 +260,9 @@ def cost_vs_compliance_scatter(
                 )
 
     # Plot points.
+    any_outlined = outline_left_of is not None and any(
+        pt.x < outline_left_of for pt in points
+    )
     for pt in points:
         if pt.formatting_id not in FORMATTING:
             _console.print(
@@ -258,7 +270,15 @@ def cost_vs_compliance_scatter(
                 f"— falling back to default style.[/]"
             )
         color, marker = FORMATTING.get(pt.formatting_id, (Palette.gray, "o"))
-        ax.scatter(pt.x, pt.y, label=pt.label, color=color, marker=marker, s=60)
+        # Plot without edge so the legend handle is clean.
+        ax.scatter(pt.x, pt.y, label=pt.label, color=color, marker=marker, s=100)
+        # For outlined points, overlay the bold black edge as a separate
+        # unlabelled artist so the series legend entry remains unaffected.
+        if outline_left_of is not None and pt.x < outline_left_of:
+            ax.scatter(
+                pt.x, pt.y, color=color, marker=marker, s=100,
+                edgecolors="black", linewidths=1.0,
+            )
         if pt.annotation is not None:
             ax.annotate(
                 pt.annotation,
@@ -292,6 +312,12 @@ def cost_vs_compliance_scatter(
     # Maybe add legend.
     if show_legend and len(points) > 0:
         loc = show_legend if isinstance(show_legend, str) else "best"
+        if any_outlined:
+            ax.scatter(
+                [], [], color=Palette.white, marker="o", s=100,
+                edgecolors="black", linewidths=1.0,
+                label=f"x\u00a0<\u00a0{outline_left_of:.3g}",
+            )
         ax.legend(loc=loc)
 
     # Relative padding around x data.
