@@ -8,13 +8,13 @@
 \resizebox{\columnwidth}{!}{
 \begin{tabular}{c c c || c c | c c | c c | c c | c c | c c | c c | c c | c c | c c}
 \toprule
-$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{RoundRobin16+16} & \multicolumn{2}{c|}{Single32} & \multicolumn{2}{c|}{Past1, τ=0.05} & \multicolumn{2}{c|}{Past7, τ=0.05} & \multicolumn{2}{c|}{Past30, τ=0.05} & \multicolumn{2}{c|}{Oracle, τ=0.05} & \multicolumn{2}{c|}{Past1, τ=0.10} & \multicolumn{2}{c|}{Past7, τ=0.10} & \multicolumn{2}{c|}{Past30, τ=0.10} & \multicolumn{2}{c}{Oracle, τ=0.10} \\
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{RoundRobin16+16} & \multicolumn{2}{c|}{Single32} & \multicolumn{2}{c|}{Past1, τ=0.05} & \multicolumn{2}{c|}{Past7, τ=0.05} & \multicolumn{2}{c|}{Past30, τ=0.05} & \multicolumn{2}{c|}{Oracle, τ=0.05} & \multicolumn{2}{c|}{Past1, τ=0.01} & \multicolumn{2}{c|}{Past7, τ=0.01} & \multicolumn{2}{c|}{Past30, τ=0.01} & \multicolumn{2}{c}{Oracle, τ=0.01} \\
  &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
 \hline
-κ=4 &  &  & 0.5869 & \$28.18 & 0.3649 & \$24.20 & 0.0761 & \$33.95 & \underline{0.0388} & \$35.36 & 0.0869 & \$32.90 & \textbf{0.0338} & \$36.43 & 0.1142 & \$31.25 & 0.0876 & \$34.18 & 0.1214 & \$29.85 & 0.0711 & \$31.84 \\
-κ=2 &  &  & 0.8369 & \$28.18 & 0.6135 & \$24.20 & 0.0819 & \$45.90 & 0.0553 & \$48.05 & 0.1099 & \$44.02 & \textbf{0.0259} & \$49.68 & 0.1530 & \$43.07 & 0.0912 & \$46.99 & 0.0761 & \$45.46 & \underline{0.0496} & \$48.83 \\
+κ=4 &  &  & 0.5553 & \$25.37 & 0.4820 & \$24.98 & 0.0603 & \$32.69 & 0.0654 & \$32.06 & 0.0690 & \$32.54 & 0.0431 & \$31.81 & 0.0273 & \$35.42 & \underline{0.0259} & \$34.26 & 0.0560 & \$32.51 & \textbf{0.0093} & \$39.53 \\
+κ=2 &  &  & 0.7845 & \$25.37 & 0.7256 & \$24.98 & 0.0963 & \$42.05 & 0.0625 & \$43.78 & 0.1049 & \$42.17 & \textbf{0.0553} & \$42.89 & 0.0963 & \$40.75 & 0.0611 & \$44.54 & 0.0754 & \$43.94 & \underline{0.0553} & \$42.89 \\
 \hline
-\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & -32.3\% & -14.1\% & -88.6\% & +41.7\% & \underline{-93.4\%} & +48.0\% & -86.0\% & +36.5\% & \textbf{-95.6\%} & +52.8\% & -81.1\% & +31.9\% & -87.1\% & +44.0\% & -85.1\% & +33.6\% & -91.0\% & +43.1\% \\
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & -10.4\% & -1.5\% & -88.4\% & +47.3\% & -90.1\% & +49.5\% & -87.1\% & +47.3\% & -92.6\% & +47.2\% & -91.4\% & +50.1\% & \underline{-93.8\%} & +55.3\% & -90.1\% & +50.7\% & \textbf{-95.6\%} & +62.5\% \\
 \bottomrule
 \end{tabular}}
 \caption{Mean improvement is relative to RoundRobin16+16.}
