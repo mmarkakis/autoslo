@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Mean improvement is relative to Round Robin. Bold/underline indicate first/second best per row, respectively.}\label{tab:todo}
+\begin{tabular}{c c c || c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{Round Robin} & \multicolumn{2}{c|}{RAIS} & \multicolumn{2}{c}{AutoSLO} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+May 27, κ=4 &  &  & 0.4080 & \$27.81 & \textbf{0.0632} & \$57.01 & \underline{0.0948} & \$42.23 \\
+April 15, κ=4 &  &  & 0.4034 & \$31.58 & \textbf{0.0332} & \$64.56 & \underline{0.0826} & \$44.14 \\
+May 27, κ=2 &  &  & 0.6559 & \$27.81 & \underline{0.1659} & \$57.01 & \textbf{0.1121} & \$62.39 \\
+April 15, κ=2 &  &  & 0.6460 & \$31.58 & \underline{0.1350} & \$64.56 & \textbf{0.1195} & \$61.10 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \textbf{-82.5\%} & +104.7\% & \underline{-80.2\%} & +77.3\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{document}
