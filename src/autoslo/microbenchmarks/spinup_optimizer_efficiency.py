@@ -154,9 +154,8 @@ class SpinupOptimizerEfficiencyBenchmark(MicrobenchmarkRunner):
             shape_legend_title="Forecasts",
             colorbar_label="Queries / Forecast",
             cmap_colors=[
-                Palette.light_gray,
+                Palette.cream,
                 Palette.light_purple,
-                Palette.light_purple_sat,
             ],
             log_x=True,
             log_color_base=2,

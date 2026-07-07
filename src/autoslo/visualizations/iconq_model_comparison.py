@@ -294,7 +294,7 @@ def plot_qerror_by_split(
             markersize=_MARKER_SIZE,
             label=p,
         )
-        for p in reversed(percentile_names)
+        for p in percentile_names
     ]
     highlight_handles: list[Line2D] = []
     if highlight_best:

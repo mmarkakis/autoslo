@@ -128,9 +128,8 @@ class ScenarioEvaluatorEfficiencyBenchmark(MicrobenchmarkRunner):
             shape_legend_title="Parallel\nSimulations",
             colorbar_label="Queries / Simulation",
             cmap_colors=[
-                Palette.light_gray,
+                Palette.cream,
                 Palette.light_red,
-                Palette.light_red_sat,
             ],
             log_x=True,
             log_y=True,

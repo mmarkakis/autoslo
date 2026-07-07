@@ -121,9 +121,8 @@ class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
             shape_legend_title="Clusters",
             colorbar_label="Active Queries / Cluster",
             cmap_colors=[
-                Palette.light_gray,
-                Palette.light_blue,
-                Palette.light_blue_sat,
+                Palette.cream,
+                Palette.light_blue
             ],
             log_color_base=2,
             log_x=True,

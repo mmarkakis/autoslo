@@ -29,6 +29,7 @@ class Palette:
     dark_purple: str = "#800080"
     gray: str = "#4A4A4A"
     black: str = "#000000"
+    cream: str = "#EEE5D5"
 
     @staticmethod
     def semantic_colors() -> Mapping[str, str]:
@@ -58,6 +59,7 @@ class Palette:
             "black": Palette.black,
             "light_purple": Palette.light_purple,
             "dark_purple": Palette.dark_purple,
+            "cream": Palette.cream,
         }
 
     @staticmethod
