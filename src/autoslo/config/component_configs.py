@@ -388,6 +388,7 @@ class ProvisionerConfig(_PartialConfig):
     spin_up_delay_s: float = 300.0
     max_capacity_ratio: float = 1.0
     price_performance_target_level: Optional[int] = None
+    max_capacity_under_price_performance_target: int = 128
 
 
 @dataclass(frozen=True)

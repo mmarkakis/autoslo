@@ -150,6 +150,8 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
     ) -> bool:
         client = self._get_client("redshift-serverless")
         max_rpu = max(base_rpu, int(base_rpu * self._max_capacity_ratio))
+        if self._price_performance_target_level is not None:
+            max_rpu = self._config.max_capacity_under_price_performance_target
         try:
             kwargs: dict = {
                 "workgroupName": workgroup_name,
@@ -580,15 +582,11 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
         if not self._attach_tpcds_database(wg_name):
             self._best_effort_cleanup(wg_name, ns_name)
-            raise RuntimeError(
-                f"TPC-DS datashare attach failed for {wg_name}"
-            )
+            raise RuntimeError(f"TPC-DS datashare attach failed for {wg_name}")
 
         if not self._create_external_schemas(wg_name):
             self._best_effort_cleanup(wg_name, ns_name)
-            raise RuntimeError(
-                f"External schema creation failed for {wg_name}"
-            )
+            raise RuntimeError(f"External schema creation failed for {wg_name}")
 
         # Build Cluster with conn_info
         host = ClusterConnInfo.form_hostname(
