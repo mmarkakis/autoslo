@@ -3,177 +3,330 @@ locals:
     workload_name: redbench_provisioned_157_0
     target_date: "2024-05-27"
     rescale_factor: 0.16666667
+  april15_workload_config: &april15_workload_config
+    workload_name: redbench_provisioned_157_0
+    target_date: "2024-04-15"
+    rescale_factor: 0.16666667
 
 main_content:
   layout:
-    rows: 1
+    rows: 2
     cols: 2
-    figsize: [8, 4]
+    figsize: [8, 6]
     shared_xlim: true
     shared_ylim: true
     show_target_region: false
     suppress_subplot_titles: true
 
   panels:
-  - row: 0
-    col: 0
-    title: "κ=4"
-    show_legend: upper right
-    slo_objective_config:
-      slo_metric: binary
-      slo_threshold: 0.05
-    slo_resolver_config:
-      slo_s: 30.0
-      slo_dict_filename: "1778469201294_p100_k4.yml"
-    threshold_lines:
-      - value: 0.05
-        color: dark_green
-      - value: 0.10
-        color: dark_blue
-    points:
-      - label: "RoundRobin16+16"
-        formatting_id: main_eval_16_16
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [16,16]
-      - label: "Single32"
-        formatting_id: main_eval_32
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [32]
-      - label: "RoundRobin32+32"
-        formatting_id: main_eval_32_32
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [32,32]
-      - label: "Single64"
-        formatting_id: main_eval_64
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [64]
-      - label: "Past1, τ=0.05"
-        formatting_id: main_eval_past1_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k4_thresh5_nocache_v8.yml
-      - label: "Past7, τ=0.05"
-        formatting_id: main_eval_past7_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k4_thresh5_nocache_v8.yml
-      - label: "Past30, τ=0.05"
-        formatting_id: main_eval_past30_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k4_thresh5_nocache_v8.yml
-      - label: "Oracle, τ=0.05"
-        formatting_id: main_eval_oracle_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k4_thresh5_nocache_v8.yml
-      - label: "Past1, τ=0.01"
-        formatting_id: main_eval_past1_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k4_thresh1_nocache_v8.yml
-      - label: "Past7, τ=0.01"
-        formatting_id: main_eval_past7_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k4_thresh1_nocache_v8.yml
-      - label: "Past30, τ=0.01"
-        formatting_id: main_eval_past30_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k4_thresh1_nocache_v8.yml
-      - label: "Oracle, τ=0.01"
-        formatting_id: main_eval_oracle_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k4_thresh1_nocache_v8.yml
+    - row: 0
+      col: 0
+      title: "May 27, κ=4"
+      show_legend: upper right
+      slo_objective_config:
+        slo_metric: binary
+        slo_threshold: 0
+      slo_resolver_config:
+        slo_s: 0
+        slo_dict_filename: "1778469201294_p100_k4.yml"
+      threshold_lines:
+        - value: 0.10
+          color: light_green
+      points:
+        # - label: "Single 32"
+        #   formatting_id: main_eval_32
+        #   workload_config: *may27_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-05-27"
+        #     INITIAL_RPU: [32]
+        - label: "Single 64"
+          formatting_id: main_eval_64
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            INITIAL_RPU: [64]
+        # - label: "Round Robin 16+16"
+        #   formatting_id: main_eval_16_16
+        #   workload_config: *may27_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-05-27"
+        #     INITIAL_RPU: [16, 16]
+        - label: "Round Robin 32+32"
+          formatting_id: main_eval_32_32
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            INITIAL_RPU: [32, 32]
+        - label: "RAIS - Balanced"
+          formatting_id: main_eval_rais50
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            RAIS_LEVEL: 50
+            RAIS_MAX_CAPACITY: 128
+        # - label: "RAIS 75"
+        #   formatting_id: main_eval_rais75
+        #   workload_config: *may27_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   params:
+        #     TARGET_DATE: "2024-05-27"
+        #     RAIS_LEVEL: 75
+        #     RAIS_MAX_CAPACITY: 128
+        - label: "RAIS - High Perf."
+          formatting_id: main_eval_rais100
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            RAIS_LEVEL: 100
+            RAIS_MAX_CAPACITY: 128
+        - label: "AutoSLO"
+          formatting_id: main_eval_chosen
+          workload_config: *may27_workload_config
+          execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v8.yml
 
-  - row: 0
-    col: 1
-    title: "κ=2"
-    show_legend: false
-    slo_objective_config:
-      slo_metric: binary
-      slo_threshold: 0.05
-    slo_resolver_config:
-      slo_s: 30.0
-      slo_dict_filename: "1778469201294_p100_k2.yml"
-    threshold_lines:
-      - value: 0.05
-        color: dark_green
-      - value: 0.10
-        color: dark_blue
-    points:
-      - label: "RoundRobin16+16"
-        formatting_id: main_eval_16_16
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [16,16]
-      - label: "Single32"
-        formatting_id: main_eval_32
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [32]
-      - label: "RoundRobin32+32"
-        formatting_id: main_eval_32_32
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [32,32]
-      - label: "Single64"
-        formatting_id: main_eval_64
-        workload_config: *may27_workload_config
-        sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
-        live_execution_config: exec:handmade/main_eval_round_robin.yml
-        params:
-          TARGET_DATE: "2024-05-27"
-          INITIAL_RPU: [64]
-      - label: "Past1, τ=0.05"
-        formatting_id: main_eval_past1_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k2_thresh5_nocache_v8.yml
-      - label: "Past7, τ=0.05"
-        formatting_id: main_eval_past7_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k2_thresh5_nocache_v8.yml
-      - label: "Past30, τ=0.05"
-        formatting_id: main_eval_past30_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k2_thresh5_nocache_v8.yml
-      - label: "Oracle, τ=0.05"
-        formatting_id: main_eval_oracle_thresh5
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k2_thresh5_nocache_v8.yml
-      - label: "Past1, τ=0.01"
-        formatting_id: main_eval_past1_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1day_k2_thresh1_nocache_v8.yml
-      - label: "Past7, τ=0.01"
-        formatting_id: main_eval_past7_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1week_k2_thresh1_nocache_v8.yml
-      - label: "Past30, τ=0.01"
-        formatting_id: main_eval_past30_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_1month_k2_thresh1_nocache_v8.yml
-      - label: "Oracle, τ=0.01"
-        formatting_id: main_eval_oracle_thresh1
-        workload_config: *may27_workload_config
-        execution_config: exec:tuned/may27_oracle_k2_thresh1_nocache_v8.yml
- 
+    - row: 1
+      col: 0
+      title: "April 15, κ=4"
+      show_legend: false
+      slo_objective_config:
+        slo_metric: binary
+        slo_threshold: 0
+      slo_resolver_config:
+        slo_s: 30.0
+        slo_dict_filename: "1778469201294_p100_k4.yml"
+      threshold_lines:
+        - value: 0.10
+          color: light_green
+      points:
+        # - label: "Single 32"
+        #   formatting_id: main_eval_32
+        #   workload_config: *april15_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-04-15"
+        #     INITIAL_RPU: [32]
+        - label: "Single 64"
+          formatting_id: main_eval_64
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            INITIAL_RPU: [64]
+        # - label: "Round Robin 16+16"
+        #   formatting_id: main_eval_16_16
+        #   workload_config: *april15_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-04-15"
+        #     INITIAL_RPU: [16, 16]
+        - label: "Round Robin 32+32"
+          formatting_id: main_eval_32_32
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            INITIAL_RPU: [32, 32]
+        - label: "RAIS - Balanced"
+          formatting_id: main_eval_rais50
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            RAIS_LEVEL: 50
+            RAIS_MAX_CAPACITY: 128
+        # - label: "RAIS 75"
+        #   formatting_id: main_eval_rais75
+        #   workload_config: *april15_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   params:
+        #     TARGET_DATE: "2024-04-15"
+        #     RAIS_LEVEL: 75
+        #     RAIS_MAX_CAPACITY: 128
+        - label: "RAIS - High Perf."
+          formatting_id: main_eval_rais100
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            RAIS_LEVEL: 100
+            RAIS_MAX_CAPACITY: 128
+        - label: "AutoSLO"
+          formatting_id: main_eval_chosen
+          workload_config: *april15_workload_config
+          execution_config: exec:tuned/april15_1month_k4_thresh10_nocache_v8.yml
+
+    - row: 0
+      col: 1
+      title: "May 27, κ=2"
+      show_legend: false
+      slo_objective_config:
+        slo_metric: binary
+        slo_threshold: 0
+      slo_resolver_config:
+        slo_s: 30.0
+        slo_dict_filename: "1778469201294_p100_k2.yml"
+      threshold_lines:
+        - value: 0.10
+          color: light_green
+      points:
+        # - label: "Single 32"
+        #   formatting_id: main_eval_32
+        #   workload_config: *may27_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-05-27"
+        #     INITIAL_RPU: [32]
+        - label: "Single 64"
+          formatting_id: main_eval_64
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            INITIAL_RPU: [64]
+        # - label: "Round Robin 16+16"
+        #   formatting_id: main_eval_16_16
+        #   workload_config: *may27_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-05-27"
+        #     INITIAL_RPU: [16, 16]
+        - label: "Round Robin 32+32"
+          formatting_id: main_eval_32_32
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            INITIAL_RPU: [32, 32]
+        - label: "RAIS - Balanced"
+          formatting_id: main_eval_rais50
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            RAIS_LEVEL: 50
+            RAIS_MAX_CAPACITY: 128
+        # - label: "RAIS 75"
+        #   formatting_id: main_eval_rais75
+        #   workload_config: *may27_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   params:
+        #     TARGET_DATE: "2024-05-27"
+        #     RAIS_LEVEL: 75
+        #     RAIS_MAX_CAPACITY: 128
+        - label: "RAIS - High Perf."
+          formatting_id: main_eval_rais100
+          workload_config: *may27_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-05-27"
+            RAIS_LEVEL: 100
+            RAIS_MAX_CAPACITY: 128
+        - label: "AutoSLO"
+          formatting_id: main_eval_chosen
+          workload_config: *may27_workload_config
+          execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v8.yml
+
+    - row: 1
+      col: 1
+      title: "April 15, κ=2"
+      show_legend: false
+      slo_objective_config:
+        slo_metric: binary
+        slo_threshold: 0
+      slo_resolver_config:
+        slo_s: 30.0
+        slo_dict_filename: "1778469201294_p100_k2.yml"
+      threshold_lines:
+        - value: 0.10
+          color: light_green
+      points:
+        # - label: "Single 32"
+        #   formatting_id: main_eval_32 
+        #   workload_config: *april15_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-04-15"
+        #     INITIAL_RPU: [32]
+        - label: "Single 64"
+          formatting_id: main_eval_64
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            INITIAL_RPU: [64]
+        # - label: "Round Robin 16+16"
+        #   formatting_id: main_eval_16_16
+        #   workload_config: *april15_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_round_robin.yml
+        #   params:
+        #     TARGET_DATE: "2024-04-15"
+        #     INITIAL_RPU: [16, 16]
+        - label: "Round Robin 32+32"
+          formatting_id: main_eval_32_32
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_round_robin_v8.yml
+          live_execution_config: exec:handmade/main_eval_round_robin.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            INITIAL_RPU: [32, 32]
+        - label: "RAIS - Balanced"
+          formatting_id: main_eval_rais50
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            RAIS_LEVEL: 50
+            RAIS_MAX_CAPACITY: 128
+        # - label: "RAIS 75"
+        #   formatting_id: main_eval_rais75
+        #   workload_config: *april15_workload_config
+        #   sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   live_execution_config: exec:handmade/main_eval_rais_v8.yml
+        #   params:
+        #     TARGET_DATE: "2024-04-15"
+        #     RAIS_LEVEL: 75
+        #     RAIS_MAX_CAPACITY: 128
+        - label: "RAIS - High Perf."
+          formatting_id: main_eval_rais100
+          workload_config: *april15_workload_config
+          sim_execution_config: exec:handmade/main_eval_rais_v8.yml
+          live_execution_config: exec:handmade/main_eval_rais_v8.yml
+          params:
+            TARGET_DATE: "2024-04-15"
+            RAIS_LEVEL: 100
+            RAIS_MAX_CAPACITY: 128
+        - label: "AutoSLO"
+          formatting_id: main_eval_chosen
+          workload_config: *april15_workload_config
+          execution_config: exec:tuned/april15_1month_k2_thresh10_nocache_v8.yml

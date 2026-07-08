@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Mean improvement is relative to Single 64. Bold/underline indicate first/second best per row, respectively.}\label{tab:todo}
+\begin{tabular}{c c c || c c | c c | c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{Single 64} & \multicolumn{2}{c|}{Round Robin 32+32} & \multicolumn{2}{c|}{RAIS - Balanced} & \multicolumn{2}{c|}{RAIS - High Perf.} & \multicolumn{2}{c}{AutoSLO} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+May 27, κ=4 &  &  & 0.0632 & \$57.01 & \underline{0.0338} & \$51.55 & \textbf{0.0316} & \$110.56 & 0.0409 & \$107.20 & 0.0970 & \$49.25 \\
+April 15, κ=4 &  &  & 0.0332 & \$64.56 & 0.0295 & \$58.92 & \textbf{0.0081} & \$127.20 & \underline{0.0214} & \$132.00 & 0.0752 & \$45.82 \\
+May 27, κ=2 &  &  & 0.1659 & \$57.01 & 0.1336 & \$51.55 & \textbf{0.0898} & \$110.56 & 0.1092 & \$107.20 & \underline{0.0920} & \$74.89 \\
+April 15, κ=2 &  &  & 0.1350 & \$64.56 & 0.1018 & \$58.92 & \textbf{0.0369} & \$127.20 & 0.0597 & \$132.00 & \underline{0.0546} & \$68.01 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & -25.4\% & -9.2\% & \textbf{-61.0\%} & +95.5\% & \underline{-40.2\%} & +96.3\% & +19.0\% & -1.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{document}
