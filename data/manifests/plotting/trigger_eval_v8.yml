@@ -27,9 +27,9 @@ locals:
 main_content:
 
   layout:
-    rows: 4
-    cols: 2
-    figsize: [8, 12]
+    rows: 2
+    cols: 4
+    figsize: [16, 6]
     shared_xlim: true
     shared_ylim: true
     show_target_region: false
@@ -41,7 +41,7 @@ main_content:
   - row: 0
     col: 0
     title: "λ=0.1, κ=4, C=[8]"
-    show_legend: false
+    show_legend: true
     slo_objective_config:
       slo_metric: binary
       slo_threshold: 0.05
@@ -88,7 +88,7 @@ main_content:
   - row: 0
     col: 1
     title: "λ=0.1, κ=4, C=[16]"
-    show_legend: true
+    show_legend: false
     slo_objective_config:
       slo_metric: binary
       slo_threshold: 0.05
@@ -131,8 +131,8 @@ main_content:
           <<: *set2
           OBSERVATION_WINDOW_S: 600.0
 
-  - row: 1
-    col: 0
+  - row: 0
+    col: 2
     title: "λ=0.1, κ=2, C=[8]"
     show_legend: False
     slo_objective_config:
@@ -178,8 +178,8 @@ main_content:
           OBSERVATION_WINDOW_S: 600.0
       
 
-  - row: 1
-    col: 1
+  - row: 0
+    col: 3
     title: "λ=0.1, κ=2, C=[16]"
     show_legend: False
     slo_objective_config:
@@ -224,7 +224,7 @@ main_content:
           <<: *set4
           OBSERVATION_WINDOW_S: 600.0
 
-  - row: 2
+  - row: 1
     col: 0
     title: "λ=0.2, κ=4, C=[8]"
     show_legend: False
@@ -270,7 +270,7 @@ main_content:
           <<: *set1
           OBSERVATION_WINDOW_S: 300.0
 
-  - row: 2
+  - row: 1
     col: 1
     title: "λ=0.2, κ=4, C=[16]"
     show_legend: false
@@ -316,8 +316,8 @@ main_content:
           <<: *set2
           OBSERVATION_WINDOW_S: 300.0
 
-  - row: 3
-    col: 0
+  - row: 1
+    col: 2
     title: "λ=0.2, κ=2, C=[8]"
     show_legend: False
     slo_objective_config:
@@ -363,8 +363,8 @@ main_content:
           OBSERVATION_WINDOW_S: 300.0
           
 
-  - row: 3
-    col: 1
+  - row: 1
+    col: 3
     title: "λ=0.2, κ=2, C=[16]"
     show_legend: False
     slo_objective_config:

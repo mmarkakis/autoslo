@@ -74,15 +74,8 @@ FORMATTING = {
     "base_32": (Palette.dark_red, "s"),
     "base_32_32": (Palette.dark_red, "D"),
     "base_64": (Palette.dark_red, "s"),
-    "round_robin": (Palette.light_red, "s"),
-    "stage": (Palette.light_blue, "^"),
-    "iconq": (Palette.light_green, "o"),
-    "autoscaler_noop": (Palette.light_gray, "s"),
-    "autoscaler_replace_with_single_best": (Palette.dark_red, "D"),
-    "autoscaler_replace_with_single_best_forward": (Palette.light_red, "D"),
-    "autoscaler_duplicate_largest": (Palette.light_blue, "^"),
-    "autoscaler_ours": (Palette.dark_green, "o"),
-    "autoscaler_ours_forward": (Palette.light_green, "o"),
+    
+   
     
     "main_eval_past30_thresh5": (Palette.light_blue, "^"),
     "main_eval_past7_thresh5": (Palette.light_blue, "s"),
@@ -98,20 +91,35 @@ FORMATTING = {
     "main_eval_oracle_thresh1": (Palette.light_orange, "D"),
     "main_eval_round_robin": (Palette.light_blue, "o"),
     
-    "trigger_noop": (Palette.light_gray, "s"),
-    "trigger_queue_depth": (Palette.light_blue, "^"),
-    "trigger_observed_violations": (Palette.light_red, "D"),
-    "trigger_combined_violations": (Palette.light_green, "o"),
+    
+    "query_router_eval_round_robin": (Palette.light_blue, "h"),
+    "query_router_eval_stage": (Palette.light_red, "s"),
+    "query_router_eval_iconq": (Palette.light_green, "^"),
+
+    "autoscaler_noop": (Palette.light_gray, "o"),
+    "autoscaler_duplicate_largest": (Palette.light_blue, "h"),
+    "autoscaler_replace_with_single_best_forward": (Palette.light_red, "s"),
+    "autoscaler_ours_forward": (Palette.light_green, "^"),
+
+    "trigger_noop": (Palette.light_gray, "o"),
+    "trigger_queue_depth": (Palette.light_blue, "h"),
+    "trigger_observed_violations": (Palette.light_red, "s"),
+    "trigger_combined_violations": (Palette.light_green, "^"),
 
 
-    "main_eval_16_16": (Palette.light_blue, "o"),
+    "main_eval_16_16": (Palette.light_gray, "h"),
     "main_eval_32": (Palette.light_gray, "o"),
-    "main_eval_32_32": (Palette.light_blue, "s"),
-    "main_eval_64": (Palette.light_gray, "s"),
-    "main_eval_rais50": (Palette.light_red, "o"),
-    "main_eval_rais75": (Palette.light_red, "s"),
-    "main_eval_rais100": (Palette.light_red, "^"),
-    "main_eval_chosen": (Palette.light_green, "*"),
+    "main_eval_32_32": (Palette.light_blue, "h"),
+    "main_eval_64": (Palette.light_blue, "o"),
+    "main_eval_rais50": (Palette.light_red, "D"),
+    "main_eval_rais75": (Palette.light_red, "d"),
+    "main_eval_rais100": (Palette.light_red, "s"),
+    "main_eval_chosen": (Palette.light_green, "^"),
+
+    "tuner_eval_base": (Palette.light_gray, "o"),
+    "tuner_eval_past1": (Palette.light_blue, "h"),
+    "tuner_eval_past7": (Palette.light_red, "s"),
+    "tuner_eval_past30": (Palette.light_green, "^"),
 }
 
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]

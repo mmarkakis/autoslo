@@ -35,22 +35,31 @@ main_content:
       - value: 0.10
         color: light_green
     points:
+      - label: "No Past Data"
+        formatting_id: tuner_eval_base
+        workload_config: *may27_workload_config
+        execution_config: exec:handmade/main_eval_base_v8.yml
+        params:
+          TARGET_DATE: "2024-05-27"
+          KAPPA: 4
       - label: "Past 1 Day"
-        formatting_id: main_eval_past1_thresh10
+        formatting_id: tuner_eval_past1
         workload_config: *may27_workload_config
         execution_config: exec:tuned/may27_1day_k4_thresh10_nocache_v8.yml
       - label: "Past 7 Days"
-        formatting_id: main_eval_past7_thresh10
+        formatting_id: tuner_eval_past7
         workload_config: *may27_workload_config
         execution_config: exec:tuned/may27_1week_k4_thresh10_nocache_v8.yml
       - label: "Past 30 Days"
-        formatting_id: main_eval_past30_thresh10
+        formatting_id: tuner_eval_past30
         workload_config: *may27_workload_config
         execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v8.yml
       # - label: "Target Day"
       #   formatting_id: main_eval_oracle_thresh10
       #   workload_config: *may27_workload_config
       #   execution_config: exec:tuned/may27_oracle_k4_thresh10_nocache_v8.yml
+      
+
 
   - row: 1
     col: 0
@@ -66,22 +75,30 @@ main_content:
       - value: 0.10
         color: light_green
     points:
+      - label: "No Past Data"
+        formatting_id: tuner_eval_base
+        workload_config: *april15_workload_config
+        execution_config: exec:handmade/main_eval_base_v8.yml
+        params:
+          TARGET_DATE: "2024-04-15"
+          KAPPA: 4
       - label: "Past 1 Day"
-        formatting_id: main_eval_past1_thresh10
+        formatting_id: tuner_eval_past1
         workload_config: *april15_workload_config
         execution_config: exec:tuned/april15_1day_k4_thresh10_nocache_v8.yml
       - label: "Past 7 Days"
-        formatting_id: main_eval_past7_thresh10
+        formatting_id: tuner_eval_past7
         workload_config: *april15_workload_config
         execution_config: exec:tuned/april15_1week_k4_thresh10_nocache_v8.yml
       - label: "Past 30 Days"
-        formatting_id: main_eval_past30_thresh10
+        formatting_id: tuner_eval_past30
         workload_config: *april15_workload_config
         execution_config: exec:tuned/april15_1month_k4_thresh10_nocache_v8.yml
       # - label: "Target Day"
       #   formatting_id: main_eval_oracle_thresh10
       #   workload_config: *april15_workload_config
       #   execution_config: exec:tuned/april15_oracle_k4_thresh10_nocache_v8.yml
+      
 
   - row: 0
     col: 1
@@ -97,22 +114,30 @@ main_content:
       - value: 0.10
         color: light_green
     points:
+      - label: "No Past Data"
+        formatting_id: tuner_eval_base
+        workload_config: *may27_workload_config
+        execution_config: exec:handmade/main_eval_base_v8.yml
+        params:
+          TARGET_DATE: "2024-05-27"
+          KAPPA: 2
       - label: "Past 1 Day"
-        formatting_id: main_eval_past1_thresh10
+        formatting_id: tuner_eval_past1
         workload_config: *may27_workload_config
         execution_config: exec:tuned/may27_1day_k2_thresh10_nocache_v8.yml
       - label: "Past 7 Days"
-        formatting_id: main_eval_past7_thresh10
+        formatting_id: tuner_eval_past7
         workload_config: *may27_workload_config
         execution_config: exec:tuned/may27_1week_k2_thresh10_nocache_v8.yml
       - label: "Past 30 Days"
-        formatting_id: main_eval_past30_thresh10
+        formatting_id: tuner_eval_past30
         workload_config: *may27_workload_config
         execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v8.yml
       # - label: "Target Day"
       #   formatting_id: main_eval_oracle_thresh10
       #   workload_config: *may27_workload_config
       #   execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v8.yml
+      
 
   - row: 1
     col: 1
@@ -128,19 +153,27 @@ main_content:
       - value: 0.10
         color: light_green
     points:
+      - label: "No Past Data"
+        formatting_id: tuner_eval_base
+        workload_config: *april15_workload_config
+        execution_config: exec:handmade/main_eval_base_v8.yml
+        params:
+          TARGET_DATE: "2024-04-15"
+          KAPPA: 2
       - label: "Past 1 Day"
-        formatting_id: main_eval_past1_thresh10
+        formatting_id: tuner_eval_past1
         workload_config: *april15_workload_config
         execution_config: exec:tuned/april15_1day_k2_thresh10_nocache_v8.yml
       - label: "Past 7 Days"
-        formatting_id: main_eval_past7_thresh10
+        formatting_id: tuner_eval_past7
         workload_config: *april15_workload_config
         execution_config: exec:tuned/april15_1week_k2_thresh10_nocache_v8.yml
       - label: "Past 30 Days"
-        formatting_id: main_eval_past30_thresh10
+        formatting_id: tuner_eval_past30
         workload_config: *april15_workload_config
         execution_config: exec:tuned/april15_1month_k2_thresh10_nocache_v8.yml
       # - label: "Target Day"
       #   formatting_id: main_eval_oracle_thresh10
       #   workload_config: *april15_workload_config
       #   execution_config: exec:tuned/april15_oracle_k2_thresh10_nocache_v8.yml
+      

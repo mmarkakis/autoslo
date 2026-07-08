@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Mean improvement is relative to Past1, τ=0.05. Bold/underline indicate first/second best per row, respectively.}\label{tab:todo}
+\begin{tabular}{c c c || c c | c c | c c | c c | c c | c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{Past1, τ=0.05} & \multicolumn{2}{c|}{Past7, τ=0.05} & \multicolumn{2}{c|}{Past30, τ=0.05} & \multicolumn{2}{c|}{Oracle, τ=0.05} & \multicolumn{2}{c|}{Past1, τ=0.10} & \multicolumn{2}{c|}{Past7, τ=0.10} & \multicolumn{2}{c|}{Past30, τ=0.10} & \multicolumn{2}{c}{Oracle, τ=0.10} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+May 27, κ=4 &  &  & 0.0532 & \$29.66 & 0.0603 & \$33.90 & 0.0797 & \$32.00 & \textbf{0.0273} & \$34.68 & 0.1056 & \$26.20 & 0.0568 & \$28.40 & \underline{0.0366} & \$38.89 & 0.0848 & \$28.56 \\
+April 15, κ=4 &  &  & \underline{0.0221} & \$33.32 & 0.0369 & \$31.94 & 0.0273 & \$33.07 & \textbf{0.0162} & \$28.42 & 0.0531 & \$27.34 & 0.0369 & \$31.94 & 0.0435 & \$28.95 & 0.0597 & \$25.99 \\
+May 27, κ=2 &  &  & 0.0805 & \$49.21 & 0.0783 & \$51.51 & \underline{0.0769} & \$50.76 & \textbf{0.0718} & \$51.12 & 0.0805 & \$49.21 & 0.0783 & \$51.85 & \underline{0.0769} & \$50.76 & 0.0841 & \$49.45 \\
+April 15, κ=2 &  &  & 0.0841 & \$44.70 & \underline{0.0649} & \$45.75 & 0.1032 & \$44.39 & \textbf{0.0450} & \$46.58 & 0.0804 & \$46.55 & 0.0870 & \$43.19 & 0.1114 & \$44.27 & 0.0730 & \$44.33 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \underline{+13.7\%} & +4.3\% & +22.9\% & +2.4\% & \textbf{-33.1\%} & +2.6\% & +58.6\% & -6.4\% & +18.6\% & -1.6\% & +23.4\% & +5.0\% & +55.2\% & -6.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{document}

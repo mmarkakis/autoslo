@@ -27,9 +27,9 @@ locals:
 main_content:
 
   layout:
-    rows: 4
-    cols: 2
-    figsize: [8, 12]
+    rows: 2
+    cols: 4
+    figsize: [16, 6]
     shared_xlim: true
     shared_ylim: true
     show_target_region: false
@@ -50,21 +50,21 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set1
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set1
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
@@ -84,29 +84,29 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set2
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set2
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_iconq_model
           <<: *set2
 
-  - row: 1
-    col: 0
+  - row: 0
+    col: 2
     title: "λ=0.1, κ=2, C=[32, 16]"
     show_legend: False
     slo_objective_config:
@@ -118,29 +118,29 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set3
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set3
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_iconq_model
           <<: *set3
 
-  - row: 1
-    col: 1
+  - row: 0
+    col: 3
     title: "λ=0.1, κ=2, C=[16, 16]"
     show_legend: False
     slo_objective_config:
@@ -152,28 +152,28 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set4
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set4
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point1
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_iconq_model
           <<: *set4
 
-  - row: 2
+  - row: 1
     col: 0
     title: "λ=0.2, κ=4, C=[32, 16]"
     show_legend: False
@@ -186,28 +186,28 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set1
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set1
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_iconq_model
           <<: *set1
 
-  - row: 2
+  - row: 1
     col: 1
     title: "λ=0.2, κ=4, C=[16, 16]"
     show_legend: False
@@ -220,29 +220,29 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set2
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set2
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_iconq_model
           <<: *set2
 
-  - row: 3
-    col: 0
+  - row: 1
+    col: 2
     title: "λ=0.2, κ=2, C=[32, 16]"
     show_legend: False
     slo_objective_config:
@@ -254,29 +254,29 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set3
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set3
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_iconq_model
           <<: *set3
 
-  - row: 3
-    col: 1
+  - row: 1
+    col: 3
     title: "λ=0.2, κ=2, C=[16, 16]"
     show_legend: False
     slo_objective_config:
@@ -288,21 +288,21 @@ main_content:
     improvement_arrow: *arrow
     points:
       - label: "Round Robin"
-        formatting_id: round_robin
+        formatting_id: query_router_eval_round_robin
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: round_robin
           <<: *set4
       - label: "Stage + Cost.Opt."
-        formatting_id: stage
+        formatting_id: query_router_eval_stage
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:
           ROUTING_POLICY_NAME: use_stage_model
           <<: *set4
       - label: "Iconq + Cost.Opt."
-        formatting_id: iconq
+        formatting_id: query_router_eval_iconq
         workload_config: *lambda_point2
         execution_config: exec:handmade/query_router_eval_v8.yml
         params:

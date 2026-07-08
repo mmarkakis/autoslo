@@ -3,9 +3,11 @@
 \usepackage{amsmath}
 \usepackage[landscape, margin=1cm]{geometry}
 \begin{document}
-\begin{table}[ht]
+\begin{table}[t]
 \centering
-\resizebox{\columnwidth}{!}{
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Mean improvement is relative to Round Robin. Bold/underline indicate first/second best per row, respectively.}\label{tab:todo}
 \begin{tabular}{c c c || c c | c c | c c}
 \toprule
 $\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{Round Robin} & \multicolumn{2}{c|}{Stage + Cost.Opt.} & \multicolumn{2}{c}{Iconq + Cost.Opt.} \\
@@ -17,13 +19,11 @@ $\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{Round Robin} & \multicolumn{2}{c|
 0.1 & 2 & [16, 16] & 0.2088 & \$10.57 & \underline{0.1414} & \$7.43 & \textbf{0.1246} & \$8.77 \\
 0.2 & 4 & [32, 16] & 0.1414 & \$7.92 & \underline{0.0707} & \$7.56 & \textbf{0.0202} & \$7.60 \\
 0.2 & 4 & [16, 16] & 0.3064 & \$5.41 & \underline{0.2761} & \$4.81 & \textbf{0.1919} & \$5.29 \\
-0.2 & 2 & [32, 16] & 0.1919 & \$8.13 & \underline{0.1919} & \$6.92 & \textbf{0.1044} & \$7.71 \\
+0.2 & 2 & [32, 16] & \underline{0.1919} & \$8.13 & \underline{0.1919} & \$6.92 & \textbf{0.1044} & \$7.71 \\
 0.2 & 2 & [16, 16] & \underline{0.4512} & \$5.48 & 0.5118 & \$5.20 & \textbf{0.3300} & \$4.98 \\
 \hline
 \multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \underline{-24.3\%} & -19.3\% & \textbf{-47.8\%} & -12.9\% \\
 \bottomrule
-\end{tabular}}
-\caption{Mean improvement is relative to Round Robin.}
-\label{tab:TODO}
+\end{tabular}
 \end{table}
 \end{document}

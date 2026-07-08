@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Mean improvement is relative to No Past Data. Bold/underline indicate first/second best per row, respectively.}\label{tab:todo}
+\begin{tabular}{c c c || c c | c c | c c | c c}
+\toprule
+$\lambda$ & $\kappa$ & C & \multicolumn{2}{c|}{No Past Data} & \multicolumn{2}{c|}{Past 1 Day} & \multicolumn{2}{c|}{Past 7 Days} & \multicolumn{2}{c}{Past 30 Days} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+May 27, κ=4 &  &  & 0.1997 & \$41.47 & 0.1149 & \$46.14 & \textbf{0.0639} & \$51.75 & \underline{0.0970} & \$49.25 \\
+April 15, κ=4 &  &  & 0.0833 & \$42.64 & \textbf{0.0664} & \$44.15 & 0.0848 & \$45.65 & \underline{0.0752} & \$45.82 \\
+May 27, κ=2 &  &  & 0.2162 & \$61.72 & \underline{0.1092} & \$71.39 & 0.1293 & \$68.38 & \textbf{0.0920} & \$74.89 \\
+April 15, κ=2 &  &  & 0.1600 & \$59.80 & \textbf{0.0546} & \$69.78 & 0.0575 & \$68.11 & \textbf{0.0546} & \$68.01 \\
+\hline
+\multicolumn{3}{c||}{\textit{Mean~$\Delta$}} & --- & --- & \underline{-44.6\%} & +11.8\% & -42.6\% & +14.1\% & \textbf{-46.1\%} & +15.3\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{document}
