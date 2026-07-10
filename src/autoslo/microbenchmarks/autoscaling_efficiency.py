@@ -180,7 +180,7 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
             shape_col="candidate_rpu",
             color_col="queries_per_obs_window",
             shape_legend_title="Candidate RPU",
-            colorbar_label="Queries / Obs. Window",
+            colorbar_label="Queries / Arrival Window",
             cmap_colors=[
                 Palette.cream,
                 Palette.light_green,
