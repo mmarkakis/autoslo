@@ -204,7 +204,7 @@ class QueryTextRegistry:
     @classmethod
     def _registry_path(cls, schema_name: str) -> Path:
         return (
-            pu.get_data_path()
+            pu.get_data_dir()
             / _REGISTRY_SUBDIR
             / schema_name
             / _REGISTRY_FILENAME
@@ -223,7 +223,7 @@ class QueryTextRegistry:
             The schema identifier.
 
         """
-        dir_path = pu.get_data_path() / _REGISTRY_SUBDIR / schema_name
+        dir_path = pu.get_data_dir() / _REGISTRY_SUBDIR / schema_name
         if not dir_path.is_dir():
             raise FileNotFoundError(
                 f"No directory found for schema '{schema_name}' at '{dir_path}'."

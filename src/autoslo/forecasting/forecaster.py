@@ -176,7 +176,7 @@ class Forecaster:
         forecast_df = pd.DataFrame(
             rows, columns=Workload.WORKLOAD_SCHEMA_COLUMNS
         )
-        out_dir = out_dir or pu.get_data_path() / "workloads"
+        out_dir = out_dir or pu.get_data_dir() / "workloads"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{workload_name}.parquet"
         forecast_df.to_parquet(out_path, index=False)

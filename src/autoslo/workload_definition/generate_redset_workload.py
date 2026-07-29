@@ -43,7 +43,7 @@ def read_in_query_texts(
 def main(args) -> None:
     # Create the output directory and dump the parameters.
     output_dir = (
-        pu.get_data_path()
+        pu.get_data_dir()
         / "redset_workloads"
         / f"redset_{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}"
     )
@@ -172,7 +172,7 @@ if __name__ == "__main__":
         "--tpcds_prob_distribution_dir",
         type=str,
         default=str(
-            pu.get_data_path() / "generation_parameters" / "dist_16_rpu"
+            pu.get_data_dir() / "generation_parameters" / "dist_16_rpu"
         ),
         help="Path to directory containing TPC-DS probability distributions.",
     )

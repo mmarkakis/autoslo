@@ -54,7 +54,7 @@ class SloResolver:
         self._dict: dict[str, float] = {}
 
         if self._filename:
-            path = pu.get_data_path() / "slos" / self._filename
+            path = pu.get_data_dir() / "slos" / self._filename
             with open(path) as f:
                 raw = yaml.safe_load(f) or {}
             self._dict = {

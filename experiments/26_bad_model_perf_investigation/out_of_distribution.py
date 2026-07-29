@@ -21,7 +21,6 @@ python3 experiments/26_bad_model_perf_investigation/out_of_distribution.py \
 """
 
 import argparse
-import json
 import re
 from pathlib import Path
 from typing import Any, Iterable
@@ -30,11 +29,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from autoslo.filesystem.path_utils import get_data_path, get_runs_path
+from autoslo.filesystem.path_utils import get_data_dir, get_runs_dir
 from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.models.iconq_model import IconqModel
 from autoslo.nn.concurrent_query_dataset import ConcurrentQueryDataset
-
 
 EPS = 1e-12
 
@@ -132,7 +130,6 @@ def _weighted_quantile(
     return float(values[idx])
 
 
-
 def _first_event_times(
     df: pd.DataFrame,
     event_type: str,
@@ -144,7 +141,9 @@ def _first_event_times(
     return filtered.groupby("query_id", observed=True)[value_col].min()
 
 
-def _concurrency_metrics(starts: np.ndarray, ends: np.ndarray) -> dict[str, float]:
+def _concurrency_metrics(
+    starts: np.ndarray, ends: np.ndarray
+) -> dict[str, float]:
     if starts.size == 0 or ends.size == 0:
         return {
             "max": float("nan"),
@@ -195,16 +194,22 @@ def _concurrency_metrics(starts: np.ndarray, ends: np.ndarray) -> dict[str, floa
 
     starts_sorted = np.sort(starts)
     ends_sorted = np.sort(ends)
-    at_start = np.searchsorted(starts_sorted, starts, side="right") - np.searchsorted(
-        ends_sorted, starts, side="right"
-    )
+    at_start = np.searchsorted(
+        starts_sorted, starts, side="right"
+    ) - np.searchsorted(ends_sorted, starts, side="right")
 
     return {
         "max": max_conc,
         "mean_time_weighted": mean_tw,
         "p95_time_weighted": p95_tw,
-        "at_start_median": float(np.median(at_start)) if at_start.size else float("nan"),
-        "at_start_p95": float(np.percentile(at_start, 95)) if at_start.size else float("nan"),
+        "at_start_median": (
+            float(np.median(at_start)) if at_start.size else float("nan")
+        ),
+        "at_start_p95": (
+            float(np.percentile(at_start, 95))
+            if at_start.size
+            else float("nan")
+        ),
     }
 
 
@@ -222,9 +227,13 @@ def _arrival_metrics_for_log(
     exec_finishes = _first_event_times(df, "query_execution_finish")
 
     arrival_values = (
-        np.sort(arrivals.to_numpy(dtype=float)) if not arrivals.empty else np.array([])
+        np.sort(arrivals.to_numpy(dtype=float))
+        if not arrivals.empty
+        else np.array([])
     )
-    interarrivals = np.diff(arrival_values) if arrival_values.size >= 2 else np.array([])
+    interarrivals = (
+        np.diff(arrival_values) if arrival_values.size >= 2 else np.array([])
+    )
 
     details_map = (
         df[df["event_type"] == "completion"]["details"]
@@ -273,26 +282,39 @@ def _arrival_metrics_for_log(
 
     out: dict[str, float] = {
         "num_arrivals": float(arrival_values.size),
-        "arrival_span_s": float(arrival_values[-1] - arrival_values[0])
-        if arrival_values.size > 1
-        else 0.0,
-        "arrival_rate_qps": float(
-            arrival_values.size / max(arrival_values[-1] - arrival_values[0], EPS)
-        )
-        if arrival_values.size > 1
-        else 0.0,
-        "interarrival_mean_s": float(np.mean(interarrivals))
-        if interarrivals.size
-        else float("nan"),
-        "interarrival_median_s": float(np.median(interarrivals))
-        if interarrivals.size
-        else float("nan"),
-        "interarrival_p95_s": float(np.percentile(interarrivals, 95))
-        if interarrivals.size
-        else float("nan"),
-        "interarrival_cv": float(np.std(interarrivals) / max(np.mean(interarrivals), EPS))
-        if interarrivals.size
-        else float("nan"),
+        "arrival_span_s": (
+            float(arrival_values[-1] - arrival_values[0])
+            if arrival_values.size > 1
+            else 0.0
+        ),
+        "arrival_rate_qps": (
+            float(
+                arrival_values.size
+                / max(arrival_values[-1] - arrival_values[0], EPS)
+            )
+            if arrival_values.size > 1
+            else 0.0
+        ),
+        "interarrival_mean_s": (
+            float(np.mean(interarrivals))
+            if interarrivals.size
+            else float("nan")
+        ),
+        "interarrival_median_s": (
+            float(np.median(interarrivals))
+            if interarrivals.size
+            else float("nan")
+        ),
+        "interarrival_p95_s": (
+            float(np.percentile(interarrivals, 95))
+            if interarrivals.size
+            else float("nan")
+        ),
+        "interarrival_cv": (
+            float(np.std(interarrivals) / max(np.mean(interarrivals), EPS))
+            if interarrivals.size
+            else float("nan")
+        ),
         "completion_success_rate": success_rate,
         "submitted_effective_concurrency_mean": submitted_conc[
             "mean_time_weighted"
@@ -356,7 +378,9 @@ def _dataset_global_summary(
     )
 
 
-def _dataset_shape_summary(dataset: ConcurrentQueryDataset, label: str) -> pd.Series:
+def _dataset_shape_summary(
+    dataset: ConcurrentQueryDataset, label: str
+) -> pd.Series:
     # Metric glossary for the printed dataset-shape table:
     #   num_samples: Number of base-query samples in the dataset.
     #   num_rows_total: Total number of interaction rows across all sequences.
@@ -374,14 +398,28 @@ def _dataset_shape_summary(dataset: ConcurrentQueryDataset, label: str) -> pd.Se
             "dataset": label,
             "num_samples": len(dataset),
             "num_rows_total": int(np.sum(seq_lens)) if seq_lens.size else 0,
-            "seq_len_mean": float(np.mean(seq_lens)) if seq_lens.size else float("nan"),
-            "seq_len_p95": float(np.percentile(seq_lens, 95)) if seq_lens.size else float("nan"),
-            "seq_len_max": float(np.max(seq_lens)) if seq_lens.size else float("nan"),
-            "pinch_point_mean": float(np.mean(pinch)) if pinch.size else float("nan"),
-            "pinch_point_p95": float(np.percentile(pinch, 95)) if pinch.size else float("nan"),
+            "seq_len_mean": (
+                float(np.mean(seq_lens)) if seq_lens.size else float("nan")
+            ),
+            "seq_len_p95": (
+                float(np.percentile(seq_lens, 95))
+                if seq_lens.size
+                else float("nan")
+            ),
+            "seq_len_max": (
+                float(np.max(seq_lens)) if seq_lens.size else float("nan")
+            ),
+            "pinch_point_mean": (
+                float(np.mean(pinch)) if pinch.size else float("nan")
+            ),
+            "pinch_point_p95": (
+                float(np.percentile(pinch, 95)) if pinch.size else float("nan")
+            ),
             "y_mean": float(np.mean(y)) if y.size else float("nan"),
             "y_p95": float(np.percentile(y, 95)) if y.size else float("nan"),
-            "lower_bound_fraction": float(np.mean(y_lb)) if y_lb.size else float("nan"),
+            "lower_bound_fraction": (
+                float(np.mean(y_lb)) if y_lb.size else float("nan")
+            ),
         }
     )
 
@@ -432,7 +470,9 @@ def _summarize_target_vs_train(
         if metric_name == "arrival_span_s":
             return "Seconds between first and last arrival."
         if metric_name == "arrival_rate_qps":
-            return "Average submitted query rate: num_arrivals / arrival_span_s."
+            return (
+                "Average submitted query rate: num_arrivals / arrival_span_s."
+            )
         if metric_name == "interarrival_mean_s":
             return "Mean time between consecutive arrivals (s)."
         if metric_name == "interarrival_median_s":
@@ -456,7 +496,9 @@ def _summarize_target_vs_train(
         if metric_name == "executing_concurrency_mean":
             return "Time-weighted mean actively executing query count."
         if metric_name == "executing_concurrency_p95":
-            return "Time-weighted 95th percentile actively executing query count."
+            return (
+                "Time-weighted 95th percentile actively executing query count."
+            )
         if metric_name == "executing_concurrency_max":
             return "Maximum actively executing query count."
 
@@ -470,10 +512,15 @@ def _summarize_target_vs_train(
             window_s = spike_p95_match.group(1)
             return f"95th percentile arrivals across {window_s}s buckets."
 
-        spike_ratio_match = re.fullmatch(r"spike_peak_to_p95_ratio_in_(.+)s", metric_name)
+        spike_ratio_match = re.fullmatch(
+            r"spike_peak_to_p95_ratio_in_(.+)s", metric_name
+        )
         if spike_ratio_match:
             window_s = spike_ratio_match.group(1)
-            return "Peak-to-typical burst amplification at " f"{window_s}s window (peak / p95)."
+            return (
+                "Peak-to-typical burst amplification at "
+                f"{window_s}s window (peak / p95)."
+            )
 
         return "No description available."
 
@@ -525,11 +572,11 @@ def main() -> None:
     model_id = args.iconq_model_id
     run_id = str(args.run_id)
 
-    model_parent_dir = Path(get_data_path()) / "iconq_models"
+    model_parent_dir = get_data_dir() / "iconq_models"
     model_dir = (model_parent_dir / model_id).resolve()
     dataset_path = (model_dir / "dataset.pkl").resolve()
     run_structured_log_path = (
-        Path(get_runs_path()) / run_id / "structured_log.parquet"
+        get_runs_dir() / run_id / "structured_log.parquet"
     ).resolve()
 
     if not model_dir.exists():
@@ -548,8 +595,8 @@ def main() -> None:
     print(f"Model parent dir: {model_parent_dir}")
     print(f"Dataset path: {dataset_path}")
 
-    model = IconqModel.load(model_id=model_id, parent_load_dir=str(model_parent_dir))
-    train_dataset = ConcurrentQueryDataset.load_from(str(dataset_path))
+    model = IconqModel.load(model_id=model_id, parent_load_dir=model_parent_dir)
+    train_dataset = ConcurrentQueryDataset.load_from(dataset_path)
     print(f"Target run_id: {run_id}")
 
     print("\nBuilding IconQ-formatted dataset from target run trace...")
@@ -560,7 +607,9 @@ def main() -> None:
     dataset_shape_df = pd.DataFrame([train_shape, run_shape])
 
     train_feature_summary_df = _dataset_global_summary(train_dataset, "train")
-    run_feature_summary_df = _dataset_global_summary(run_dataset, f"run_{run_id}")
+    run_feature_summary_df = _dataset_global_summary(
+        run_dataset, f"run_{run_id}"
+    )
     feature_summary_df = pd.concat(
         [train_feature_summary_df, run_feature_summary_df], ignore_index=True
     )
@@ -615,15 +664,19 @@ def main() -> None:
     feature_summary_df.to_csv(
         args.output_dir / "feature_summary_train_vs_target.csv", index=False
     )
-    feature_ood_df.to_csv(args.output_dir / "feature_range_ood.csv", index=False)
+    feature_ood_df.to_csv(
+        args.output_dir / "feature_range_ood.csv", index=False
+    )
     train_run_metrics_df.to_csv(
         args.output_dir / "train_runs_arrival_metrics.csv", index=False
     )
     target_metrics_df.to_csv(
-        args.output_dir / f"target_run_{run_id}_arrival_metrics.csv", index=False
+        args.output_dir / f"target_run_{run_id}_arrival_metrics.csv",
+        index=False,
     )
     target_vs_train_df.to_csv(
-        args.output_dir / f"target_run_{run_id}_vs_train_arrival_distribution.csv",
+        args.output_dir
+        / f"target_run_{run_id}_vs_train_arrival_distribution.csv",
         index=False,
     )
 

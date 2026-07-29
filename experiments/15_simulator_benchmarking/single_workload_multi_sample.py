@@ -141,7 +141,7 @@ if __name__ == "__main__":
             "use for sampling."
         ),
         default=os.path.join(
-            pu.get_data_path(), "generation_parameters", "dist_16_rpu"
+            pu.get_data_dir(), "generation_parameters", "dist_16_rpu"
         ),
     )
     parser.add_argument(

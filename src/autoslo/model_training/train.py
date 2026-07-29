@@ -32,7 +32,7 @@ args = parser.parse_args()
 
 cfg = load_yaml(args.train_config_path)
 iconq_model_id = Path(args.train_config_path).stem
-iconq_model_dir = pu.get_data_path() / "iconq_models" / iconq_model_id
+iconq_model_dir = pu.get_data_dir() / "iconq_models" / iconq_model_id
 if iconq_model_dir.exists() and args.force:
     print(f"Forcing re-training. Deleting {iconq_model_dir}...")
     shutil.rmtree(iconq_model_dir)

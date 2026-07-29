@@ -18,7 +18,7 @@ from autoslo.config.utils import (
 from autoslo.filesystem.path_utils import (
     append_to_run_log,
     find_most_recent_live_run_id,
-    get_runs_path,
+    get_runs_dir,
 )
 from autoslo.filesystem.yaml_helpers import load_yaml_with_params
 from autoslo.workload_definition.poisson_workload_creator import (
@@ -269,7 +269,7 @@ def print_run_status_table() -> None:
 
     # (workload_id, rpu) → best run_id
     best: dict[tuple[str, int], str] = {}
-    log_path = get_runs_path() / "run_log.csv"
+    log_path = get_runs_dir() / "run_log.csv"
     if log_path.exists():
         with open(log_path, newline="") as f:
             for row in csv.DictReader(f):

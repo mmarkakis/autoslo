@@ -28,7 +28,7 @@ _SCHEME_DIRS: dict[str, str] = {
 
 def resolve_config(ref: str) -> Path:
     """Resolve a prefixed config reference to an absolute Path."""
-    data = pu.get_data_path()
+    data = pu.get_data_dir()
     scheme, _, path_part = ref.partition(":")
     sub_dir = _SCHEME_DIRS.get(scheme.lower())
     if sub_dir is None:
@@ -146,7 +146,7 @@ def resolve_series_exec_config_id(
 
 @functools.lru_cache(maxsize=1)
 def _load_baseline_groups() -> dict:
-    path = pu.get_data_path() / "baseline_groups.yml"
+    path = pu.get_data_dir() / "baseline_groups.yml"
     return load_yaml(path) if path.exists() else {}
 
 

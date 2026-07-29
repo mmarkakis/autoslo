@@ -212,7 +212,7 @@ class XGBoostModel:
 
         # Create directory.
         parent_save_dir = (
-            parent_save_dir or pu.get_data_path() / "xgboost_models"
+            parent_save_dir or pu.get_data_dir() / "xgboost_models"
         )
         self._run_id = str(int(datetime.now().timestamp()))
         self._save_dir = parent_save_dir / self._run_id
@@ -446,7 +446,7 @@ class XGBoostModel:
                 stored. If None, defaults to `data/xgboost_models/`.
         """
         parent_load_dir = (
-            parent_load_dir or pu.get_data_path() / "xgboost_models"
+            parent_load_dir or pu.get_data_dir() / "xgboost_models"
         )
         load_dir = parent_load_dir / timestamp
         if not load_dir.exists():

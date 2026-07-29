@@ -346,7 +346,7 @@ class StructuredLog:
         self._df: pd.DataFrame | None = None
 
     @classmethod
-    def load(cls, source: Path | pd.DataFrame) -> StructuredLog:
+    def load(cls, source: str | Path | pd.DataFrame) -> StructuredLog:
         """Load a consolidated structured log.
 
         Parameters
@@ -369,7 +369,7 @@ class StructuredLog:
         path = Path(source)
         if isinstance(source, str) and not path.exists():
             # Treat as a run ID.
-            path = pu.get_runs_path() / source / "structured_log.parquet"
+            path = pu.get_runs_dir() / source / "structured_log.parquet"
         elif path.is_dir():
             path = path / "structured_log.parquet"
 

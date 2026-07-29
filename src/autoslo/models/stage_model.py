@@ -159,7 +159,7 @@ class StageModel:
                 the parent_save_dir named after the current timestamp.
         """
         # Create directory.
-        parent_save_dir = parent_save_dir or pu.get_data_path() / "stage_models"
+        parent_save_dir = parent_save_dir or pu.get_data_dir() / "stage_models"
         timestamp = str(int(datetime.now().timestamp()))
         save_dir = parent_save_dir / timestamp
         save_dir.mkdir(parents=True, exist_ok=False)
@@ -195,7 +195,7 @@ class StageModel:
         Raises:
             ValueError: If the specified directory does not exist.
         """
-        parent_load_dir = parent_load_dir or pu.get_data_path() / "stage_models"
+        parent_load_dir = parent_load_dir or pu.get_data_dir() / "stage_models"
         load_dir = parent_load_dir / timestamp
         if not load_dir.exists():
             raise ValueError(f"StageModel directory {load_dir} does not exist.")

@@ -391,7 +391,7 @@ class CacheModel:
                 the parent_save_dir named after the current timestamp.
         """
         # Create directory.
-        parent_save_dir = parent_save_dir or pu.get_data_path() / "cache_models"
+        parent_save_dir = parent_save_dir or pu.get_data_dir() / "cache_models"
         timestamp = str(int(datetime.now().timestamp()))
         save_dir = parent_save_dir / timestamp
         save_dir.mkdir(parents=True, exist_ok=False)
@@ -442,7 +442,7 @@ class CacheModel:
         Raises:
             ValueError: If the specified directory does not exist.
         """
-        parent_load_dir = parent_load_dir or pu.get_data_path() / "cache_models"
+        parent_load_dir = parent_load_dir or pu.get_data_dir() / "cache_models"
         load_dir = Path(parent_load_dir) / timestamp
         if not load_dir.exists():
             raise FileNotFoundError(f"CacheModel {timestamp} not found")

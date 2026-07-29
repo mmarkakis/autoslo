@@ -58,7 +58,7 @@ def get_redset_raw_data(
     return path
 
 
-def get_data_path() -> Path:
+def get_data_dir() -> Path:
     """
     Return the absolute DATA_PATH used by autoslo.
     Useful for API routes that need to expose this to the UI.
@@ -66,12 +66,12 @@ def get_data_path() -> Path:
     return AUTOSLO_ROOT / "data"
 
 
-def get_runs_path() -> Path:
+def get_runs_dir() -> Path:
     """
     Return the absolute RUNS_PATH used by autoslo.
     Useful for API routes that need to expose this to the UI.
     """
-    return get_data_path() / "runs"
+    return get_data_dir() / "runs"
 
 
 def append_to_run_log(
@@ -96,10 +96,10 @@ def append_to_run_log(
         May be empty for callers that do not track workload.
     """
 
-    log_path = get_runs_path() / "run_log.csv"
+    log_path = get_runs_dir() / "run_log.csv"
     write_header = not log_path.exists()
     started_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    get_runs_path().mkdir(parents=True, exist_ok=True)
+    get_runs_dir().mkdir(parents=True, exist_ok=True)
     with open(log_path, "a", newline="") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
@@ -123,7 +123,7 @@ def find_most_recent_live_run_id(
     both match.  Returns ``None`` if the log does not exist, the columns are
     absent, or no matching entry is found.
     """
-    log_path = get_runs_path() / "run_log.csv"
+    log_path = get_runs_dir() / "run_log.csv"
     if not log_path.exists():
         return None
     with open(log_path, newline="") as f:
@@ -145,37 +145,37 @@ def get_models_dir() -> Path:
     """
     Return the absolute path to the models directory.
     """
-    return get_data_path() / "models"
+    return get_data_dir() / "models"
 
 
-def get_schemas_path() -> Path:
+def get_schemas_dir() -> Path:
     """
     Return the absolute path to the schemas config directory.
     Schema config files live at ``{schemas_path}/{schema_name}.yml``.
     """
-    return get_data_path() / "schemas"
+    return get_data_dir() / "schemas"
 
 
-def get_query_runner_configs_path() -> Path:
+def get_query_runner_configs_dir() -> Path:
     """
     Return the absolute path to the query runner configs directory.
     Config files live at ``{path}/{config_name}.yml``.
     """
-    return get_data_path() / "query_runner_configs"
+    return get_data_dir() / "query_runner_configs"
 
 
 def get_heavy_templates_files() -> dict[str, Path]:
     """
     Return the path to the heavy templates file for TPC-DS.
     """
-    return {"tpcds": get_data_path() / "tpcds_heavy_templates.txt"}
+    return {"tpcds": get_data_dir() / "tpcds_heavy_templates.txt"}
 
 
 def list_composite_workloads() -> list[str]:
     """
     Return the names of subdirectories under DATA_PATH/composite_workloads.
     """
-    base = get_data_path() / "composite_workloads"
+    base = get_data_dir() / "composite_workloads"
     if not base.is_dir():
         return []
     return sorted(d.name for d in base.iterdir() if d.is_dir())
@@ -185,7 +185,7 @@ def get_workloads_dir() -> Path:
     """
     Return the absolute path to the workloads directory.
     """
-    return get_data_path() / "workloads"
+    return get_data_dir() / "workloads"
 
 
 def get_conn_info_path() -> Path:
@@ -242,7 +242,7 @@ class RunLocator:
                     raise ValueError(f"Column '{col}' not found in run summary")
 
         run_summary_path = (
-            get_runs_path() / f"run_summary_{last_run_id}.parquet"
+            get_runs_dir() / f"run_summary_{last_run_id}.parquet"
         )
         run_summary = pd.read_parquet(run_summary_path, columns=columns)
 
@@ -301,12 +301,12 @@ class RunLocator:
             return last_run_id, run_summary_cols
 
         run_dirs = sorted(
-            [d.name for d in get_runs_path().iterdir() if d.is_dir()]
+            [d.name for d in get_runs_dir().iterdir() if d.is_dir()]
         )
         last_run_id = run_dirs[-1]
         run_summary_files = [
             f.name
-            for f in get_runs_path().iterdir()
+            for f in get_runs_dir().iterdir()
             if f.name.startswith("run_summary_") and f.name.endswith(".parquet")
         ]
         if (
@@ -320,10 +320,10 @@ class RunLocator:
             assert last_run_id_internal == last_run_id
             for f in run_summary_files:
                 if last_run_id not in f:
-                    (get_runs_path() / f).unlink()
+                    (get_runs_dir() / f).unlink()
         else:
             run_summary_path = (
-                get_runs_path() / f"run_summary_{last_run_id}.parquet"
+                get_runs_dir() / f"run_summary_{last_run_id}.parquet"
             )
             run_summary_cols = pq.read_schema(run_summary_path).names
 
@@ -353,7 +353,7 @@ class RunLocator:
         """
         import json
 
-        runs_path = get_runs_path()
+        runs_path = get_runs_dir()
         old_path = runs_path / run_dir / "run_params.yml"
         new_path = runs_path / run_dir / "config.yml"
 
@@ -421,7 +421,7 @@ class RunLocator:
         # Write out the summary dataframe.
         last_run_id = run_dirs[-1]
         run_summary_path = (
-            get_runs_path() / f"run_summary_{last_run_id}.parquet"
+            get_runs_dir() / f"run_summary_{last_run_id}.parquet"
         )
         run_summary.to_parquet(run_summary_path, index=False)
 

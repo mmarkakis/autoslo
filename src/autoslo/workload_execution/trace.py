@@ -84,7 +84,7 @@ class Trace:
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
         self._original_start = datetime.now()
 
-        run_dir = pu.get_runs_path() / run_id
+        run_dir = pu.get_runs_dir() / run_id
         pq_filenames = [
             f.name for f in run_dir.iterdir() if f.name.endswith(".parquet")
         ]
@@ -210,7 +210,7 @@ class Trace:
         sys_query_history Parquet files for the run.
         """
 
-        run_dir = pu.get_runs_path() / run_id
+        run_dir = pu.get_runs_dir() / run_id
         any_sys_query_history_file = next(
             (
                 f.name
@@ -282,7 +282,7 @@ class Trace:
     def structured_log(self) -> Optional[StructuredLog]:
         """Lazily loaded StructuredLog for this run, or None if absent."""
         if not hasattr(self, "_structured_log"):
-            path = pu.get_runs_path() / self._run_id / "structured_log.parquet"
+            path = pu.get_runs_dir() / self._run_id / "structured_log.parquet"
             self._structured_log: Optional[StructuredLog] = (
                 StructuredLog.load(path) if path.exists() else None
             )
@@ -453,7 +453,7 @@ class Trace:
         The order of the query IDs in the Series matches the order of the query
         IDs provided by the ``query_ids`` property.
         """
-        run_dir = pu.get_runs_path() / self.run_id
+        run_dir = pu.get_runs_dir() / self.run_id
         cache_path = run_dir / "query_text_ids.parquet"
 
         if cache_path.exists():
@@ -580,7 +580,7 @@ class Trace:
         d = {}
 
         # Find out the name of the schema.
-        run_params_path = pu.get_runs_path() / self._run_id / "run_params.yml"
+        run_params_path = pu.get_runs_dir() / self._run_id / "run_params.yml"
         with open(run_params_path, "r") as f:
             run_params = yaml.safe_load(f)
         schema_name = run_params["schema_name"]

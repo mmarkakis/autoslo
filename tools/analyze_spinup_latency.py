@@ -63,7 +63,6 @@ def _resolve_inputs_from_manifest(manifest_path: Path) -> list[_Input]:
     """Return (log_path, run_id) pairs for every entry in the manifest."""
     manifest = load_yaml(manifest_path)
     entries = manifest.get("main_content", [])
-    runs_dir = Path(pu.get_runs_path())
 
     inputs: list[_Input] = []
     for entry in entries:
@@ -75,7 +74,7 @@ def _resolve_inputs_from_manifest(manifest_path: Path) -> list[_Input]:
         run_id = find_most_recent_live_run_id(config_label, wid)
         if run_id is None:
             continue
-        log_path = runs_dir / run_id / "structured_log.parquet"
+        log_path = pu.get_runs_dir() / run_id / "structured_log.parquet"
         if log_path.exists():
             inputs.append(_Input(log_path=log_path, run_id=run_id))
         else:
@@ -118,7 +117,7 @@ def parse_args() -> _Args:
         manifest_path = Path(args.manifest)
         if not manifest_path.is_absolute() and not manifest_path.exists():
             manifest_path = (
-                Path(pu.get_data_path())
+                pu.get_data_dir()
                 / "manifests"
                 / "execution"
                 / manifest_path.with_suffix(".yml")

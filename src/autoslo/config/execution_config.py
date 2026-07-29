@@ -68,7 +68,7 @@ class ExecutionConfig:
         # ── Determine run_id and set up logging ──────────────────────────────
         run_id = str(int(wall_clock_utc() * 1000))
         default_parent = "runs" if is_runner else "simulator_runs"
-        out_dir = out_dir or pu.get_data_path() / default_parent / run_id
+        out_dir = out_dir or pu.get_data_dir() / default_parent / run_id
         out_dir.mkdir(parents=True, exist_ok=True)
         structured_log_handler = setup_run_logging(
             out_dir=out_dir,

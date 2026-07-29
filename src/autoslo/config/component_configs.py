@@ -43,7 +43,7 @@ class _PartialConfig:
         Load the execution config YAML file for the given run_id and parse it
         into an instance of the PartialConfig subclass.
         """
-        cfg_path = pu.get_data_path() / "runs" / run_id / "execution_config.yml"
+        cfg_path = pu.get_data_dir() / "runs" / run_id / "execution_config.yml"
         cfg = load_yaml(cfg_path)
         return cls.from_config(cfg)
 

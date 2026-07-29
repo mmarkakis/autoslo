@@ -188,7 +188,7 @@ def main():
     manifest_path = Path(args.execution_manifest_path)
     if not manifest_path.is_absolute():
         manifest_path = (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "manifests"
             / "execution"
             / manifest_path.with_suffix(".yml")
@@ -198,7 +198,6 @@ def main():
 
     manifest = load_yaml(manifest_path)
     entries = manifest.get("main_content", [])
-    data_path = pu.get_data_path()
 
     # Apply split filter for live runs.
     if args.live and args.splits > 1:
@@ -216,8 +215,8 @@ def main():
         effective_entries = entries
 
     # ── Preflight ───────────────────────────────────────────────────────────────────
-    sim_runs_dir = data_path / "simulator_runs"
-    runs_path = pu.get_runs_path()
+    sim_runs_dir = pu.get_data_dir() / "simulator_runs"
+    runs_dir = pu.get_runs_dir()
     preflight_rows: list[tuple[str, str, str, Optional[float]]] = []
     missing_entry_indices: set[int] = set()
 
@@ -282,9 +281,7 @@ def main():
             would_skip = (
                 not args.force
                 and recent_run_id is not None
-                and (
-                    runs_path / recent_run_id / "execution_config.yml"
-                ).exists()
+                and (runs_dir / recent_run_id / "execution_config.yml").exists()
             )
         action = "Skip \u2014 exists" if would_skip else "Run"
 
@@ -348,7 +345,9 @@ def main():
 
     # ── Execute ──────────────────────────────────────────────────────────────────
     if not args.live:
-        records = _run_simulator(effective_entries, data_path, force=args.force)
+        records = _run_simulator(
+            effective_entries, pu.get_data_dir(), force=args.force
+        )
     else:
         records = _run_live(effective_entries, force=args.force)
 
@@ -418,7 +417,6 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
     """
     Run each (workload, exec_config) pair sequentially against live clusters.
     """
-    runs_path = pu.get_runs_path()
     records: list[_RunRecord] = []
     for entry in entries:
         workload_config = WorkloadConfig.from_config(entry)
@@ -432,7 +430,7 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
             if (
                 recent_run_id is not None
                 and (
-                    runs_path / recent_run_id / "execution_config.yml"
+                    pu.get_runs_dir() / recent_run_id / "execution_config.yml"
                 ).exists()
             ):
                 console.print(
@@ -442,7 +440,7 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
                     _RunRecord(
                         config_label,
                         wid,
-                        runs_path / recent_run_id,
+                        pu.get_runs_dir() / recent_run_id,
                         was_run=False,
                     )
                 )
@@ -463,7 +461,10 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
         asyncio.run(runner.run())
         records.append(
             _RunRecord(
-                config_label, wid, runs_path / runner.run_id, was_run=True
+                config_label,
+                wid,
+                pu.get_runs_dir() / runner.run_id,
+                was_run=True,
             )
         )
 

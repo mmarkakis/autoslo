@@ -69,7 +69,7 @@ class Workload:
 
         # Find the dataframe.
         in_dir = (
-            workload_config.workload_dir or pu.get_data_path() / "workloads"
+            workload_config.workload_dir or pu.get_data_dir() / "workloads"
         )
         path = Path(in_dir) / f"{workload_config.workload_name}.parquet"
         if not path.exists():
@@ -274,7 +274,7 @@ class Workload:
             If a file already exists at the target path and *overwrite* is
             *False*.
         """
-        out_dir = out_dir or pu.get_data_path() / "workloads"
+        out_dir = out_dir or pu.get_data_dir() / "workloads"
         out_workload_name = (
             out_workload_name or self._workload_config.workload_name
         )

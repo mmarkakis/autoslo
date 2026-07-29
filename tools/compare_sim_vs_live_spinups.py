@@ -487,9 +487,6 @@ def _resolve_entries(
 ) -> list[_EntryPaths]:
     manifest = load_yaml(manifest_path)
     entries = manifest.get("main_content", [])
-    data_path = Path(pu.get_data_path())
-    sim_runs_dir = data_path / "simulator_runs"
-    runs_dir = Path(pu.get_runs_path())
 
     result: list[_EntryPaths] = []
     for entry in entries:
@@ -501,7 +498,9 @@ def _resolve_entries(
 
         sim_dir: Optional[Path] = None
         if include_sim:
-            candidate = sim_runs_dir / wid / config_label
+            candidate = (
+                pu.get_data_dir() / "simulator_runs" / wid / config_label
+            )
             if (candidate / "execution_config.yml").exists():
                 sim_dir = candidate
             else:
@@ -513,7 +512,7 @@ def _resolve_entries(
         if include_live:
             run_id = find_most_recent_live_run_id(config_label, wid)
             if run_id is not None:
-                candidate = runs_dir / run_id
+                candidate = pu.get_runs_dir() / run_id
                 if (candidate / "execution_config.yml").exists():
                     live_dir = candidate
             if live_dir is None:
@@ -569,7 +568,7 @@ def main() -> None:
     manifest_path = Path(args.manifest)
     if not manifest_path.is_absolute() and not manifest_path.exists():
         manifest_path = (
-            Path(pu.get_data_path())
+            pu.get_data_dir()
             / "manifests"
             / "execution"
             / manifest_path.with_suffix(".yml")

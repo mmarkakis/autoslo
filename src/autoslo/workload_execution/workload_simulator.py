@@ -537,12 +537,12 @@ if __name__ == "__main__":
     execution_config_path = Path(args.execution_config_path)
     if not execution_config_path.is_absolute():
         execution_config_path = (
-            pu.get_data_path() / "execution_configs" / execution_config_path
+            pu.get_data_dir() / "execution_configs" / execution_config_path
         )
     cfg = load_yaml_with_params(execution_config_path, params)
 
     run_id = make_run_id([Path(execution_config_path).stem], params)
-    out_dir = pu.get_data_path() / "simulator_runs" / run_id
+    out_dir = pu.get_data_dir() / "simulator_runs" / run_id
     if out_dir.exists():
         if args.force:
             shutil.rmtree(out_dir)

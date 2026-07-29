@@ -8,7 +8,7 @@ import pandas as pd
 import seaborn as sns
 from tqdm.auto import tqdm
 
-from autoslo.filesystem.path_utils import get_runs_path
+from autoslo.filesystem.path_utils import get_runs_dir
 from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.models.iconq_model import IconqModel
 from autoslo.visualizations.colors import Palette
@@ -49,7 +49,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _load_run_ids_from_run_log() -> list[str]:
-    run_log_path = Path(get_runs_path()) / "run_log.csv"
+    run_log_path = get_runs_dir() / "run_log.csv"
     if not run_log_path.exists():
         raise FileNotFoundError(f"run_log.csv not found at {run_log_path}")
 
@@ -77,7 +77,7 @@ def _load_run_ids_from_run_log() -> list[str]:
 
 def _load_run_log_metadata() -> pd.DataFrame:
     """Return a DataFrame with run_id, workload_id, and redshift_version columns."""
-    run_log_path = Path(get_runs_path()) / "run_log.csv"
+    run_log_path = get_runs_dir() / "run_log.csv"
     run_log_df = pd.read_csv(run_log_path, dtype={"run_id": str})
     run_log_df["run_id"] = run_log_df["run_id"].astype(str)
     if "workload_id" not in run_log_df.columns:
@@ -87,7 +87,9 @@ def _load_run_log_metadata() -> pd.DataFrame:
     run_log_df["redshift_version"] = run_log_df["run_id"].apply(
         lambda rid: Trace.redshift_version_for_run(rid)
     )
-    return run_log_df[["run_id", "workload_id", "redshift_version"]].drop_duplicates(subset="run_id")
+    return run_log_df[
+        ["run_id", "workload_id", "redshift_version"]
+    ].drop_duplicates(subset="run_id")
 
 
 def _load_cache(cache_path: Path, refresh_cache: bool) -> pd.DataFrame:
@@ -226,9 +228,8 @@ def _add_counterfactual_predictions(
                     pred_latency_s = model_pred.overall_mean_s()
 
                     # Find matching row(s) in mega_df
-                    mask = (
-                        (mega_df["run_id"] == run_id)
-                        & (mega_df["query_id"] == query_id)
+                    mask = (mega_df["run_id"] == run_id) & (
+                        mega_df["query_id"] == query_id
                     )
                     if not mask.any():
                         continue
@@ -248,9 +249,7 @@ def _add_counterfactual_predictions(
                         )
 
             except Exception as exc:
-                print(
-                    f"  Failed to predict {model_id} on run {run_id}: {exc}"
-                )
+                print(f"  Failed to predict {model_id} on run {run_id}: {exc}")
                 continue
 
     return mega_df
@@ -339,7 +338,9 @@ def _plot_drift_over_time(
             prev_ver = ver
 
     sns.set_theme(context="paper", style="whitegrid", font_scale=1.0)
-    fig, axes = plt.subplots(2, 3, figsize=(18, 9), constrained_layout=True, sharey='row')
+    fig, axes = plt.subplots(
+        2, 3, figsize=(18, 9), constrained_layout=True, sharey="row"
+    )
 
     positions = list(range(len(run_ids)))
     percentile_specs = [(0.50, "P50"), (0.90, "P90"), (0.95, "P95")]
@@ -401,14 +402,14 @@ def _plot_drift_over_time(
                         linewidth=0,
                         zorder=3,
                     )
-            
+
             # Draw a  horizontal line at 1.0 for reference.
             ax.axhline(
                 1.0,
                 color="0.35",
                 linestyle="--",
                 linewidth=1.1,
-                label="Perfect"
+                label="Perfect",
             )
 
             # Draw a vertical line at each Redshift version transition and
@@ -536,9 +537,7 @@ def _plot_counterfactual_vs_log_scatter(
     df = df[(df["predicted_latency"] > 0) & (df[pred_col] > 0)]
 
     if df.empty:
-        raise ValueError(
-            f"No valid rows for scatterplot of model {model_id}."
-        )
+        raise ValueError(f"No valid rows for scatterplot of model {model_id}.")
 
     df["rpu"] = df["rpu"].astype(int)
     palette = dict(Palette.rpu_to_color())
@@ -685,7 +684,9 @@ def _get_available_model_ids(mega_df: pd.DataFrame) -> list[str | None]:
     for col in mega_df.columns:
         if col.startswith("iconq_") and col.endswith("_factor_error"):
             # Extract model_id from "iconq_{model_id}_factor_error"
-            model_id = col[6:-13]  # Remove "iconq_" prefix and "_factor_error" suffix
+            model_id = col[
+                6:-13
+            ]  # Remove "iconq_" prefix and "_factor_error" suffix
             model_ids.add(model_id)
     return [None] + sorted(model_ids)
 
@@ -720,7 +721,8 @@ def main() -> None:
             output_path = script_dir / "prediction_error_drift_over_time.png"
         else:
             output_path = (
-                script_dir / f"prediction_error_drift_over_time_iconq_{model_id}.png"
+                script_dir
+                / f"prediction_error_drift_over_time_iconq_{model_id}.png"
             )
 
         try:

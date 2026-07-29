@@ -265,7 +265,7 @@ class IconqQueryFeaturizer:
         # Load the database statistics.
         # FIXME: We just load from cluster size 32.
         statistics_path = (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "db_stats"
             / f"cluster_32_{self._schema_name}.yml"
         )
@@ -508,7 +508,7 @@ class IconqQueryFeaturizer:
         if iconq_query_featurizer_id is None:
             iconq_query_featurizer_id = str(int(datetime.now().timestamp()))
         save_dir = (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "__query_featurizations"
             / self._schema_name
             / iconq_query_featurizer_id
@@ -561,7 +561,7 @@ class IconqQueryFeaturizer:
 
         # Load parameters.
         load_dir = (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "__query_featurizations"
             / schema_name
             / iconq_query_featurizer_id

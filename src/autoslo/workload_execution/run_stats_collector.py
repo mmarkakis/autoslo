@@ -73,7 +73,7 @@ class RunStatsCollector:
         """
         self.run_params = {}
         for run_id in self.run_ids:
-            run_path = pu.get_runs_path() / run_id
+            run_path = pu.get_runs_dir() / run_id
             if not run_path.is_dir():
                 print(f"Run path {run_path} does not exist, skipping.")
                 continue
@@ -126,7 +126,7 @@ class RunStatsCollector:
 
         # Write out the DataFrame to a parquet file.
         out_path = (
-            pu.get_runs_path() / run_id / f"{table_name}+{cluster_name}.parquet"
+            pu.get_runs_dir() / run_id / f"{table_name}+{cluster_name}.parquet"
         )
         df.to_parquet(out_path, index=False)
         print(f"\tWrote {table_name} to {out_path}.")

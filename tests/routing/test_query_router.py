@@ -661,7 +661,7 @@ class TestQueryRouterIntegration:
     def _check_model(self) -> None:
         import autoslo.filesystem.path_utils as pu
 
-        model_dir = pu.get_data_path() / "iconq_models" / _INTEGRATION_MODEL_ID
+        model_dir = pu.get_data_dir() / "iconq_models" / _INTEGRATION_MODEL_ID
         if not model_dir.is_dir():
             pytest.skip(
                 f"IconqModel {_INTEGRATION_MODEL_ID!r} not found at {model_dir}. "

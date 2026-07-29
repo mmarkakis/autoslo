@@ -162,7 +162,7 @@ class IconqModel:
 
     @staticmethod
     def default_save_dir(model_id: str) -> Path:
-        return pu.get_data_path() / "iconq_models" / model_id
+        return pu.get_data_dir() / "iconq_models" / model_id
 
     def __init__(
         self,
@@ -1033,7 +1033,7 @@ class IconqModel:
             parent_load_dir: The parent directory where iconq models are stored.
                 If None, defaults to `data/iconq_models/`.
         """
-        parent_load_dir = parent_load_dir or pu.get_data_path() / "iconq_models"
+        parent_load_dir = parent_load_dir or pu.get_data_dir() / "iconq_models"
         load_dir = parent_load_dir / model_id
         if not load_dir.exists():
             raise ValueError(f"IconqModel directory {load_dir} does not exist.")

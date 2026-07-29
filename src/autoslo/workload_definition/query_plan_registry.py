@@ -181,7 +181,7 @@ class QueryPlanRegistry:
     @classmethod
     def _registry_path(cls, schema_name: str) -> Path:
         return (
-            pu.get_data_path()
+            pu.get_data_dir()
             / _REGISTRY_SUBDIR
             / schema_name
             / _REGISTRY_FILENAME

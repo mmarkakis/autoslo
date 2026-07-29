@@ -36,7 +36,7 @@ def generate_slo_tables(
         baseline_percentiles: Percentiles (0–100) to sweep.
         multipliers: Headroom multipliers (*k*) to sweep.
     """
-    log_path = pu.get_runs_path() / run_id / "structured_log.parquet"
+    log_path = pu.get_runs_dir() / run_id / "structured_log.parquet"
     if not log_path.exists():
         raise FileNotFoundError(
             f"No structured_log.parquet found for run {run_id!r} "
@@ -49,7 +49,7 @@ def generate_slo_tables(
     )
     print(f"Loaded {len(df)} latency records from run {run_id!r}.")
 
-    exec_cfg_path = pu.get_runs_path() / run_id / "execution_config.yml"
+    exec_cfg_path = pu.get_runs_dir() / run_id / "execution_config.yml"
     if exec_cfg_path.exists():
         runner_cfg = WorkloadRunnerConfig.from_config(load_yaml(exec_cfg_path))
         if runner_cfg.closed_loop:
@@ -65,7 +65,7 @@ def generate_slo_tables(
             "WARNING: execution_config.yml not found; could not verify closed-loop mode."
         )
 
-    slo_dir = pu.get_data_path() / "slos"
+    slo_dir = pu.get_data_dir() / "slos"
     slo_dir.mkdir(parents=True, exist_ok=True)
 
     for p in baseline_percentiles:

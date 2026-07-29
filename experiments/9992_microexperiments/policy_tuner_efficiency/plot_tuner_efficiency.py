@@ -22,7 +22,7 @@ all_dfs = []
 
 for experiment_name in experiment_names:
     experiment_path = os.path.join(
-        pu.get_data_path(), "tuner_runs", experiment_name
+        pu.get_data_dir(), "tuner_runs", experiment_name
     )
     for scenario_name in os.listdir(experiment_path):
         scenario_path = os.path.join(experiment_path, scenario_name)

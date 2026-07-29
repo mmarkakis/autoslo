@@ -207,6 +207,6 @@ if __name__ == "__main__":
 
     workload_name = args.workload_name
     workload_dir = (
-        pu.get_data_path() / "redset_executable_workloads" / workload_name
+        pu.get_data_dir() / "redset_executable_workloads" / workload_name
     )
     main(workload_dir, args.new_q_per_template_min, args.new_q_per_template_max)

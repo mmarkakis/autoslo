@@ -49,7 +49,7 @@ class MicrobenchmarkRunner:
     @classmethod
     def manifest_path(cls) -> Path:
         return (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "manifests"
             / "microbench"
             / f"{cls.name()}.yml"
@@ -57,15 +57,15 @@ class MicrobenchmarkRunner:
 
     @classmethod
     def scratch_dir(cls) -> Path:
-        return pu.get_data_path() / "microbenchmark_runs" / cls.name()
+        return pu.get_data_dir() / "microbenchmark_runs" / cls.name()
 
     @classmethod
     def csv_path(cls) -> Path:
-        return pu.get_data_path() / "plot_data" / f"{cls.name()}.csv"
+        return pu.get_data_dir() / "plot_data" / f"{cls.name()}.csv"
 
     @classmethod
     def plot_path(cls) -> Path:
-        return pu.get_data_path() / "plots" / f"{cls.name()}.png"
+        return pu.get_data_dir() / "plots" / f"{cls.name()}.png"
 
     #############
     # To be implemented by subclasses.

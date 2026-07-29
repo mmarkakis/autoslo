@@ -74,9 +74,9 @@ class PolicyTuner:
                 params,
             )
 
-        self._out_dir = pu.get_data_path() / "tuner_runs" / self._run_id
+        self._out_dir = pu.get_data_dir() / "tuner_runs" / self._run_id
         self._publication_path = (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "execution_configs"
             / "tuned"
             / (self._run_id + ".yml")

@@ -202,10 +202,10 @@ async def test_xgboost_model_with_real_trace(
     runs_root.mkdir()
     data_root.mkdir()
     monkeypatch.setattr(
-        xgb_module.pu, "get_runs_path", lambda: runs_root
+        xgb_module.pu, "get_runs_dir", lambda: runs_root
     )
     monkeypatch.setattr(
-        xgb_module.pu, "get_data_path", lambda: data_root
+        xgb_module.pu, "get_data_dir", lambda: data_root
     )
     run_id = "xgb-trace"
     _create_trace_run(

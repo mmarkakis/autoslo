@@ -214,7 +214,7 @@ class DBStatsCollector:
 
         # Check whether the intended output already exists.
         stats_path = (
-            pu.get_data_path()
+            pu.get_data_dir()
             / "db_stats"
             / f"{self.cluster_name}_{self.schema_name}.yml"
         )

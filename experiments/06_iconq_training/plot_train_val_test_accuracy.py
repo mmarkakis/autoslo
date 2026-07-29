@@ -313,7 +313,7 @@ def main(iconq_model_id: str, hide_plot_title: bool):
     trained_on_log_runtime = model.trained_on_log_runtime
 
     model_dir = os.path.join(
-        pu.get_data_path(),
+        pu.get_data_dir(),
         "iconq_models",
         iconq_model_id,
     )

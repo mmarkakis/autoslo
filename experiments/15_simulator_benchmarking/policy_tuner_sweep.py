@@ -269,7 +269,7 @@ def main(args):
         f"sweep__{args.workload_name}__slo{args.slo_s}"
     )
     out_dir = os.path.join(
-        pu.get_data_path(), "simulator_runs", experiment_name
+        pu.get_data_dir(), "simulator_runs", experiment_name
     )
     os.makedirs(out_dir, exist_ok=True)
 
@@ -428,7 +428,7 @@ if __name__ == "__main__":
         "--tpcds_prob_distribution_dir",
         type=str,
         default=os.path.join(
-            pu.get_data_path(), "generation_parameters", "dist_16_rpu"
+            pu.get_data_dir(), "generation_parameters", "dist_16_rpu"
         ),
         help="Directory containing the TPCDS probability distributions.",
     )

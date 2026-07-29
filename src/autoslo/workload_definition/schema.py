@@ -91,4 +91,4 @@ class Schema:
 
     @classmethod
     def _config_path(cls, schema_name: str) -> Path:
-        return pu.get_schemas_path() / f"{schema_name}.yml"
+        return pu.get_schemas_dir() / f"{schema_name}.yml"
