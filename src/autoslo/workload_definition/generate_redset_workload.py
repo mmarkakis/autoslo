@@ -1,5 +1,5 @@
 import argparse
-import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -28,12 +28,12 @@ def read_in_query_texts(
         template_id = _template_id(temp_and_q_idx)
         query_num = _idx_in_template(temp_and_q_idx)
         template_str = f"query{template_id:03d}"
-        query_path = os.path.join(
-            pu.QUERIES_PATH,
-            template_str,
-            f"{template_str}_{query_num:03d}.sql",
+        query_path = (
+            pu.QUERIES_PATH
+            / template_str
+            / f"{template_str}_{query_num:03d}.sql"
         )
-        if not os.path.exists(query_path):
+        if not query_path.exists():
             raise FileNotFoundError(f"Query file {query_path} does not exist.")
         with open(query_path, "r") as f:
             query_texts_dict[temp_and_q_idx] = f.read()
@@ -42,13 +42,13 @@ def read_in_query_texts(
 
 def main(args) -> None:
     # Create the output directory and dump the parameters.
-    output_dir = os.path.join(
-        pu.get_data_path(),
-        "redset_workloads",
-        f"redset_{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}",
+    output_dir = (
+        pu.get_data_path()
+        / "redset_workloads"
+        / f"redset_{args.cluster_type}_cluster{args.cluster_id}_seed{args.seed}"
     )
-    os.makedirs(output_dir, exist_ok=True)
-    with open(os.path.join(output_dir, "parameters.yml"), "w") as f:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / "parameters.yml", "w") as f:
         yaml.dump(vars(args), f)
 
     # Read in and process the Redset trace.
@@ -80,17 +80,14 @@ def main(args) -> None:
     )
 
     # Read in the TPC-DS probability distribution and mapping.
-    dist_path = os.path.join(args.tpcds_prob_distribution_dir, "array.npy")
+    tpcds_prob_distribution_dir = Path(args.tpcds_prob_distribution_dir)
+    dist_path = tpcds_prob_distribution_dir / "array.npy"
     with open(dist_path, "rb") as f:
         dist = np.load(f)
-    index_dict_path = os.path.join(
-        args.tpcds_prob_distribution_dir, "index_dict.yml"
-    )
+    index_dict_path = tpcds_prob_distribution_dir / "index_dict.yml"
     with open(index_dict_path, "r") as f:
         index_dict = yaml.safe_load(f)
-    column_dict_path = os.path.join(
-        args.tpcds_prob_distribution_dir, "column_dict.yml"
-    )
+    column_dict_path = tpcds_prob_distribution_dir / "column_dict.yml"
     with open(column_dict_path, "r") as f:
         column_dict = yaml.safe_load(f)
 
@@ -134,15 +131,15 @@ def main(args) -> None:
     df["query_text"] = df["tpcds_temp_and_q_idx"].map(query_texts)
 
     # Write out the full workload.
-    full_out_path = os.path.join(output_dir, "full_workload.parquet")
+    full_out_path = output_dir / "full_workload.parquet"
     df.to_parquet(full_out_path, index=False)
 
     # Write out per day workloads.
-    day_dir = os.path.join(output_dir, "days")
-    os.makedirs(day_dir, exist_ok=True)
+    day_dir = output_dir / "days"
+    day_dir.mkdir(parents=True, exist_ok=True)
     for day, day_df in df.groupby("arrival_day"):
         day_str = day.strftime("%Y-%m-%d")
-        day_out_path = os.path.join(day_dir, f"{day_str}.parquet")
+        day_out_path = day_dir / f"{day_str}.parquet"
         day_df["rel_start_time_s"] = (
             day_df["arrival_timestamp"] - day_df["arrival_timestamp"].min()
         ).dt.total_seconds()
@@ -174,10 +171,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tpcds_prob_distribution_dir",
         type=str,
-        default=os.path.join(
-            pu.get_data_path(),
-            "generation_parameters",
-            "dist_16_rpu",
+        default=str(
+            pu.get_data_path() / "generation_parameters" / "dist_16_rpu"
         ),
         help="Path to directory containing TPC-DS probability distributions.",
     )

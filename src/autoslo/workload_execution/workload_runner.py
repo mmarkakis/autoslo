@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import concurrent.futures
 import logging
-import os
 import queue
 import threading
 from functools import partial
@@ -127,7 +126,7 @@ class WorkloadRunner:
     def __init__(
         self,
         cfg: dict,
-        out_dir: Optional[str | Path] = None,
+        out_dir: Optional[Path] = None,
         write_text_log: bool = True,
     ) -> None:
         """
@@ -160,7 +159,7 @@ class WorkloadRunner:
             max_workers=self._workload_runner_config.max_threads
         )
 
-        dump_yaml(cfg, os.path.join(self._out_dir, "execution_config.yml"))
+        dump_yaml(cfg, self._out_dir / "execution_config.yml")
 
         # ── Instance Variables ───────────────────────────────────────────────
         self._routing_lock = threading.Lock()

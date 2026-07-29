@@ -13,6 +13,7 @@ from __future__ import annotations
 import functools
 import warnings
 from pathlib import Path
+from typing import Optional
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.utils import make_run_id
@@ -27,7 +28,7 @@ _SCHEME_DIRS: dict[str, str] = {
 
 def resolve_config(ref: str) -> Path:
     """Resolve a prefixed config reference to an absolute Path."""
-    data = Path(pu.get_data_path())
+    data = pu.get_data_path()
     scheme, _, path_part = ref.partition(":")
     sub_dir = _SCHEME_DIRS.get(scheme.lower())
     if sub_dir is None:
@@ -88,8 +89,7 @@ def resolve_trial_spec_path(ref: str) -> Path:
     scheme, _, path_part = ref.partition(":")
     if scheme.lower() != "trial":
         raise ValueError(f"Expected 'trial:' scheme in '{ref}'.")
-    root = Path(pu.AUTOSLO_ROOT)
-    return root / "experiments" / path_part / "trial_spec.yml"
+    return pu.AUTOSLO_ROOT / "experiments" / path_part / "trial_spec.yml"
 
 
 @functools.lru_cache(maxsize=64)
@@ -98,7 +98,7 @@ def _load_trial_spec(spec_path: Path) -> dict:
 
 
 def resolve_series_exec_config_id(
-    entry: dict, root: Path | None = None
+    entry: dict, root: Optional[Path] = None
 ) -> str | None:
     """
     Return the exec_config_id string for a plot-spec series entry.
@@ -107,8 +107,7 @@ def resolve_series_exec_config_id(
       trial:    {spec, trial_id} -> make_run_id from trial_spec.yml
       baseline: {exec_config, params} -> make_run_id([exec_stem], params)
     """
-    if root is None:
-        root = Path(pu.AUTOSLO_ROOT)
+    root = root or pu.AUTOSLO_ROOT
 
     if "trial" in entry:
         ref = entry["trial"]
@@ -147,7 +146,7 @@ def resolve_series_exec_config_id(
 
 @functools.lru_cache(maxsize=1)
 def _load_baseline_groups() -> dict:
-    path = Path(pu.get_data_path()) / "baseline_groups.yml"
+    path = pu.get_data_path() / "baseline_groups.yml"
     return load_yaml(path) if path.exists() else {}
 
 

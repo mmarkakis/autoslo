@@ -1,8 +1,7 @@
 import argparse
-import json
-import logging
 import os
 import random
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -23,11 +22,11 @@ DATASHARE_ACCOUNT_ID = "147854383891"
 DATASHARE_NAMESPACE_ID = "1015d398-b04c-40d0-bb67-257e0956c96d"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "Password123"
-OUTPUT_DIR = os.path.join(
-    pu.AUTOSLO_ROOT,
-    "experiments",
-    "10_workgroup_initialization_benchmarking",
-    "logs",
+OUTPUT_DIR = (
+    pu.AUTOSLO_ROOT
+    / "experiments"
+    / "10_workgroup_initialization_benchmarking"
+    / "logs"
 )
 DEFAULT_POLL_INTERVAL = 1  # seconds
 
@@ -99,7 +98,9 @@ def get_clients():
             "redshift-serverless", region_name=AWS_REGION
         )
     if redshift_data_client is None:
-        redshift_data_client = boto3.client("redshift-data", region_name=AWS_REGION)
+        redshift_data_client = boto3.client(
+            "redshift-data", region_name=AWS_REGION
+        )
     return redshift_serverless_client, redshift_data_client
 
 
@@ -134,7 +135,9 @@ def create_namespace(
         print(f"{datetime.now()} ✓ Namespace creation initiated.")
         return True
     except client.exceptions.ConflictException:
-        print(f"{datetime.now()} ⚠ Namespace '{namespace_name}' already exists, skipping creation.")
+        print(
+            f"{datetime.now()} ⚠ Namespace '{namespace_name}' already exists, skipping creation."
+        )
         return True
     except Exception as e:
         print(f"{datetime.now()} ✗ Namespace creation failed:")
@@ -160,7 +163,9 @@ def create_workgroup(
     Returns:
         True if successful, False otherwise.
     """
-    print(f"{datetime.now()} Creating workgroup '{workgroup_name}' with {base_rpu} RPU...")
+    print(
+        f"{datetime.now()} Creating workgroup '{workgroup_name}' with {base_rpu} RPU..."
+    )
     try:
         client = boto3.client("redshift-serverless", region_name=aws_region)
         client.create_workgroup(
@@ -170,10 +175,14 @@ def create_workgroup(
             maxCapacity=base_rpu,
             publiclyAccessible=True,
         )
-        print(f"{datetime.now()} ✓ Workgroup creation initiated (publicly accessible).")
+        print(
+            f"{datetime.now()} ✓ Workgroup creation initiated (publicly accessible)."
+        )
         return True
     except client.exceptions.ConflictException:
-        print(f"{datetime.now()} ⚠ Workgroup '{workgroup_name}' already exists, skipping creation.")
+        print(
+            f"{datetime.now()} ⚠ Workgroup '{workgroup_name}' already exists, skipping creation."
+        )
         return True
     except Exception as e:
         print(f"{datetime.now()} ✗ Workgroup creation failed:")
@@ -195,7 +204,9 @@ def make_workgroup_publicly_accessible(
     Returns:
         True if successful, False otherwise.
     """
-    print(f"{datetime.now()} Making workgroup '{workgroup_name}' publicly accessible...")
+    print(
+        f"{datetime.now()} Making workgroup '{workgroup_name}' publicly accessible..."
+    )
     try:
         client = boto3.client("redshift-serverless", region_name=aws_region)
         client.update_workgroup(
@@ -206,13 +217,19 @@ def make_workgroup_publicly_accessible(
         return True
     except client.exceptions.ValidationException as e:
         if "already public" in str(e):
-            print(f"{datetime.now()} ⚠ Workgroup '{workgroup_name}' is already publicly accessible.")
+            print(
+                f"{datetime.now()} ⚠ Workgroup '{workgroup_name}' is already publicly accessible."
+            )
             return True
-        print(f"{datetime.now()} ✗ Failed to make workgroup publicly accessible:")
+        print(
+            f"{datetime.now()} ✗ Failed to make workgroup publicly accessible:"
+        )
         print(str(e))
         return False
     except Exception as e:
-        print(f"{datetime.now()} ✗ Failed to make workgroup publicly accessible:")
+        print(
+            f"{datetime.now()} ✗ Failed to make workgroup publicly accessible:"
+        )
         print(str(e))
         return False
 
@@ -235,7 +252,9 @@ def wait_for_workgroup_available(
     Returns:
         True if workgroup becomes available, False if timeout or error.
     """
-    print(f"{datetime.now()} Waiting for workgroup '{workgroup_name}' to become available...")
+    print(
+        f"{datetime.now()} Waiting for workgroup '{workgroup_name}' to become available..."
+    )
     start_time = datetime.now()
 
     client = boto3.client("redshift-serverless", region_name=aws_region)
@@ -246,7 +265,9 @@ def wait_for_workgroup_available(
 
             if status == "AVAILABLE":
                 elapsed = datetime.now() - start_time
-                print(f"{datetime.now()} ✓ Workgroup is available (waited {elapsed})")
+                print(
+                    f"{datetime.now()} ✓ Workgroup is available (waited {elapsed})"
+                )
                 return True
 
             print(f"{datetime.now()} Workgroup status: {status}, waiting...")
@@ -257,7 +278,9 @@ def wait_for_workgroup_available(
             print(str(e))
             return False
 
-    print(f"{datetime.now()} ✗ Timeout waiting for workgroup to become available")
+    print(
+        f"{datetime.now()} ✗ Timeout waiting for workgroup to become available"
+    )
     return False
 
 
@@ -279,7 +302,9 @@ def wait_for_namespace_available(
     Returns:
         True if namespace becomes available, False if timeout or error.
     """
-    print(f"{datetime.now()} Waiting for namespace '{namespace_name}' to become available...")
+    print(
+        f"{datetime.now()} Waiting for namespace '{namespace_name}' to become available..."
+    )
     start_time = datetime.now()
 
     client = boto3.client("redshift-serverless", region_name=aws_region)
@@ -290,7 +315,9 @@ def wait_for_namespace_available(
 
             if status == "AVAILABLE":
                 elapsed = datetime.now() - start_time
-                print(f"{datetime.now()} ✓ Namespace is available (waited {elapsed})")
+                print(
+                    f"{datetime.now()} ✓ Namespace is available (waited {elapsed})"
+                )
                 return True
 
             print(f"{datetime.now()} Namespace status: {status}, waiting...")
@@ -301,7 +328,9 @@ def wait_for_namespace_available(
             print(str(e))
             return False
 
-    print(f"{datetime.now()} ✗ Timeout waiting for namespace to become available")
+    print(
+        f"{datetime.now()} ✗ Timeout waiting for namespace to become available"
+    )
     return False
 
 
@@ -338,7 +367,7 @@ def attach_tpcds_database(
     start_time = datetime.now()
 
     client = boto3.client("redshift-data", region_name=aws_region)
-    
+
     try:
         response = client.execute_statement(
             WorkgroupName=workgroup_name,
@@ -359,7 +388,9 @@ def attach_tpcds_database(
             status = response["Status"]
 
             if status == "FINISHED":
-                print(f"{datetime.now()} ✓ Successfully attached TPC-DS database.")
+                print(
+                    f"{datetime.now()} ✓ Successfully attached TPC-DS database."
+                )
                 return True
             elif status == "FAILED":
                 error = response.get("Error", "Unknown error")
@@ -432,7 +463,9 @@ def create_external_schemas(
                 status = response["Status"]
 
                 if status == "FINISHED":
-                    print(f"{datetime.now()} ✓ External schema ext_tpcds{scale} created.")
+                    print(
+                        f"{datetime.now()} ✓ External schema ext_tpcds{scale} created."
+                    )
                     break
                 elif status in ("FAILED", "ABORTED"):
                     error = response.get("Error", "Unknown error")
@@ -448,7 +481,9 @@ def create_external_schemas(
                 all_success = False
                 break
         else:
-            print(f"{datetime.now()} ✗ Timeout creating external schema ext_tpcds{scale}")
+            print(
+                f"{datetime.now()} ✗ Timeout creating external schema ext_tpcds{scale}"
+            )
             all_success = False
 
     return all_success
@@ -478,7 +513,9 @@ def wait_for_workgroup_deleted(
     poll_interval: int = DEFAULT_POLL_INTERVAL,
 ) -> bool:
     """Wait for a workgroup to be deleted."""
-    print(f"{datetime.now()} Waiting for workgroup '{workgroup_name}' to be deleted...")
+    print(
+        f"{datetime.now()} Waiting for workgroup '{workgroup_name}' to be deleted..."
+    )
     start_time = datetime.now()
     client = boto3.client("redshift-serverless", region_name=aws_region)
 
@@ -492,7 +529,9 @@ def wait_for_workgroup_deleted(
             print(f"{datetime.now()} ✓ Workgroup deleted (waited {elapsed})")
             return True
         except Exception as e:
-            print(f"{datetime.now()} ✗ Error checking workgroup deletion status:")
+            print(
+                f"{datetime.now()} ✗ Error checking workgroup deletion status:"
+            )
             print(str(e))
             return False
 
@@ -524,7 +563,9 @@ def wait_for_namespace_deleted(
     poll_interval: int = DEFAULT_POLL_INTERVAL,
 ) -> bool:
     """Wait for a namespace to be deleted."""
-    print(f"{datetime.now()} Waiting for namespace '{namespace_name}' to be deleted...")
+    print(
+        f"{datetime.now()} Waiting for namespace '{namespace_name}' to be deleted..."
+    )
     start_time = datetime.now()
     client = boto3.client("redshift-serverless", region_name=aws_region)
 
@@ -538,7 +579,9 @@ def wait_for_namespace_deleted(
             print(f"{datetime.now()} ✓ Namespace deleted (waited {elapsed})")
             return True
         except Exception as e:
-            print(f"{datetime.now()} ✗ Error checking namespace deletion status:")
+            print(
+                f"{datetime.now()} ✗ Error checking namespace deletion status:"
+            )
             print(str(e))
             return False
 
@@ -624,7 +667,7 @@ def setup_workgroup(
     namespace_name: Optional[str] = None,
     admin_username: str = "admin",
     admin_password: Optional[str] = None,
-    output_dir: str | Path = ".",
+    output_dir: Path = Path("./"),
 ) -> bool:
     """
     Complete setup of a Redshift Serverless workgroup with TPC-DS schemas.
@@ -660,7 +703,7 @@ def setup_workgroup(
     print(f"{'='*70}\n")
 
     start_time = datetime.now()
-    base_path = Path(output_dir).expanduser().resolve()
+    base_path = output_dir.expanduser().resolve()
     base_path.mkdir(parents=True, exist_ok=True)
     timestamp = start_time.strftime("%Y%m%d_%H%M%S")
     log_path = base_path / f"{workgroup_name}_setup_{timestamp}.log"
@@ -897,7 +940,7 @@ def benchmark_workgroup_creation(
         if trial_num > 1:
             # Wait 3 minutes before starting next trial (except on first)
             print(f"\nWaiting 3 minutes before trial {trial_num}...")
-            time.sleep(180) 
+            time.sleep(180)
 
         print(
             f"\nTrial {trial_num}/{len(trials)}: RPU {rpu}, Iteration {iteration}"

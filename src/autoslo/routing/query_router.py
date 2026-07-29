@@ -39,7 +39,7 @@ class QueryRouter:
         slo_resolver: SloResolver,
         slo_objective: SloObjective,
         query_router_config: QueryRouterConfig,
-        out_dir: str | Path,
+        out_dir: Path,
         iconq_model: Optional[IconqModel] = None,
         source_for_log_records: str = "QueryRouter",
     ):
@@ -66,7 +66,7 @@ class QueryRouter:
         )
 
     def _read_or_derive_rel_time_s_to_forecasted_table_vecs(
-        self, out_dir: str | Path
+        self, out_dir: Path
     ) -> dict[float, np.ndarray]:
 
         out_path = Path(out_dir) / "rel_time_s_to_forecasted_table_vecs.npz"

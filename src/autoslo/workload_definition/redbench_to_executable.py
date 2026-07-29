@@ -1,6 +1,6 @@
 import argparse
 import json
-import os
+from pathlib import Path
 
 import pandas as pd
 import rich
@@ -11,13 +11,13 @@ from autoslo.workload_definition.query import QueryTextId
 
 
 def main(
-    workload_dir: str, new_q_per_template_min: int, new_q_per_template_max: int
+    workload_dir: Path, new_q_per_template_min: int, new_q_per_template_max: int
 ) -> None:
     # Read in the workload queries from 'queries.json', either in the workload_dir
     # or in a subdir starting with `matching_` or `generation`.
-    queries_json_path = os.path.join(workload_dir, "queries.json")
-    if not os.path.exists(queries_json_path):
-        subdirs = os.listdir(workload_dir)
+    queries_json_path = workload_dir / "queries.json"
+    if not queries_json_path.exists():
+        subdirs = [d.name for d in workload_dir.iterdir() if d.is_dir()]
         matching_subdirs = [
             d
             for d in subdirs
@@ -31,10 +31,8 @@ def main(
             raise ValueError(
                 f"Multiple subdirectories starting with 'matching_' or 'generation_' found in {workload_dir}."
             )
-        queries_json_path = os.path.join(
-            workload_dir, matching_subdirs[0], "queries.json"
-        )
-        if not os.path.exists(queries_json_path):
+        queries_json_path = workload_dir / matching_subdirs[0] / "queries.json"
+        if not queries_json_path.exists():
             raise FileNotFoundError(
                 f"No 'queries.json' found in {workload_dir} or its subdirectories."
             )
@@ -71,18 +69,18 @@ def main(
     # Convert as needed and save to Parquet.
     df["abs_start_time"] = pd.to_datetime(df["abs_start_time_str"])
     df = df.drop(columns=["abs_start_time_str"])
-    output_path = os.path.join(workload_dir, "workload.parquet")
+    output_path = workload_dir / "workload.parquet"
     df.to_parquet(output_path, index=False)
-    output_path_2 = os.path.join(
-        pu.get_workloads_dir(),
-        "ext_tpcds1000",
-        f"{os.path.basename(workload_dir)}.parquet",
+    output_path_2 = (
+        pu.get_workloads_dir()
+        / "ext_tpcds1000"
+        / f"{workload_dir.name}.parquet"
     )
     df.to_parquet(output_path_2, index=False)
 
     # Pretty print some stats about the workload in a table.
     rich.print(
-        f"Workload '{os.path.basename(workload_dir)}' converted to executable format:"
+        f"Workload '{workload_dir.name}' converted to executable format:"
     )
     stats_table = rich.table.Table(title="Workload Stats")
     stats_table.add_column("Stat", style="cyan", no_wrap=True)
@@ -125,18 +123,18 @@ def main(
         frac=1, random_state=42, replace=False
     ).reset_index(drop=True)
     warmup_df["abs_start_time"] = pd.Timestamp("2024-01-01 00:00:00")
-    warmup_output_path = os.path.join(workload_dir, "warmup_workload.parquet")
+    warmup_output_path = workload_dir / "warmup_workload.parquet"
     warmup_df.to_parquet(warmup_output_path, index=False)
-    warmup_output_path_2 = os.path.join(
-        pu.get_workloads_dir(),
-        "ext_tpcds1000",
-        f"{os.path.basename(workload_dir)}_warmup.parquet",
+    warmup_output_path_2 = (
+        pu.get_workloads_dir()
+        / "ext_tpcds1000"
+        / f"{workload_dir.name}_warmup.parquet"
     )
     warmup_df.to_parquet(warmup_output_path_2, index=False)
 
     # Print some stats about the warm-up workload as well.
     rich.print(
-        f"Warm-up workload for '{os.path.basename(workload_dir)}' created with 3 copies of each unique query:"
+        f"Warm-up workload for '{workload_dir.name}' created with 3 copies of each unique query:"
     )
     warmup_stats_table = rich.table.Table(title="Warm-up Workload Stats")
     warmup_stats_table.add_column("Stat", style="cyan", no_wrap=True)
@@ -161,10 +159,10 @@ def main(
     query_text_records = []
     for _, row in unique_queries.iterrows():
         schema_name = QueryTextId(row["query_text_id"]).schema_name
-        query_text_file = os.path.join(
-            pu.QUERIES_PATH,
-            schema_name,
-            f"{row['query_text_id']}.sql",
+        query_text_file = (
+            pu.QUERIES_PATH
+            / schema_name
+            / f"{row['query_text_id']}.sql"
         )
         with open(query_text_file, "r") as f:
             query_text = f.read()
@@ -179,7 +177,7 @@ def main(
     query_text_df = query_text_df.sort_values(by=["query_text_id"]).reset_index(
         drop=True
     )
-    query_text_output_path = os.path.join(workload_dir, "query_texts.parquet")
+    query_text_output_path = workload_dir / "query_texts.parquet"
     query_text_df.to_parquet(query_text_output_path, index=False)
 
 
@@ -208,7 +206,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     workload_name = args.workload_name
-    workload_dir = os.path.join(
-        pu.get_data_path(), "redset_executable_workloads", workload_name
+    workload_dir = (
+        pu.get_data_path() / "redset_executable_workloads" / workload_name
     )
     main(workload_dir, args.new_q_per_template_min, args.new_q_per_template_max)

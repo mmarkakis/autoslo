@@ -1,5 +1,3 @@
-import os
-import warnings
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -86,9 +84,9 @@ class Trace:
         self._dfs: dict[str, dict[str, pd.DataFrame]] = defaultdict(dict)
         self._original_start = datetime.now()
 
-        run_dir = os.path.join(pu.get_runs_path(), run_id)
+        run_dir = pu.get_runs_path() / run_id
         pq_filenames = [
-            f for f in os.listdir(run_dir) if f.endswith(".parquet")
+            f.name for f in run_dir.iterdir() if f.name.endswith(".parquet")
         ]
 
         # Pass 1: build (cluster_name, redshift_query_id) -> cluster_aware_query_id mapping
@@ -104,7 +102,7 @@ class Trace:
                 continue
             cluster_name = parts[1]
             df_ids = pd.read_parquet(
-                os.path.join(run_dir, filename),
+                run_dir / filename,
                 columns=["query_id", "query_text"],
             )
             if len(df_ids) == 0:
@@ -132,7 +130,7 @@ class Trace:
             if parts[0] in Trace.REQUIRED_COLUMNS.keys():
                 table_name, cluster_name = parts[0], parts[1]
                 df = Trace._read_with_colcheck(
-                    os.path.join(run_dir, filename),
+                    run_dir / filename,
                     Trace.REQUIRED_COLUMNS[table_name],
                 )
                 if len(df) == 0:
@@ -177,7 +175,7 @@ class Trace:
         return self._run_id
 
     @staticmethod
-    def _read_with_colcheck(path: str, column_list: list[str]) -> pd.DataFrame:
+    def _read_with_colcheck(path: Path, column_list: list[str]) -> pd.DataFrame:
         """
         Check if the Parquet file at the specified path contains the required
         columns, and read it into a DataFrame if so.
@@ -212,12 +210,13 @@ class Trace:
         sys_query_history Parquet files for the run.
         """
 
-        run_dir = os.path.join(pu.get_runs_path(), run_id)
+        run_dir = pu.get_runs_path() / run_id
         any_sys_query_history_file = next(
             (
-                f
-                for f in os.listdir(run_dir)
-                if f.startswith("sys_query_history") and f.endswith(".parquet")
+                f.name
+                for f in run_dir.iterdir()
+                if f.name.startswith("sys_query_history")
+                and f.name.endswith(".parquet")
             ),
             None,
         )
@@ -225,7 +224,7 @@ class Trace:
             return Trace.UNKNOWN_REDSHIFT_VERSION_SENTINEL
         first_row_of_redshift_version_column = (
             pd.read_parquet(
-                os.path.join(run_dir, any_sys_query_history_file),
+                run_dir / any_sys_query_history_file,
                 columns=["redshift_version"],
                 engine="pyarrow",
             )["redshift_version"]
@@ -283,11 +282,7 @@ class Trace:
     def structured_log(self) -> Optional[StructuredLog]:
         """Lazily loaded StructuredLog for this run, or None if absent."""
         if not hasattr(self, "_structured_log"):
-            path = (
-                Path(pu.get_runs_path())
-                / self._run_id
-                / "structured_log.parquet"
-            )
+            path = pu.get_runs_path() / self._run_id / "structured_log.parquet"
             self._structured_log: Optional[StructuredLog] = (
                 StructuredLog.load(path) if path.exists() else None
             )
@@ -458,10 +453,10 @@ class Trace:
         The order of the query IDs in the Series matches the order of the query
         IDs provided by the ``query_ids`` property.
         """
-        run_dir = os.path.join(pu.get_runs_path(), self.run_id)
-        cache_path = os.path.join(run_dir, "query_text_ids.parquet")
+        run_dir = pu.get_runs_path() / self.run_id
+        cache_path = run_dir / "query_text_ids.parquet"
 
-        if os.path.exists(cache_path):
+        if cache_path.exists():
             concatenated = cast(
                 pd.Series,
                 pd.read_parquet(cache_path).squeeze("columns").map(QueryTextId),
@@ -471,7 +466,7 @@ class Trace:
                 not concatenated.empty
                 and concatenated.index.name != "cluster_aware_query_id"
             ):
-                os.remove(cache_path)
+                cache_path.unlink()
             else:
                 return concatenated
 
@@ -479,9 +474,7 @@ class Trace:
         series = []
         for cluster_name in self.seen_clusters:
             df = pd.read_parquet(
-                os.path.join(
-                    run_dir, f"sys_query_history+{cluster_name}.parquet"
-                ),
+                run_dir / f"sys_query_history+{cluster_name}.parquet",
                 columns=["query_id", "query_text"],
             )
             df["cluster_aware_query_id"] = df["query_id"].apply(
@@ -587,9 +580,7 @@ class Trace:
         d = {}
 
         # Find out the name of the schema.
-        run_params_path = os.path.join(
-            pu.get_runs_path(), self._run_id, "run_params.yml"
-        )
+        run_params_path = pu.get_runs_path() / self._run_id / "run_params.yml"
         with open(run_params_path, "r") as f:
             run_params = yaml.safe_load(f)
         schema_name = run_params["schema_name"]

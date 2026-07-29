@@ -114,7 +114,6 @@ class QueryReservoir:
         """
         Returns the paths to both files.
         """
-        directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
 
         count_df_path = directory / "reservoir.parquet"
@@ -126,7 +125,6 @@ class QueryReservoir:
 
     @classmethod
     def load(cls, directory: Path) -> "QueryReservoir":
-        directory = Path(directory)
         count_df_path = directory / "reservoir.parquet"
         if not count_df_path.exists():
             raise FileNotFoundError(

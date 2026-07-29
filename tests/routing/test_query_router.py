@@ -659,13 +659,10 @@ class TestQueryRouterIntegration:
 
     @pytest.fixture(autouse=True)
     def _check_model(self) -> None:
-        import os
         import autoslo.filesystem.path_utils as pu
 
-        model_dir = os.path.join(
-            pu.get_data_path(), "iconq_models", _INTEGRATION_MODEL_ID
-        )
-        if not os.path.isdir(model_dir):
+        model_dir = pu.get_data_path() / "iconq_models" / _INTEGRATION_MODEL_ID
+        if not model_dir.is_dir():
             pytest.skip(
                 f"IconqModel {_INTEGRATION_MODEL_ID!r} not found at {model_dir}. "
                 "Set a valid model ID to run integration tests."

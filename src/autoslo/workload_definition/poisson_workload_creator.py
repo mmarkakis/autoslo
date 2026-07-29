@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -270,9 +269,7 @@ class PoissonWorkloadCreator:
             }
             records.append(record)
         df = pd.DataFrame(records)
-        out_path = os.path.join(
-            pu.get_workloads_dir(), f"{workload_name}.parquet"
-        )
+        out_path = pu.get_workloads_dir() / f"{workload_name}.parquet"
         df.to_parquet(out_path)
 
         # Print a nice summary

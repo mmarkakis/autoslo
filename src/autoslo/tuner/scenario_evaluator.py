@@ -14,7 +14,7 @@ import threading
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from multiprocessing import Manager, get_context
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import torch
 from rich.progress import (
@@ -191,7 +191,7 @@ class ScenarioEvaluator:
         workload_first: bool = True,
         render_log: bool = False,
         verbose_progress: bool = True,
-        profile_path: str | Path | None = None,
+        profile_path: Optional[Path] = None,
     ) -> list[list[ExecutionResult]]:
         """
         Convenience wrapper around :meth:`evaluate_batch_from_configs` that
@@ -219,14 +219,14 @@ class ScenarioEvaluator:
     def evaluate_batch_from_configs(
         self,
         progress_bar_label: str,
-        out_dir: str | Path,
+        out_dir: Path,
         workload_configs: list[WorkloadConfig],
         configs: list[dict[str, Any]],
         config_labels: list[str] | None = None,
         workload_first: bool = True,
         render_log: bool = False,
         verbose_progress: bool = True,
-        profile_path: str | Path | None = None,
+        profile_path: Optional[Path] = None,
     ) -> list[list[ExecutionResult]]:
         """
         Evaluate the cross-product of *workload_configs* and *configs* in

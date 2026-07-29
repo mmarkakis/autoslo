@@ -132,7 +132,7 @@ def _load_panel_data(
     ]
 
     scatter_points: list[ScatterPoint] = []
-    runs_dir = Path(pu.get_runs_path())
+    runs_dir = pu.get_runs_path()
     for point in panel["points"]:
         workload_config = WorkloadConfig.from_config(point)
         exec_cfg_path = resolve_config(get_exec_config_ref(point, live))
@@ -752,7 +752,7 @@ def _generate_timeline_plot(
     else:
         rows, cols = 1, 1
 
-    runs_dir = Path(pu.get_runs_path())
+    runs_dir = pu.get_runs_path()
 
     panel_lanes: list[tuple[dict, list[SpinupLane]]] = []
     for panel in panels_spec:
@@ -794,7 +794,7 @@ def _generate_plot(
     manifest = load_yaml(manifest_path)
     plot_name = manifest_path.stem
 
-    data_path = Path(pu.get_data_path())
+    data_path = pu.get_data_path()
     sim_runs_dir = data_path / "simulator_runs"
     plots_dir = data_path / "plots" / plot_name
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -870,7 +870,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    manifests_dir = Path(pu.get_data_path()) / "manifests" / "plotting"
+    manifests_dir = pu.get_data_path() / "manifests" / "plotting"
 
     if args.all:
         manifest_paths = sorted(manifests_dir.glob("*.yml"))

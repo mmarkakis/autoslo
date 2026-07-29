@@ -26,7 +26,7 @@ Parquet file, use :meth:`QueryTextRegistry.register`:
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -142,7 +142,7 @@ class QueryTextRegistry:
             If the registry file for the schema does not exist.
         """
         path = cls._registry_path(schema_name)
-        if not os.path.exists(path):
+        if not path.exists():
             raise FileNotFoundError(
                 f"No query-text registry found for schema '{schema_name}'. "
                 f"Expected: {path}"
@@ -170,7 +170,7 @@ class QueryTextRegistry:
             Dictionary from ``query_text_id`` to SQL string.
         """
         path = cls._registry_path(schema_name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         df = pd.DataFrame(
             list(mapping.items()), columns=["query_text_id", "query_text"]
         )
@@ -202,12 +202,12 @@ class QueryTextRegistry:
                 )
 
     @classmethod
-    def _registry_path(cls, schema_name: str) -> str:
-        return os.path.join(
-            pu.get_data_path(),
-            _REGISTRY_SUBDIR,
-            schema_name,
-            _REGISTRY_FILENAME,
+    def _registry_path(cls, schema_name: str) -> Path:
+        return (
+            pu.get_data_path()
+            / _REGISTRY_SUBDIR
+            / schema_name
+            / _REGISTRY_FILENAME
         )
 
     @classmethod
@@ -223,19 +223,15 @@ class QueryTextRegistry:
             The schema identifier.
 
         """
-        dir_path = os.path.join(
-            pu.get_data_path(),
-            _REGISTRY_SUBDIR,
-            schema_name,
-        )
-        if not os.path.isdir(dir_path):
+        dir_path = pu.get_data_path() / _REGISTRY_SUBDIR / schema_name
+        if not dir_path.is_dir():
             raise FileNotFoundError(
                 f"No directory found for schema '{schema_name}' at '{dir_path}'."
             )
         mapping = {}
-        for filename in os.listdir(dir_path):
-            if filename.endswith(".sql"):
-                query_text_id = filename[:-4]  # Strip .sql extension
-                with open(os.path.join(dir_path, filename), "r") as f:
+        for entry in dir_path.iterdir():
+            if entry.suffix == ".sql" and entry.is_file():
+                query_text_id = entry.stem
+                with open(entry, "r") as f:
                     mapping[query_text_id] = f.read()
         cls.save_schema(schema_name, mapping)

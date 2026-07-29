@@ -188,7 +188,7 @@ def main():
     manifest_path = Path(args.execution_manifest_path)
     if not manifest_path.is_absolute():
         manifest_path = (
-            Path(pu.get_data_path())
+            pu.get_data_path()
             / "manifests"
             / "execution"
             / manifest_path.with_suffix(".yml")
@@ -198,7 +198,7 @@ def main():
 
     manifest = load_yaml(manifest_path)
     entries = manifest.get("main_content", [])
-    data_path = Path(pu.get_data_path())
+    data_path = pu.get_data_path()
 
     # Apply split filter for live runs.
     if args.live and args.splits > 1:
@@ -217,7 +217,7 @@ def main():
 
     # ── Preflight ───────────────────────────────────────────────────────────────────
     sim_runs_dir = data_path / "simulator_runs"
-    runs_path = Path(pu.get_runs_path())
+    runs_path = pu.get_runs_path()
     preflight_rows: list[tuple[str, str, str, Optional[float]]] = []
     missing_entry_indices: set[int] = set()
 
@@ -418,7 +418,7 @@ def _run_live(entries: list[dict], force: bool) -> list[_RunRecord]:
     """
     Run each (workload, exec_config) pair sequentially against live clusters.
     """
-    runs_path = Path(pu.get_runs_path())
+    runs_path = pu.get_runs_path()
     records: list[_RunRecord] = []
     for entry in entries:
         workload_config = WorkloadConfig.from_config(entry)

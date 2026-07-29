@@ -104,7 +104,7 @@ class ExecutionResult:
 
     @staticmethod
     def load(
-        execution_dir: str | Path,
+        execution_dir: Path,
         slo_resolver: Optional[SloResolver] = None,
         tail_fraction: float = 1.0,
         min_cluster_index: Optional[int] = None,
@@ -138,8 +138,6 @@ class ExecutionResult:
                 "At most one of 'tail_fraction' and 'min_cluster_index' may be "
                 "specified at a time."
             )
-
-        execution_dir = Path(execution_dir)
 
         # -- SLO resolver --
         if slo_resolver is None:

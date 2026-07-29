@@ -1,5 +1,5 @@
-import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import yaml
@@ -9,7 +9,6 @@ from autoslo.models.cache_model import CacheModel
 from autoslo.models.model_prediction import ModelPrediction
 from autoslo.models.xgboost_model import XGBoostModel
 from autoslo.workload_definition.query import QueryTextId
-from autoslo.workload_execution.trace import Trace
 
 
 class StageModel:
@@ -133,16 +132,12 @@ class StageModel:
                     (remaining_query_text_ids[query_id], cluster_rpu)
                 ] = prediction
             else:
-                xgboost_remaining[query_id] = remaining_query_text_ids[
-                    query_id
-                ]
+                xgboost_remaining[query_id] = remaining_query_text_ids[query_id]
 
         # Use XGBoost only for the queries that were not cache hits.
-        xgboost_predictions = (
-            self._xgboost_model.predict_from_query_text_id(
-                xgboost_remaining,
-                cluster_rpu=cluster_rpu,
-            )
+        xgboost_predictions = self._xgboost_model.predict_from_query_text_id(
+            xgboost_remaining,
+            cluster_rpu=cluster_rpu,
         )
         for query_id, prediction in xgboost_predictions.items():
             overall_predictions[query_id] = prediction
@@ -152,7 +147,7 @@ class StageModel:
 
         return overall_predictions
 
-    def save(self, parent_save_dir: Optional[str] = None) -> str:
+    def save(self, parent_save_dir: Optional[Path] = None) -> Path:
         """
         Saves the StageModel.
 
@@ -164,17 +159,13 @@ class StageModel:
                 the parent_save_dir named after the current timestamp.
         """
         # Create directory.
-        if parent_save_dir is None:
-            parent_save_dir = os.path.join(pu.get_data_path(), "stage_models")
+        parent_save_dir = parent_save_dir or pu.get_data_path() / "stage_models"
         timestamp = str(int(datetime.now().timestamp()))
-        save_dir = os.path.join(
-            parent_save_dir,
-            timestamp,
-        )
-        os.makedirs(save_dir, exist_ok=False)
+        save_dir = parent_save_dir / timestamp
+        save_dir.mkdir(parents=True, exist_ok=False)
 
         # Save stage model parameters
-        param_path = os.path.join(save_dir, "params.yml")
+        param_path = save_dir / "params.yml"
         with open(param_path, "w") as f:
             yaml.safe_dump(
                 {
@@ -188,7 +179,7 @@ class StageModel:
 
     @staticmethod
     def load(
-        timestamp: str, parent_load_dir: Optional[str] = None
+        timestamp: str, parent_load_dir: Optional[Path] = None
     ) -> "StageModel":
         """
         Loads the model from the given directory.
@@ -204,14 +195,13 @@ class StageModel:
         Raises:
             ValueError: If the specified directory does not exist.
         """
-        if parent_load_dir is None:
-            parent_load_dir = os.path.join(pu.get_data_path(), "stage_models")
-        load_dir = os.path.join(parent_load_dir, timestamp)
-        if not os.path.exists(load_dir):
+        parent_load_dir = parent_load_dir or pu.get_data_path() / "stage_models"
+        load_dir = parent_load_dir / timestamp
+        if not load_dir.exists():
             raise ValueError(f"StageModel directory {load_dir} does not exist.")
 
         # Load model parameters
-        param_path = os.path.join(load_dir, "params.yml")
+        param_path = load_dir / "params.yml"
         with open(param_path, "r") as f:
             params = yaml.safe_load(f)
 

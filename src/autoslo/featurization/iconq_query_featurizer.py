@@ -3,7 +3,6 @@ Some code in this file was derived from code written by Ziniu Wu for IconqSched.
 """
 
 import functools
-import os
 import pickle
 from collections import defaultdict
 from datetime import datetime
@@ -265,10 +264,10 @@ class IconqQueryFeaturizer:
 
         # Load the database statistics.
         # FIXME: We just load from cluster size 32.
-        statistics_path = os.path.join(
-            pu.get_data_path(),
-            "db_stats",
-            f"cluster_32_{self._schema_name}.yml",
+        statistics_path = (
+            pu.get_data_path()
+            / "db_stats"
+            / f"cluster_32_{self._schema_name}.yml"
         )
         stats = load_yaml(statistics_path)
 
@@ -508,16 +507,18 @@ class IconqQueryFeaturizer:
         # Create directory.
         if iconq_query_featurizer_id is None:
             iconq_query_featurizer_id = str(int(datetime.now().timestamp()))
-        save_dir = os.path.join(
-            pu.get_data_path(),
-            "__query_featurizations",
-            self._schema_name,
-            iconq_query_featurizer_id,
+        save_dir = (
+            pu.get_data_path()
+            / "__query_featurizations"
+            / self._schema_name
+            / iconq_query_featurizer_id
         )
-        os.makedirs(save_dir, exist_ok=(iconq_query_featurizer_id is not None))
+        save_dir.mkdir(
+            parents=True, exist_ok=(iconq_query_featurizer_id is not None)
+        )
 
         # Save featurizer parameters.
-        param_path = os.path.join(save_dir, "params.yml")
+        param_path = save_dir / "params.yml"
         dump_yaml(
             {
                 "m": self._m,
@@ -535,7 +536,7 @@ class IconqQueryFeaturizer:
         )
 
         # Save featurization cache as pickle (fast binary format).
-        cache_path = os.path.join(save_dir, "featurizations.pkl")
+        cache_path = save_dir / "featurizations.pkl"
         with open(cache_path, "wb") as f:
             pickle.dump(
                 dict(self._featurization_cache),
@@ -559,20 +560,20 @@ class IconqQueryFeaturizer:
         """
 
         # Load parameters.
-        load_dir = os.path.join(
-            pu.get_data_path(),
-            "__query_featurizations",
-            schema_name,
-            iconq_query_featurizer_id,
+        load_dir = (
+            pu.get_data_path()
+            / "__query_featurizations"
+            / schema_name
+            / iconq_query_featurizer_id
         )
-        param_path = os.path.join(load_dir, "params.yml")
+        param_path = load_dir / "params.yml"
         params = load_yaml(param_path)
 
         # Load featurization cache.  Prefer the binary pickle format; fall
         # back to the legacy YAML file and auto-migrate on the way out.
-        pkl_path = os.path.join(load_dir, "featurizations.pkl")
-        yml_path = os.path.join(load_dir, "featurizations.yml")
-        if os.path.exists(pkl_path):
+        pkl_path = load_dir / "featurizations.pkl"
+        yml_path = load_dir / "featurizations.yml"
+        if pkl_path.exists():
             with open(pkl_path, "rb") as f:
                 precomputed_featurization_cache: dict[
                     QueryTextId, IconqQueryFeaturizer.IconqQueryFeaturization

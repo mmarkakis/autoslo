@@ -1,6 +1,5 @@
 import argparse
 import decimal
-import os
 from datetime import datetime
 from enum import Enum
 from typing import Any, cast
@@ -214,12 +213,12 @@ class DBStatsCollector:
         """
 
         # Check whether the intended output already exists.
-        stats_path = os.path.join(
-            pu.get_data_path(),
-            "db_stats",
-            f"{self.cluster_name}_{self.schema_name}.yml",
+        stats_path = (
+            pu.get_data_path()
+            / "db_stats"
+            / f"{self.cluster_name}_{self.schema_name}.yml"
         )
-        if os.path.exists(stats_path) and not self.force:
+        if stats_path.exists() and not self.force:
             return
 
         # Create a connection from config.
@@ -259,7 +258,7 @@ class DBStatsCollector:
             "table_stats": table_stats,
             "column_stats": column_stats,
         }
-        os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
         with open(stats_path, "w") as f:
             yaml.safe_dump(d, f)
 

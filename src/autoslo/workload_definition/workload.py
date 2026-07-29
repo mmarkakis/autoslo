@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -69,14 +68,11 @@ class Workload:
         self._queries_cache: list[Query] | None = None
 
         # Find the dataframe.
-        in_dir = workload_config.workload_dir or (
-            Path(pu.get_data_path()) / "workloads"
+        in_dir = (
+            workload_config.workload_dir or pu.get_data_path() / "workloads"
         )
-        path = os.path.join(
-            in_dir,
-            f"{workload_config.workload_name}.parquet",
-        )
-        if not os.path.exists(path):
+        path = Path(in_dir) / f"{workload_config.workload_name}.parquet"
+        if not path.exists():
             raise FileNotFoundError(
                 f"Workload file not found at {path}. " "Ensure the file exists."
             )
@@ -245,7 +241,7 @@ class Workload:
 
     def save(
         self,
-        out_dir: Optional[str | Path] = None,
+        out_dir: Optional[Path] = None,
         out_workload_name: Optional[str] = None,
         overwrite: bool = False,
     ) -> Path:
@@ -278,7 +274,7 @@ class Workload:
             If a file already exists at the target path and *overwrite* is
             *False*.
         """
-        out_dir = out_dir or os.path.join(pu.get_data_path(), "workloads")
+        out_dir = out_dir or pu.get_data_path() / "workloads"
         out_workload_name = (
             out_workload_name or self._workload_config.workload_name
         )

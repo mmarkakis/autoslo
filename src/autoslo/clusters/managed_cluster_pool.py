@@ -18,6 +18,7 @@ import threading
 import time
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -28,7 +29,6 @@ from autoslo.clusters.actions import SpinUpAction, TearDownAction
 from autoslo.clusters.cluster import Cluster, ClusterState, ClusterView
 from autoslo.clusters.cluster_conn_info import ClusterConnInfo
 from autoslo.clusters.cluster_provisioner import ClusterProvisioner
-from autoslo.nn.lstm_state import AfterLSTMState
 from autoslo.clusters.redshift_run_stats_collector import (
     RedshiftRunStatsCollector,
 )
@@ -36,6 +36,7 @@ from autoslo.clusters.spin_up_budget import SpinUpBudget
 from autoslo.config.component_configs import ManagedClusterPoolConfig
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
 from autoslo.filesystem.structured_log import emit_structured
+from autoslo.nn.lstm_state import AfterLSTMState
 from autoslo.workload_definition.query import Query
 from autoslo.workload_execution.conn_utils import ConnWithSetup
 
@@ -83,13 +84,13 @@ class ManagedClusterPool:
         search_path: str = "public",
         background_executor: Optional[ThreadPoolExecutor] = None,
         run_id: Optional[str] = None,
-        out_dir: Optional[str] = None,
+        out_dir: Optional[Path] = None,
         write_text_log: bool = False,
     ) -> None:
         self._search_path = search_path
         self._background_executor = background_executor
         self._run_id: Optional[str] = run_id
-        self._out_dir: Optional[str] = out_dir
+        self._out_dir: Optional[Path] = out_dir
         self._write_text_log = write_text_log
 
         # Spin up initial clusters.

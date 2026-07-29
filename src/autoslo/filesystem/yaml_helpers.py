@@ -68,7 +68,7 @@ _QuotingSafeDumper.add_multi_representer(object, _dataclass_using_asdict)
 
 def dump_yaml(
     data: Any,
-    path: str | Path,
+    path: Path,
     header_string: Optional[str] = None,
     **kwargs: Any,
 ) -> None:
@@ -90,7 +90,7 @@ def dump_yaml(
         yaml.dump(data, f, Dumper=_QuotingSafeDumper, **kwargs)
 
 
-def load_yaml(path: str | Path) -> Any:
+def load_yaml(path: Path) -> Any:
     """
     Load YAML from *path*.
 
@@ -113,7 +113,7 @@ def detect_placeholders(text: str) -> list[str]:
     return _PLACEHOLDER_RE.findall(text)
 
 
-def load_yaml_with_params(path: str | Path, params: dict[str, str]) -> Any:
+def load_yaml_with_params(path: Path, params: dict[str, str]) -> Any:
     """Load YAML from *path*, substituting ``<KEY>`` placeholders with values
     from *params* before parsing.
 

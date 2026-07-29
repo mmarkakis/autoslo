@@ -1,5 +1,5 @@
 import logging
-import os
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -23,7 +23,7 @@ class RedshiftRunStatsCollector:
         cluster_name: str,
         conn_info: ClusterConnInfo,
         run_id: str,
-        out_dir: str,
+        out_dir: Path,
     ) -> None:
         """Stats-collector callback invoked during cluster tear-down.
 
@@ -123,7 +123,7 @@ class RedshiftRunStatsCollector:
         query: str,
         table_name: str,
         cluster_name: str,
-        out_dir: str,
+        out_dir: Path,
     ) -> Optional[pd.DataFrame]:
         """Execute *query*, write result as Parquet, return the DataFrame."""
         try:
@@ -136,10 +136,7 @@ class RedshiftRunStatsCollector:
                     else []
                 )
             df = pd.DataFrame(rows, columns=cols)
-            out_path = os.path.join(
-                out_dir,
-                f"{table_name}+{cluster_name}.parquet",
-            )
+            out_path = out_dir / f"{table_name}+{cluster_name}.parquet"
             df.to_parquet(out_path, index=False)
             logging.info("Wrote %d rows to %s", len(df), out_path)
             return df

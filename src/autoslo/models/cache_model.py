@@ -1,7 +1,7 @@
-import os
 import pickle
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -378,7 +378,7 @@ class CacheModel:
         self._run_ids.extend(run_ids)
         self._run_ids = list(set(self._run_ids))
 
-    def save(self, parent_save_dir: Optional[str] = None) -> str:
+    def save(self, parent_save_dir: Optional[Path] = None) -> str:
         """
         Saves the CacheModel.
 
@@ -391,17 +391,13 @@ class CacheModel:
                 the parent_save_dir named after the current timestamp.
         """
         # Create directory.
-        if parent_save_dir is None:
-            parent_save_dir = os.path.join(pu.get_data_path(), "cache_models")
+        parent_save_dir = parent_save_dir or pu.get_data_path() / "cache_models"
         timestamp = str(int(datetime.now().timestamp()))
-        save_dir = os.path.join(
-            parent_save_dir,
-            timestamp,
-        )
-        os.makedirs(save_dir, exist_ok=False)
+        save_dir = parent_save_dir / timestamp
+        save_dir.mkdir(parents=True, exist_ok=False)
 
         # Save cache model parameters
-        param_path = os.path.join(save_dir, "params.yml")
+        param_path = save_dir / "params.yml"
         with open(param_path, "w") as f:
             yaml.safe_dump(
                 {
@@ -422,7 +418,7 @@ class CacheModel:
             )
 
         # Save the model itself
-        cache_pkl_path = os.path.join(save_dir, "model.pkl")
+        cache_pkl_path = save_dir / "model.pkl"
         with open(cache_pkl_path, "wb") as f:
             pickle.dump(self._cache, f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -430,7 +426,7 @@ class CacheModel:
 
     @staticmethod
     def load(
-        timestamp: str, parent_load_dir: Optional[str] = None
+        timestamp: str, parent_load_dir: Optional[Path] = None
     ) -> "CacheModel":
         """
         Loads the model from the given directory.
@@ -446,17 +442,13 @@ class CacheModel:
         Raises:
             ValueError: If the specified directory does not exist.
         """
-        if parent_load_dir is None:
-            parent_load_dir = os.path.join(pu.get_data_path(), "cache_models")
-        load_dir = os.path.join(
-            parent_load_dir,
-            timestamp,
-        )
-        if not os.path.exists(load_dir):
+        parent_load_dir = parent_load_dir or pu.get_data_path() / "cache_models"
+        load_dir = Path(parent_load_dir) / timestamp
+        if not load_dir.exists():
             raise FileNotFoundError(f"CacheModel {timestamp} not found")
 
         # Load model parameters
-        param_path = os.path.join(load_dir, "params.yml")
+        param_path = load_dir / "params.yml"
         with open(param_path, "r") as f:
             params = yaml.safe_load(f)
         model = CacheModel(
@@ -502,9 +494,9 @@ class CacheModel:
 
         # Load the model itself.  Prefer the binary pickle format; fall back
         # to the legacy YAML and auto-migrate on the way out.
-        cache_pkl_path = os.path.join(load_dir, "model.pkl")
-        cache_yml_path = os.path.join(load_dir, "model.yml")
-        if os.path.exists(cache_pkl_path):
+        cache_pkl_path = load_dir / "model.pkl"
+        cache_yml_path = load_dir / "model.yml"
+        if cache_pkl_path.exists():
             with open(cache_pkl_path, "rb") as f:
                 model._cache = pickle.load(f)
         else:

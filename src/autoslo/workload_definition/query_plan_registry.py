@@ -25,8 +25,8 @@ use :meth:`QueryPlanRegistry.register`:
 
 from __future__ import annotations
 
-import os
 import pickle
+from pathlib import Path
 from typing import Any, Optional
 
 import autoslo.filesystem.path_utils as pu
@@ -130,7 +130,7 @@ class QueryPlanRegistry:
             If the registry file for the schema does not exist.
         """
         path = cls._registry_path(schema_name)
-        if not os.path.exists(path):
+        if not path.exists():
             raise FileNotFoundError(
                 f"No query-plan registry found for schema '{schema_name}' "
                 f"at '{path}'."
@@ -153,7 +153,7 @@ class QueryPlanRegistry:
             Dictionary from ``query_text_id`` to parsed plan dict.
         """
         path = cls._registry_path(schema_name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump(mapping, f)
         _cache[schema_name] = dict(mapping)
@@ -179,10 +179,10 @@ class QueryPlanRegistry:
                 _cache[schema_name] = {}
 
     @classmethod
-    def _registry_path(cls, schema_name: str) -> str:
-        return os.path.join(
-            pu.get_data_path(),
-            _REGISTRY_SUBDIR,
-            schema_name,
-            _REGISTRY_FILENAME,
+    def _registry_path(cls, schema_name: str) -> Path:
+        return (
+            pu.get_data_path()
+            / _REGISTRY_SUBDIR
+            / schema_name
+            / _REGISTRY_FILENAME
         )

@@ -1,5 +1,5 @@
-import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -11,7 +11,7 @@ from autoslo.nn.loss_functions import LossType
 
 
 def plot_loss(
-    save_path: str,
+    save_path: Path,
     train_loss: dict[int, float],
     val_loss: dict[int, float],
     loss_type: LossType,
@@ -45,7 +45,7 @@ def plot_loss(
 
 
 def plot_learning_rate(
-    save_path: str,
+    save_path: Path,
     lr_trajectory: dict[int, float],
     mark_x: Optional[int] = None,
 ) -> None:
@@ -76,7 +76,7 @@ def plot_learning_rate(
 
 def update_checkpoint(
     nn: torch.nn.Module,
-    dir: str,
+    dir: Path,
 ) -> None:
     """
     Update the model checkpoint.
@@ -86,26 +86,19 @@ def update_checkpoint(
         dir: The directory to save the checkpoint to.
     """
     current_ts = int(datetime.now().timestamp())
-    model_save_path = os.path.join(
-        dir,
-        f"model_{current_ts}.pth",
-    )
+    model_save_path = dir / f"model_{current_ts}.pth"
     torch.save(nn.state_dict(), model_save_path)
 
     # Remove old model.
-    for file in os.listdir(dir):
-        if file.startswith("model_") and file.endswith(".pth"):
-            prev_checkpoint_ts = int(file[len("model_") : -len(".pth")])
+    for file in dir.iterdir():
+        if file.name.startswith("model_") and file.name.endswith(".pth"):
+            prev_checkpoint_ts = int(file.name[len("model_") : -len(".pth")])
             if prev_checkpoint_ts < current_ts:
-                old_model_save_path = os.path.join(
-                    dir,
-                    f"model_{prev_checkpoint_ts}.pth",
-                )
-                os.remove(old_model_save_path)
+                (dir / f"model_{prev_checkpoint_ts}.pth").unlink()
 
 
 def update_plots(
-    training_dir: str,
+    training_dir: Path,
     prev_checkpoint_epoch: int,
     train_loss_trajectory: dict[int, float],
     val_loss_trajectory: dict[int, float],
@@ -126,10 +119,7 @@ def update_plots(
         mark_prev_checkpoint: Whether to mark the previous checkpoint on the plot.
     """
     mark_x = prev_checkpoint_epoch if mark_prev_checkpoint else None
-    loss_save_path = os.path.join(
-        training_dir,
-        f"loss_trajectory.png",
-    )
+    loss_save_path = training_dir / "loss_trajectory.png"
     plot_loss(
         loss_save_path,
         train_loss_trajectory,
@@ -137,8 +127,5 @@ def update_plots(
         loss_type,
         mark_x,
     )
-    lr_save_path = os.path.join(
-        training_dir,
-        f"lr_trajectory.png",
-    )
+    lr_save_path = training_dir / "lr_trajectory.png"
     plot_learning_rate(lr_save_path, lr_trajectory, mark_x)

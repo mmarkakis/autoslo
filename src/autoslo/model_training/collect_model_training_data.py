@@ -1,8 +1,6 @@
 import argparse
 import asyncio
 import csv
-import itertools
-import os
 import re
 import time
 from pathlib import Path
@@ -183,19 +181,17 @@ def create_training_workloads() -> list[Workload]:
 
 def sequentially_execute_training_workloads(
     workload_configs: list[WorkloadConfig],
-    execution_config_path: str | Path,
+    execution_config_path: Path,
     params: list[str],
     force: bool = False,
 ) -> None:
     """Execute each workload config sequentially against live clusters."""
-    exec_cfg_path = Path(execution_config_path)
     parsed_params = parse_params(params)
-    runs_path = Path(get_runs_path())
 
     t_start = time.monotonic()
     total = len(workload_configs)
     for i, workload_config in enumerate(workload_configs, start=1):
-        config_id = make_run_id([exec_cfg_path.stem], parsed_params)
+        config_id = make_run_id([execution_config_path.stem], parsed_params)
         wid = workload_config.id()
 
         if not force:
@@ -206,7 +202,7 @@ def sequentially_execute_training_workloads(
                 )
                 continue
 
-        cfg = load_yaml_with_params(exec_cfg_path, parsed_params)
+        cfg = load_yaml_with_params(execution_config_path, parsed_params)
         cfg = copy_and_apply_overrides(
             cfg, {"workload_config": workload_config.to_dict()}
         )
@@ -273,8 +269,8 @@ def print_run_status_table() -> None:
 
     # (workload_id, rpu) → best run_id
     best: dict[tuple[str, int], str] = {}
-    log_path = os.path.join(get_runs_path(), "run_log.csv")
-    if os.path.exists(log_path):
+    log_path = get_runs_path() / "run_log.csv"
+    if log_path.exists():
         with open(log_path, newline="") as f:
             for row in csv.DictReader(f):
                 if not (wid := row.get("workload_id", "")) or (

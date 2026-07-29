@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -48,8 +47,8 @@ class PolicyTuner:
 
     def __init__(
         self,
-        initial_execution_config_path: str,
-        tuner_config_path: str,
+        initial_execution_config_path: Path,
+        tuner_config_path: Path,
         params: dict[str, str] | None = None,
         run_id: str | None = None,
         verbose_progress: bool = True,
@@ -75,17 +74,14 @@ class PolicyTuner:
                 params,
             )
 
-        self._out_dir = Path(
-            os.path.join(pu.get_data_path(), "tuner_runs", self._run_id)
-        )
-        self._publication_path = os.path.join(
-            pu.get_data_path(),
-            "execution_configs",
-            "tuned",
-            self._run_id + ".yml",
+        self._out_dir = pu.get_data_path() / "tuner_runs" / self._run_id
+        self._publication_path = (
+            pu.get_data_path()
+            / "execution_configs"
+            / "tuned"
+            / (self._run_id + ".yml")
         )
 
-       
         # Scenario evaluator — shared by all tuning phases.
         self._evaluator = ScenarioEvaluator()
         self._verbose_progress = verbose_progress
@@ -133,8 +129,8 @@ class PolicyTuner:
         """
         train_dir = self._out_dir / "02_workloads" / "train"
         val_dir = self._out_dir / "02_workloads" / "val"
-        os.makedirs(train_dir, exist_ok=True)
-        os.makedirs(val_dir, exist_ok=True)
+        train_dir.mkdir(parents=True, exist_ok=True)
+        val_dir.mkdir(parents=True, exist_ok=True)
 
         # Ground-truth mode: use the real target-day workload as both
         # train and val rather than sampling from the reservoir.
@@ -433,7 +429,7 @@ class PolicyTuner:
         Returns the path to the final optimised config file.
         """
         # Without force, skip if the published tuned config already exists.
-        if not force and os.path.exists(self._publication_path):
+        if not force and self._publication_path.exists():
             raise AlreadyCompleteError(
                 f"Tuned config '{self._publication_path}' already exists; "
                 f"skipping. Pass --force to re-run regardless."
@@ -442,10 +438,10 @@ class PolicyTuner:
         # Wipe any existing outputs before re-running (stale or --force).
         if self._out_dir.exists():
             shutil.rmtree(self._out_dir)
-        if os.path.exists(self._publication_path):
-            os.remove(self._publication_path)
-        os.makedirs(self._out_dir, exist_ok=True)
-        os.makedirs(os.path.dirname(self._publication_path), exist_ok=True)
+        if self._publication_path.exists():
+            self._publication_path.unlink()
+        self._out_dir.mkdir(parents=True, exist_ok=True)
+        self._publication_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Persist substituted configs for reproducibility.
         initial_execution_config_out_path = (

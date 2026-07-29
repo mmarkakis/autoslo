@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -232,7 +234,7 @@ class ConcurrentQueryDataset(Dataset):
             dataset.y_is_lower_bound[start:end],
         )
 
-    def save_to(self, path: str) -> None:
+    def save_to(self, path: Path) -> None:
         """
         Saves the dataset to disk at the specified path.
 
@@ -252,7 +254,7 @@ class ConcurrentQueryDataset(Dataset):
         )
 
     @classmethod
-    def load_from(cls, path: str) -> "ConcurrentQueryDataset":
+    def load_from(cls, path: Path) -> "ConcurrentQueryDataset":
         """
         Loads a dataset from disk at the specified path.
 

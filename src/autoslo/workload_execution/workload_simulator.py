@@ -2,7 +2,6 @@ import argparse
 import cProfile
 import heapq
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import Callable, Optional
@@ -38,7 +37,7 @@ class WorkloadSimulator:
     def __init__(
         self,
         cfg: dict,
-        out_dir: Optional[str | Path] = None,
+        out_dir: Optional[Path] = None,
         write_text_log: bool = False,
     ):
         """
@@ -61,7 +60,7 @@ class WorkloadSimulator:
         self._autoscaler = execution_config.autoscaler
         self._structured_handler = execution_config.structured_log_handler
 
-        dump_yaml(cfg, os.path.join(self._out_dir, "execution_config.yml"))
+        dump_yaml(cfg, self._out_dir / "execution_config.yml")
 
         # ── Activate initial clusters immediately (no spin-up delay) ──────
         pending_cluster_names = self._pool.clusters_in_state(
@@ -260,13 +259,11 @@ class WorkloadSimulator:
         if self._structured_handler is not None:
             self._structured_handler.finalize()
 
-        mapping_out_path = os.path.join(self._out_dir, "mapping.yml")
+        mapping_out_path = self._out_dir / "mapping.yml"
         dump_yaml(seq_num_to_cluster_name, mapping_out_path)
 
         if render_log:
-            render_log_viewer(
-                os.path.join(self._out_dir, "structured_log.parquet")
-            )
+            render_log_viewer(self._out_dir / "structured_log.parquet")
 
         return ExecutionResult.load(self._out_dir)
 
@@ -494,7 +491,7 @@ class WorkloadSimulator:
                 ],
             }
 
-        out_path = os.path.join(self._out_dir, "billing_interval_analysis.yml")
+        out_path = self._out_dir / "billing_interval_analysis.yml"
         dump_yaml(d, out_path)
 
 
@@ -537,25 +534,23 @@ if __name__ == "__main__":
 
     params = parse_params(args.param)
 
-    execution_config_path = args.execution_config_path
-    if not os.path.isabs(execution_config_path):
-        execution_config_path = os.path.join(
-            pu.get_data_path(),
-            "execution_configs",
-            execution_config_path,
+    execution_config_path = Path(args.execution_config_path)
+    if not execution_config_path.is_absolute():
+        execution_config_path = (
+            pu.get_data_path() / "execution_configs" / execution_config_path
         )
     cfg = load_yaml_with_params(execution_config_path, params)
 
     run_id = make_run_id([Path(execution_config_path).stem], params)
-    out_dir = Path(os.path.join(pu.get_data_path(), "simulator_runs", run_id))
-    if os.path.exists(out_dir):
+    out_dir = pu.get_data_path() / "simulator_runs" / run_id
+    if out_dir.exists():
         if args.force:
             shutil.rmtree(out_dir)
         else:
             raise FileExistsError(
                 f"Output directory {out_dir} already exists. Use --force to overwrite."
             )
-    os.makedirs(out_dir, exist_ok=False)
+    out_dir.mkdir(parents=True, exist_ok=False)
 
     profiler = cProfile.Profile()
     if args.profile:

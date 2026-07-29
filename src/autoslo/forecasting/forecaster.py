@@ -68,7 +68,7 @@ class Forecaster:
         self,
         target_date: date | str,
         seed: int = 42,
-        out_dir: Optional[Path | str] = None,
+        out_dir: Optional[Path] = None,
         workload_name: str = "forecast",
         rescale_factor: float = 1.0,
         use_fixed_queries_per_hour: bool = False,
@@ -176,11 +176,7 @@ class Forecaster:
         forecast_df = pd.DataFrame(
             rows, columns=Workload.WORKLOAD_SCHEMA_COLUMNS
         )
-        out_dir = (
-            Path(out_dir)
-            if out_dir is not None
-            else Path(pu.get_data_path()) / "workloads"
-        )
+        out_dir = out_dir or pu.get_data_path() / "workloads"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{workload_name}.parquet"
         forecast_df.to_parquet(out_path, index=False)

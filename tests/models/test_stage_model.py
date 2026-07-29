@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Any
 
@@ -277,8 +276,8 @@ def test_stage_model_end_to_end_with_real_models(
     data_root = tmp_path / "data"
     runs_root.mkdir()
     data_root.mkdir()
-    monkeypatch.setattr(pu, "get_runs_path", lambda: os.fspath(runs_root))
-    monkeypatch.setattr(pu, "get_data_path", lambda: os.fspath(data_root))
+    monkeypatch.setattr(pu, "get_runs_path", lambda: runs_root)
+    monkeypatch.setattr(pu, "get_data_path", lambda: data_root)
 
     monkeypatch.setattr(
         xgb_module,

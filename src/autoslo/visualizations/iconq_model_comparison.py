@@ -24,15 +24,15 @@ Encoding shared by both plots
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-import matplotlib.ticker as mticker
+from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from rich.progress import (
     BarColumn,
@@ -69,7 +69,9 @@ class ModelEntry:
     """Optional Palette attribute name (e.g. ``'light_green'``).  When set,
     overrides the automatic color assigned from ``Palette.as_list()``."""
 
-    def resolved_color(self, fallback_idx: int, fallback_list: list[str]) -> str:
+    def resolved_color(
+        self, fallback_idx: int, fallback_list: list[str]
+    ) -> str:
         """Return the color for this model.
 
         If *color* is set, resolve it as ``getattr(Palette, color)``.
@@ -78,6 +80,7 @@ class ModelEntry:
         if self.color is not None:
             return getattr(Palette, self.color)
         return fallback_list[fallback_idx % len(fallback_list)]
+
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -99,7 +102,7 @@ _GROUP_GAP = 0.35  # extra gap between model groups
 # RPU columns with fewer than this many test-set samples are excluded.
 _MIN_RPU_SAMPLES_DEFAULT = 30
 
-_DEFAULT_OUTPUT_DIR = "data/plots/iconq_comparison"
+_DEFAULT_OUTPUT_DIR = Path("data/plots/iconq_comparison")
 
 
 # ── Palette helpers ───────────────────────────────────────────────────────────
@@ -169,11 +172,11 @@ def _figsize(n_models: int, n_bars_per_group: int) -> tuple[float, float]:
 def plot_qerror_by_split(
     models: list[ModelEntry],
     all_split_dfs: dict[str, dict[DataSplit, pd.DataFrame]],
-    output_dir: str = _DEFAULT_OUTPUT_DIR,
+    output_dir: Path = _DEFAULT_OUTPUT_DIR,
     highlight_best: bool = True,
     annotate_best: bool = True,
     show_title: bool = True,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Scatter plot comparing Q-error percentiles across splits.
 
     X-axis: splits (train / val / test); columns within each group = models.
@@ -232,7 +235,9 @@ def plot_qerror_by_split(
                 continue
             x = group_centers[j] + offsets[i]
             for pct_name, value in zip(percentile_names, result):
-                is_best = best_model_for.get((split.value, pct_name)) == model_id
+                is_best = (
+                    best_model_for.get((split.value, pct_name)) == model_id
+                )
                 ax.plot(
                     x,
                     value,
@@ -241,7 +246,9 @@ def plot_qerror_by_split(
                     linestyle="none",
                     markersize=_MARKER_SIZE,
                     markeredgecolor="black",
-                    markeredgewidth=2.0 if (is_best and highlight_best) else 0.0,
+                    markeredgewidth=(
+                        2.0 if (is_best and highlight_best) else 0.0
+                    ),
                 )
                 if (is_best and annotate_best) or m.annotate:
                     ax.annotate(
@@ -258,7 +265,9 @@ def plot_qerror_by_split(
 
     # ── Axes formatting ──────────────────────────────────────────────────────
     ax.set_xticks(group_centers)
-    ax.set_xticklabels([s.value.capitalize() for s in splits], fontsize=_FONTSIZE)
+    ax.set_xticklabels(
+        [s.value.capitalize() for s in splits], fontsize=_FONTSIZE
+    )
     ax.tick_params(axis="y", labelsize=_FONTSIZE)
     ax.set_ylabel("Q-Error", fontsize=_FONTSIZE)
     ax.set_ylim(bottom=1, top=max_p95 * 1.15)
@@ -276,7 +285,8 @@ def plot_qerror_by_split(
     # ── Legend ───────────────────────────────────────────────────────────────
     color_handles = [
         Line2D(
-            [0], [0],
+            [0],
+            [0],
             marker=_MARKERS["p50"],
             color=m.resolved_color(i, colors),
             linestyle="none",
@@ -287,7 +297,8 @@ def plot_qerror_by_split(
     ]
     marker_handles = [
         Line2D(
-            [0], [0],
+            [0],
+            [0],
             marker=_MARKERS[p],
             color="gray",
             linestyle="none",
@@ -300,7 +311,8 @@ def plot_qerror_by_split(
     if highlight_best:
         highlight_handles.append(
             Line2D(
-                [0], [0],
+                [0],
+                [0],
                 marker="o",
                 color="white",
                 linestyle="none",
@@ -333,8 +345,8 @@ def plot_qerror_by_split(
         if i < len(legend_rows) - 1:
             ax.add_artist(leg)
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    save_path = os.path.join(output_dir, "qerror_by_split.png")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / "qerror_by_split.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
 
@@ -345,12 +357,12 @@ def plot_qerror_by_split(
 def plot_factor_error_by_rpu(
     models: list[ModelEntry],
     all_split_dfs: dict[str, dict[DataSplit, pd.DataFrame]],
-    output_dir: str = _DEFAULT_OUTPUT_DIR,
+    output_dir: Path = _DEFAULT_OUTPUT_DIR,
     min_rpu_samples: int = _MIN_RPU_SAMPLES_DEFAULT,
     highlight_best: bool = True,
     annotate_best: bool = True,
     show_title: bool = True,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Scatter plot of factor error percentiles by RPU (test set).
 
     X-axis: RPU values; columns within each group = models.
@@ -448,7 +460,9 @@ def plot_factor_error_by_rpu(
                     linestyle="none",
                     markersize=_MARKER_SIZE,
                     markeredgecolor="black",
-                    markeredgewidth=2.0 if (is_best and highlight_best) else 0.0,
+                    markeredgewidth=(
+                        2.0 if (is_best and highlight_best) else 0.0
+                    ),
                 )
                 if (is_best and annotate_best) or m.annotate:
                     ax.annotate(
@@ -490,7 +504,8 @@ def plot_factor_error_by_rpu(
     # ── Legend ───────────────────────────────────────────────────────────────
     model_handles = [
         Line2D(
-            [0], [0],
+            [0],
+            [0],
             marker=_MARKERS["p50"],
             color=m.resolved_color(i, colors),
             linestyle="none",
@@ -501,7 +516,8 @@ def plot_factor_error_by_rpu(
     ]
     marker_handles = [
         Line2D(
-            [0], [0],
+            [0],
+            [0],
             marker=_MARKERS[p],
             color="gray",
             linestyle="none",
@@ -514,7 +530,8 @@ def plot_factor_error_by_rpu(
     if highlight_best:
         highlight_handles.append(
             Line2D(
-                [0], [0],
+                [0],
+                [0],
                 marker="o",
                 color="white",
                 linestyle="none",
@@ -547,8 +564,8 @@ def plot_factor_error_by_rpu(
         if i < len(legend_rows) - 1:
             ax.add_artist(leg)
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    save_path = os.path.join(output_dir, "factor_error_by_rpu.png")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / "factor_error_by_rpu.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
 
@@ -573,8 +590,10 @@ def _assign_conc_bin(conc_series: pd.Series) -> pd.Series:
     """
     result = pd.Series(-1, index=conc_series.index, dtype=int)
     for idx, (lo, hi) in enumerate(_CONC_BIN_EDGES):
-        mask = (conc_series >= lo) if hi is None else (
-            (conc_series >= lo) & (conc_series <= hi)
+        mask = (
+            (conc_series >= lo)
+            if hi is None
+            else ((conc_series >= lo) & (conc_series <= hi))
         )
         result[mask] = idx
     return result
@@ -583,13 +602,13 @@ def _assign_conc_bin(conc_series: pd.Series) -> pd.Series:
 def plot_factor_error_vs_concurrency(
     models: list[ModelEntry],
     all_split_dfs: dict[str, dict[DataSplit, pd.DataFrame]],
-    output_dir: str = _DEFAULT_OUTPUT_DIR,
+    output_dir: Path = _DEFAULT_OUTPUT_DIR,
     min_rpu_samples: int = _MIN_RPU_SAMPLES_DEFAULT,
     min_bin_samples: int = 5,
     highlight_best: bool = True,
     annotate_best: bool = True,
     show_title: bool = True,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Fraction of queries underpredicted, by concurrency bin, faceted by RPU.
 
     One subplot per qualified RPU value (test set, normal observations only).
@@ -652,9 +671,13 @@ def plot_factor_error_vs_concurrency(
                 for bin_idx in range(_N_CONC_BINS):
                     bin_data[(model_id, rpu_val, bin_idx)] = None
                 continue
-            conc = pd.to_numeric(
-                sub["num_other_concurrent_queries"], errors="coerce"
-            ).fillna(-1).astype(int)
+            conc = (
+                pd.to_numeric(
+                    sub["num_other_concurrent_queries"], errors="coerce"
+                )
+                .fillna(-1)
+                .astype(int)
+            )
             fe = pd.to_numeric(sub["factor_error"], errors="coerce")
             bin_col = _assign_conc_bin(conc)
             for bin_idx in range(_N_CONC_BINS):
@@ -724,7 +747,9 @@ def plot_factor_error_vs_concurrency(
                     linestyle="none",
                     markersize=_MARKER_SIZE,
                     markeredgecolor="black",
-                    markeredgewidth=2.0 if (is_best and highlight_best) else 0.0,
+                    markeredgewidth=(
+                        2.0 if (is_best and highlight_best) else 0.0
+                    ),
                 )
                 if (is_best and annotate_best) or m.annotate:
                     ax.annotate(
@@ -770,7 +795,8 @@ def plot_factor_error_vs_concurrency(
     # ── Legend ────────────────────────────────────────────────────────────────
     model_handles = [
         Line2D(
-            [0], [0],
+            [0],
+            [0],
             marker="o",
             color=m.resolved_color(i, colors),
             linestyle="none",
@@ -781,18 +807,21 @@ def plot_factor_error_vs_concurrency(
     ]
     legend_rows: list[list[Line2D]] = [model_handles]
     if highlight_best:
-        legend_rows.append([
-            Line2D(
-                [0], [0],
-                marker="o",
-                color="white",
-                linestyle="none",
-                markersize=_MARKER_SIZE,
-                markeredgecolor="black",
-                markeredgewidth=2.0,
-                label="Least biased (closest to 50%)",
-            )
-        ])
+        legend_rows.append(
+            [
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="white",
+                    linestyle="none",
+                    markersize=_MARKER_SIZE,
+                    markeredgecolor="black",
+                    markeredgewidth=2.0,
+                    label="Least biased (closest to 50%)",
+                )
+            ]
+        )
     n_legend_rows = len(legend_rows)
     bottom_pad = 0.04 + n_legend_rows * 0.11
     top_pad = 0.97 if show_title else 1.0
@@ -814,10 +843,8 @@ def plot_factor_error_vs_concurrency(
         if i < n_legend_rows - 1:
             fig.add_artist(leg)
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    save_path = os.path.join(
-        output_dir, "overprediction_fraction_vs_concurrency.png"
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / "overprediction_fraction_vs_concurrency.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
 
@@ -829,10 +856,10 @@ def plot_inference_time_by_arrival(
     models: list[ModelEntry],
     workload: Workload,
     rpu: int,
-    output_dir: str = _DEFAULT_OUTPUT_DIR,
+    output_dir: Path = _DEFAULT_OUTPUT_DIR,
     max_arrivals: int | None = None,
     show_title: bool = True,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Line plot of per-arrival inference time as the active query set grows.
 
     For each model and each query arrival *i* (in ``rel_start_time_s`` order),
@@ -884,15 +911,14 @@ def plot_inference_time_by_arrival(
     n_arrivals = len(all_queries)
     arrival_indices = list(range(1, n_arrivals + 1))
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    csv_path = os.path.join(
-        output_dir,
-        f"inference_timing_{workload.workload_config.id()}.csv",
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = (
+        output_dir / f"inference_timing_{workload.workload_config.id()}.csv",
     )
 
     # ── Load cached results (if any) ─────────────────────────────────────────
     model_times: dict[str, list[float]] = {}
-    if os.path.exists(csv_path):
+    if csv_path.exists():
         cached = pd.read_csv(csv_path, index_col="arrival_index")
         if len(cached) == n_arrivals:
             for col in cached.columns:
@@ -1097,6 +1123,6 @@ def plot_inference_time_by_arrival(
 
     fig.tight_layout()
 
-    save_path = os.path.join(output_dir, "inference_time_by_arrival.png")
+    save_path = output_dir / "inference_time_by_arrival.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path

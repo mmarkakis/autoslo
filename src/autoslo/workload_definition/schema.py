@@ -18,8 +18,8 @@ Usage::
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import yaml
 
@@ -66,7 +66,7 @@ class Schema:
             If no config file exists for *schema_name*.
         """
         path = cls._config_path(schema_name)
-        if not os.path.exists(path):
+        if not path.exists():
             raise FileNotFoundError(
                 f"No schema config found for '{schema_name}'. "
                 f"Expected: {path}"
@@ -81,7 +81,7 @@ class Schema:
     def save(self) -> None:
         """Persist this schema's config to ``data/schemas/{name}.yml``."""
         path = self._config_path(self.name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             yaml.dump({"search_path": self.search_path}, f, sort_keys=False)
 
@@ -90,5 +90,5 @@ class Schema:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _config_path(cls, schema_name: str) -> str:
-        return os.path.join(pu.get_schemas_path(), f"{schema_name}.yml")
+    def _config_path(cls, schema_name: str) -> Path:
+        return pu.get_schemas_path() / f"{schema_name}.yml"

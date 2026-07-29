@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import os
 
 import pandas as pd
 import psycopg2 as pg2
@@ -74,21 +73,22 @@ class RunStatsCollector:
         """
         self.run_params = {}
         for run_id in self.run_ids:
-            run_path = os.path.join(pu.get_runs_path(), run_id)
-            if not os.path.isdir(run_path):
+            run_path = pu.get_runs_path() / run_id
+            if not run_path.is_dir():
                 print(f"Run path {run_path} does not exist, skipping.")
                 continue
 
             # Determine if we should collect stats for this run.
             should_collect = (self.force) or not any(
-                (fname.startswith('sys') and fname.endswith(".parquet")) for fname in os.listdir(run_path)
+                (fname.startswith("sys") and fname.endswith(".parquet"))
+                for fname in (f.name for f in run_path.iterdir())
             )
             if not should_collect:
                 print(f"Stats already exist for run {run_id}, skipping.")
                 continue
 
             # Store the relevant information for later processing.
-            with open(os.path.join(run_path, "run_params.yml"), "r") as f:
+            with open(run_path / "run_params.yml", "r") as f:
                 self.run_params[run_id] = yaml.safe_load(f)
 
     async def run_one_and_write_out(
@@ -125,8 +125,8 @@ class RunStatsCollector:
         df = pd.DataFrame(rows, columns=cols)
 
         # Write out the DataFrame to a parquet file.
-        out_path = os.path.join(
-            pu.get_runs_path(), run_id, f"{table_name}+{cluster_name}.parquet"
+        out_path = (
+            pu.get_runs_path() / run_id / f"{table_name}+{cluster_name}.parquet"
         )
         df.to_parquet(out_path, index=False)
         print(f"\tWrote {table_name} to {out_path}.")

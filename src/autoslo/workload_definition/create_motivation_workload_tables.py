@@ -1,10 +1,8 @@
-import os
 from datetime import datetime, timedelta
 
 import pandas as pd
-import autoslo.filesystem.path_utils as pu
 
-from autoslo.workload_definition.workload import Workload
+import autoslo.filesystem.path_utils as pu
 
 records = []
 current_time = datetime.fromisoformat("2026-01-01T00:00:00")
@@ -58,16 +56,10 @@ for i in range(5 * l):
     current_time += phase_3_interarrival
 
 df = pd.DataFrame(records)
-output_path = os.path.join(
-    pu.get_workloads_dir(),
-    "ext_tpcds1000",
-    "motivation_workload_tables.parquet",
+output_path = (
+    pu.get_workloads_dir()
+    / "ext_tpcds1000"
+    / "motivation_workload_tables.parquet"
 )
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
+output_path.parent.mkdir(parents=True, exist_ok=True)
 df.to_parquet(output_path)
-
-# Print a nice summary
-workload = Workload(
-    workload_name="motivation_workload_tables", schema_name="ext_tpcds1000"
-)
-workload.print_summary()

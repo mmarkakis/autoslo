@@ -43,9 +43,7 @@ class _PartialConfig:
         Load the execution config YAML file for the given run_id and parse it
         into an instance of the PartialConfig subclass.
         """
-        cfg_path = (
-            Path(pu.get_data_path()) / "runs" / run_id / "execution_config.yml"
-        )
+        cfg_path = pu.get_data_path() / "runs" / run_id / "execution_config.yml"
         cfg = load_yaml(cfg_path)
         return cls.from_config(cfg)
 
@@ -85,7 +83,7 @@ class WorkloadConfig(_PartialConfig):
     """
 
     workload_name: str
-    workload_dir: Optional[str | Path] = None  # Defaults to data/workloads/
+    workload_dir: Optional[Path] = None  # Defaults to data/workloads/
     target_date: Optional[str] = None  # YYYY-MM-DD
     rescale_factor: float = 1.0
 
@@ -126,7 +124,7 @@ class ReservoirConfig(_PartialConfig):
     workload_name: str
     last_day_date_inclusive: str  # YYYY-MM-DD
     num_days: int = 1
-    workload_dir: Optional[str | Path] = None  # Defaults to data/workloads/
+    workload_dir: Optional[Path] = None  # Defaults to data/workloads/
 
     def __post_init__(self):
         if self.workload_dir is None:
@@ -292,8 +290,8 @@ class AutoscalerConfig(_PartialConfig):
             "slo_tightening_factor" in autoscaler_cfg
             and "trigger_slo_tightening_factor" not in autoscaler_cfg
         ):
-            autoscaler_cfg["trigger_slo_tightening_factor"] = autoscaler_cfg.pop(
-                "slo_tightening_factor"
+            autoscaler_cfg["trigger_slo_tightening_factor"] = (
+                autoscaler_cfg.pop("slo_tightening_factor")
             )
         new_cfg = {**cfg, "autoscaler_config": autoscaler_cfg}
         return super().from_config(

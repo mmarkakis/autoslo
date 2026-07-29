@@ -22,7 +22,6 @@ Provides eight diagnostic plots (each with one panel per data split):
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -93,9 +92,7 @@ def _add_cluster_rpu(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
     if "rpu" in out.columns:
-        out["rpu"] = pd.to_numeric(
-            out["rpu"], errors="coerce"
-        ).astype("Int64")
+        out["rpu"] = pd.to_numeric(out["rpu"], errors="coerce").astype("Int64")
         return out
 
     if "cluster_name" in out.columns:
@@ -171,7 +168,7 @@ def plot_all(iconq_model_id: str) -> None:
 def plot_qerror_cdf(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Q-Error cumulative distribution function, one panel per split.
 
     X-axis: Q-Error (log scale).
@@ -189,7 +186,14 @@ def plot_qerror_cdf(
             .to_numpy(dtype=float)
         )
         if len(q_errs) == 0:
-            ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+            ax.text(
+                0.5,
+                0.5,
+                "No data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
             ax.set_title(f"{split.value.capitalize()}  (N=0)")
             continue
         cdf = np.arange(1, len(q_errs) + 1) / len(q_errs)
@@ -216,9 +220,7 @@ def plot_qerror_cdf(
 
     fig.suptitle(f"{iconq_model_id} - Q-Error CDF", fontsize=12)
     fig.tight_layout()
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id), "qerror_cdf.png"
-    )
+    save_path = IconqModel.default_save_dir(iconq_model_id) / "qerror_cdf.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
 
@@ -229,7 +231,7 @@ def plot_qerror_cdf(
 def plot_predicted_vs_actual(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Censor-aware predicted-vs-observed scatter, one panel per split/type.
 
     Row 1 (normal): predicted vs actual with y=x and ±2x bands.
@@ -238,7 +240,8 @@ def plot_predicted_vs_actual(
     # Compute limits.
     nocq = "num_other_concurrent_queries"
     prepared = {
-        split: _add_observation_type(split_dfs[split]).copy() for split in DataSplit
+        split: _add_observation_type(split_dfs[split]).copy()
+        for split in DataSplit
     }
     vmax = max(
         1,
@@ -254,7 +257,9 @@ def plot_predicted_vs_actual(
         ignore_index=True,
     )
     all_latencies = all_latencies.apply(pd.to_numeric, errors="coerce")
-    all_latencies = all_latencies[(all_latencies["y"] > 0) & (all_latencies["y_pred_mean"] > 0)]
+    all_latencies = all_latencies[
+        (all_latencies["y"] > 0) & (all_latencies["y_pred_mean"] > 0)
+    ]
     lim_min = max(float(all_latencies.min().min()) * 0.8, 1e-6)
     lim_max = float(all_latencies.max().max()) * 1.25
 
@@ -278,7 +283,14 @@ def plot_predicted_vs_actual(
             ]
 
             if sub.empty:
-                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
                 ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
                 continue
 
@@ -330,7 +342,9 @@ def plot_predicted_vs_actual(
             ax.set_xlim(lim_min, lim_max)
             ax.set_ylim(lim_min, lim_max)
             ax.set_xlabel(
-                "Actual latency (s)" if obs == "normal" else "Lower-bound latency (s)"
+                "Actual latency (s)"
+                if obs == "normal"
+                else "Lower-bound latency (s)"
             )
             if col_idx == 0:
                 ax.set_ylabel("Predicted latency (s)")
@@ -352,8 +366,8 @@ def plot_predicted_vs_actual(
         f"{iconq_model_id} - Predicted vs Observed (Censor-aware)",
         fontsize=12,
     )
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id), "predicted_vs_actual.png"
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id) / "predicted_vs_actual.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -365,7 +379,7 @@ def plot_predicted_vs_actual(
 def plot_qerror_over_epochs(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """
     Two-panel epoch-trajectory plot.
 
@@ -481,7 +495,11 @@ def plot_qerror_over_epochs(
         df = split_dfs[split]
         if df.empty:
             continue
-        q_errs = pd.to_numeric(df["q_error"], errors="coerce").dropna().to_numpy(dtype=float)
+        q_errs = (
+            pd.to_numeric(df["q_error"], errors="coerce")
+            .dropna()
+            .to_numpy(dtype=float)
+        )
         vals = [
             float(np.percentile(q_errs, p)) if len(q_errs) else float("nan")
             for p in percentile_keys
@@ -520,8 +538,8 @@ def plot_qerror_over_epochs(
 
     fig.suptitle(f"{iconq_model_id} - Q-Error over Epochs", fontsize=12)
     fig.tight_layout()
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id), "qerror_over_epochs.png"
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id) / "qerror_over_epochs.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -533,7 +551,7 @@ def plot_qerror_over_epochs(
 def plot_qerror_vs_concurrency(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Box plots of Q-Error grouped by concurrency bin, one panel per split.
 
     The 0-concurrent bin (isolated queries predicted by the stage model) is
@@ -601,8 +619,9 @@ def plot_qerror_vs_concurrency(
 
     fig.suptitle(f"{iconq_model_id} - Q-Error vs. Concurrency", fontsize=12)
     fig.tight_layout()
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id), "qerror_vs_concurrency.png"
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id)
+        / "qerror_vs_concurrency.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -614,7 +633,7 @@ def plot_qerror_vs_concurrency(
 def plot_qerror_heatmap(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Heatmap of median Q-Error per (query template × concurrency bin).
 
     Rows are sorted by the val-split median Q-Error (worst templates at top)
@@ -729,8 +748,8 @@ def plot_qerror_heatmap(
         fontsize=12,
     )
     fig.tight_layout()
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id), "qerror_heatmap.png"
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id) / "qerror_heatmap.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -744,7 +763,7 @@ def plot_template_contribution_breakdown(
     iconq_model_id: str,
     run_id: Optional[str] = None,
     top_k: int = 12,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Template-level error/frequency/contribution breakdown per split.
 
     For each split and template:
@@ -768,8 +787,10 @@ def plot_template_contribution_breakdown(
             )
             continue
 
-        df["template"] = df["query_text_id"].astype(str).apply(
-            lambda x: QueryTextId(x).template_id
+        df["template"] = (
+            df["query_text_id"]
+            .astype(str)
+            .apply(lambda x: QueryTextId(x).template_id)
         )
         grouped = (
             df.groupby("template", observed=True)
@@ -796,9 +817,11 @@ def plot_template_contribution_breakdown(
                     & arrivals["query_text_id"].notna()
                 ].copy()
                 if not arrivals.empty:
-                    arrivals["template"] = arrivals["query_text_id"].astype(
-                        str
-                    ).apply(lambda x: QueryTextId(x).template_id)
+                    arrivals["template"] = (
+                        arrivals["query_text_id"]
+                        .astype(str)
+                        .apply(lambda x: QueryTextId(x).template_id)
+                    )
                     run_freq_df = (
                         arrivals.groupby("template", observed=True)
                         .size()
@@ -821,9 +844,9 @@ def plot_template_contribution_breakdown(
         fig, ax = plt.subplots(1, 1, figsize=(8, 4))
         ax.text(0.5, 0.5, "No template-level data", ha="center", va="center")
         ax.set_axis_off()
-        save_path = os.path.join(
-            IconqModel.default_save_dir(iconq_model_id),
-            "template_contribution_breakdown.png",
+        save_path = (
+            IconqModel.default_save_dir(iconq_model_id)
+            / "template_contribution_breakdown.png"
         )
         fig.savefig(save_path, bbox_inches="tight", dpi=150)
         return fig, save_path
@@ -905,10 +928,14 @@ def plot_template_contribution_breakdown(
                 zorder=3,
             )
 
-            split_weighted = float(np.sum(s_df["contribution"].to_numpy(dtype=float)))
+            split_weighted = float(
+                np.sum(s_df["contribution"].to_numpy(dtype=float))
+            )
             run_weighted = float(np.sum(run_contrib))
             delta_pct = (
-                100.0 * (run_weighted - split_weighted) / max(split_weighted, 1e-9)
+                100.0
+                * (run_weighted - split_weighted)
+                / max(split_weighted, 1e-9)
             )
             contrib_ax.text(
                 0.98,
@@ -971,9 +998,9 @@ def plot_template_contribution_breakdown(
         ),
         fontsize=13,
     )
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id),
-        "template_contribution_breakdown.png",
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id)
+        / "template_contribution_breakdown.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -985,7 +1012,7 @@ def plot_template_contribution_breakdown(
 def plot_error_by_cluster_rpu(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Censor-aware error boxplots by RPU, one panel per split/metric family."""
     fig, axes = plt.subplots(
         4, 3, figsize=(18, 16), sharex="col", constrained_layout=True
@@ -995,7 +1022,12 @@ def plot_error_by_cluster_rpu(
         ("normal", "q_error", "Q-Error", True),
         ("normal", "abs_error", "Abs Error (s)", True),
         ("aborted", "factor_error", "Factor Error", True),
-        ("aborted", "underprediction_error_s", "Underprediction Error (s)", True),
+        (
+            "aborted",
+            "underprediction_error_s",
+            "Underprediction Error (s)",
+            True,
+        ),
     ]
 
     for col_idx, split in enumerate(DataSplit):
@@ -1006,7 +1038,14 @@ def plot_error_by_cluster_rpu(
             ax = axes[row_idx, col_idx]
             sub = df[df["observation_type"] == obs].copy()
             if metric not in sub.columns:
-                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
                 ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
                 continue
             sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
@@ -1015,14 +1054,24 @@ def plot_error_by_cluster_rpu(
                 sub = sub[sub[metric] > 0]
 
             if sub.empty:
-                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
                 ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
                 continue
 
             sub["rpu"] = sub["rpu"].astype(int)
             rpus = sorted(sub["rpu"].unique().tolist())
             x_positions = np.arange(1, len(rpus) + 1)
-            data = [sub.loc[sub["rpu"] == r, metric].to_numpy(dtype=float) for r in rpus]
+            data = [
+                sub.loc[sub["rpu"] == r, metric].to_numpy(dtype=float)
+                for r in rpus
+            ]
 
             bp = ax.boxplot(
                 data,
@@ -1053,8 +1102,8 @@ def plot_error_by_cluster_rpu(
         f"{iconq_model_id} - Censor-aware Error by Cluster RPU",
         fontsize=12,
     )
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id), "error_by_cluster_rpu.png"
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id) / "error_by_cluster_rpu.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -1066,7 +1115,7 @@ def plot_error_by_cluster_rpu(
 def plot_error_cdf_by_cluster_rpu(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Censor-aware CDF views grouped by cluster RPU."""
     fig, axes = plt.subplots(
         3, 3, figsize=(18, 13), sharey="row", constrained_layout=True
@@ -1076,7 +1125,12 @@ def plot_error_cdf_by_cluster_rpu(
     metric_specs = [
         ("normal", "factor_error", "Factor error (predicted / actual)", True),
         ("normal", "q_error", "Q-Error", True),
-        ("aborted", "factor_error", "Factor error (predicted / lower-bound)", True),
+        (
+            "aborted",
+            "factor_error",
+            "Factor error (predicted / lower-bound)",
+            True,
+        ),
     ]
 
     for col_idx, split in enumerate(DataSplit):
@@ -1087,7 +1141,14 @@ def plot_error_cdf_by_cluster_rpu(
             ax = axes[row_idx, col_idx]
             sub = df[df["observation_type"] == obs].copy()
             if metric not in sub.columns:
-                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
                 ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
                 continue
             sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
@@ -1096,7 +1157,14 @@ def plot_error_cdf_by_cluster_rpu(
                 sub = sub[sub[metric] > 0]
 
             if sub.empty:
-                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
                 ax.set_title(f"{split.value.capitalize()} / {obs} (N=0)")
                 continue
 
@@ -1128,9 +1196,9 @@ def plot_error_cdf_by_cluster_rpu(
         f"{iconq_model_id} - Censor-aware Error CDF by Cluster RPU",
         fontsize=12,
     )
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id),
-        "error_cdf_by_cluster_rpu.png",
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id)
+        / "error_cdf_by_cluster_rpu.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -1139,7 +1207,7 @@ def plot_error_cdf_by_cluster_rpu(
 def plot_censor_aware_performance_dashboard(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """Censor-aware dashboard with type-specific metrics.
 
     Row 1: normal queries (q_error CDF, abs_error CDF, pred-vs-actual scatter)
@@ -1151,7 +1219,9 @@ def plot_censor_aware_performance_dashboard(
         ignore_index=True,
     )
     combined = _add_observation_type(_add_cluster_rpu(combined))
-    combined["rpu"] = pd.to_numeric(combined["rpu"], errors="coerce").astype("Int64")
+    combined["rpu"] = pd.to_numeric(combined["rpu"], errors="coerce").astype(
+        "Int64"
+    )
     palette = dict(Palette.rpu_to_color())
 
     normal = combined[combined["observation_type"] == "normal"].copy()
@@ -1174,7 +1244,14 @@ def plot_censor_aware_performance_dashboard(
             legend_fontsize=7,
         )
     else:
-        axes[0, 0].text(0.5, 0.5, "No normal rows", ha="center", va="center", transform=axes[0, 0].transAxes)
+        axes[0, 0].text(
+            0.5,
+            0.5,
+            "No normal rows",
+            ha="center",
+            va="center",
+            transform=axes[0, 0].transAxes,
+        )
 
     # Normal: abs_error CDF
     if not normal.empty:
@@ -1191,7 +1268,14 @@ def plot_censor_aware_performance_dashboard(
             legend_fontsize=7,
         )
     else:
-        axes[0, 1].text(0.5, 0.5, "No normal rows", ha="center", va="center", transform=axes[0, 1].transAxes)
+        axes[0, 1].text(
+            0.5,
+            0.5,
+            "No normal rows",
+            ha="center",
+            va="center",
+            transform=axes[0, 1].transAxes,
+        )
 
     # Normal: scatter predicted vs actual
     if not normal.empty:
@@ -1211,7 +1295,9 @@ def plot_censor_aware_performance_dashboard(
                 color=palette.get(int(r), "black"),
                 label=str(r),
             )
-        lim_min = max(float(min(sub["y"].min(), sub["y_pred_mean"].min())) * 0.8, 1e-6)
+        lim_min = max(
+            float(min(sub["y"].min(), sub["y_pred_mean"].min())) * 0.8, 1e-6
+        )
         lim_max = float(max(sub["y"].max(), sub["y_pred_mean"].max())) * 1.25
         xs = np.array([lim_min, lim_max])
         axes[0, 2].plot(xs, xs, "k-", lw=1.2)
@@ -1223,7 +1309,14 @@ def plot_censor_aware_performance_dashboard(
         axes[0, 2].grid(True, which="both", linestyle=":", alpha=0.3)
         axes[0, 2].legend(title="RPU", fontsize=7)
     else:
-        axes[0, 2].text(0.5, 0.5, "No normal rows", ha="center", va="center", transform=axes[0, 2].transAxes)
+        axes[0, 2].text(
+            0.5,
+            0.5,
+            "No normal rows",
+            ha="center",
+            va="center",
+            transform=axes[0, 2].transAxes,
+        )
 
     # Aborted: factor_error CDF
     if not aborted.empty:
@@ -1240,7 +1333,14 @@ def plot_censor_aware_performance_dashboard(
             legend_fontsize=7,
         )
     else:
-        axes[1, 0].text(0.5, 0.5, "No aborted rows", ha="center", va="center", transform=axes[1, 0].transAxes)
+        axes[1, 0].text(
+            0.5,
+            0.5,
+            "No aborted rows",
+            ha="center",
+            va="center",
+            transform=axes[1, 0].transAxes,
+        )
 
     # Aborted: underprediction_error_s CDF
     if not aborted.empty:
@@ -1257,11 +1357,20 @@ def plot_censor_aware_performance_dashboard(
             legend_fontsize=7,
         )
     else:
-        axes[1, 1].text(0.5, 0.5, "No aborted rows", ha="center", va="center", transform=axes[1, 1].transAxes)
+        axes[1, 1].text(
+            0.5,
+            0.5,
+            "No aborted rows",
+            ha="center",
+            va="center",
+            transform=axes[1, 1].transAxes,
+        )
 
     # Aborted: underprediction rate by RPU
     if not aborted.empty:
-        rate_df = aborted.dropna(subset=["rpu", "underprediction_error_s"]).copy()
+        rate_df = aborted.dropna(
+            subset=["rpu", "underprediction_error_s"]
+        ).copy()
         rate_df["rpu"] = rate_df["rpu"].astype(int)
         rate_df["is_underpredicted"] = rate_df["underprediction_error_s"] > 0
         rates = (
@@ -1281,17 +1390,26 @@ def plot_censor_aware_performance_dashboard(
         axes[1, 2].set_title("Aborted: Underprediction Fraction by RPU")
         axes[1, 2].grid(True, axis="y", linestyle=":", alpha=0.3)
         for i, v in enumerate(rate_vals_pct):
-            axes[1, 2].text(i, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
+            axes[1, 2].text(
+                i, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=8
+            )
     else:
-        axes[1, 2].text(0.5, 0.5, "No aborted rows", ha="center", va="center", transform=axes[1, 2].transAxes)
+        axes[1, 2].text(
+            0.5,
+            0.5,
+            "No aborted rows",
+            ha="center",
+            va="center",
+            transform=axes[1, 2].transAxes,
+        )
 
     fig.suptitle(
         f"{iconq_model_id} - Censor-aware Performance Dashboard",
         fontsize=13,
     )
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id),
-        "censor_aware_performance_dashboard.png",
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id)
+        / "censor_aware_performance_dashboard.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path
@@ -1303,7 +1421,7 @@ def plot_censor_aware_performance_dashboard(
 def plot_signed_error_heatmap_rpu_x_concurrency(
     split_dfs: dict[DataSplit, pd.DataFrame],
     iconq_model_id: str,
-) -> tuple[Figure, str]:
+) -> tuple[Figure, Path]:
     """3x3 heatmap grid: rows=P25/P50/P75, cols=train/val/test.
 
     Within each panel: rows=RPU, cols=concurrency bins,
@@ -1348,8 +1466,7 @@ def plot_signed_error_heatmap_rpu_x_concurrency(
                 for i, rpu in enumerate(sorted_rpus):
                     for j, bin_label in enumerate(_CONC_LABELS):
                         vals = df.loc[
-                            (df["rpu"] == rpu)
-                            & (df["conc_bin"] == bin_label),
+                            (df["rpu"] == rpu) & (df["conc_bin"] == bin_label),
                             "signed_log_ratio",
                         ].to_numpy(dtype=float)
                         if len(vals) > 0:
@@ -1448,9 +1565,9 @@ def plot_signed_error_heatmap_rpu_x_concurrency(
         fontsize=12,
     )
     fig.tight_layout()
-    save_path = os.path.join(
-        IconqModel.default_save_dir(iconq_model_id),
-        "signed_error_heatmap_rpu_x_concurrency.png",
+    save_path = (
+        IconqModel.default_save_dir(iconq_model_id)
+        / "signed_error_heatmap_rpu_x_concurrency.png"
     )
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     return fig, save_path

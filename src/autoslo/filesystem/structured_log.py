@@ -30,10 +30,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -99,7 +98,7 @@ class StructuredLogHandler(logging.Handler):
 
     def __init__(
         self,
-        out_dir: str | Path,
+        out_dir: Path,
         flush_threshold: int = 10_000,
         filename: str = "structured_log.parquet",
     ) -> None:
@@ -116,11 +115,11 @@ class StructuredLogHandler(logging.Handler):
     # -- properties --------------------------------------------------------
 
     @property
-    def out_dir(self) -> str | Path:
+    def out_dir(self) -> Path:
         return self._out_dir
 
     @out_dir.setter
-    def out_dir(self, value: str | Path) -> None:
+    def out_dir(self, value: Path) -> None:
         self._out_dir = value
 
     @property
@@ -179,7 +178,7 @@ class StructuredLogHandler(logging.Handler):
 
         Caller must hold ``self._lock``.
         """
-        os.makedirs(self._out_dir, exist_ok=True)
+        self._out_dir.mkdir(parents=True, exist_ok=True)
         cols = sorted(self._all_columns)
         df = pd.DataFrame(self._buffer, columns=cols)
         # Serialise details dicts to JSON strings for Parquet storage.
@@ -193,10 +192,7 @@ class StructuredLogHandler(logging.Handler):
                 )
                 for d in df["details"]
             ]
-        shard_path = os.path.join(
-            self._out_dir,
-            f"_shard_{self._shard_idx:04d}.parquet",
-        )
+        shard_path = self._out_dir / f"_shard_{self._shard_idx:04d}.parquet"
         df.to_parquet(shard_path, index=False)
         self._shard_idx += 1
         self._buffer.clear()
@@ -217,12 +213,9 @@ class StructuredLogHandler(logging.Handler):
 
             dfs: list[pd.DataFrame] = []
             for idx in range(self._shard_idx):
-                shard_path = os.path.join(
-                    self._out_dir,
-                    f"_shard_{idx:04d}.parquet",
-                )
+                shard_path = self._out_dir / f"_shard_{idx:04d}.parquet"
                 dfs.append(pd.read_parquet(shard_path))
-                os.remove(shard_path)
+                shard_path.unlink()
 
             consolidated = pd.concat(dfs, ignore_index=True)
 
@@ -244,12 +237,12 @@ class StructuredLogHandler(logging.Handler):
             )
             consolidated = consolidated.reindex(columns=ordered_cols)
 
-            out_path = os.path.join(self._out_dir, self._filename)
+            out_path = self._out_dir / self._filename
             consolidated.to_parquet(out_path, index=False)
             self._shard_idx = 0
-            return StructuredLog.load(Path(out_path))
+            return StructuredLog.load(out_path)
 
-    def reset(self, out_dir: str | None = None) -> None:
+    def reset(self, out_dir: Optional[Path] = None) -> None:
         """Drop all buffered records and shard state for a new run.
 
         If *out_dir* is provided the handler switches to that directory.
@@ -258,8 +251,7 @@ class StructuredLogHandler(logging.Handler):
             self._buffer.clear()
             self._shard_idx = 0
             self._all_columns = set(REQUIRED_KEYS)
-            if out_dir is not None:
-                self._out_dir = out_dir
+            self._out_dir = out_dir or self._out_dir
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +260,7 @@ class StructuredLogHandler(logging.Handler):
 
 
 def setup_structured_logging(
-    out_dir: str | Path,
+    out_dir: Path,
     flush_threshold: int = 10_000,
     filename: str = "structured_log.parquet",
 ) -> StructuredLogHandler:
@@ -308,7 +300,7 @@ def setup_structured_logging(
 
 
 def setup_run_logging(
-    out_dir: str | Path,
+    out_dir: Path,
     write_text_log: bool,
 ) -> StructuredLogHandler:
     """Configure file-based text logging and structured logging for a run.
@@ -321,7 +313,7 @@ def setup_run_logging(
         logger.setLevel(logging.INFO)
         for h in list(logger.handlers):
             logger.removeHandler(h)
-        fh = logging.FileHandler(os.path.join(out_dir, "run.log"))
+        fh = logging.FileHandler(out_dir / "run.log")
         fh.setLevel(logging.INFO)
         fh.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -354,7 +346,7 @@ class StructuredLog:
         self._df: pd.DataFrame | None = None
 
     @classmethod
-    def load(cls, source: str | Path | pd.DataFrame) -> StructuredLog:
+    def load(cls, source: Path | pd.DataFrame) -> StructuredLog:
         """Load a consolidated structured log.
 
         Parameters
@@ -377,7 +369,7 @@ class StructuredLog:
         path = Path(source)
         if isinstance(source, str) and not path.exists():
             # Treat as a run ID.
-            path = Path(pu.get_runs_path()) / source / "structured_log.parquet"
+            path = pu.get_runs_path() / source / "structured_log.parquet"
         elif path.is_dir():
             path = path / "structured_log.parquet"
 

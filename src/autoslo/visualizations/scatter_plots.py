@@ -125,7 +125,7 @@ FORMATTING = {
 CLI_SCATTER_MARKERS = ["●", "■", "▲", "◆", "★", "✦", "◉", "▶"]
 
 
-def plot_legend_to(path: str | Path):
+def plot_legend_to(path: Path):
     """
     Plot just the legend as a small image.
     """

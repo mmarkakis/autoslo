@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -23,11 +22,9 @@ for i in range(5 * n):
     records.append(record)
 
 df = pd.DataFrame(records)
-output_path = os.path.join(
-    pu.get_workloads_dir(), "ext_tpcds1000", "test_workload.parquet"
+output_path = (
+    pu.get_workloads_dir() / "ext_tpcds1000" / "test_workload.parquet"
 )
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
+output_path.parent.mkdir(parents=True, exist_ok=True)
 df.to_parquet(output_path)
 
-# Print a nice summary
-Workload.print_summary_from_df(df)

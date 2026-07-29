@@ -9,8 +9,6 @@ Run with ``--help`` for the full list of options.
 """
 
 import argparse
-import os
-from pathlib import Path
 
 import autoslo.filesystem.path_utils as pu
 from autoslo.config.component_configs import WorkloadRunnerConfig
@@ -38,7 +36,7 @@ def generate_slo_tables(
         baseline_percentiles: Percentiles (0–100) to sweep.
         multipliers: Headroom multipliers (*k*) to sweep.
     """
-    log_path = Path(pu.get_runs_path()) / run_id / "structured_log.parquet"
+    log_path = pu.get_runs_path() / run_id / "structured_log.parquet"
     if not log_path.exists():
         raise FileNotFoundError(
             f"No structured_log.parquet found for run {run_id!r} "
@@ -51,7 +49,7 @@ def generate_slo_tables(
     )
     print(f"Loaded {len(df)} latency records from run {run_id!r}.")
 
-    exec_cfg_path = Path(pu.get_runs_path()) / run_id / "execution_config.yml"
+    exec_cfg_path = pu.get_runs_path() / run_id / "execution_config.yml"
     if exec_cfg_path.exists():
         runner_cfg = WorkloadRunnerConfig.from_config(load_yaml(exec_cfg_path))
         if runner_cfg.closed_loop:
@@ -67,22 +65,22 @@ def generate_slo_tables(
             "WARNING: execution_config.yml not found; could not verify closed-loop mode."
         )
 
-    slo_dir = os.path.join(pu.get_data_path(), "slos")
-    os.makedirs(slo_dir, exist_ok=True)
+    slo_dir = pu.get_data_path() / "slos"
+    slo_dir.mkdir(parents=True, exist_ok=True)
 
     for p in baseline_percentiles:
         mid_part = f"p{int(p)}" if p != -1 else "mean"
         if p == -1:
             baseline = df.groupby("template_id")["latency_s"].mean()
         else:
-            baseline = df.groupby("template_id")["latency_s"].quantile(p / 100.0)
+            baseline = df.groupby("template_id")["latency_s"].quantile(
+                p / 100.0
+            )
         for k in multipliers:
             slo_dict = {
                 str(t): round(float(v * k), 3) for t, v in baseline.items()
             }
-            out_path = os.path.join(
-                slo_dir, f"{run_id}_{mid_part}_k{int(k)}.yml"
-            )
+            out_path = slo_dir / f"{run_id}_{mid_part}_k{int(k)}.yml"
             dump_yaml(
                 {
                     "run_id": run_id,
@@ -93,7 +91,9 @@ def generate_slo_tables(
                 },
                 out_path,
             )
-            print(f"  Wrote SLO table  agg_method={mid_part}  k={k}  → {out_path}")
+            print(
+                f"  Wrote SLO table  agg_method={mid_part}  k={k}  → {out_path}"
+            )
 
 
 if __name__ == "__main__":

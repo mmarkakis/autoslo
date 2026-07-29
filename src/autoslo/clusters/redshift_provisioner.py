@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import itertools
 import logging
-import os
 import time
 
 import boto3  # type: ignore
@@ -73,9 +72,7 @@ class RedshiftServerlessProvisioner(ClusterProvisioner):
 
     def __init__(self, config: ProvisionerConfig) -> None:
         self._config = config
-        absolute_aws_config_path = os.path.join(
-            pu.AUTOSLO_ROOT, config.aws_config_path
-        )
+        absolute_aws_config_path = pu.AUTOSLO_ROOT / config.aws_config_path
         with open(absolute_aws_config_path) as f:
             cfg = yaml.safe_load(f)
 

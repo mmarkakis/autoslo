@@ -266,7 +266,7 @@ def main():
         preflight_rows: list[tuple[str, str, str]] = []
         planned_runs: list[tuple[str, str, PolicyTuner]] = []
         postflight_entries: list[_PostflightEntry] = []
-        tuner_runs_dir = Path(pu.get_data_path()) / "tuner_runs"
+        tuner_runs_dir = pu.get_data_path() / "tuner_runs"
 
         for tuning_run_name, tuning_run_spec in manifest.get(
             "main_content", {}

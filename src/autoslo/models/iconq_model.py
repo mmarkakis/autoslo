@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import pickle
 from collections import defaultdict
 from dataclasses import asdict
@@ -162,15 +161,15 @@ class IconqModel:
     """
 
     @staticmethod
-    def default_save_dir(model_id: str) -> str:
-        return os.path.join(pu.get_data_path(), "iconq_models", model_id)
+    def default_save_dir(model_id: str) -> Path:
+        return pu.get_data_path() / "iconq_models" / model_id
 
     def __init__(
         self,
         init_config: IconqModelInitConfig,
         train_config: Optional[IconqModelTrainConfig] = None,
         device: torch.device = torch.device("cpu"),
-        parent_save_dir: Optional[str] = None,
+        parent_save_dir: Optional[Path] = None,
         model_id: Optional[str] = None,
         inference_mode: bool = False,
     ) -> None:
@@ -200,8 +199,8 @@ class IconqModel:
         self._parent_save_dir = parent_save_dir
         self._save_dir = self.default_save_dir(model_id)
         if parent_save_dir is not None:
-            self._save_dir = os.path.join(parent_save_dir, model_id)
-        os.makedirs(self._save_dir, exist_ok=True)
+            self._save_dir = Path(parent_save_dir) / model_id
+        self._save_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize the query and interaction featurizer.
         if init_config.iconq_query_featurizer_id is None:
@@ -718,7 +717,7 @@ class IconqModel:
         Saves the model parameters to disk.
         """
 
-        param_path = os.path.join(self._save_dir, "params.yml")
+        param_path = self._save_dir / "params.yml"
         with open(param_path, "w") as f:
             yaml.safe_dump(
                 {
@@ -1023,7 +1022,7 @@ class IconqModel:
     @staticmethod
     def load(
         model_id: str,
-        parent_load_dir: Optional[str] = None,
+        parent_load_dir: Optional[Path] = None,
         inference_mode: bool = True,
     ) -> "IconqModel":
         """
@@ -1034,15 +1033,13 @@ class IconqModel:
             parent_load_dir: The parent directory where iconq models are stored.
                 If None, defaults to `data/iconq_models/`.
         """
-
-        if parent_load_dir is None:
-            parent_load_dir = os.path.join(pu.get_data_path(), "iconq_models")
-        load_dir = os.path.join(parent_load_dir, model_id)
-        if not os.path.exists(load_dir):
+        parent_load_dir = parent_load_dir or pu.get_data_path() / "iconq_models"
+        load_dir = parent_load_dir / model_id
+        if not load_dir.exists():
             raise ValueError(f"IconqModel directory {load_dir} does not exist.")
 
         # Load model parameters
-        param_path = os.path.join(load_dir, "params.yml")
+        param_path = load_dir / "params.yml"
         with open(param_path, "r") as f:
             params = yaml.safe_load(f)
 
@@ -1078,15 +1075,15 @@ class IconqModel:
         # Load the model checkpoint
         checkpoint_files = [
             file
-            for file in os.listdir(load_dir)
-            if file.startswith("model_") and file.endswith(".pth")
+            for file in load_dir.iterdir()
+            if file.name.startswith("model_") and file.name.endswith(".pth")
         ]
         if checkpoint_files:
             latest_checkpoint_file = max(
                 checkpoint_files,
-                key=lambda f: int(f[len("model_") : -len(".pth")]),
+                key=lambda f: int(f.name[len("model_") : -len(".pth")]),
             )
-            checkpoint_path = os.path.join(load_dir, latest_checkpoint_file)
+            checkpoint_path = latest_checkpoint_file
             print(f"Loading model checkpoint from {checkpoint_path}")
             state_dict = torch.load(checkpoint_path, map_location=model._device)
             model._load_nn_state_dict_with_feature_guard(state_dict)
@@ -1112,13 +1109,13 @@ class IconqModel:
             deterministically and saved to the model directory so that
             subsequent calls take the fast path.
         """
-        dataset_pkl = os.path.join(self._save_dir, "dataset.pkl")
-        train_idx_file = os.path.join(self._save_dir, "train_indices.pkl")
-        val_idx_file = os.path.join(self._save_dir, "val_indices.pkl")
-        test_idx_file = os.path.join(self._save_dir, "test_indices.pkl")
+        dataset_pkl = self._save_dir / "dataset.pkl"
+        train_idx_file = self._save_dir / "train_indices.pkl"
+        val_idx_file = self._save_dir / "val_indices.pkl"
+        test_idx_file = self._save_dir / "test_indices.pkl"
 
         if all(
-            os.path.exists(p)
+            p.exists()
             for p in (dataset_pkl, train_idx_file, val_idx_file, test_idx_file)
         ):
             self._dataset = ConcurrentQueryDataset.load_from(dataset_pkl)
@@ -1140,7 +1137,7 @@ class IconqModel:
                 for run_id in self._train_config.run_ids
             ]
         )
-        self._dataset.save_to(os.path.join(self._save_dir, "dataset.pkl"))
+        self._dataset.save_to(self._save_dir / "dataset.pkl")
 
         # Derive split indices.
         explicit = self._train_config.explicit_run_ids_per_split
@@ -1184,7 +1181,7 @@ class IconqModel:
             ("val_indices.pkl", val_idxs),
             ("test_indices.pkl", test_idxs),
         ]:
-            with open(os.path.join(self._save_dir, name), "wb") as f:
+            with open(self._save_dir / name, "wb") as f:
                 pickle.dump(idxs, f)
 
         return
@@ -1414,11 +1411,11 @@ class IconqModel:
         # ── Final evaluation on best checkpoint ──────────────────────────────
         checkpoint_files = [
             f
-            for f in os.listdir(self._save_dir)
-            if f.startswith("model_") and f.endswith(".pth")
+            for f in self._save_dir.iterdir()
+            if f.name.startswith("model_") and f.name.endswith(".pth")
         ]
         if checkpoint_files:
-            checkpoint_path = os.path.join(self._save_dir, checkpoint_files[0])
+            checkpoint_path = checkpoint_files[0]
             self._load_nn_state_dict_with_feature_guard(
                 torch.load(
                     checkpoint_path,
@@ -1573,7 +1570,7 @@ class IconqModel:
                 raise ValueError(
                     f"out_filename must end with .csv (got {out_filename})"
                 )
-            df.to_csv(os.path.join(self._save_dir, out_filename))
+            df.to_csv(self._save_dir / out_filename)
 
         return mean_batch_loss, errors
 

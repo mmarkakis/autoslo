@@ -1,5 +1,5 @@
-import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional, cast
 
 import matplotlib.pyplot as plt
@@ -186,7 +186,7 @@ class XGBoostModel:
     def train(
         self,
         run_ids: list[str],
-        parent_save_dir: Optional[str] = None,
+        parent_save_dir: Optional[Path] = None,
         only_non_overlapping_queries: bool = False,
         use_client_side_latencies: bool = False,
         ignore_aborted_queries: bool = False,
@@ -211,14 +211,12 @@ class XGBoostModel:
         """
 
         # Create directory.
-        if parent_save_dir is None:
-            parent_save_dir = os.path.join(pu.get_data_path(), "xgboost_models")
-        self._run_id = str(int(datetime.now().timestamp()))
-        self._save_dir = os.path.join(
-            parent_save_dir,
-            self._run_id,
+        parent_save_dir = (
+            parent_save_dir or pu.get_data_path() / "xgboost_models"
         )
-        os.makedirs(self._save_dir, exist_ok=True)
+        self._run_id = str(int(datetime.now().timestamp()))
+        self._save_dir = parent_save_dir / self._run_id
+        self._save_dir.mkdir(parents=True, exist_ok=True)
 
         self._only_non_overlapping_queries = only_non_overlapping_queries
         if ignore_aborted_queries:
@@ -227,7 +225,7 @@ class XGBoostModel:
             self._setup_aft_booster()
 
         # Save the XGBoostModel parameters.
-        params_path = os.path.join(self._save_dir, "params.yml")
+        params_path = self._save_dir / "params.yml"
         with open(params_path, "w") as f:
             yaml.dump(
                 {
@@ -328,11 +326,9 @@ class XGBoostModel:
         val_df = featurization_df.iloc[split_idx:]
 
         # Save them out.
-        train_df_path = os.path.join(
-            self._save_dir, "train_featurizations.parquet"
-        )
+        train_df_path = self._save_dir / "train_featurizations.parquet"
         train_df.to_parquet(train_df_path)
-        val_df_path = os.path.join(self._save_dir, "val_featurizations.parquet")
+        val_df_path = self._save_dir / "val_featurizations.parquet"
         val_df.to_parquet(val_df_path)
 
         # Train the model.
@@ -418,12 +414,12 @@ class XGBoostModel:
         """
 
         # Save the model.
-        model_json_path = os.path.join(self._save_dir, "model.json")
-        self._model.save_model(model_json_path)
+        model_json_path = self._save_dir / "model.json"
+        self._model.save_model(str(model_json_path))  # xgboost requires str
 
         # Also save the loss trajectories of the model as a plot.
         losses = self._evals_result
-        loss_plot_path = os.path.join(self._save_dir, "loss_plot.png")
+        loss_plot_path = self._save_dir / "loss_plot.png"
         plt.figure()
         plt.plot(losses["validation_0"][self._eval_metric], label="Train Loss")
         plt.plot(
@@ -439,7 +435,7 @@ class XGBoostModel:
 
     @staticmethod
     def load(
-        timestamp: str, parent_load_dir: Optional[str] = None
+        timestamp: str, parent_load_dir: Optional[Path] = None
     ) -> "XGBoostModel":
         """
         Loads the model from the given directory.
@@ -449,19 +445,17 @@ class XGBoostModel:
             parent_load_dir: The parent directory where xgboost models are
                 stored. If None, defaults to `data/xgboost_models/`.
         """
-        if parent_load_dir is None:
-            parent_load_dir = os.path.join(pu.get_data_path(), "xgboost_models")
-        load_dir = os.path.join(
-            parent_load_dir,
-            timestamp,
+        parent_load_dir = (
+            parent_load_dir or pu.get_data_path() / "xgboost_models"
         )
-        if not os.path.exists(load_dir):
+        load_dir = parent_load_dir / timestamp
+        if not load_dir.exists():
             raise FileNotFoundError(
                 f"XGBoostModel directory {load_dir} does not exist."
             )
 
         # Load model parameters.
-        params_path = os.path.join(load_dir, "params.yml")
+        params_path = load_dir / "params.yml"
         with open(params_path, "r") as f:
             params = yaml.safe_load(f)
         model = XGBoostModel(
@@ -477,12 +471,12 @@ class XGBoostModel:
         )
 
         # Load the model.
-        model_json_path = os.path.join(load_dir, "model.json")
+        model_json_path = load_dir / "model.json"
         training_mode = params.get("xgb_training_mode", "legacy_regression")
         if training_mode == "aft_censored":
             model._setup_aft_booster()
         else:
             model._setup_legacy_regressor()
-        model._model.load_model(model_json_path)
+        model._model.load_model(str(model_json_path))  # xgboost requires str
 
         return model

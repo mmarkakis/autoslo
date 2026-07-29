@@ -77,7 +77,7 @@ class Autoscaler:
         provisioner_config: ProvisionerConfig,
         query_router_config: QueryRouterConfig,
         autoscaler_config: AutoscalerConfig,
-        out_dir: str | Path,
+        out_dir: Path,
         iconq_model: Optional[IconqModel] = None,
         force_one_decision_after_query_count: Optional[int] = None,
     ) -> None:
@@ -701,8 +701,12 @@ class Autoscaler:
             ):
                 continue
 
+            eff_most_recent_query_completion_rel_time_s: float = (
+                cluster.most_recent_query_completion_rel_time_s
+                or cluster.creation_time_s
+            )
             idle_time_s = (
-                rel_time_s - cluster.most_recent_query_completion_rel_time_s
+                rel_time_s - eff_most_recent_query_completion_rel_time_s
             )
             lifetime_s = rel_time_s - cluster.creation_time_s
 
@@ -713,7 +717,7 @@ class Autoscaler:
                     reason=(
                         f"creation_time: {cluster.creation_time_s:.0f}s, "
                         f"most_recent_query_completion_time: "
-                        f"{cluster.most_recent_query_completion_rel_time_s:.0f}s, "
+                        f"{eff_most_recent_query_completion_rel_time_s:.0f}s, "
                         f"current_time: {rel_time_s:.0f}s, "
                     ),
                     cluster_name=cluster_name,
@@ -804,6 +808,7 @@ class Autoscaler:
             )
         )
         post_spinup_replay_end_checkpoints[None] = baseline_checkpoint
+        assert baseline_viol_and_cost is not None
         viol_and_costs[None] = baseline_viol_and_cost
         emit_structured(
             BaseStructuredEvent(
@@ -834,6 +839,7 @@ class Autoscaler:
             post_spinup_replay_end_checkpoints[rpu] = (
                 post_spinup_replay_end_checkpoint
             )
+            assert slo_viol_and_cost is not None
             viol_and_costs[rpu] = slo_viol_and_cost
 
             hyp_cluster_name = f"autoslo-{rpu}-hypothetical"

@@ -1,5 +1,4 @@
 import argparse
-import os
 import shutil
 from pathlib import Path
 
@@ -33,18 +32,16 @@ args = parser.parse_args()
 
 cfg = load_yaml(args.train_config_path)
 iconq_model_id = Path(args.train_config_path).stem
-iconq_model_dir = os.path.join(
-    pu.get_data_path(), "iconq_models", iconq_model_id
-)
-if os.path.exists(iconq_model_dir) and args.force:
+iconq_model_dir = pu.get_data_path() / "iconq_models" / iconq_model_id
+if iconq_model_dir.exists() and args.force:
     print(f"Forcing re-training. Deleting {iconq_model_dir}...")
     shutil.rmtree(iconq_model_dir)
 
-os.makedirs(iconq_model_dir, exist_ok=True)
-progress_cache_path = os.path.join(iconq_model_dir, "progress_cache.yml")
+iconq_model_dir.mkdir(parents=True, exist_ok=True)
+progress_cache_path = iconq_model_dir / "progress_cache.yml"
 cached_progress: dict = {}
 
-if os.path.exists(progress_cache_path):
+if progress_cache_path.exists():
     cached_progress = load_yaml(progress_cache_path)
 
 iconq_model_init_config_dict = cfg.get("iconq_model_init_config", {})
