@@ -32,7 +32,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.figure import Figure
+import matplotlib.ticker as mticker
 from matplotlib.lines import Line2D
 from rich.progress import (
     BarColumn,
@@ -553,7 +553,276 @@ def plot_factor_error_by_rpu(
     return fig, save_path
 
 
-# ── Plot 3: Inference time by arrival ─────────────────────────────────────────
+# ── Plot 3: Factor error vs. concurrent queries, faceted by RPU ───────────────
+
+# Concurrency bin definitions.  Edges are [lo, hi] inclusive; hi=None means
+# open-ended (≥ lo).
+_CONC_BIN_EDGES: list[tuple[int, int | None]] = [
+    (0, 15),
+    (16, 31),
+    (32, None),
+]
+_CONC_BIN_LABELS: list[str] = ["0\u201315", "16\u201331", "32+"]
+_N_CONC_BINS = len(_CONC_BIN_EDGES)
+
+
+def _assign_conc_bin(conc_series: pd.Series) -> pd.Series:
+    """Return integer bin index (0 .. _N_CONC_BINS-1) for each value in *conc_series*.
+
+    Values that fall in no bin (e.g. negative) receive index -1.
+    """
+    result = pd.Series(-1, index=conc_series.index, dtype=int)
+    for idx, (lo, hi) in enumerate(_CONC_BIN_EDGES):
+        mask = (conc_series >= lo) if hi is None else (
+            (conc_series >= lo) & (conc_series <= hi)
+        )
+        result[mask] = idx
+    return result
+
+
+def plot_factor_error_vs_concurrency(
+    models: list[ModelEntry],
+    all_split_dfs: dict[str, dict[DataSplit, pd.DataFrame]],
+    output_dir: str = _DEFAULT_OUTPUT_DIR,
+    min_rpu_samples: int = _MIN_RPU_SAMPLES_DEFAULT,
+    min_bin_samples: int = 5,
+    highlight_best: bool = True,
+    annotate_best: bool = True,
+    show_title: bool = True,
+) -> tuple[Figure, str]:
+    """Fraction of queries underpredicted, by concurrency bin, faceted by RPU.
+
+    One subplot per qualified RPU value (test set, normal observations only).
+    All subplots share the same Y axis (0 – 100%).
+
+    Within each subplot the X-axis carries four concurrency bins
+    (0 | 1–31 | 32–63 | 64+); within each bin there is one dot per model
+    showing the fraction of queries where the model overpredicted
+    (``factor_error > 1``, i.e. predicted latency > actual latency).
+
+    *   0% → model always underpredicts in that bin
+    *  50% → perfectly balanced / unbiased  (dashed reference line)
+    * 100% → model always overpredicts in that bin
+
+    Bins with fewer than *min_bin_samples* valid observations are omitted.
+    The highlighted point in each bin is the model closest to 50% (least
+    biased).
+    """
+    model_ids = [m.model_id for m in models]
+    n_models = len(model_ids)
+    colors = Palette.as_list()
+
+    # ── Collect per-(model, RPU) DataFrames ──────────────────────────────────
+    rpu_dfs: dict[tuple[str, int], pd.DataFrame] = {}
+    qualified_rpus: set[int] = set()
+
+    for model_id in model_ids:
+        test_df = _add_cluster_rpu(all_split_dfs[model_id][DataSplit.TEST])
+        test_df = _normal_df(test_df)
+        test_df["rpu"] = pd.to_numeric(test_df["rpu"], errors="coerce").astype(
+            "Int64"
+        )
+        test_df = test_df.dropna(subset=["rpu"])
+        if "num_other_concurrent_queries" not in test_df.columns:
+            continue
+        for rpu_val, sub in test_df.groupby("rpu", observed=True):
+            rpu_int = int(str(rpu_val))
+            if len(sub) >= min_rpu_samples:
+                qualified_rpus.add(rpu_int)
+                rpu_dfs[(model_id, rpu_int)] = sub[
+                    ["factor_error", "num_other_concurrent_queries"]
+                ].copy()
+
+    if not qualified_rpus:
+        raise ValueError(
+            f"No RPU values have >= {min_rpu_samples} test-set samples in any model. "
+            "Lower --min-rpu-samples or check the test set size."
+        )
+
+    sorted_rpus = sorted(qualified_rpus)
+    n_rpus = len(sorted_rpus)
+
+    # ── Compute fraction_underpredicted per (model, RPU, bin) ─────────────────
+    # bin_data[(model_id, rpu, bin_idx)] -> float in [0,1] | None
+    bin_data: dict[tuple[str, int, int], float | None] = {}
+    for model_id in model_ids:
+        for rpu_val in sorted_rpus:
+            sub = rpu_dfs.get((model_id, rpu_val))
+            if sub is None or sub.empty:
+                for bin_idx in range(_N_CONC_BINS):
+                    bin_data[(model_id, rpu_val, bin_idx)] = None
+                continue
+            conc = pd.to_numeric(
+                sub["num_other_concurrent_queries"], errors="coerce"
+            ).fillna(-1).astype(int)
+            fe = pd.to_numeric(sub["factor_error"], errors="coerce")
+            bin_col = _assign_conc_bin(conc)
+            for bin_idx in range(_N_CONC_BINS):
+                mask = (bin_col == bin_idx) & fe.notna() & (fe > 0)
+                valid_fe = fe[mask]
+                if len(valid_fe) < min_bin_samples:
+                    bin_data[(model_id, rpu_val, bin_idx)] = None
+                else:
+                    bin_data[(model_id, rpu_val, bin_idx)] = float(
+                        (valid_fe > 1.0).mean()
+                    )
+
+    # ── Figure layout ─────────────────────────────────────────────────────────
+    _ncols = min(n_rpus, 4)
+    _nrows = (n_rpus + _ncols - 1) // _ncols
+
+    group_width = n_models * _ITEM_SPACING + _GROUP_GAP
+    group_centers = np.array([j * group_width for j in range(_N_CONC_BINS)])
+    offsets = (np.arange(n_models) - (n_models - 1) / 2.0) * _ITEM_SPACING
+
+    subplot_width = max(4.0, _N_CONC_BINS * group_width * 1.6 + 0.8)
+    fig_width = min(subplot_width * _ncols + 0.5, 28.0)
+    fig, axes = plt.subplots(
+        _nrows,
+        _ncols,
+        figsize=(fig_width, 7.0 * _nrows + 1.5),
+        squeeze=False,
+        sharey="all",
+    )
+
+    # ── Draw each RPU subplot ─────────────────────────────────────────────────
+    for subplot_idx, rpu_val in enumerate(sorted_rpus):
+        ax = axes[subplot_idx // _ncols][subplot_idx % _ncols]
+        # Reference line: 50% = perfectly unbiased.
+        ax.axhline(0.5, color="0.4", linewidth=0.8, linestyle="--", zorder=0)
+
+        # Best model per bin: closest fraction to 0.5 (least biased).
+        best_model_for: dict[int, str] = {}
+        if highlight_best:
+            for bin_idx in range(_N_CONC_BINS):
+                best_m: str | None = None
+                best_dist = float("inf")
+                for mid in model_ids:
+                    v = bin_data.get((mid, rpu_val, bin_idx))
+                    if v is None:
+                        continue
+                    d = abs(v - 0.5)
+                    if d < best_dist:
+                        best_dist = d
+                        best_m = mid
+                if best_m is not None:
+                    best_model_for[bin_idx] = best_m
+
+        for i, (model_id, m) in enumerate(zip(model_ids, models)):
+            color = m.resolved_color(i, colors)
+            for bin_idx in range(_N_CONC_BINS):
+                value = bin_data.get((model_id, rpu_val, bin_idx))
+                if value is None:
+                    continue
+                x = group_centers[bin_idx] + offsets[i]
+                is_best = best_model_for.get(bin_idx) == model_id
+                ax.plot(
+                    x,
+                    value,
+                    marker="o",
+                    color=color,
+                    linestyle="none",
+                    markersize=_MARKER_SIZE,
+                    markeredgecolor="black",
+                    markeredgewidth=2.0 if (is_best and highlight_best) else 0.0,
+                )
+                if (is_best and annotate_best) or m.annotate:
+                    ax.annotate(
+                        f"{value:.0%}",
+                        xy=(x, value),
+                        xytext=(0, 6),
+                        textcoords="offset points",
+                        fontsize=_FONTSIZE - 6,
+                        color="black" if (is_best and annotate_best) else color,
+                        rotation=90,
+                        ha="center",
+                        va="bottom",
+                    )
+
+        ax.set_xticks(group_centers)
+        ax.set_xticklabels(_CONC_BIN_LABELS, fontsize=_FONTSIZE - 2)
+        ax.tick_params(axis="y", labelsize=_FONTSIZE - 2)
+        ax.set_xlim(
+            group_centers[0] - group_width * 0.5,
+            group_centers[-1] + group_width * 0.5,
+        )
+        ax.grid(True, axis="y", linestyle=":", alpha=1.0, zorder=0)
+        ax.set_title(f"{rpu_val} RPU", fontsize=_FONTSIZE)
+        ax.set_xlabel("Concurrent queries", fontsize=_FONTSIZE - 2)
+        if subplot_idx % _ncols == 0:
+            ax.set_ylabel("Fraction overpredicted", fontsize=_FONTSIZE - 2)
+
+    # Shared Y axis: 0–100%, fixed range so 50% reference is always centred.
+    axes[0][0].set_ylim(0.0, 1.0)
+    axes[0][0].yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1.0))
+
+    # Hide unused axes in the final row.
+    for subplot_idx in range(n_rpus, _nrows * _ncols):
+        axes[subplot_idx // _ncols][subplot_idx % _ncols].set_visible(False)
+
+    if show_title:
+        fig.suptitle(
+            "Fraction Overpredicted by Concurrency Bin and RPU\n"
+            "test set · normal observations only · dashed line = 50% (unbiased)",
+            fontsize=_FONTSIZE,
+        )
+
+    # ── Legend ────────────────────────────────────────────────────────────────
+    model_handles = [
+        Line2D(
+            [0], [0],
+            marker="o",
+            color=m.resolved_color(i, colors),
+            linestyle="none",
+            markersize=_MARKER_SIZE,
+            label=m.label,
+        )
+        for i, m in enumerate(models)
+    ]
+    legend_rows: list[list[Line2D]] = [model_handles]
+    if highlight_best:
+        legend_rows.append([
+            Line2D(
+                [0], [0],
+                marker="o",
+                color="white",
+                linestyle="none",
+                markersize=_MARKER_SIZE,
+                markeredgecolor="black",
+                markeredgewidth=2.0,
+                label="Least biased (closest to 50%)",
+            )
+        ])
+    n_legend_rows = len(legend_rows)
+    bottom_pad = 0.04 + n_legend_rows * 0.11
+    top_pad = 0.97 if show_title else 1.0
+    fig.tight_layout(rect=[0, bottom_pad, 1, top_pad])
+    _y_start = bottom_pad - 0.03
+    _y_step = -(bottom_pad - 0.03) / n_legend_rows
+    for i, row in enumerate(legend_rows):
+        leg = fig.legend(
+            handles=row,
+            ncol=len(row),
+            loc="lower center",
+            bbox_to_anchor=(0.5, _y_start + i * _y_step),
+            bbox_transform=fig.transFigure,
+            borderaxespad=0,
+            fontsize=_FONTSIZE - 2,
+            columnspacing=0.4,
+            handletextpad=0.05,
+        )
+        if i < n_legend_rows - 1:
+            fig.add_artist(leg)
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    save_path = os.path.join(
+        output_dir, "overprediction_fraction_vs_concurrency.png"
+    )
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    return fig, save_path
+
+
+# ── Plot 4: Inference time by arrival ─────────────────────────────────────────
 
 
 def plot_inference_time_by_arrival(
