@@ -6,6 +6,8 @@ show_titles: false
 q_error_highlight_margin: 0 
 factor_error_margin: 0  
 
+reference_split_model_id: comparison_base
+
 
 workload_config:
   workload_name: poisson_99_1_3_0.1_42
