@@ -39,6 +39,7 @@ import pandas as pd
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
 # Public helper: emit a structured record
@@ -637,3 +638,169 @@ class StructuredLog:
         ).clip(lower=0.0)
         results_df["rpu"] = results_df["rpu"].astype(int)
         return results_df
+
+    def flat_df(
+        self,
+        drop_fwd_queries: bool = True,
+        coerce_numerics: bool = True,
+    ) -> pd.DataFrame:
+        """Return the event table with ``details`` normalised into sibling columns.
+
+        ``StructuredLog.df`` keeps ``details`` as parsed dicts for efficient
+        downstream access; this method expands them into a flat table.
+
+        Parameters
+        ----------
+        drop_fwd_queries :
+            Remove rows whose ``query_id`` starts with ``"fwd"`` (forward-
+            simulation phantom queries emitted by the autoscaler counterfactual
+            engine).  Default ``True``.
+        coerce_numerics :
+            Convert object-typed columns to ``float64`` wherever every non-null
+            value parses successfully as a number.  Default ``True``.
+        """
+        base = self.df.copy()
+        pre_expand_cols = set(base.columns) - {"details"}
+
+        if "details" in base.columns:
+            # self.df parses details to dicts only during parquet lazy-load;
+            # when loaded directly from a DataFrame they may still be strings.
+            def _parse(x: Any) -> dict:
+                if isinstance(x, dict):
+                    return x
+                if isinstance(x, str) and x:
+                    try:
+                        parsed = json.loads(x)
+                        return parsed if isinstance(parsed, dict) else {}
+                    except (TypeError, json.JSONDecodeError):
+                        return {}
+                return {}
+
+            # Remember structural columns so coerce_numerics skips them.
+            expanded = pd.json_normalize(base["details"].apply(_parse).tolist())
+            expanded.index = base.index
+            base = pd.concat([base.drop(columns="details"), expanded], axis=1)
+        else:
+            pre_expand_cols = set(base.columns)
+
+        if drop_fwd_queries and "query_id" in base.columns:
+            fwd_mask = (
+                base["query_id"].astype(str).str.startswith("fwd", na=False)
+            )
+            base = base[~fwd_mask]
+
+        if coerce_numerics:
+            for col in base.select_dtypes(include="object").columns:
+                if col in pre_expand_cols:
+                    # Never coerce structural columns such as query_id,
+                    # query_text_id, event_type, or cluster_name.
+                    continue
+                converted = pd.to_numeric(base[col], errors="coerce")
+                if converted.notna().sum() == base[col].notna().sum():
+                    base[col] = converted
+
+        return base.reset_index(drop=True)
+
+    def query_slo_outcomes(
+        self,
+        slo_resolver: SloResolver,
+        drop_incomplete: bool = True,
+    ) -> pd.DataFrame:
+        """Return per-query latency with actual SLO outcome columns.
+
+        Extends :meth:`query_latencies` with four derived columns:
+
+        * ``slo_s`` — effective SLO threshold for this query in seconds.
+        * ``slo_violated`` — 1 if ``latency_s > slo_s``, else 0.
+        * ``slo_overshoot_s`` — ``max(0, latency_s - slo_s)``.
+        * ``relative_violation`` — ``max(0, (latency_s - slo_s) / slo_s)``.
+
+        Parameters
+        ----------
+        slo_resolver :
+            Resolver that maps ``query_text_id`` to the effective SLO in
+            seconds, applying the tightening factor.
+        drop_incomplete :
+            Forwarded to :meth:`query_latencies`.  Default ``True``.
+        """
+        result = self.query_latencies(drop_incomplete=drop_incomplete)
+
+        if result.empty:
+            return pd.DataFrame(
+                columns=[
+                    "query_id",
+                    "query_text_id",
+                    "arrival_s",
+                    "completion_s",
+                    "latency_s",
+                    "slo_s",
+                    "slo_violated",
+                    "slo_overshoot_s",
+                    "relative_violation",
+                ]
+            )
+
+        result["slo_s"] = result["query_text_id"].map(slo_resolver.resolve)
+        result["slo_violated"] = (result["latency_s"] > result["slo_s"]).astype(
+            int
+        )
+        result["slo_overshoot_s"] = (
+            result["latency_s"] - result["slo_s"]
+        ).clip(lower=0.0)
+        # Guard against slo_s == 0 (divide-by-zero would produce inf).
+        slo_nonzero = result["slo_s"].replace(0.0, float("nan"))
+        result["relative_violation"] = (
+            (result["latency_s"] - result["slo_s"]) / slo_nonzero
+        ).clip(lower=0.0)
+
+        return result
+
+    def logos_df(
+        self,
+        slo_resolver: Optional[SloResolver] = None,
+        drop_fwd_queries: bool = True,
+    ) -> pd.DataFrame:
+        """Return a Logos-ready event-level DataFrame.
+
+        Calls :meth:`flat_df`, then — if *slo_resolver* is provided —
+        broadcasts per-query SLO outcomes onto every row for that
+        ``query_id``.  Also adds ``actual_execution_latency_s`` (from
+        ``query_execution_finish`` rows only) and ``predicted_latency_s``
+        (from ``query_routed`` / ``latency_update`` rows only), separating
+        the two semantically distinct uses of the ``latency_s`` details field.
+
+        Non-query rows (cluster lifecycle events, run start/finish) receive
+        NaN for the per-query outcome columns; Logos excludes them from the
+        prepared log because they have no ``query_id`` to group by.
+        """
+        df = self.flat_df(drop_fwd_queries=drop_fwd_queries)
+
+        if slo_resolver is not None:
+            outcomes = self.query_slo_outcomes(slo_resolver)
+            renamed = outcomes.rename(columns={"latency_s": "final_latency_s"})
+            outcome_cols = [
+                "final_latency_s",
+                "slo_s",
+                "slo_violated",
+                "slo_overshoot_s",
+                "relative_violation",
+            ]
+            mapping = renamed.set_index("query_id")
+            for col in outcome_cols:
+                df[col] = df["query_id"].map(mapping[col])
+
+        if "latency_s" in df.columns:
+            df["actual_execution_latency_s"] = df["latency_s"].where(
+                df["event_type"] == EventType.QUERY_EXECUTION_FINISH.value
+            )
+            df["predicted_latency_s"] = df["latency_s"].where(
+                df["event_type"].isin(
+                    {
+                        EventType.QUERY_ROUTED.value,
+                        EventType.LATENCY_UPDATE.value,
+                    }
+                )
+            )
+            df = df.drop(columns=["latency_s"])
+
+        return df

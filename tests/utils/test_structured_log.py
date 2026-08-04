@@ -516,3 +516,311 @@ class TestStructuredLogQueryLatencies:
         result = StructuredLog.load(log).query_latencies()
         assert "cluster_name" not in result.columns
         assert result.iloc[0]["latency_s"] == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# StructuredLog.flat_df
+# ---------------------------------------------------------------------------
+
+
+def _make_log_with_details(*rows: dict) -> pd.DataFrame:
+    """Build a log DataFrame with a JSON-string ``details`` column."""
+    import json as _json
+
+    defaults = {"wall_clock_s": 0.0, "source": "test", "query_text_id": "1"}
+    records = []
+    for r in rows:
+        rec = {**defaults, **r}
+        if "details" in rec and isinstance(rec["details"], dict):
+            rec["details"] = _json.dumps(rec["details"])
+        records.append(rec)
+    return pd.DataFrame(records)
+
+
+class TestFlatDf:
+    def test_expands_details_fields(self):
+        log = _make_log_with_details(
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "details": {"slo_violation": 0.25, "cost": 0.4},
+            },
+        )
+        result = StructuredLog.load(log).flat_df()
+        assert "details" not in result.columns
+        assert "slo_violation" in result.columns
+        assert result.iloc[0]["slo_violation"] == pytest.approx(0.25)
+
+    def test_coerces_numeric_details_fields(self):
+        log = _make_log_with_details(
+            {
+                "event_type": "query_execution_finish",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "details": {"latency_s": "12.5"},
+            },
+        )
+        result = StructuredLog.load(log).flat_df(coerce_numerics=True)
+        assert pd.api.types.is_numeric_dtype(result["latency_s"])
+        assert result.iloc[0]["latency_s"] == pytest.approx(12.5)
+
+    def test_does_not_coerce_mixed_string_field(self):
+        log = _make_log_with_details(
+            {
+                "event_type": "spin_up_requested",
+                "query_id": None,
+                "rel_time_s": 0.0,
+                "details": {"reason": "initial"},
+            },
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "details": {"reason": "overload"},
+            },
+        )
+        result = StructuredLog.load(log).flat_df(coerce_numerics=True)
+        # "reason" has string values; should stay as object dtype
+        assert result["reason"].dtype == object
+
+    def test_drops_fwd_queries_by_default(self):
+        log = _make_log_with_details(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 1.0, "details": {}},
+            {"event_type": "arrival", "query_id": "fwd_q1", "rel_time_s": 2.0, "details": {}},
+            {"event_type": "arrival", "query_id": "fwd_q2", "rel_time_s": 3.0, "details": {}},
+        )
+        result = StructuredLog.load(log).flat_df()
+        assert len(result) == 1
+        assert result.iloc[0]["query_id"] == "q0"
+
+    def test_keeps_fwd_queries_when_disabled(self):
+        log = _make_log_with_details(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 1.0, "details": {}},
+            {"event_type": "arrival", "query_id": "fwd_q1", "rel_time_s": 2.0, "details": {}},
+        )
+        result = StructuredLog.load(log).flat_df(drop_fwd_queries=False)
+        assert len(result) == 2
+
+    def test_no_details_column_returns_base(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 1.0},
+        )
+        result = StructuredLog.load(log).flat_df()
+        assert "details" not in result.columns
+        assert "event_type" in result.columns
+
+    def test_resets_index(self):
+        log = _make_log_with_details(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0, "details": {}},
+            {"event_type": "arrival", "query_id": "fwd_q1", "rel_time_s": 1.0, "details": {}},
+            {"event_type": "arrival", "query_id": "q2", "rel_time_s": 2.0, "details": {}},
+        )
+        result = StructuredLog.load(log).flat_df()
+        assert list(result.index) == list(range(len(result)))
+
+
+# ---------------------------------------------------------------------------
+# StructuredLog.query_slo_outcomes
+# ---------------------------------------------------------------------------
+
+
+class _FakeSloResolver:
+    """Minimal stand-in for SloResolver used in tests."""
+
+    def __init__(self, mapping: dict[str, float], default: float = 10.0):
+        self._mapping = mapping
+        self._default = default
+
+    def resolve(self, qid) -> float:
+        if qid is None:
+            return self._default
+        return self._mapping.get(str(qid), self._default)
+
+
+class TestQuerySloOutcomes:
+    def _make_slog(self, arrival: float, completion: float, qid: str = "q0", qtid: str = "t1"):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": qid, "rel_time_s": arrival, "query_text_id": qtid},
+            {"event_type": "completion", "query_id": qid, "rel_time_s": completion, "query_text_id": qtid},
+        )
+        return StructuredLog.load(log)
+
+    def test_columns_present(self):
+        slog = self._make_slog(0.0, 5.0)
+        resolver = _FakeSloResolver({"t1": 10.0})
+        result = slog.query_slo_outcomes(resolver)
+        assert set(result.columns) >= {
+            "query_id", "latency_s", "slo_s", "slo_violated",
+            "slo_overshoot_s", "relative_violation",
+        }
+
+    def test_no_violation(self):
+        slog = self._make_slog(0.0, 5.0)  # latency = 5s
+        resolver = _FakeSloResolver({"t1": 10.0})  # SLO = 10s
+        result = slog.query_slo_outcomes(resolver)
+        row = result.iloc[0]
+        assert row["slo_s"] == pytest.approx(10.0)
+        assert row["slo_violated"] == 0
+        assert row["slo_overshoot_s"] == pytest.approx(0.0)
+        assert row["relative_violation"] == pytest.approx(0.0)
+
+    def test_violation(self):
+        slog = self._make_slog(0.0, 15.0)  # latency = 15s
+        resolver = _FakeSloResolver({"t1": 10.0})  # SLO = 10s
+        result = slog.query_slo_outcomes(resolver)
+        row = result.iloc[0]
+        assert row["slo_violated"] == 1
+        assert row["slo_overshoot_s"] == pytest.approx(5.0)
+        assert row["relative_violation"] == pytest.approx(0.5)
+
+    def test_exact_slo_boundary(self):
+        slog = self._make_slog(0.0, 10.0)  # latency == SLO exactly
+        resolver = _FakeSloResolver({"t1": 10.0})
+        result = slog.query_slo_outcomes(resolver)
+        assert result.iloc[0]["slo_violated"] == 0
+        assert result.iloc[0]["slo_overshoot_s"] == pytest.approx(0.0)
+
+    def test_per_template_slo(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0, "query_text_id": "fast"},
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 3.0, "query_text_id": "fast"},
+            {"event_type": "arrival", "query_id": "q1", "rel_time_s": 0.0, "query_text_id": "slow"},
+            {"event_type": "completion", "query_id": "q1", "rel_time_s": 3.0, "query_text_id": "slow"},
+        )
+        resolver = _FakeSloResolver({"fast": 2.0, "slow": 5.0})
+        result = StructuredLog.load(log).query_slo_outcomes(resolver).set_index("query_id")
+        assert result.loc["q0", "slo_violated"] == 1  # 3s > 2s
+        assert result.loc["q1", "slo_violated"] == 0  # 3s < 5s
+
+    def test_empty_log_returns_correct_columns(self):
+        log = _make_log()
+        resolver = _FakeSloResolver({})
+        result = StructuredLog.load(log).query_slo_outcomes(resolver)
+        assert len(result) == 0
+        assert set(result.columns) >= {
+            "slo_s", "slo_violated", "slo_overshoot_s", "relative_violation",
+        }
+
+    def test_zero_slo_does_not_raise(self):
+        slog = self._make_slog(0.0, 5.0)
+        # slo_s = 0 would cause divide-by-zero; should produce NaN, not raise.
+        resolver = _FakeSloResolver({"t1": 0.0})
+        result = slog.query_slo_outcomes(resolver)
+        assert pd.isna(result.iloc[0]["relative_violation"])
+
+
+# ---------------------------------------------------------------------------
+# StructuredLog.logos_df
+# ---------------------------------------------------------------------------
+
+
+class TestLogosDf:
+    def _make_full_slog(self):
+        """Log with arrival, query_execution_finish, query_routed, latency_update, completion."""
+        log = _make_log_with_details(
+            {
+                "event_type": "arrival",
+                "query_id": "q0",
+                "rel_time_s": 0.0,
+                "query_text_id": "t1",
+                "details": {},
+            },
+            {
+                "event_type": "query_routed",
+                "query_id": "q0",
+                "rel_time_s": 0.1,
+                "query_text_id": "t1",
+                "details": {"latency_s": "8.0"},
+            },
+            {
+                "event_type": "latency_update",
+                "query_id": "q0",
+                "rel_time_s": 0.5,
+                "query_text_id": "t1",
+                "details": {"latency_s": "9.0", "old_latency_s": "8.0"},
+            },
+            {
+                "event_type": "query_execution_finish",
+                "query_id": "q0",
+                "rel_time_s": 10.0,
+                "query_text_id": "t1",
+                "details": {"latency_s": "10.0"},
+            },
+            {
+                "event_type": "completion",
+                "query_id": "q0",
+                "rel_time_s": 10.0,
+                "query_text_id": "t1",
+                "details": {"success": True},
+            },
+            # Non-query row (no query_id)
+            {
+                "event_type": "cluster_ready",
+                "query_id": None,
+                "rel_time_s": 0.05,
+                "query_text_id": None,
+                "details": {},
+            },
+        )
+        return StructuredLog.load(log)
+
+    def test_details_expanded(self):
+        slog = self._make_full_slog()
+        result = slog.logos_df()
+        assert "details" not in result.columns
+        assert "latency_s" in result.columns
+
+    def test_without_resolver_no_slo_columns(self):
+        slog = self._make_full_slog()
+        result = slog.logos_df(slo_resolver=None)
+        assert "slo_violated" not in result.columns
+        assert "slo_s" not in result.columns
+
+    def test_slo_columns_broadcast_to_all_query_rows(self):
+        slog = self._make_full_slog()
+        resolver = _FakeSloResolver({"t1": 15.0})  # latency=10s < 15s → no violation
+        result = slog.logos_df(slo_resolver=resolver)
+        query_rows = result[result["query_id"] == "q0"]
+        assert query_rows["slo_violated"].dropna().unique().tolist() == [0]
+        assert (query_rows["slo_s"].dropna() == 15.0).all()
+
+    def test_non_query_rows_have_nan_slo(self):
+        slog = self._make_full_slog()
+        resolver = _FakeSloResolver({"t1": 15.0})
+        result = slog.logos_df(slo_resolver=resolver)
+        non_query = result[result["query_id"].isna()]
+        assert non_query["slo_violated"].isna().all()
+
+    def test_actual_execution_latency_only_on_execution_rows(self):
+        slog = self._make_full_slog()
+        result = slog.logos_df()
+        exe_rows = result[result["event_type"] == "query_execution_finish"]
+        non_exe_rows = result[result["event_type"] != "query_execution_finish"]
+        assert exe_rows["actual_execution_latency_s"].notna().all()
+        assert non_exe_rows["actual_execution_latency_s"].isna().all()
+
+    def test_predicted_latency_only_on_routing_rows(self):
+        slog = self._make_full_slog()
+        result = slog.logos_df()
+        routing_types = {"query_routed", "latency_update"}
+        routing_rows = result[result["event_type"].isin(routing_types)]
+        other_rows = result[~result["event_type"].isin(routing_types)]
+        assert routing_rows["predicted_latency_s"].notna().all()
+        assert other_rows["predicted_latency_s"].isna().all()
+
+    def test_fwd_queries_excluded_by_default(self):
+        log = _make_log_with_details(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0, "details": {}},
+            {"event_type": "arrival", "query_id": "fwd_sim_q1", "rel_time_s": 1.0, "details": {}},
+        )
+        result = StructuredLog.load(log).logos_df()
+        assert "fwd_sim_q1" not in result["query_id"].astype(str).values
+
+    def test_violation_broadcast_correctly(self):
+        slog = self._make_full_slog()
+        resolver = _FakeSloResolver({"t1": 5.0})  # latency=10s > 5s → violated
+        result = slog.logos_df(slo_resolver=resolver)
+        query_rows = result[result["query_id"] == "q0"]
+        assert (query_rows["slo_violated"].dropna() == 1).all()
+        assert (query_rows["slo_overshoot_s"].dropna() == 5.0).all()
