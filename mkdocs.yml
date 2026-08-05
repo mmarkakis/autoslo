@@ -69,119 +69,122 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Workload Definition:
-    - "Query": reference/autoslo/workload_definition/query.md
-    - "Workload": reference/autoslo/workload_definition/workload.md
-    - "Schema": reference/autoslo/workload_definition/schema.md
-    - "Query Plan Registry": reference/autoslo/workload_definition/query_plan_registry.md
-    - "Query Text Registry": reference/autoslo/workload_definition/query_text_registry.md
-    - "Poisson Workload Creator": reference/autoslo/workload_definition/poisson_workload_creator.md
-    - "Redset Workload Generator": reference/autoslo/workload_definition/generate_redset_workload.md
-    - "Redbench Converter": reference/autoslo/workload_definition/redbench_to_executable.md
-  - Workload Execution:
-    - "Workload Runner": reference/autoslo/workload_execution/workload_runner.md
-    - "Workload Simulator": reference/autoslo/workload_execution/workload_simulator.md
-    - "Execution Result": reference/autoslo/workload_execution/execution_result.md
-    - "Aggregated Results": reference/autoslo/workload_execution/aggregated_execution_results.md
-    - "Trace": reference/autoslo/workload_execution/trace.md
-    - "Run Stats Collector": reference/autoslo/workload_execution/run_stats_collector.md
-    - "Simulator Event": reference/autoslo/workload_execution/simulator_event.md
-    - "Connection Utils": reference/autoslo/workload_execution/conn_utils.md
-  - SLO:
-    - "SLO Resolver": reference/autoslo/slo/slo_resolver.md
-    - "SLO Metric": reference/autoslo/slo/slo_metric.md
-    - "SLO Objective": reference/autoslo/slo/slo_objective.md
-    - "SLO Table": reference/autoslo/slo/slo_table.md
-  - Clusters:
-    - "Cluster": reference/autoslo/clusters/cluster.md
-    - "Autoscaler": reference/autoslo/clusters/autoscaler.md
-    - "Autoscaling Policy": reference/autoslo/clusters/autoscaling_policy.md
-    - "Autoscaling Trigger Policy": reference/autoslo/clusters/autoscaling_trigger_policy.md
-    - "Managed Cluster Pool": reference/autoslo/clusters/managed_cluster_pool.md
-    - "Capacity Checkpoint": reference/autoslo/clusters/capacity_checkpoint.md
-    - "Spin-Up Budget": reference/autoslo/clusters/spin_up_budget.md
-    - "Scheduled Spin-Up": reference/autoslo/clusters/scheduled_spinup.md
-    - "Billing": reference/autoslo/clusters/billing.md
-    - "Cluster Provisioner": reference/autoslo/clusters/cluster_provisioner.md
-    - "Redshift Provisioner": reference/autoslo/clusters/redshift_provisioner.md
-    - "Redshift Run Stats": reference/autoslo/clusters/redshift_run_stats_collector.md
-    - "Cluster Connection Info": reference/autoslo/clusters/cluster_conn_info.md
-    - "Actions": reference/autoslo/clusters/actions.md
-  - Routing:
-    - "Query Router": reference/autoslo/routing/query_router.md
-    - "Router Policy": reference/autoslo/routing/query_router_policy.md
-    - "Wrapper": reference/autoslo/routing/wrapper.md
-  - Tuner:
-    - "Policy Tuner": reference/autoslo/tuner/policy_tuner.md
-    - "Spinup Optimizer": reference/autoslo/tuner/spinup_optimizer.md
-    - "Scenario Evaluator": reference/autoslo/tuner/scenario_evaluator.md
-    - "Param Sweep": reference/autoslo/tuner/param_sweep.md
-    - "Reservoir": reference/autoslo/tuner/reservoir.md
-    - "Parallelism": reference/autoslo/tuner/parallelism.md
-    - "Tuner Console": reference/autoslo/tuner/tuner_console.md
-    - "Tuner Timer": reference/autoslo/tuner/policy_tuner_timer.md
-  - Models:
-    - "ICONQ Model": reference/autoslo/models/iconq_model.md
-    - "ICONQ Model Config": reference/autoslo/models/iconq_model_config.md
-    - "Cache Model": reference/autoslo/models/cache_model.md
-    - "Stage Model": reference/autoslo/models/stage_model.md
-    - "XGBoost Model": reference/autoslo/models/xgboost_model.md
-    - "Model Prediction": reference/autoslo/models/model_prediction.md
-  - Neural Networks:
-    - "Runtime Net": reference/autoslo/nn/runtime_net.md
-    - "ICONQ Runtime Net": reference/autoslo/nn/iconq_runtime_net.md
-    - "Bayesian Linear": reference/autoslo/nn/bayesian_linear.md
-    - "Bayesian MLP": reference/autoslo/nn/bayesian_mlp.md
-    - "Bayesian LSTM Cell": reference/autoslo/nn/bayesian_lstm_cell.md
-    - "Bayesian Pinch LSTM": reference/autoslo/nn/bayesian_pinch_lstm.md
-    - "Concurrent Query Dataset": reference/autoslo/nn/concurrent_query_dataset.md
-    - "Loss Functions": reference/autoslo/nn/loss_functions.md
-    - "LSTM State": reference/autoslo/nn/lstm_state.md
-  - Model Training:
-    - "Train": reference/autoslo/model_training/train.md
-    - "Collect Training Data": reference/autoslo/model_training/collect_model_training_data.md
-    - "Training Checkpoint": reference/autoslo/model_training/iconq_model_training_checkpoint.md
-  - Featurization:
-    - "ICONQ Query Featurizer": reference/autoslo/featurization/iconq_query_featurizer.md
-    - "ICONQ Interaction Featurizer": reference/autoslo/featurization/iconq_interaction_featurizer.md
-    - "DB Stats Collector": reference/autoslo/featurization/db_stats_collector.md
-  - Forecasting:
-    - "Forecaster": reference/autoslo/forecasting/forecaster.md
-    - "Forecast Policy": reference/autoslo/forecasting/forecast_policy.md
-  - Query Plans:
-    - "Plan Parser": reference/autoslo/query_plans/parse_plan.md
-    - "Plan Operator": reference/autoslo/query_plans/plan_operator.md
-  - Config:
-    - "Execution Config": reference/autoslo/config/execution_config.md
-    - "Component Configs": reference/autoslo/config/component_configs.md
-    - "Config Utils": reference/autoslo/config/utils.md
-  - Filesystem:
-    - "Path Utils": reference/autoslo/filesystem/path_utils.md
-    - "Config Resolver": reference/autoslo/filesystem/config_resolver.md
-    - "Structured Log": reference/autoslo/filesystem/structured_log.md
-    - "Structured Events": reference/autoslo/filesystem/structured_events.md
-    - "YAML Helpers": reference/autoslo/filesystem/yaml_helpers.md
-  - Visualizations:
-    - "Colors": reference/autoslo/visualizations/colors.md
-    - "Bar Charts": reference/autoslo/visualizations/bar_charts.md
-    - "Scatter Plots": reference/autoslo/visualizations/scatter_plots.md
-    - "Spinup Timelines": reference/autoslo/visualizations/spinup_timelines.md
-    - "Prediction Error CDF": reference/autoslo/visualizations/prediction_error_cdf.md
-    - "Prediction Error Scatter": reference/autoslo/visualizations/prediction_error_scatter.md
-    - "ICONQ Model Comparison": reference/autoslo/visualizations/iconq_model_comparison.md
-    - "ICONQ Model Performance": reference/autoslo/visualizations/iconq_model_performance.md
-    - "Log Viewer": reference/autoslo/visualizations/render_log_viewer.md
-  - Microbenchmarks:
-    - "Microbenchmark Runner": reference/autoslo/microbenchmarks/microbenchmark_runner.md
-    - "Routing Efficiency": reference/autoslo/microbenchmarks/routing_efficiency.md
-    - "Autoscaling Efficiency": reference/autoslo/microbenchmarks/autoscaling_efficiency.md
-    - "Scenario Evaluator Efficiency": reference/autoslo/microbenchmarks/scenario_evaluator_efficiency.md
-    - "Spinup Optimizer Efficiency": reference/autoslo/microbenchmarks/spinup_optimizer_efficiency.md
-  - Entry Points:
-    - "Execute": reference/autoslo/entry_points/execute.md
-    - "Tune": reference/autoslo/entry_points/tune.md
-    - "Plot": reference/autoslo/entry_points/plot.md
-    - "Microbench": reference/autoslo/entry_points/microbench.md
+  - Workloads & SLOs:
+    - Workload Definition:
+      - "Query": reference/autoslo/workload_definition/query.md
+      - "Workload": reference/autoslo/workload_definition/workload.md
+      - "Schema": reference/autoslo/workload_definition/schema.md
+      - "Query Plan Registry": reference/autoslo/workload_definition/query_plan_registry.md
+      - "Query Text Registry": reference/autoslo/workload_definition/query_text_registry.md
+      - "Poisson Workload Creator": reference/autoslo/workload_definition/poisson_workload_creator.md
+      - "Redset Workload Generator": reference/autoslo/workload_definition/generate_redset_workload.md
+      - "Redbench Converter": reference/autoslo/workload_definition/redbench_to_executable.md
+    - Workload Execution:
+      - "Workload Runner": reference/autoslo/workload_execution/workload_runner.md
+      - "Workload Simulator": reference/autoslo/workload_execution/workload_simulator.md
+      - "Execution Result": reference/autoslo/workload_execution/execution_result.md
+      - "Aggregated Results": reference/autoslo/workload_execution/aggregated_execution_results.md
+      - "Trace": reference/autoslo/workload_execution/trace.md
+      - "Run Stats Collector": reference/autoslo/workload_execution/run_stats_collector.md
+      - "Simulator Event": reference/autoslo/workload_execution/simulator_event.md
+      - "Connection Utils": reference/autoslo/workload_execution/conn_utils.md
+    - Query Plans:
+      - "Plan Parser": reference/autoslo/query_plans/parse_plan.md
+      - "Plan Operator": reference/autoslo/query_plans/plan_operator.md
+    - SLO:
+      - "SLO Resolver": reference/autoslo/slo/slo_resolver.md
+      - "SLO Metric": reference/autoslo/slo/slo_metric.md
+      - "SLO Objective": reference/autoslo/slo/slo_objective.md
+      - "SLO Table": reference/autoslo/slo/slo_table.md
+  - Models & Prediction:
+    - Featurization:
+      - "ICONQ Query Featurizer": reference/autoslo/featurization/iconq_query_featurizer.md
+      - "ICONQ Interaction Featurizer": reference/autoslo/featurization/iconq_interaction_featurizer.md
+      - "DB Stats Collector": reference/autoslo/featurization/db_stats_collector.md
+    - Models:
+      - "ICONQ Model": reference/autoslo/models/iconq_model.md
+      - "ICONQ Model Config": reference/autoslo/models/iconq_model_config.md
+      - "Cache Model": reference/autoslo/models/cache_model.md
+      - "Stage Model": reference/autoslo/models/stage_model.md
+      - "XGBoost Model": reference/autoslo/models/xgboost_model.md
+      - "Model Prediction": reference/autoslo/models/model_prediction.md
+    - Neural Networks:
+      - "Runtime Net": reference/autoslo/nn/runtime_net.md
+      - "ICONQ Runtime Net": reference/autoslo/nn/iconq_runtime_net.md
+      - "Bayesian Linear": reference/autoslo/nn/bayesian_linear.md
+      - "Bayesian MLP": reference/autoslo/nn/bayesian_mlp.md
+      - "Bayesian LSTM Cell": reference/autoslo/nn/bayesian_lstm_cell.md
+      - "Bayesian Pinch LSTM": reference/autoslo/nn/bayesian_pinch_lstm.md
+      - "Concurrent Query Dataset": reference/autoslo/nn/concurrent_query_dataset.md
+      - "Loss Functions": reference/autoslo/nn/loss_functions.md
+      - "LSTM State": reference/autoslo/nn/lstm_state.md
+    - Model Training:
+      - "Train": reference/autoslo/model_training/train.md
+      - "Collect Training Data": reference/autoslo/model_training/collect_model_training_data.md
+      - "Training Checkpoint": reference/autoslo/model_training/iconq_model_training_checkpoint.md
+    - Forecasting:
+      - "Forecaster": reference/autoslo/forecasting/forecaster.md
+      - "Forecast Policy": reference/autoslo/forecasting/forecast_policy.md
+  - System & Tooling:
+    - Clusters:
+      - "Cluster": reference/autoslo/clusters/cluster.md
+      - "Autoscaler": reference/autoslo/clusters/autoscaler.md
+      - "Autoscaling Policy": reference/autoslo/clusters/autoscaling_policy.md
+      - "Autoscaling Trigger Policy": reference/autoslo/clusters/autoscaling_trigger_policy.md
+      - "Managed Cluster Pool": reference/autoslo/clusters/managed_cluster_pool.md
+      - "Capacity Checkpoint": reference/autoslo/clusters/capacity_checkpoint.md
+      - "Spin-Up Budget": reference/autoslo/clusters/spin_up_budget.md
+      - "Scheduled Spin-Up": reference/autoslo/clusters/scheduled_spinup.md
+      - "Billing": reference/autoslo/clusters/billing.md
+      - "Cluster Provisioner": reference/autoslo/clusters/cluster_provisioner.md
+      - "Redshift Provisioner": reference/autoslo/clusters/redshift_provisioner.md
+      - "Redshift Run Stats": reference/autoslo/clusters/redshift_run_stats_collector.md
+      - "Cluster Connection Info": reference/autoslo/clusters/cluster_conn_info.md
+      - "Actions": reference/autoslo/clusters/actions.md
+    - Routing:
+      - "Query Router": reference/autoslo/routing/query_router.md
+      - "Router Policy": reference/autoslo/routing/query_router_policy.md
+      - "Wrapper": reference/autoslo/routing/wrapper.md
+    - Tuner:
+      - "Policy Tuner": reference/autoslo/tuner/policy_tuner.md
+      - "Spinup Optimizer": reference/autoslo/tuner/spinup_optimizer.md
+      - "Scenario Evaluator": reference/autoslo/tuner/scenario_evaluator.md
+      - "Param Sweep": reference/autoslo/tuner/param_sweep.md
+      - "Reservoir": reference/autoslo/tuner/reservoir.md
+      - "Parallelism": reference/autoslo/tuner/parallelism.md
+      - "Tuner Console": reference/autoslo/tuner/tuner_console.md
+      - "Tuner Timer": reference/autoslo/tuner/policy_tuner_timer.md
+    - Config:
+      - "Execution Config": reference/autoslo/config/execution_config.md
+      - "Component Configs": reference/autoslo/config/component_configs.md
+      - "Config Utils": reference/autoslo/config/utils.md
+    - Filesystem:
+      - "Path Utils": reference/autoslo/filesystem/path_utils.md
+      - "Config Resolver": reference/autoslo/filesystem/config_resolver.md
+      - "Structured Log": reference/autoslo/filesystem/structured_log.md
+      - "Structured Events": reference/autoslo/filesystem/structured_events.md
+      - "YAML Helpers": reference/autoslo/filesystem/yaml_helpers.md
+    - Entry Points:
+      - "Execute": reference/autoslo/entry_points/execute.md
+      - "Tune": reference/autoslo/entry_points/tune.md
+      - "Plot": reference/autoslo/entry_points/plot.md
+      - "Microbench": reference/autoslo/entry_points/microbench.md
+    - Visualizations:
+      - "Colors": reference/autoslo/visualizations/colors.md
+      - "Bar Charts": reference/autoslo/visualizations/bar_charts.md
+      - "Scatter Plots": reference/autoslo/visualizations/scatter_plots.md
+      - "Spinup Timelines": reference/autoslo/visualizations/spinup_timelines.md
+      - "Prediction Error CDF": reference/autoslo/visualizations/prediction_error_cdf.md
+      - "Prediction Error Scatter": reference/autoslo/visualizations/prediction_error_scatter.md
+      - "ICONQ Model Comparison": reference/autoslo/visualizations/iconq_model_comparison.md
+      - "ICONQ Model Performance": reference/autoslo/visualizations/iconq_model_performance.md
+      - "Log Viewer": reference/autoslo/visualizations/render_log_viewer.md
+    - Microbenchmarks:
+      - "Microbenchmark Runner": reference/autoslo/microbenchmarks/microbenchmark_runner.md
+      - "Routing Efficiency": reference/autoslo/microbenchmarks/routing_efficiency.md
+      - "Autoscaling Efficiency": reference/autoslo/microbenchmarks/autoscaling_efficiency.md
+      - "Scenario Evaluator Efficiency": reference/autoslo/microbenchmarks/scenario_evaluator_efficiency.md
+      - "Spinup Optimizer Efficiency": reference/autoslo/microbenchmarks/spinup_optimizer_efficiency.md
 markdown_extensions:
     - markdown_include.include:
         base_path: .
