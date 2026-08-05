@@ -172,6 +172,22 @@ class IconqQueryFeaturizer:
         """
         return self._n
 
+    @functools.cached_property
+    def feature_names(self) -> list[str]:
+        """
+        Returns the names of the features in the featurization vector.
+
+        Returns:
+            A list of feature names.
+        """
+        feature_names = []
+        for op in self._top_operators:
+            feature_names.append(f"{op}#count")
+            feature_names.append(f"{op}#cardinality")
+        for table_name, _ in self._top_tables:
+            feature_names.append(f"{table_name}#cardinality")
+        return feature_names
+
     def _find_top_operators(self, run_ids: list[str]) -> list[str]:
         """
         Finds the top M operators across the given runs.
@@ -329,6 +345,22 @@ class IconqQueryFeaturizer:
                 dtype=np.float32,
             )
         return self._np_featurization_cache[query_text_id]
+
+    def featurize_from_query_text_id_as_dict(
+        self, query_text_id: QueryTextId
+    ) -> dict[str, float]:
+        """
+        Like :meth:`featurize_from_query_text_id`, but returns the featurization
+        as a dictionary mapping feature names to their values.
+
+        Parameters:
+            query_text_id: The query text ID identifying the query to convert.
+
+        Returns:
+            A dictionary mapping feature names to their values.
+        """
+        features = self.featurize_from_query_text_id(query_text_id)
+        return dict(zip(self.feature_names, features))
 
     def table_vector_for(self, query_text_id: QueryTextId) -> np.ndarray:
         """Return the table-access slice of the featurization for *query_text_id*.
