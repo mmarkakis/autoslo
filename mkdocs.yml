@@ -52,9 +52,6 @@ plugins:
 - mkdocstrings:
     handlers:
       python:
-        setup_commands:
-            - import sys
-            - sys.path.append("src")
         paths: [src]
         options:
             docstring_style: google
