@@ -5,6 +5,7 @@
 .vscode
 .ui-meta/
 .planning/
+site/
 
 scratch.ipynb
 config/conn.yml
