@@ -39,6 +39,7 @@ import pandas as pd
 import autoslo.filesystem.path_utils as pu
 from autoslo.clusters.cluster import Cluster
 from autoslo.filesystem.structured_events import BaseStructuredEvent, EventType
+from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.slo.slo_resolver import SloResolver
 
 # ---------------------------------------------------------------------------
@@ -345,6 +346,7 @@ class StructuredLog:
     def __init__(self, parquet_path: Path) -> None:
         self._parquet_path = parquet_path
         self._df: pd.DataFrame | None = None
+        self._execution_config: dict[str, Any] | None = None
 
     @classmethod
     def load(cls, source: str | Path | pd.DataFrame) -> StructuredLog:
@@ -352,7 +354,7 @@ class StructuredLog:
 
         Parameters
         ----------
-        source :
+        source : str | Path | pd.DataFrame
             One of:
 
             * A ``pd.DataFrame`` — used directly as the in-memory log.
@@ -376,8 +378,25 @@ class StructuredLog:
 
         if not path.exists():
             raise FileNotFoundError(f"No structured log found at {path}")
+        instance = cls(path)
 
-        return cls(path)
+        execution_config_path = path.parent / "execution_config.yml"
+        if not execution_config_path.exists():
+            logging.warning(
+                f"Execution config file not found at {execution_config_path}"
+            )
+        else:
+            logging.info(
+                f"Loading execution config from {execution_config_path}"
+            )
+            instance._execution_config = load_yaml(execution_config_path)
+
+        return instance
+
+    @property
+    def execution_config(self) -> dict | None:
+        """Execution config loaded alongside this log, or None."""
+        return self._execution_config
 
     @property
     def path(self) -> Path | None:
@@ -657,8 +676,11 @@ class StructuredLog:
         if routing.empty:
             return pd.DataFrame(
                 columns=[
-                    "query_id", "cluster_name", "rpu",
-                    "latency_s_for_routing", "slo_violation_at_routing",
+                    "query_id",
+                    "cluster_name",
+                    "rpu",
+                    "latency_s_for_routing",
+                    "slo_violation_at_routing",
                 ]
             )
 
@@ -673,6 +695,7 @@ class StructuredLog:
         routing["rpu"] = routing["cluster_name"].apply(_safe_rpu)
 
         if "details" in routing.columns:
+
             def _parse_detail(x: Any) -> dict:
                 if isinstance(x, dict):
                     return x
@@ -697,8 +720,11 @@ class StructuredLog:
 
         return routing[
             [
-                "query_id", "cluster_name", "rpu",
-                "latency_s_for_routing", "slo_violation_at_routing",
+                "query_id",
+                "cluster_name",
+                "rpu",
+                "latency_s_for_routing",
+                "slo_violation_at_routing",
             ]
         ].reset_index(drop=True)
 
@@ -707,7 +733,8 @@ class StructuredLog:
         drop_fwd_queries: bool = True,
         coerce_numerics: bool = True,
     ) -> pd.DataFrame:
-        """Return the event table with ``details`` normalised into sibling columns.
+        """
+        Return the event table with ``details`` normalised into sibling columns.
 
         ``StructuredLog.df`` keeps ``details`` as parsed dicts for efficient
         downstream access; this method expands them into a flat table.
@@ -818,67 +845,4 @@ class StructuredLog:
 
         return result
 
-    def logos_df(
-        self,
-        slo_resolver: Optional[SloResolver] = None,
-        drop_fwd_queries: bool = True,
-    ) -> pd.DataFrame:
-        """Return a Logos-ready event-level DataFrame.
 
-        Calls :meth:`flat_df`, then — if *slo_resolver* is provided —
-        broadcasts per-query SLO outcomes onto every row for that
-        ``query_id``.  Also adds ``actual_execution_latency_s`` (from
-        ``query_execution_finish`` rows only) and ``predicted_latency_s``
-        (from ``query_routed`` / ``latency_update`` rows only), separating
-        the two semantically distinct uses of the ``latency_s`` details field.
-
-        Non-query rows (cluster lifecycle events, run start/finish) receive
-        NaN for the per-query outcome columns; Logos excludes them from the
-        prepared log because they have no ``query_id`` to group by.
-        """
-        df = self.flat_df(drop_fwd_queries=drop_fwd_queries)
-
-        if slo_resolver is not None:
-            outcomes = self.query_slo_outcomes(slo_resolver)
-            renamed = outcomes.rename(columns={"latency_s": "final_latency_s"})
-            outcome_cols = [
-                "final_latency_s",
-                "slo_s",
-                "slo_violated",
-                "slo_overshoot_s",
-                "relative_violation",
-            ]
-            mapping = renamed.set_index("query_id")
-            for col in outcome_cols:
-                df[col] = df["query_id"].map(mapping[col])
-
-        assignments = self.query_cluster_assignments()
-        if not assignments.empty:
-            asgn = assignments.set_index("query_id")
-            df["selected_cluster_name"] = df["query_id"].map(asgn["cluster_name"])
-            # cast to float so Logos treats it as numeric, not string
-            df["selected_rpu"] = pd.to_numeric(
-                df["query_id"].map(asgn["rpu"]), errors="coerce"
-            )
-            if slo_resolver is not None:
-                # prediction_error: signed difference between actual and routing-time predicted latency.
-                df["prediction_error"] = (
-                    df["final_latency_s"]
-                    - df["query_id"].map(asgn["latency_s_for_routing"])
-                )
-
-        if "latency_s" in df.columns:
-            df["actual_execution_latency_s"] = df["latency_s"].where(
-                df["event_type"] == EventType.QUERY_EXECUTION_FINISH.value
-            )
-            df["predicted_latency_s"] = df["latency_s"].where(
-                df["event_type"].isin(
-                    {
-                        EventType.QUERY_ROUTED.value,
-                        EventType.LATENCY_UPDATE.value,
-                    }
-                )
-            )
-            df = df.drop(columns=["latency_s"])
-
-        return df
