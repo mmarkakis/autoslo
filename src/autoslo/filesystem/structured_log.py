@@ -639,6 +639,69 @@ class StructuredLog:
         results_df["rpu"] = results_df["rpu"].astype(int)
         return results_df
 
+    def query_cluster_assignments(self) -> pd.DataFrame:
+        """Return the cluster each query was routed to, from ``routing`` events.
+
+        Columns: ``query_id``, ``cluster_name``, ``rpu``,
+        ``latency_s_for_routing``, ``slo_violation_at_routing``.
+        Only real queries are included (``fwd`` query IDs are excluded).
+        One row per query; if duplicate routing events exist, the last is kept.
+        """
+        df = self.df
+        routing = df[
+            (df["event_type"] == EventType.ROUTING.value)
+            & df["query_id"].notna()
+            & ~df["query_id"].astype(str).str.startswith("fwd", na=False)
+        ].copy()
+
+        if routing.empty:
+            return pd.DataFrame(
+                columns=[
+                    "query_id", "cluster_name", "rpu",
+                    "latency_s_for_routing", "slo_violation_at_routing",
+                ]
+            )
+
+        routing = routing.drop_duplicates(subset=["query_id"], keep="last")
+
+        def _safe_rpu(name: str) -> Optional[int]:
+            try:
+                return Cluster.rpu_for_cluster_name(name)
+            except (ValueError, AttributeError):
+                return None
+
+        routing["rpu"] = routing["cluster_name"].apply(_safe_rpu)
+
+        if "details" in routing.columns:
+            def _parse_detail(x: Any) -> dict:
+                if isinstance(x, dict):
+                    return x
+                if isinstance(x, str) and x:
+                    try:
+                        parsed = json.loads(x)
+                        return parsed if isinstance(parsed, dict) else {}
+                    except (TypeError, json.JSONDecodeError):
+                        return {}
+                return {}
+
+            details = routing["details"].apply(_parse_detail)
+            routing["latency_s_for_routing"] = details.apply(
+                lambda d: float(d.get("latency_s_for_routing", float("nan")))
+            )
+            routing["slo_violation_at_routing"] = details.apply(
+                lambda d: float(d.get("slo_violation", float("nan")))
+            )
+        else:
+            routing["latency_s_for_routing"] = float("nan")
+            routing["slo_violation_at_routing"] = float("nan")
+
+        return routing[
+            [
+                "query_id", "cluster_name", "rpu",
+                "latency_s_for_routing", "slo_violation_at_routing",
+            ]
+        ].reset_index(drop=True)
+
     def flat_df(
         self,
         drop_fwd_queries: bool = True,
@@ -788,6 +851,21 @@ class StructuredLog:
             mapping = renamed.set_index("query_id")
             for col in outcome_cols:
                 df[col] = df["query_id"].map(mapping[col])
+
+        assignments = self.query_cluster_assignments()
+        if not assignments.empty:
+            asgn = assignments.set_index("query_id")
+            df["selected_cluster_name"] = df["query_id"].map(asgn["cluster_name"])
+            # cast to float so Logos treats it as numeric, not string
+            df["selected_rpu"] = pd.to_numeric(
+                df["query_id"].map(asgn["rpu"]), errors="coerce"
+            )
+            if slo_resolver is not None:
+                # prediction_error: signed difference between actual and routing-time predicted latency.
+                df["prediction_error"] = (
+                    df["final_latency_s"]
+                    - df["query_id"].map(asgn["latency_s_for_routing"])
+                )
 
         if "latency_s" in df.columns:
             df["actual_execution_latency_s"] = df["latency_s"].where(

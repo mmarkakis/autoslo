@@ -769,7 +769,9 @@ class TestLogosDf:
         slog = self._make_full_slog()
         result = slog.logos_df()
         assert "details" not in result.columns
-        assert "latency_s" in result.columns
+        # latency_s is split into event-type-specific columns by logos_df
+        assert "actual_execution_latency_s" in result.columns
+        assert "predicted_latency_s" in result.columns
 
     def test_without_resolver_no_slo_columns(self):
         slog = self._make_full_slog()
@@ -824,3 +826,147 @@ class TestLogosDf:
         query_rows = result[result["query_id"] == "q0"]
         assert (query_rows["slo_violated"].dropna() == 1).all()
         assert (query_rows["slo_overshoot_s"].dropna() == 5.0).all()
+
+
+# ---------------------------------------------------------------------------
+# StructuredLog.query_cluster_assignments
+# ---------------------------------------------------------------------------
+
+
+def _make_routing_log(*rows: dict) -> pd.DataFrame:
+    """Build a log with routing events that have details as JSON strings."""
+    import json as _json
+
+    defaults = {"wall_clock_s": 0.0, "source": "QueryRouter", "query_text_id": "t1"}
+    records = []
+    for r in rows:
+        rec = {**defaults, **r}
+        if "details" in rec and isinstance(rec["details"], dict):
+            rec["details"] = _json.dumps(rec["details"])
+        records.append(rec)
+    return pd.DataFrame(records)
+
+
+class TestQueryClusterAssignments:
+    def test_basic(self):
+        log = _make_routing_log(
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "cluster_name": "autoslo-32-run1-0",
+                "details": {"latency_s_for_routing": 10.5, "slo_violation": 0.0, "cost": 0.0, "cache_risk": 0.0},
+            },
+        )
+        result = StructuredLog.load(log).query_cluster_assignments()
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["query_id"] == "q0"
+        assert row["cluster_name"] == "autoslo-32-run1-0"
+        assert row["rpu"] == 32
+        assert row["latency_s_for_routing"] == pytest.approx(10.5)
+        assert row["slo_violation_at_routing"] == pytest.approx(0.0)
+
+    def test_columns_present(self):
+        log = _make_routing_log(
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "cluster_name": "autoslo-16-run1-1",
+                "details": {"latency_s_for_routing": 5.0, "slo_violation": 0.25, "cost": 0.2, "cache_risk": 0.0},
+            },
+        )
+        result = StructuredLog.load(log).query_cluster_assignments()
+        assert set(result.columns) == {
+            "query_id", "cluster_name", "rpu",
+            "latency_s_for_routing", "slo_violation_at_routing",
+        }
+
+    def test_multiple_queries(self):
+        log = _make_routing_log(
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "cluster_name": "autoslo-32-run1-0",
+                "details": {"latency_s_for_routing": 10.0, "slo_violation": 0.0, "cost": 0.0, "cache_risk": 0.0},
+            },
+            {
+                "event_type": "routing",
+                "query_id": "q1",
+                "rel_time_s": 2.0,
+                "cluster_name": "autoslo-16-run1-1",
+                "details": {"latency_s_for_routing": 5.0, "slo_violation": 0.5, "cost": 0.2, "cache_risk": 0.0},
+            },
+        )
+        result = StructuredLog.load(log).query_cluster_assignments().set_index("query_id")
+        assert result.loc["q0", "rpu"] == 32
+        assert result.loc["q1", "rpu"] == 16
+        assert result.loc["q1", "slo_violation_at_routing"] == pytest.approx(0.5)
+
+    def test_fwd_queries_excluded(self):
+        log = _make_routing_log(
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "cluster_name": "autoslo-32-run1-0",
+                "details": {"latency_s_for_routing": 10.0, "slo_violation": 0.0, "cost": 0.0, "cache_risk": 0.0},
+            },
+            {
+                "event_type": "routing",
+                "query_id": "fwd_sim_q1",
+                "rel_time_s": 2.0,
+                "cluster_name": "autoslo-32-run1-0",
+                "details": {"latency_s_for_routing": 8.0, "slo_violation": 0.0, "cost": 0.0, "cache_risk": 0.0},
+            },
+        )
+        result = StructuredLog.load(log).query_cluster_assignments()
+        assert len(result) == 1
+        assert result.iloc[0]["query_id"] == "q0"
+
+    def test_no_routing_events_returns_empty(self):
+        log = _make_log(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0},
+        )
+        result = StructuredLog.load(log).query_cluster_assignments()
+        assert len(result) == 0
+        assert set(result.columns) == {
+            "query_id", "cluster_name", "rpu",
+            "latency_s_for_routing", "slo_violation_at_routing",
+        }
+
+    def test_unparseable_cluster_name_gives_none_rpu(self):
+        log = _make_routing_log(
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 1.0,
+                "cluster_name": "no-spinup-baseline",
+                "details": {"latency_s_for_routing": 10.0, "slo_violation": 0.0, "cost": 0.0, "cache_risk": 0.0},
+            },
+        )
+        result = StructuredLog.load(log).query_cluster_assignments()
+        assert result.iloc[0]["rpu"] is None
+
+    def test_logos_df_adds_cluster_columns(self):
+        log = _make_log_with_details(
+            {"event_type": "arrival", "query_id": "q0", "rel_time_s": 0.0, "query_text_id": "t1", "details": {}},
+            {
+                "event_type": "routing",
+                "query_id": "q0",
+                "rel_time_s": 0.1,
+                "cluster_name": "autoslo-32-run1-0",
+                "query_text_id": "t1",
+                "details": {"latency_s_for_routing": "10.0", "slo_violation": "0.0", "cost": "0.0", "cache_risk": "0.0"},
+            },
+            {"event_type": "completion", "query_id": "q0", "rel_time_s": 12.0, "query_text_id": "t1", "details": {"success": True}},
+        )
+        resolver = _FakeSloResolver({"t1": 15.0})
+        result = StructuredLog.load(log).logos_df(slo_resolver=resolver)
+        query_rows = result[result["query_id"] == "q0"]
+        assert (query_rows["selected_cluster_name"].dropna() == "autoslo-32-run1-0").all()
+        assert (query_rows["selected_rpu"].dropna() == 32).all()
+        # prediction_error = final_latency_s - latency_s_for_routing = 12 - 10 = 2
+        assert query_rows["prediction_error"].dropna().iloc[0] == pytest.approx(2.0)
