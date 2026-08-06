@@ -348,6 +348,22 @@ class StructuredLog:
         self._df: pd.DataFrame | None = None
         self._execution_config: dict[str, Any] | None = None
 
+    @staticmethod
+    def _unjson(raw: Any) -> dict:
+        """
+        Parse a JSON string into a dict, or return an empty dict on error.
+        """
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (TypeError, json.JSONDecodeError):
+                return {}
+        return {}
+
     @classmethod
     def load(cls, source: str | Path | pd.DataFrame) -> StructuredLog:
         """Load a consolidated structured log.
@@ -420,20 +436,7 @@ class StructuredLog:
                     f"required column(s): {missing}"
                 )
             if "details" in self._df.columns:
-                # Parse string into dict for easier downstream access.
-                def _parse_details(raw: Any) -> dict:
-                    if isinstance(raw, dict):
-                        return raw
-                    if isinstance(raw, str) and raw:
-                        try:
-                            parsed = json.loads(raw)
-                            if isinstance(parsed, dict):
-                                return parsed
-                        except (TypeError, json.JSONDecodeError):
-                            return {}
-                    return {}
-
-                self._df["details"] = self._df["details"].apply(_parse_details)
+                self._df["details"] = self._df["details"].apply(self._unjson)
         return self._df
 
     def query_latencies(self, *, drop_incomplete: bool = True) -> pd.DataFrame:
@@ -753,25 +756,11 @@ class StructuredLog:
         pre_expand_cols = set(base.columns) - {"details"}
 
         if "details" in base.columns:
-            # self.df parses details to dicts only during parquet lazy-load;
-            # when loaded directly from a DataFrame they may still be strings.
-            def _parse(x: Any) -> dict:
-                if isinstance(x, dict):
-                    return x
-                if isinstance(x, str) and x:
-                    try:
-                        parsed = json.loads(x)
-                        return parsed if isinstance(parsed, dict) else {}
-                    except (TypeError, json.JSONDecodeError):
-                        return {}
-                return {}
-
-            # Remember structural columns so coerce_numerics skips them.
-            expanded = pd.json_normalize(base["details"].apply(_parse).tolist())
+            expanded = pd.json_normalize(
+                base["details"].apply(self._unjson).tolist()
+            )
             expanded.index = base.index
             base = pd.concat([base.drop(columns="details"), expanded], axis=1)
-        else:
-            pre_expand_cols = set(base.columns)
 
         if drop_fwd_queries and "query_id" in base.columns:
             fwd_mask = (
