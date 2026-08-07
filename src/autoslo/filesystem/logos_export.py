@@ -14,6 +14,7 @@ from typing import Optional
 
 import pandas as pd
 
+from autoslo.config.component_configs import QueryRouterConfig
 from autoslo.filesystem.structured_events import EventType
 from autoslo.filesystem.structured_log import StructuredLog
 from autoslo.models.iconq_model import IconqModel
@@ -25,6 +26,7 @@ def logos_df(
     slo_resolver: Optional[SloResolver] = None,
     drop_fwd_queries: bool = True,
     include_named_query_features: bool = True,
+    include_overlap_counts: bool = True,
 ) -> pd.DataFrame:
     """
     Return a Logos-ready event-level DataFrame from *log*.
@@ -104,5 +106,11 @@ def logos_df(
                 left_on="query_text_id",
                 right_index=True,
             )
+
+    # Bring in overlap counts, if requested and available.
+    if include_overlap_counts and ("query_id" in df.columns):
+        overlap_counts = log.query_overlap_counts()
+        if not overlap_counts.empty:
+            df = df.merge(overlap_counts, how="left")
 
     return df

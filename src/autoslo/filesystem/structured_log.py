@@ -34,6 +34,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 
 import autoslo.filesystem.path_utils as pu
@@ -440,10 +441,11 @@ class StructuredLog:
         return self._df
 
     def query_latencies(self, *, drop_incomplete: bool = True) -> pd.DataFrame:
-        """Return per-query end-to-end latency (COMPLETION − ARRIVAL rel_time_s).
+        """
+        Return per-query end-to-end latency (COMPLETION − ARRIVAL rel_time_s).
 
         Columns: ``query_id``, ``query_text_id``, ``arrival_s``,
-        ``completion_s``, ``latency_s``.
+        ``completion_s``, ``latency_s``, ``latency_prediction_at_arrival_s``.
         Rows where either event is missing are dropped when
         *drop_incomplete* is ``True`` (default) or kept as ``NaN`` when
         ``False``.
@@ -463,6 +465,7 @@ class StructuredLog:
                     "arrival_s",
                     "completion_s",
                     "latency_s",
+                    "latency_prediction_at_arrival_s",
                 ]
             )
 
@@ -480,6 +483,7 @@ class StructuredLog:
                     "arrival_s",
                     "completion_s",
                     "latency_s",
+                    "latency_prediction_at_arrival_s",
                 ]
             )
 
@@ -521,6 +525,21 @@ class StructuredLog:
                 ),
             }
         )
+
+        # Add in the predicted latencies at arrival time, from the query_routed
+        # events.
+        routed = self.df[self.df["event_type"] == EventType.QUERY_ROUTED.value]
+        if not routed.empty and "details" in routed.columns:
+            routed = routed[["query_id", "details"]].copy()
+            routed["latency_prediction_at_arrival_s"] = routed["details"].apply(
+                lambda d: (
+                    float(d["latency_s"])
+                    if (isinstance(d, dict) and "latency_s" in d)
+                    else None
+                )
+            )
+            routed = routed.drop(columns=["details"])
+            result = result.merge(routed, how="left")
 
         if drop_incomplete:
             result = result.dropna(
@@ -662,12 +681,12 @@ class StructuredLog:
         return results_df
 
     def query_cluster_assignments(self) -> pd.DataFrame:
-        """Return the cluster each query was routed to, from ``routing`` events.
+        """
+        Return the cluster each query was routed to, from ``routing`` events.
 
-        Columns: ``query_id``, ``cluster_name``, ``rpu``,
-        ``latency_s_for_routing``, ``slo_violation_at_routing``.
+        Columns: ``query_id``, ``cluster_name``, ``rpu``.
         Only real queries are included (``fwd`` query IDs are excluded).
-        One row per query; if duplicate routing events exist, the last is kept.
+        One row per query; if duplicate routing events exist, raise.
         """
         df = self.df
         routing = df[
@@ -675,61 +694,24 @@ class StructuredLog:
             & df["query_id"].notna()
             & ~df["query_id"].astype(str).str.startswith("fwd", na=False)
         ].copy()
+        routing["rpu"] = routing["cluster_name"].apply(
+            Cluster.rpu_for_cluster_name
+        )
 
         if routing.empty:
-            return pd.DataFrame(
-                columns=[
-                    "query_id",
-                    "cluster_name",
-                    "rpu",
-                    "latency_s_for_routing",
-                    "slo_violation_at_routing",
-                ]
+            return pd.DataFrame(columns=["query_id", "cluster_name", "rpu"])
+
+        # Ensure exactly one event per query_id; if duplicates exist, raise.
+        if routing["query_id"].duplicated().any():
+            dupes = routing[routing["query_id"].duplicated(keep=False)]
+            bad_ids = dupes["query_id"].unique().tolist()
+            raise ValueError(
+                f"Duplicate routing events for query_id(s): {bad_ids!r}"
             )
 
-        routing = routing.drop_duplicates(subset=["query_id"], keep="last")
-
-        def _safe_rpu(name: str) -> Optional[int]:
-            try:
-                return Cluster.rpu_for_cluster_name(name)
-            except (ValueError, AttributeError):
-                return None
-
-        routing["rpu"] = routing["cluster_name"].apply(_safe_rpu)
-
-        if "details" in routing.columns:
-
-            def _parse_detail(x: Any) -> dict:
-                if isinstance(x, dict):
-                    return x
-                if isinstance(x, str) and x:
-                    try:
-                        parsed = json.loads(x)
-                        return parsed if isinstance(parsed, dict) else {}
-                    except (TypeError, json.JSONDecodeError):
-                        return {}
-                return {}
-
-            details = routing["details"].apply(_parse_detail)
-            routing["latency_s_for_routing"] = details.apply(
-                lambda d: float(d.get("latency_s_for_routing", float("nan")))
-            )
-            routing["slo_violation_at_routing"] = details.apply(
-                lambda d: float(d.get("slo_violation", float("nan")))
-            )
-        else:
-            routing["latency_s_for_routing"] = float("nan")
-            routing["slo_violation_at_routing"] = float("nan")
-
-        return routing[
-            [
-                "query_id",
-                "cluster_name",
-                "rpu",
-                "latency_s_for_routing",
-                "slo_violation_at_routing",
-            ]
-        ].reset_index(drop=True)
+        return routing[["query_id", "cluster_name", "rpu"]].reset_index(
+            drop=True
+        )
 
     def flat_df(
         self,
@@ -768,6 +750,16 @@ class StructuredLog:
             )
             base = base[~fwd_mask]
 
+            # Also drop rows with autoscaler-simulation-related events
+            if "event_type" in base.columns:
+                sim_event_types = {
+                    EventType.SIM_QUERY_ARRIVAL.value,
+                    EventType.SIM_QUERY_COMPLETION.value,
+                    EventType.RPU_COUNTERFACTUAL.value,
+                    EventType.RPU_SELECTION.value,
+                }
+                base = base[~base["event_type"].isin(sim_event_types)]
+
         if coerce_numerics:
             for col in base.select_dtypes(include="object").columns:
                 if col in pre_expand_cols:
@@ -785,14 +777,8 @@ class StructuredLog:
         slo_resolver: SloResolver,
         drop_incomplete: bool = True,
     ) -> pd.DataFrame:
-        """Return per-query latency with actual SLO outcome columns.
-
-        Extends :meth:`query_latencies` with four derived columns:
-
-        * ``slo_s`` — effective SLO threshold for this query in seconds.
-        * ``slo_violated`` — 1 if ``latency_s > slo_s``, else 0.
-        * ``slo_overshoot_s`` — ``max(0, latency_s - slo_s)``.
-        * ``relative_violation`` — ``max(0, (latency_s - slo_s) / slo_s)``.
+        """
+        Return per-query latency with actual SLO outcome columns.
 
         Parameters
         ----------
@@ -801,37 +787,145 @@ class StructuredLog:
             seconds, applying the tightening factor.
         drop_incomplete :
             Forwarded to :meth:`query_latencies`.  Default ``True``.
+
+        Returns
+        -------
+        DataFrame with columns:
+        ``query_id``, ``query_text_id``, ``observed_latency_s``, ``slo_s``,
+        ``observed_latency_over_slo``, ``observed_slo_violation``.
+
+        Raises
+        ------
+        ValueError if any query_text_id is missing an SLO or has a non-positive
+        SLO.
         """
         result = self.query_latencies(drop_incomplete=drop_incomplete)
+        result = result.drop(
+            columns=["arrival_s", "completion_s"], errors="ignore"
+        )
 
         if result.empty:
             return pd.DataFrame(
                 columns=[
                     "query_id",
                     "query_text_id",
-                    "arrival_s",
-                    "completion_s",
-                    "latency_s",
+                    "observed_latency_s",
                     "slo_s",
-                    "slo_violated",
-                    "slo_overshoot_s",
-                    "relative_violation",
+                    "observed_latency_over_slo",
+                    "observed_slo_violation",
                 ]
             )
 
+        result = result.rename(columns={"latency_s": "observed_latency_s"})
         result["slo_s"] = result["query_text_id"].map(slo_resolver.resolve)
-        result["slo_violated"] = (result["latency_s"] > result["slo_s"]).astype(
-            int
+        if result["slo_s"].isna().any() or (result["slo_s"] <= 0).any():
+            bad_ids = result.loc[
+                result["slo_s"].isna() | (result["slo_s"] <= 0), "query_text_id"
+            ].unique()
+            raise ValueError(
+                f"Missing or non-positive SLO for query_text_id(s): {bad_ids!r}"
+            )
+        result["observed_latency_over_slo"] = (
+            result["observed_latency_s"]
+        ) / result["slo_s"]
+        result["observed_slo_violation"] = (
+            result["observed_latency_over_slo"] > 1
         )
-        result["slo_overshoot_s"] = (
-            result["latency_s"] - result["slo_s"]
-        ).clip(lower=0.0)
-        # Guard against slo_s == 0 (divide-by-zero would produce inf).
-        slo_nonzero = result["slo_s"].replace(0.0, float("nan"))
-        result["relative_violation"] = (
-            (result["latency_s"] - result["slo_s"]) / slo_nonzero
-        ).clip(lower=0.0)
 
         return result
 
+    def query_overlap_counts(
+        self,
+    ) -> pd.DataFrame:
+        """
+        Return a DataFrame with one row per query containing the number of
+        queries that each query overlapped with (on the same cluster), split by
+        whether they arrived before or after the query in question.
 
+        Returns a DataFrame with columns: ``query_id``, ``query_text_id``,
+        ``cluster_name``, ``num_active_at_start``,
+        ``arrival_rate_during``, ``num_arrived_during_initial_prediction``.
+        """
+        latencies_df = self.query_latencies(drop_incomplete=True)
+        assignments_df = self.query_cluster_assignments()
+
+        if latencies_df.empty or assignments_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "query_id",
+                    "query_text_id",
+                    "cluster_name",
+                    "num_active_at_start",
+                    "arrival_rate_during",
+                    "num_arrived_during_initial_prediction",
+                ]
+            )
+
+        overlaps_df = latencies_df.merge(
+            assignments_df, how="left", on="query_id", validate="one_to_one"
+        )
+
+        # Ensure start/end times are sorted and ends are after starts, or raise.
+        overlaps_df = overlaps_df.sort_values(
+            by=["cluster_name", "arrival_s", "completion_s"]
+        )
+        if (overlaps_df["completion_s"] < overlaps_df["arrival_s"]).any():
+            bad_ids = overlaps_df.loc[
+                overlaps_df["completion_s"] < overlaps_df["arrival_s"],
+                "query_id",
+            ].unique()
+            raise ValueError(
+                f"Queries with completion_s < arrival_s: {bad_ids!r}"
+            )
+        overlaps_df["num_active_at_start"] = 0
+        overlaps_df["num_arrived_during"] = 0
+        overlaps_df["num_arrived_during_initial_prediction"] = 0
+
+        for _, sub_df in overlaps_df.groupby("cluster_name"):
+            arrivals = sub_df["arrival_s"].to_numpy()
+            completions = sub_df["completion_s"].to_numpy()
+            initial_predictions = sub_df[
+                "latency_prediction_at_arrival_s"
+            ].to_numpy()
+
+            # sub_df is sorted by arrival_s, but completion_s must be sorted
+            # separately.
+            sorted_completions = np.sort(completions)
+
+            # Queries satisfying:
+            # other_arrival <= this_arrival < other_completion
+            overlaps_df.loc[sub_df.index, "num_active_at_start"] = (
+                np.searchsorted(arrivals, arrivals, side="left")
+                - np.searchsorted(sorted_completions, arrivals, side="right")
+            )
+
+            # Queries satisfying:
+            # this_arrival < other_arrival < this_completion
+            overlaps_df.loc[sub_df.index, "num_arrived_during"] = (
+                np.searchsorted(arrivals, completions, side="left")
+                - np.searchsorted(arrivals, arrivals, side="right")
+            )
+
+            # Queries satisfying:
+            # this_arrival < other_arrival < this_arrival + initial_prediction
+            overlaps_df.loc[
+                sub_df.index, "num_arrived_during_initial_prediction"
+            ] = np.searchsorted(
+                arrivals, arrivals + initial_predictions, side="left"
+            ) - np.searchsorted(
+                arrivals, arrivals, side="right"
+            )
+        overlaps_df["arrival_rate_during"] = (
+            overlaps_df["num_arrived_during"] / (overlaps_df["latency_s"])
+        ).replace([np.inf, -np.inf], np.nan)
+
+        return overlaps_df[
+            [
+                "query_id",
+                "query_text_id",
+                "cluster_name",
+                "num_active_at_start",
+                "arrival_rate_during",
+                "num_arrived_during_initial_prediction",
+            ]
+        ]
