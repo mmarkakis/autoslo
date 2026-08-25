@@ -129,7 +129,6 @@ nav:
       - "Autoscaling Policy": reference/autoslo/clusters/autoscaling_policy.md
       - "Autoscaling Trigger Policy": reference/autoslo/clusters/autoscaling_trigger_policy.md
       - "Managed Cluster Pool": reference/autoslo/clusters/managed_cluster_pool.md
-      - "Capacity Checkpoint": reference/autoslo/clusters/capacity_checkpoint.md
       - "Spin-Up Budget": reference/autoslo/clusters/spin_up_budget.md
       - "Scheduled Spin-Up": reference/autoslo/clusters/scheduled_spinup.md
       - "Billing": reference/autoslo/clusters/billing.md
