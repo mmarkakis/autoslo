@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "AutoSLO: Practical Latency SLOs on Cloud Data Warehouses"
+repository-code: "https://github.com/mmarkakis/autoslo"
+license: "CC-BY-NC-ND-4.0"
+authors:
+  - family-names: "Markakis"
+    given-names: "Markos"
+    affiliation: "MIT CSAIL"
+    email: "markakis@mit.edu"
+  - family-names: "Kraska"
+    given-names: "Tim"
+    affiliation: "MIT CSAIL"
+    email: "kraska@mit.edu"
+preferred-citation:
+  type: article
+  title: "AutoSLO: Practical Latency SLOs on Cloud Data Warehouses -- Extended Version"
+  authors:
+    - family-names: "Markakis"
+      given-names: "Markos"
+      affiliation: "MIT CSAIL"
+    - family-names: "Kraska"
+      given-names: "Tim"
+      affiliation: "MIT CSAIL"
+  year: 2026
+  url: "https://arxiv.org/abs/2607.11770"
+  identifiers:
+    - type: doi
+      value: "10.48550/arXiv.2607.11770"
+    - type: other
+      value: "arXiv:2607.11770 [cs.DB]"
