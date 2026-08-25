@@ -3,16 +3,19 @@ message: "If you use this software, please cite it as below."
 type: software
 title: "AutoSLO: Practical Latency SLOs on Cloud Data Warehouses"
 repository-code: "https://github.com/mmarkakis/autoslo"
-license: "CC-BY-NC-ND-4.0"
+url: 'https://mmarkakis.github.io/autoslo/'
+license: "MIT"
 authors:
-  - family-names: "Markakis"
-    given-names: "Markos"
-    affiliation: "MIT CSAIL"
-    email: "markakis@mit.edu"
-  - family-names: "Kraska"
-    given-names: "Tim"
-    affiliation: "MIT CSAIL"
-    email: "kraska@mit.edu"
+  - given-names: Markos
+    family-names: Markakis
+    email: markakis@alum.mit.edu
+    affiliation: MIT CSAIL
+    orcid: 'https://orcid.org/0000-0003-2851-8840'
+  - given-names: Tim
+    family-names: Kraska
+    email: kraska@mit.edu
+    affiliation: MIT CSAIL
+    orcid: 'https://orcid.org/0009-0003-2414-2759'
 preferred-citation:
   type: article
   title: "AutoSLO: Practical Latency SLOs on Cloud Data Warehouses -- Extended Version"
@@ -30,3 +33,58 @@ preferred-citation:
       value: "10.48550/arXiv.2607.11770"
     - type: other
       value: "arXiv:2607.11770 [cs.DB]"
+identifiers:
+  - type: doi
+    value: 10.48550/arXiv.2607.11770
+    description: >-
+      AutoSLO: Practical Latency SLOs on Cloud Data
+      Warehouses -- Extended Version
+  - type: url
+    value: 'https://mmarkakis.github.io/autoslo/'
+    description: Code documentation
+abstract: >-
+  Modern cloud data warehouses decouple compute from
+  storage, making it easy for organizations to access the
+  same underlying data with multiple compute clusters. This
+  flexibility is often used for performance isolation among
+  diverse workloads, so that each workload meets its latency
+  service-level objective (SLO) more reliably. For example,
+  interactive dashboards, ad hoc analysis, and batch jobs
+  can each run on separate clusters. However, this
+  dedicated-cluster approach requires each compute cluster
+  to be continuously scaled to adapt to workload evolution,
+  with over-provisioning wasting resources and
+  under-provisioning risking SLO violations.
+
+
+  We present AutoSLO, a latency-SLO-aware workload
+  management framework for multi-cluster cloud data
+  warehouses. AutoSLO operates across three timescales
+  through three key components. First, a periodic Policy
+  Tuner plans proactive cluster scaling actions and tunes
+  configuration parameters, using simulations of
+  history-derived workload forecasts. Second, an SLO-aware
+  reactive Autoscaler adjusts the active cluster set when
+  recent workload behavior deviates from the forecast.
+  Third, an online Query Router reacts to live load when
+  placing each query, using a concurrency-aware latency
+  predictor to avoid SLO violations.
+
+
+  On realistic Redbench workloads, AutoSLO successfully
+  meets latency SLOs of varying strictness, reducing cost by
+  a mean of 26.4% compared to the per-scenario next-best
+  baseline. Component-level evaluations show that the Query
+  Router and Autoscaler respectively reduce SLO violation
+  rates by a mean of 47.8% and 93.7%, relative to their
+  corresponding alternatives. Finally, we show that the
+  Policy Tuner can reduce the SLO violation rate by a mean
+  of 44.6% using a single day of workload history, and that
+  each component is efficient given its intended operating
+  timescale.
+keywords:
+  - SLO
+  - service-level objective
+  - cloud data warehouse
+  - autoscaling
+  - Amazon Redshift
