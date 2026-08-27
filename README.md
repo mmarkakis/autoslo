@@ -86,3 +86,22 @@ python src/autoslo/entry_points/microbench.py routing_efficiency
 **Outputs**:
 - Experiment data at `data/plot_data/<name>.csv`
 - Plot at `data/plots/<name>.png`
+
+---
+
+## Cite This Work
+
+```bibtex
+@misc{markakis2026autoslo,
+title={AutoSLO: Practical Latency SLOs on Cloud Data Warehouses -- Extended Version}, 
+author={Markos Markakis and Tim Kraska},
+year={2026},
+eprint={2607.11770},
+archivePrefix={arXiv},
+primaryClass={cs.DB},
+url={https://arxiv.org/abs/2607.11770},
+doi={10.48550/arXiv.2607.11770}
+}
+```
+
+A machine-readable citation is also available in [CITATION.cff](https://github.com/mmarkakis/autoslo/blob/main/CITATION.cff).
