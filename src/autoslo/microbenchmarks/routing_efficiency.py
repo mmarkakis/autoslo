@@ -112,8 +112,9 @@ class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
         df.to_csv(cls.csv_path(), index=False)
 
     @classmethod
-    def plot(cls) -> None:
+    def plot(cls, high_contrast: bool = False) -> None:
         cls.microbenchmark_scatter_plot(
+            path=cls.plot_path(high_contrast=high_contrast),
             x_col="total_active_queries",
             y_col="elapsed_s",
             shape_col="clusters",
@@ -122,7 +123,11 @@ class RoutingEfficiencyBenchmark(MicrobenchmarkRunner):
             colorbar_label="Running Queries / Cluster",
             cmap_colors=[
                 Palette.cream,
-                Palette.light_blue
+                (
+                    Palette.high_contrast_blue
+                    if high_contrast
+                    else Palette.light_blue
+                ),
             ],
             log_color_base=2,
             log_x=True,

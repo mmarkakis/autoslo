@@ -173,8 +173,9 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
         df.to_csv(cls.csv_path(), index=False)
 
     @classmethod
-    def plot(cls) -> None:
+    def plot(cls, high_contrast: bool = False) -> None:
         cls.microbenchmark_scatter_plot(
+            path=cls.plot_path(high_contrast=high_contrast),
             x_col="simulated_queries",
             y_col="elapsed_s",
             shape_col="candidate_rpu",
@@ -183,7 +184,11 @@ class AutoscalingEfficiencyBenchmark(MicrobenchmarkRunner):
             colorbar_label="Queries / Arrival Window",
             cmap_colors=[
                 Palette.cream,
-                Palette.light_green,
+                (
+                    Palette.high_contrast_green
+                    if high_contrast
+                    else Palette.light_green
+                ),
             ],
             log_x=True,
             log_y=True,

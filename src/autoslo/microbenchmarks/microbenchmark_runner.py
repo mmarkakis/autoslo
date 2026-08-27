@@ -63,10 +63,11 @@ class MicrobenchmarkRunner:
         )
 
     @classmethod
-    def plot_path(cls) -> Path:
-        return (
-            pu.get_data_dir() / "plots" / f"{cls.name()}" / f"{cls.name()}.png"
+    def plot_path(cls, high_contrast: bool = False) -> Path:
+        filename = (
+            f"{cls.name()}{'_high_contrast' if high_contrast else ''}.png"
         )
+        return pu.get_data_dir() / "plots" / f"{cls.name()}" / filename
 
     #############
     # To be implemented by subclasses.
@@ -85,7 +86,7 @@ class MicrobenchmarkRunner:
         raise NotImplementedError("Must be implemented by subclasses.")
 
     @classmethod
-    def plot(cls) -> None:
+    def plot(cls, high_contrast: bool = False) -> None:
         raise NotImplementedError("Must be implemented by subclasses.")
 
     ############
@@ -264,6 +265,7 @@ class MicrobenchmarkRunner:
     def microbenchmark_scatter_plot(
         cls,
         *,
+        path: str,
         x_col: str,
         y_col: str,
         shape_col: str,
@@ -513,5 +515,5 @@ class MicrobenchmarkRunner:
         )
 
         fig.tight_layout()
-        fig.savefig(cls.plot_path(), dpi=cls.SCATTER_DPI)
+        fig.savefig(path, dpi=cls.SCATTER_DPI)
         plt.close(fig)

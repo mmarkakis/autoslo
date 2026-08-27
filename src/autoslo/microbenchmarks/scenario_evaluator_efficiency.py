@@ -119,8 +119,9 @@ class ScenarioEvaluatorEfficiencyBenchmark(MicrobenchmarkRunner):
         df.to_csv(cls.csv_path(), index=False)
 
     @classmethod
-    def plot(cls) -> None:
+    def plot(cls, high_contrast: bool = False) -> None:
         cls.microbenchmark_scatter_plot(
+            path=cls.plot_path(high_contrast=high_contrast),
             x_col="total_simulated_queries",
             y_col="elapsed_s",
             shape_col="n_parallel",
@@ -129,7 +130,11 @@ class ScenarioEvaluatorEfficiencyBenchmark(MicrobenchmarkRunner):
             colorbar_label="Queries / Simulation",
             cmap_colors=[
                 Palette.cream,
-                Palette.light_red,
+                (
+                    Palette.high_contrast_red
+                    if high_contrast
+                    else Palette.light_red
+                ),
             ],
             log_x=True,
             log_y=True,

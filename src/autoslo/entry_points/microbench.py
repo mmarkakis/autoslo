@@ -54,6 +54,11 @@ def main() -> None:
         action="store_true",
         help="Regenerate results, if they exist.",
     )
+    parser.add_argument(
+        "--high_contrast",
+        action="store_true",
+        help="Use high contrast colors for plots."
+    )
     args = parser.parse_args()
 
     # Resolve key paths.
@@ -106,7 +111,7 @@ def main() -> None:
             " Cannot generate plot."
         )
         return
-    bm_cls.plot()
+    bm_cls.plot(high_contrast=args.high_contrast)
     console.print("[bold green]Microbenchmark completed.[/]")
     console.print(f"  csv: {bm_cls.csv_path()}")
     console.print(f"  plot: {bm_cls.plot_path()}")

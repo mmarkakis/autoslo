@@ -144,9 +144,10 @@ class SpinupOptimizerEfficiencyBenchmark(MicrobenchmarkRunner):
         df.to_csv(cls.csv_path(), index=False)
 
     @classmethod
-    def plot(cls) -> None:
+    def plot(cls, high_contrast: bool = False) -> None:
 
         cls.microbenchmark_scatter_plot(
+            path=cls.plot_path(high_contrast=high_contrast),
             x_col="total_simulated_queries",
             y_col="elapsed_s",
             shape_col="n_scenarios",
@@ -155,7 +156,11 @@ class SpinupOptimizerEfficiencyBenchmark(MicrobenchmarkRunner):
             colorbar_label="Queries / Forecast",
             cmap_colors=[
                 Palette.cream,
-                Palette.light_purple,
+                (
+                    Palette.high_contrast_purple
+                    if high_contrast
+                    else Palette.light_purple
+                ),
             ],
             log_x=True,
             log_color_base=2,

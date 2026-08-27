@@ -30,6 +30,10 @@ class Palette:
     gray: str = "#4A4A4A"
     black: str = "#000000"
     cream: str = "#EEE5D5"
+    high_contrast_blue: str = "#5084B0"
+    high_contrast_green: str = "#50B055"
+    high_contrast_red: str = "#B06250"
+    high_contrast_purple: str = "#B050AB"
 
     @staticmethod
     def semantic_colors() -> Mapping[str, str]:
