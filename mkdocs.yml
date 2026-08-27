@@ -181,6 +181,9 @@ nav:
       - "Autoscaling Efficiency": reference/autoslo/microbenchmarks/autoscaling_efficiency.md
       - "Scenario Evaluator Efficiency": reference/autoslo/microbenchmarks/scenario_evaluator_efficiency.md
       - "Spinup Optimizer Efficiency": reference/autoslo/microbenchmarks/spinup_optimizer_efficiency.md
+  - Operations:
+    - "Entry Points": ops/entry_points.md
+    - "Workgroup Setup": ops/workgroup_setup.md
 markdown_extensions:
     - markdown_include.include:
         base_path: .
