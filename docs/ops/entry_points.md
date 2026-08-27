@@ -2,7 +2,7 @@
 
 ## Policy Tuning
 
-`src/autoslo/entry_points/tune.py`
+[📄](https://mmarkakis.github.io/autoslo/reference/autoslo/entry_points/tune/) ● [📟](https://github.com/mmarkakis/autoslo/blob/main/src/autoslo/entry_points/tune.py)
 
 **Objective**: Optimize an `execution_config` for a (maybe forecasted) workload.
 
@@ -25,7 +25,7 @@ The `TUNER_RUN_NAME` is deterministically derived from the inputs.
 
 ## Execution
 
-`src/autoslo/entry_points/execute.py`
+[📄](https://mmarkakis.github.io/autoslo/reference/autoslo/entry_points/execute/) ● [📟](https://github.com/mmarkakis/autoslo/blob/main/src/autoslo/entry_points/execute.py)
 
 **Objective**: Execute combinations of (workload, `execution_config`), either
 against the simulator or against live Redshift clusters.
@@ -50,7 +50,7 @@ runs even if rerunning the same combination.
 
 ## Plotting
 
-`src/autoslo/entry_points/plot.py`
+[📄](https://mmarkakis.github.io/autoslo/reference/autoslo/entry_points/plot/) ● [📟](https://github.com/mmarkakis/autoslo/blob/main/src/autoslo/entry_points/plot.py)
 
 **Objective**: Plot the SLO performance of different execution outputs (on the
 simulator or on live workload clusters)
@@ -66,7 +66,7 @@ simulator or on live workload clusters)
 
 ## Microbenchmarks
 
-`src/autoslo/entry_points/microbench.py`
+[📄](https://mmarkakis.github.io/autoslo/reference/autoslo/entry_points/microbench/) ● [📟](https://github.com/mmarkakis/autoslo/blob/main/src/autoslo/entry_points/microbench.py)
 
 **Objective**: Run method-level efficiency microbenchmarks (routing,
 autoscaling, tuner-phase timing) using dedicated manifests.
