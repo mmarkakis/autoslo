@@ -912,7 +912,7 @@ def plot_inference_time_by_arrival(
     arrival_indices = list(range(1, n_arrivals + 1))
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = (
+    csv_path = Path(
         output_dir / f"inference_timing_{workload.workload_config.id()}.csv",
     )
 

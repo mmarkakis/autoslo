@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -65,9 +66,9 @@ from autoslo.config.component_configs import WorkloadConfig
 from autoslo.models.iconq_model import DataSplit, IconqModel
 from autoslo.visualizations.colors import Palette
 from autoslo.visualizations.iconq_model_comparison import (
-    ModelEntry,
     _DEFAULT_OUTPUT_DIR,
     _MIN_RPU_SAMPLES_DEFAULT,
+    ModelEntry,
     plot_factor_error_by_rpu,
     plot_factor_error_vs_concurrency,
     plot_inference_time_by_arrival,
@@ -118,7 +119,7 @@ def _load_manifest(
     path: str,
 ) -> tuple[
     list[ModelEntry],
-    str,
+    Path,
     int,
     bool,
     bool,
@@ -161,9 +162,13 @@ def _load_manifest(
                 file=sys.stderr,
             )
             sys.exit(1)
-        models.append(ModelEntry(model_id=model_id, label=label, annotate=annotate, color=color))
+        models.append(
+            ModelEntry(
+                model_id=model_id, label=label, annotate=annotate, color=color
+            )
+        )
 
-    output_dir = str(raw.get("output_dir", _DEFAULT_OUTPUT_DIR))
+    output_dir = Path(raw.get("output_dir", _DEFAULT_OUTPUT_DIR))
     min_rpu_samples = int(raw.get("min_rpu_samples", _MIN_RPU_SAMPLES_DEFAULT))
     highlight_best = bool(raw.get("highlight_best", True))
     annotate_best = bool(raw.get("annotate_best", True))
@@ -176,7 +181,9 @@ def _load_manifest(
     raw_max = raw.get("max_arrivals")
     max_arrivals: int | None = int(raw_max) if raw_max is not None else None
     raw_ref = raw.get("reference_split_model_id")
-    reference_split_model_id: str | None = str(raw_ref) if raw_ref is not None else None
+    reference_split_model_id: str | None = (
+        str(raw_ref) if raw_ref is not None else None
+    )
 
     return (
         models,
@@ -210,7 +217,7 @@ def main() -> None:
 
     # CLI flags override manifest values when provided.
     if args.output_dir is not None:
-        output_dir = args.output_dir
+        output_dir = Path(args.output_dir)
     if args.min_rpu_samples is not None:
         min_rpu_samples = args.min_rpu_samples
 
@@ -226,8 +233,8 @@ def main() -> None:
     all_split_dfs = {}
     for m in models:
         print(f"Loading {m.model_id} ...")
-        all_split_dfs[m.model_id] = IconqModel.optimized_load_final_dfs_per_split(
-            m.model_id
+        all_split_dfs[m.model_id] = (
+            IconqModel.optimized_load_final_dfs_per_split(m.model_id)
         )
 
     # If a reference split model is specified, reassign every model's rows to
@@ -367,7 +374,7 @@ def main() -> None:
             rpu=inference_rpu,
             output_dir=output_dir,
             max_arrivals=max_arrivals,
-            show_title=show_titles
+            show_title=show_titles,
         )
         print(f"  saved: {path4}")
         if args.show:

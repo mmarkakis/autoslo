@@ -23,12 +23,12 @@ models:
   - iconq_model_id: comparison_+size
     label: "+Size"
     annotate: false  
-    color: light_blue
+    color: high_contrast_blue
   - iconq_model_id: comparison_+censored
     label: "+Censored"
     annotate: false 
-    color: light_red
+    color: high_contrast_red
   - iconq_model_id: model_v8
     label: "Iconq+"
     annotate: false 
-    color: light_green
+    color: high_contrast_green
