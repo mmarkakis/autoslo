@@ -182,6 +182,7 @@ nav:
       - "Spinup Optimizer Efficiency": reference/autoslo/microbenchmarks/spinup_optimizer_efficiency.md
   - Operations:
     - "Entry Points": ops/entry_points.md
+    - "Repository Reference": ops/repo_reference.md
     - "Workgroup Setup": ops/workgroup_setup.md
 markdown_extensions:
     - markdown_include.include:

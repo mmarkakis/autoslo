@@ -24,7 +24,7 @@ by each routing decision.
 
 - Full API reference and documentation: **[mmarkakis.github.io/autoslo](https://mmarkakis.github.io/autoslo/)**
 
-- Detailed map of paper concepts to repository files: [Paper-to-code-mapping](#paper-to-code-mapping)
+- Detailed map of paper concepts to repository files and code/data directory layout: [Repository Reference](https://mmarkakis.github.io/autoslo/ops/repo_reference/)
 
 - Hands-on instructions on using our top-level scripts: 
 [Entry point reference](https://mmarkakis.github.io/autoslo/ops/entry_points/).
