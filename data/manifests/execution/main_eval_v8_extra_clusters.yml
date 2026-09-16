@@ -1,0 +1,78 @@
+locals:
+  may27_workload_config_c135: &may27_workload_config_c135
+    workload_name: redbench_provisioned_135_0
+    target_date: "2024-05-27"
+    rescale_factor: 0.16666667
+  may27_workload_config_c105: &may27_workload_config_c105
+    workload_name: redbench_provisioned_105_0
+    target_date: "2024-05-27"
+    rescale_factor: 0.16666667
+
+main_content:
+  ## Cluster 135, May 27
+
+  # Baselines (kappa-independent; reused when plotting both kappa=4 and kappa=2)
+  - workload_config: *may27_workload_config_c135
+    sim_execution_config: exec:handmade/main_eval_round_robin_v8_c135.yml
+    live_execution_config: exec:handmade/main_eval_round_robin_c135.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      INITIAL_RPU: [64]
+  - workload_config: *may27_workload_config_c135
+    sim_execution_config: exec:handmade/main_eval_round_robin_v8_c135.yml
+    live_execution_config: exec:handmade/main_eval_round_robin_c135.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      INITIAL_RPU: [32, 32]
+  - workload_config: *may27_workload_config_c135
+    execution_config: exec:handmade/main_eval_rais_v8_c135.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      RAIS_LEVEL: 50
+      RAIS_MAX_CAPACITY: 128
+  - workload_config: *may27_workload_config_c135
+    execution_config: exec:handmade/main_eval_rais_v8_c135.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      RAIS_LEVEL: 100
+      RAIS_MAX_CAPACITY: 128
+
+  # AutoSLO (tuned by main_eval_v8_extra_clusters.yml tuning manifest)
+  - workload_config: *may27_workload_config_c135
+    execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v8_c135.yml
+  - workload_config: *may27_workload_config_c135
+    execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v8_c135.yml
+
+  ## Cluster 105, May 27
+
+  # Baselines (kappa-independent; reused when plotting both kappa=4 and kappa=2)
+  - workload_config: *may27_workload_config_c105
+    sim_execution_config: exec:handmade/main_eval_round_robin_v8_c105.yml
+    live_execution_config: exec:handmade/main_eval_round_robin_c105.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      INITIAL_RPU: [64]
+  - workload_config: *may27_workload_config_c105
+    sim_execution_config: exec:handmade/main_eval_round_robin_v8_c105.yml
+    live_execution_config: exec:handmade/main_eval_round_robin_c105.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      INITIAL_RPU: [32, 32]
+  - workload_config: *may27_workload_config_c105
+    execution_config: exec:handmade/main_eval_rais_v8_c105.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      RAIS_LEVEL: 50
+      RAIS_MAX_CAPACITY: 128
+  - workload_config: *may27_workload_config_c105
+    execution_config: exec:handmade/main_eval_rais_v8_c105.yml
+    params:
+      TARGET_DATE: "2024-05-27"
+      RAIS_LEVEL: 100
+      RAIS_MAX_CAPACITY: 128
+
+  # AutoSLO (tuned by main_eval_v8_extra_clusters.yml tuning manifest)
+  - workload_config: *may27_workload_config_c105
+    execution_config: exec:tuned/may27_1month_k4_thresh10_nocache_v8_c105.yml
+  - workload_config: *may27_workload_config_c105
+    execution_config: exec:tuned/may27_1month_k2_thresh10_nocache_v8_c105.yml

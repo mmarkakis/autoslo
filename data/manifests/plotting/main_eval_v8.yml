@@ -105,7 +105,7 @@ main_content:
         slo_metric: binary
         slo_threshold: 0
       slo_resolver_config:
-        slo_s: 30.0
+        slo_s: 0.0
         slo_dict_filename: "1778469201294_p100_k4.yml"
       threshold_lines:
         - value: 0.10
@@ -183,7 +183,7 @@ main_content:
         slo_metric: binary
         slo_threshold: 0
       slo_resolver_config:
-        slo_s: 30.0
+        slo_s: 0.0
         slo_dict_filename: "1778469201294_p100_k2.yml"
       threshold_lines:
         - value: 0.10
@@ -261,7 +261,7 @@ main_content:
         slo_metric: binary
         slo_threshold: 0
       slo_resolver_config:
-        slo_s: 30.0
+        slo_s: 0.0
         slo_dict_filename: "1778469201294_p100_k2.yml"
       threshold_lines:
         - value: 0.10
