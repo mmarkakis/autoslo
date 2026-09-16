@@ -588,7 +588,7 @@ class IconqQueryFeaturizer:
         Parameters:
             schema_name: The schema the featurizer was trained for.
             iconq_query_featurizer_id: The identifier of the directory to load
-            the IconqQueryFeaturizer from.
+                the IconqQueryFeaturizer from.
         """
 
         # Load parameters.

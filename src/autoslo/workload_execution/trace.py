@@ -67,9 +67,6 @@ class Trace:
         Parameters:
             run_id: The ID of the run directory containing the Parquet files.
 
-        Returns:
-            A Trace instance.
-
         Raises:
             ValueError: If no sys_query_history Parquet file is found in the
                 run directory.

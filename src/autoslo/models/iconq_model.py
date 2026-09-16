@@ -1452,11 +1452,7 @@ class IconqModel:
         Evaluates the model on a subset of *dataset* identified by *indices*.
 
         Parameters:
-            dataset: The full dataset.
-            indices: Indices into *dataset* to evaluate on.
-            train_config: Training configuration used to compute the loss.
-            var_reg_weight: Weight for the variance regularisation term (NLL
-                loss only).
+            split: The data split to evaluate on.
             out_filename: If given, the filename (relative to the model's save
                 dir) to save the predictions on the evaluated subset.
 

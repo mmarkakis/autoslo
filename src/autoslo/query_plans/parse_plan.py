@@ -16,7 +16,7 @@ init_plan_regex = re.compile(r"InitPlan \d+ \(returns \$\d\)")
 join_columns_regex = re.compile(r"\w+\.\w+ ?= ?\w+\.\w+")
 
 
-def list_columns(n, s: set[tuple[str, str]]) -> None:
+def list_columns(n: Any, s: set[tuple[str, str]]) -> None:
     """
     Recursively list the column names and operators in the filter conditions of the plan.
 
@@ -36,8 +36,8 @@ def plan_summary(
     tables: Optional[set[str]] = None,
     filter_columns: Optional[set[tuple[str, str]]] = None,
     operators: Optional[set[str]] = None,
-    skip_columns=False,
-    conv_to_dict=False,
+    skip_columns: bool = False,
+    conv_to_dict: bool = False,
 ) -> tuple[set[str], set[tuple[str, str]], set[str]]:
     """
     Get a summary of the plan, including the tables, filter columns, and operators.

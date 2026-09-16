@@ -13,9 +13,11 @@ def copy_and_apply_overrides(
     Apply dot-delimited key overrides to a *deep copy* of the initial config,
     returning the modified copy without mutating the original.
 
-    Example::
+    Example:
+        ```python
         copy_and_apply_overrides(cfg, {"slo_config.slo_s": 5.0})
         # equivalent to  cfg["slo_config"]["slo_s"] = 5.0
+        ```
     """
     internal_cfg = copy.deepcopy(initial_config)
     for dotted_key, value in dot_delimited_overrides.items():

@@ -2,7 +2,7 @@ import csv
 import fcntl
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -249,7 +249,7 @@ class RunLocator:
         return run_summary
 
     @staticmethod
-    def get_run_ids(**kwargs) -> list[str]:
+    def get_run_ids(**kwargs: Any) -> list[str]:
         """
         Returns a list of run IDs that match the given filter criteria. For
         integer or float values, an exact match is performed. For string values,

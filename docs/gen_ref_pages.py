@@ -11,6 +11,7 @@ https://mkdocstrings.github.io/recipes/#automatic-code-reference-pages
 from pathlib import Path
 import sys
 import mkdocs_gen_files
+import yaml
 
 
 # Replace the file docs/index.md with a copy of README.md
@@ -19,11 +20,32 @@ with mkdocs_gen_files.open("index.md", "w") as fd:
         fd.write(readme.read())
 
 
-nav = mkdocs_gen_files.Nav()
-
 root = Path(__file__).parent.parent
 src = root / "src"
 sys.path.append(str(src))  # allow importing from src
+
+
+def _collect_nav_targets(nav_node: object) -> set[str]:
+    """Recursively collect every leaf page path from mkdocs.yml's nav tree."""
+    targets: set[str] = set()
+    if isinstance(nav_node, dict):
+        for value in nav_node.values():
+            targets |= _collect_nav_targets(value)
+    elif isinstance(nav_node, list):
+        for item in nav_node:
+            targets |= _collect_nav_targets(item)
+    elif isinstance(nav_node, str):
+        targets.add(nav_node)
+    return targets
+
+
+# mkdocs.yml's hand-curated `nav:` is the single source of truth for which
+# modules get a reference page: a module is only generated below if its
+# reference page is already listed there, so newly-added modules must be
+# explicitly opted in via mkdocs.yml rather than silently appearing.
+with open(root / "mkdocs.yml") as f:
+    _mkdocs_config = yaml.safe_load(f)
+nav_targets = _collect_nav_targets(_mkdocs_config.get("nav", []))
 
 # Generate CSS from autoslo.utils.colors.Palette
 try:
@@ -98,16 +120,13 @@ for path in sorted(pkg_root.rglob("*.py")):
     elif parts[-1] == "__main__":
         continue
 
-    print(doc_path.as_posix())
+    if full_doc_path.as_posix() not in nav_targets:
+        continue
 
-    nav[parts] = doc_path.as_posix()
+    print(doc_path.as_posix())
 
     with mkdocs_gen_files.open(full_doc_path, "w") as fd:
         identifier = ".".join(parts)
         print("::: " + identifier, file=fd)
 
     mkdocs_gen_files.set_edit_path(full_doc_path, path.relative_to(root))
-
-
-with mkdocs_gen_files.open("reference/SUMMARY.md", "w") as nav_file:
-    nav_file.writelines(nav.build_literate_nav())

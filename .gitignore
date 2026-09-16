@@ -6,6 +6,7 @@
 .ui-meta/
 .planning/
 site/
+agent_planning/
 
 scratch.ipynb
 config/conn.yml

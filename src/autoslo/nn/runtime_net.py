@@ -248,7 +248,14 @@ class RuntimeNet(nn.Module):  # pylint: disable=too-many-instance-attributes
         """Run the output MLP heads on a pre-computed LSTM embedding.
 
         Parameters:
-            lstm_out: Shape (batch_size, lstm_hidden_size).
+            fwd_out: Forward-direction LSTM output, shape 
+                (batch_size, hidden_size).
+            after_out: "After" pinch-state LSTM output, shape 
+                (batch_size, hidden_size).
+            after_h: Hidden state of the "after" LSTM.
+            after_c: Cell state of the "after" LSTM.
+            fwd_out_for_state: Forward output snapshot to carry into the 
+                returned state.
             mdn_mix_softmax_temperature: Softmax temperature for MDN mixing
                 coefficients (ignored when is_mdn=False).
 
