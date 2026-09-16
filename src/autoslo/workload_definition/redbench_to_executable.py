@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pandas as pd
 import rich
+import rich.table
 
 import autoslo.filesystem.path_utils as pu
-
 from autoslo.workload_definition.query import QueryTextId
 
 
@@ -71,11 +71,7 @@ def main(
     df = df.drop(columns=["abs_start_time_str"])
     output_path = workload_dir / "workload.parquet"
     df.to_parquet(output_path, index=False)
-    output_path_2 = (
-        pu.get_workloads_dir()
-        / "ext_tpcds1000"
-        / f"{workload_dir.name}.parquet"
-    )
+    output_path_2 = pu.get_workloads_dir() / f"{workload_dir.name}.parquet"
     df.to_parquet(output_path_2, index=False)
 
     # Pretty print some stats about the workload in a table.
@@ -126,9 +122,7 @@ def main(
     warmup_output_path = workload_dir / "warmup_workload.parquet"
     warmup_df.to_parquet(warmup_output_path, index=False)
     warmup_output_path_2 = (
-        pu.get_workloads_dir()
-        / "ext_tpcds1000"
-        / f"{workload_dir.name}_warmup.parquet"
+        pu.get_workloads_dir() / f"{workload_dir.name}_warmup.parquet"
     )
     warmup_df.to_parquet(warmup_output_path_2, index=False)
 
@@ -160,9 +154,7 @@ def main(
     for _, row in unique_queries.iterrows():
         schema_name = QueryTextId(row["query_text_id"]).schema_name
         query_text_file = (
-            pu.QUERIES_PATH
-            / schema_name
-            / f"{row['query_text_id']}.sql"
+            pu.QUERIES_PATH / schema_name / f"{row['query_text_id']}.sql"
         )
         with open(query_text_file, "r") as f:
             query_text = f.read()
