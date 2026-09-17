@@ -345,3 +345,7 @@ run_id,config_id,workload_id,started_at
 1783522738989,main_eval_base_v8__KAPPA=2__TARGET_DATE=2024-05-27,redbench_provisioned_157_0__2024-05-27__rf0.167,2026-07-08T14:58:59Z
 1783523334128,main_eval_base_v8__KAPPA=4__TARGET_DATE=2024-04-15,redbench_provisioned_157_0__2024-04-15__rf0.167,2026-07-08T15:08:57Z
 1783523942256,main_eval_base_v8__KAPPA=2__TARGET_DATE=2024-04-15,redbench_provisioned_157_0__2024-04-15__rf0.167,2026-07-08T15:19:02Z
+1789587400925,may27_1month_k4_thresh10_nocache_v8_c135,redbench_provisioned_135_0__2024-05-27__rf0.167,2026-09-16T19:36:41Z
+1789588016251,may27_1month_k2_thresh10_nocache_v8_c135,redbench_provisioned_135_0__2024-05-27__rf0.167,2026-09-16T19:46:56Z
+1789588649182,may27_1month_k4_thresh10_nocache_v8_c105,redbench_provisioned_105_0__2024-05-27__rf0.167,2026-09-16T19:57:29Z
+1789589231478,may27_1month_k2_thresh10_nocache_v8_c105,redbench_provisioned_105_0__2024-05-27__rf0.167,2026-09-16T20:07:12Z
