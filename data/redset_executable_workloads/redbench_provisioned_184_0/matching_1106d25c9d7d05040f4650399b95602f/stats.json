@@ -1,0 +1,33 @@
+{
+  "sampling_steps": {
+    "5": 18,
+    "1": 105941,
+    "2": 92,
+    "4 -> 6": 4083,
+    "3 -> 6": 1937
+  },
+  "matched_workload_size": {
+    "num_queries": 532499,
+    "num_select_queries": 112071,
+    "num_insert_queries": 355018,
+    "num_update_queries": 63203,
+    "num_delete_queries": 2207,
+    "repetition_ratio": 0.9977514254356613,
+    "dml_aware_repetition_ratio": 0.8775686841377341,
+    "scanset_repetition_ratio": 0.9998126187863051,
+    "dml_aware_scanset_repetition_ratio": 0.8928982520009636
+  },
+  "timeline_size": {
+    "num_queries": 532499,
+    "num_select_queries": 112071,
+    "num_insert_queries": 355018,
+    "num_update_queries": 63203,
+    "num_delete_queries": 2207,
+    "repetition_ratio": 0.9453025314309679,
+    "dml_aware_repetition_ratio": 0.9258862685262021,
+    "scanset_repetition_ratio": 0.9992950897199097,
+    "dml_aware_scanset_repetition_ratio": 0.9524319404663115
+  },
+  "cluster_id": 184,
+  "database_id": 0
+}

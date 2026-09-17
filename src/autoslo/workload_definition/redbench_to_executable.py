@@ -67,7 +67,9 @@ def main(
     df = pd.DataFrame.from_records(records)
 
     # Convert as needed and save to Parquet.
-    df["abs_start_time"] = pd.to_datetime(df["abs_start_time_str"])
+    # format="mixed" tolerates timestamps with and without fractional seconds
+    # (Redbench-matched queries sometimes carry only whole-second precision).
+    df["abs_start_time"] = pd.to_datetime(df["abs_start_time_str"], format="mixed")
     df = df.drop(columns=["abs_start_time_str"])
     output_path = workload_dir / "workload.parquet"
     df.to_parquet(output_path, index=False)

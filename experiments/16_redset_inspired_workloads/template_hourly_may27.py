@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 
 from autoslo.workload_definition.query import QueryTextId
 
-CLUSTERS = [157, 135, 105]
+CLUSTERS = [157, 184, 137, 101, 159]
 OUT_DIR = os.path.dirname(__file__)
 
 
