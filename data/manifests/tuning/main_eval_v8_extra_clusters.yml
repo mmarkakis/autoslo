@@ -1,4 +1,16 @@
 locals:
+    default_configs_c184: &default_configs_c184
+        initial_execution_config: "exec:handmade/main_eval_base_v8_c184"
+        tuner_config: "tuner:forecasted_v8_c184"
+    default_configs_c137: &default_configs_c137
+        initial_execution_config: "exec:handmade/main_eval_base_v8_c137"
+        tuner_config: "tuner:forecasted_v8_c137"
+    default_configs_c101: &default_configs_c101
+        initial_execution_config: "exec:handmade/main_eval_base_v8_c101"
+        tuner_config: "tuner:forecasted_v8_c101"
+    default_configs_c159: &default_configs_c159
+        initial_execution_config: "exec:handmade/main_eval_base_v8_c159"
+        tuner_config: "tuner:forecasted_v8_c159"
     default_configs_c135: &default_configs_c135
         initial_execution_config: "exec:handmade/main_eval_base_v8_c135"
         tuner_config: "tuner:forecasted_v8_c135"
@@ -14,11 +26,57 @@ locals:
         NUM_DAYS: 30
 
 main_content:
-    # Extends the cluster-157-only sweep in main_eval_v8.yml with the two
-    # additional clusters (135, 105) chosen for the paper's generalization
-    # check (see agent_planning/20260916_additional_redset_clusters_for_paper.md).
-    # Only May 27, kappa in {4, 2}, threshold = 0.10 is covered, matching the
-    # "AutoSLO" points used in the extra-clusters companion to Figure 6.
+    # Cluster 184, May 27, kappa = 4, threshold = 0.10
+    may27_1month_k4_thresh10_nocache_v8_c184:
+        configs: *default_configs_c184
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+
+    # Cluster 184, May 27, kappa = 2, threshold = 0.10
+    may27_1month_k2_thresh10_nocache_v8_c184:
+        configs: *default_configs_c184
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+            KAPPA: 2
+
+    # Cluster 137, May 27, kappa = 4, threshold = 0.10
+    may27_1month_k4_thresh10_nocache_v8_c137:
+        configs: *default_configs_c137
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+
+    # Cluster 137, May 27, kappa = 2, threshold = 0.10
+    may27_1month_k2_thresh10_nocache_v8_c137:
+        configs: *default_configs_c137
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+            KAPPA: 2
+
+    # Cluster 101, May 27, kappa = 4, threshold = 0.10
+    may27_1month_k4_thresh10_nocache_v8_c101:
+        configs: *default_configs_c101
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+
+    # Cluster 101, May 27, kappa = 2, threshold = 0.10
+    may27_1month_k2_thresh10_nocache_v8_c101:
+        configs: *default_configs_c101
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+            KAPPA: 2
+
+    # Cluster 159, May 27, kappa = 4, threshold = 0.10
+    may27_1month_k4_thresh10_nocache_v8_c159:
+        configs: *default_configs_c159
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+
+    # Cluster 159, May 27, kappa = 2, threshold = 0.10
+    may27_1month_k2_thresh10_nocache_v8_c159:
+        configs: *default_configs_c159
+        params:
+            <<: [*may27_default_exec_params, *default_may27_sampling_tuner_params]
+            KAPPA: 2
 
     # Cluster 135, May 27, kappa = 4, threshold = 0.10
     may27_1month_k4_thresh10_nocache_v8_c135:
