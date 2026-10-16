@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
-from autoslo.config.utils import parse_params
+from autoslo.config.utils import make_run_id, parse_params
 from autoslo.filesystem.config_resolver import resolve_config
 from autoslo.filesystem.yaml_helpers import load_yaml
 from autoslo.tuner.policy_tuner import AlreadyCompleteError, PolicyTuner
@@ -281,6 +281,35 @@ def main():
                     resolve_config(tuning_run_spec["configs"]["tuner_config"])
                 )
 
+                # Priority: output already published. Checked directly here
+                # (mirroring execute.py) instead of relying on
+                # AlreadyCompleteError, which is only raised inside
+                # PolicyTuner.tune() and would otherwise go undetected until
+                # execution actually reaches this run.
+                publication_path = (
+                    pu.get_data_dir()
+                    / "execution_configs"
+                    / "tuned"
+                    / f"{tuning_run_name}.yml"
+                )
+                if not args.force and publication_path.exists():
+                    preflight_rows.append(
+                        (
+                            tuning_run_name,
+                            "Skip",
+                            f"Tuned config '{publication_path}' already exists",
+                        )
+                    )
+                    postflight_entries.append(
+                        (
+                            tuning_run_name,
+                            "Skip",
+                            tuner_runs_dir / tuning_run_name,
+                            True,
+                        )
+                    )
+                    continue
+
                 pt = PolicyTuner(
                     initial_execution_config_path=initial_execution_config_path,
                     tuner_config_path=tuner_config_path,
@@ -317,6 +346,8 @@ def main():
                     )
                 )
             except AlreadyCompleteError as exc:
+                # Safety net in case the publication path appears between the
+                # check above and construction (e.g. a concurrent run).
                 preflight_rows.append((tuning_run_name, "Skip", str(exc)))
                 postflight_entries.append(
                     (
@@ -372,25 +403,46 @@ def main():
     # params.
     preflight_rows: list[tuple[str, str, str]] = []
     single_pt: PolicyTuner | None = None
+    single_run_details = (
+        f"execution={args.initial_execution_config_path}, "
+        f"tuner={args.tuner_config_path}"
+    )
     try:
-        single_pt = PolicyTuner(
-            initial_execution_config_path=args.initial_execution_config_path,
-            tuner_config_path=args.tuner_config_path,
-            params=parse_params(args.param),
-            verbose_progress=args.verbose_progress,
+        single_run_id = make_run_id(
+            [
+                Path(args.initial_execution_config_path).stem,
+                Path(args.tuner_config_path).stem,
+            ],
+            parse_params(args.param),
         )
-        single_run_details = (
-            "execution="
-            f"{args.initial_execution_config_path}, "
-            f"tuner={args.tuner_config_path}"
+        publication_path = (
+            pu.get_data_dir()
+            / "execution_configs"
+            / "tuned"
+            / f"{single_run_id}.yml"
         )
-        preflight_rows.append(
-            (
-                "single-run",
-                "Run",
-                single_run_details,
+        if not args.force and publication_path.exists():
+            preflight_rows.append(
+                (
+                    "single-run",
+                    "Skip",
+                    f"Tuned config '{publication_path}' already exists",
+                )
             )
-        )
+        else:
+            single_pt = PolicyTuner(
+                initial_execution_config_path=args.initial_execution_config_path,
+                tuner_config_path=args.tuner_config_path,
+                params=parse_params(args.param),
+                verbose_progress=args.verbose_progress,
+            )
+            preflight_rows.append(
+                (
+                    "single-run",
+                    "Run",
+                    single_run_details,
+                )
+            )
     except AlreadyCompleteError as exc:
         preflight_rows.append(("single-run", "Skip", str(exc)))
 
