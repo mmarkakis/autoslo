@@ -1,0 +1,31 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[landscape, margin=1cm]{geometry}
+\begin{document}
+\begin{table*}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{End-to-end evaluation with SLO violation rate target $\tau=0.10$.}\label{tab:todo}
+\begin{tabular}{c c c || c c | c c | c c | c c | c c}
+\toprule
+ &  &  &  &  & \multicolumn{4}{c|}{Round Robin} & \multicolumn{4}{c}{RAIS} \\
+Cluster & Day & $\kappa$ & \multicolumn{2}{c|}{AutoSLO} & \multicolumn{2}{c|}{64} & \multicolumn{2}{c|}{32+32} & \multicolumn{2}{c|}{Balanced} & \multicolumn{2}{c}{High Perf.} \\
+ &  &  & VR & Cost & VR & Cost & VR & Cost & VR & Cost & VR & Cost \\
+\hline
+157 & 4/15 & 4 & \textit{0.0752} & \$45.82 & \textit{0.0332} & \$64.56 & \textit{0.0295} & \$58.92 & \textit{0.0081} & \$127.20 & \textit{0.0214} & \$132.00 \\
+157 & 4/15 & 2 & \textit{0.0546} & \$68.01 & 0.1350 & \$64.56 & 0.1018 & \$58.92 & \textit{0.0369} & \$127.20 & \textit{0.0597} & \$132.00 \\
+157 & 5/27 & 4 & \textit{0.0970} & \$49.25 & \textit{0.0632} & \$57.01 & \textit{0.0338} & \$51.55 & \textit{0.0316} & \$110.56 & \textit{0.0409} & \$107.20 \\
+157 & 5/27 & 2 & \textit{0.0920} & \$74.89 & 0.1659 & \$57.01 & 0.1336 & \$51.55 & \textit{0.0898} & \$110.56 & 0.1092 & \$107.20 \\
+99 & 5/27 & 4 & \textit{0.0389} & \$161.88 & 0.1709 & \$96.82 & \textit{0.0738} & \$97.20 & \textit{0.0000} & \$193.60 & \textit{0.0000} & \$193.60 \\
+99 & 5/27 & 2 & \textit{0.0262} & \$197.83 & 0.2442 & \$96.82 & 0.2412 & \$97.20 & \textit{0.0000} & \$193.60 & \textit{0.0000} & \$193.60 \\
+184 & 5/27 & 4 & \textit{0.0208} & \$45.74 & \textit{0.0000} & \$96.00 & \textit{0.0000} & \$96.40 & \textit{0.0000} & \$192.00 & \textit{0.0000} & \$192.80 \\
+184 & 5/27 & 2 & \textit{0.0040} & \$61.60 & \textit{0.0003} & \$96.00 & \textit{0.0007} & \$96.40 & \textit{0.0003} & \$192.00 & \textit{0.0003} & \$192.80 \\
+\hline
+\multicolumn{3}{c||}{VR Target Met} & 8/8 &  & 4/8 &  & 5/8 &  & 8/8 &  & 7/8 &  \\
+\multicolumn{3}{c||}{Total cost} &  & \$705.02 &  & \$628.77 &  & \$608.14 &  & \$1246.72 &  & \$1251.20 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+\end{document}
