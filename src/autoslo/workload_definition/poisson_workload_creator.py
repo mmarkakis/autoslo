@@ -178,8 +178,6 @@ class PoissonWorkloadCreator:
             include_total_in_name=False,
         )
 
-   
-
     @staticmethod
     def create_poisson_workload_phased(
         num_templates: int,
@@ -221,6 +219,86 @@ class PoissonWorkloadCreator:
         rng.shuffle(query_text_ids)
         query_text_ids = query_text_ids[:num_total_queries]
 
+        return PoissonWorkloadCreator._package_queries_into_workload(
+            query_text_ids=query_text_ids,
+            phases=phases,
+            workload_name=workload_name,
+            print_summary=print_summary,
+            rng=rng,
+        )
+
+    @staticmethod
+    def create_poisson_workload_template_blocks(
+        template_blocks: list[tuple[int, int]],
+        num_query_texts_per_template: int,
+        num_queries_per_query_text: int,
+        poisson_lambda: float,
+        seed: int,
+        print_summary: bool = True,
+    ) -> Workload:
+        """
+        Create a workload with a single, constant-rate Poisson arrival
+        process (like :meth:`create_poisson_workload`), but where the query
+        mix shifts over time: all queries drawn from one block of templates
+        are issued before any query from the next block. Within a block,
+        query order is still randomized.
+
+        This models a workload-mix shift, as opposed to the arrival-rate
+        shifts produced by :meth:`create_poisson_workload_phased` /
+        :meth:`make_bursty_profile`.
+
+        Parameters
+        ----------
+        template_blocks:
+            Ordered list of ``(first_template_idx, last_template_idx)``
+            inclusive, 1-indexed TPC-DS template ranges. E.g.
+            ``[(1, 33), (34, 66), (67, 99)]`` issues all queries for
+            templates 1-33 first, then 34-66, then 67-99.
+        num_query_texts_per_template, num_queries_per_query_text:
+            As in :meth:`create_poisson_workload`; applied uniformly to
+            every template across all blocks.
+        poisson_lambda:
+            Constant Poisson arrival rate (queries/s) governing
+            inter-arrival times for the whole workload; the block
+            structure affects only template assignment, not arrival
+            timing.
+        seed:
+            Random seed; also governs the within-block shuffling of query
+            texts.
+        """
+        rng = np.random.default_rng(seed)
+
+        query_text_ids: list[str] = []
+        for first_template_idx, last_template_idx in template_blocks:
+            block_query_text_ids = []
+            for template_idx in range(
+                first_template_idx, last_template_idx + 1
+            ):
+                for query_text_idx in range(
+                    1, num_query_texts_per_template + 1
+                ):
+                    for _ in range(1, num_queries_per_query_text + 1):
+                        block_query_text_ids.append(
+                            f"ext_tpcds1000#{template_idx:03d}#"
+                            f"{query_text_idx:03d}"
+                        )
+            rng.shuffle(block_query_text_ids)
+            query_text_ids.extend(block_query_text_ids)
+
+        num_total_queries = len(query_text_ids)
+        block_str = "_".join(
+            f"t{first}-{last}" for first, last in template_blocks
+        )
+        workload_name = (
+            f"poisson_blocks_{block_str}_{num_query_texts_per_template}_"
+            f"{num_queries_per_query_text}_{poisson_lambda}_{seed}"
+        )
+
+        phases = [
+            PoissonArrivalPhase(
+                num_queries=num_total_queries, poisson_lambda=poisson_lambda
+            )
+        ]
         return PoissonWorkloadCreator._package_queries_into_workload(
             query_text_ids=query_text_ids,
             phases=phases,
