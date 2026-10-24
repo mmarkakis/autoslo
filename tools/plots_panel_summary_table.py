@@ -392,6 +392,40 @@ def _write_latex_table(
     lines.append(" & ".join(vr_summary_cells) + r" \\")
     lines.append(" & ".join(cost_summary_cells) + r" \\")
 
+    # --- Mean cost Δ row, relative to AutoSLO (cost columns only). --------
+    if AUTOSLO_LABEL in method_order:
+        mean_cost_pct: dict[str, float | None] = {}
+        for method in method_order:
+            if method == AUTOSLO_LABEL:
+                continue
+            diffs: list[float] = []
+            for panel_row in panel_rows:
+                if (
+                    AUTOSLO_LABEL not in panel_row.points
+                    or method not in panel_row.points
+                ):
+                    continue
+                _ref_vr, ref_cost = panel_row.points[AUTOSLO_LABEL]
+                _vr, cost = panel_row.points[method]
+                if ref_cost != 0:
+                    diffs.append((cost - ref_cost) / ref_cost * 100)
+            mean_cost_pct[method] = sum(diffs) / len(diffs) if diffs else None
+
+        mean_delta_cells: list[str] = [
+            r"\multicolumn{3}{c||}{Mean~$\Delta$ cost vs. AutoSLO}"
+        ]
+        for group in groups:
+            for method, _subheader in group.members:
+                mean_delta_cells.append("")  # VR column left blank
+                if method == AUTOSLO_LABEL:
+                    mean_delta_cells.append("---")
+                else:
+                    pct = mean_cost_pct[method]
+                    mean_delta_cells.append(
+                        rf"{pct:+.1f}\%" if pct is not None else "---"
+                    )
+        lines.append(" & ".join(mean_delta_cells) + r" \\")
+
     lines += [
         r"\bottomrule",
         r"\end{tabular}",
