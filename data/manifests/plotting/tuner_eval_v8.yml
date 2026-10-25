@@ -21,6 +21,84 @@ main_content:
     suppress_subplot_titles: true
 
   panels:
+  - row: 1
+    col: 0
+    title: "April 15, κ=4"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    threshold_lines:
+      - value: 0.10
+        color: light_green
+    points:
+      - label: "No Past Data"
+        formatting_id: tuner_eval_base
+        workload_config: *april15_workload_config
+        execution_config: exec:handmade/main_eval_base_v8.yml
+        params:
+          TARGET_DATE: "2024-04-15"
+          KAPPA: 4
+      - label: "Past 1 Day"
+        formatting_id: tuner_eval_past1
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1day_k4_thresh10_nocache_v8.yml
+      - label: "Past 7 Days"
+        formatting_id: tuner_eval_past7
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1week_k4_thresh10_nocache_v8.yml
+      - label: "Past 30 Days"
+        formatting_id: tuner_eval_past30
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1month_k4_thresh10_nocache_v8.yml
+      # - label: "Target Day"
+      #   formatting_id: main_eval_oracle_thresh10
+      #   workload_config: *april15_workload_config
+      #   execution_config: exec:tuned/april15_oracle_k4_thresh10_nocache_v8.yml
+      
+
+  - row: 1
+    col: 1
+    title: "April 15, κ=2"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    threshold_lines:
+      - value: 0.10
+        color: light_green
+    points:
+      - label: "No Past Data"
+        formatting_id: tuner_eval_base
+        workload_config: *april15_workload_config
+        execution_config: exec:handmade/main_eval_base_v8.yml
+        params:
+          TARGET_DATE: "2024-04-15"
+          KAPPA: 2
+      - label: "Past 1 Day"
+        formatting_id: tuner_eval_past1
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1day_k2_thresh10_nocache_v8.yml
+      - label: "Past 7 Days"
+        formatting_id: tuner_eval_past7
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1week_k2_thresh10_nocache_v8.yml
+      - label: "Past 30 Days"
+        formatting_id: tuner_eval_past30
+        workload_config: *april15_workload_config
+        execution_config: exec:tuned/april15_1month_k2_thresh10_nocache_v8.yml
+      # - label: "Target Day"
+      #   formatting_id: main_eval_oracle_thresh10
+      #   workload_config: *april15_workload_config
+      #   execution_config: exec:tuned/april15_oracle_k2_thresh10_nocache_v8.yml
+      
+
   - row: 0
     col: 0
     title: "May 27, κ=4"
@@ -61,45 +139,6 @@ main_content:
       
 
 
-  - row: 1
-    col: 0
-    title: "April 15, κ=4"
-    show_legend: false
-    slo_objective_config:
-      slo_metric: binary
-      slo_threshold: 0.05
-    slo_resolver_config:
-      slo_s: 30.0
-      slo_dict_filename: "1778469201294_p100_k4.yml"
-    threshold_lines:
-      - value: 0.10
-        color: light_green
-    points:
-      - label: "No Past Data"
-        formatting_id: tuner_eval_base
-        workload_config: *april15_workload_config
-        execution_config: exec:handmade/main_eval_base_v8.yml
-        params:
-          TARGET_DATE: "2024-04-15"
-          KAPPA: 4
-      - label: "Past 1 Day"
-        formatting_id: tuner_eval_past1
-        workload_config: *april15_workload_config
-        execution_config: exec:tuned/april15_1day_k4_thresh10_nocache_v8.yml
-      - label: "Past 7 Days"
-        formatting_id: tuner_eval_past7
-        workload_config: *april15_workload_config
-        execution_config: exec:tuned/april15_1week_k4_thresh10_nocache_v8.yml
-      - label: "Past 30 Days"
-        formatting_id: tuner_eval_past30
-        workload_config: *april15_workload_config
-        execution_config: exec:tuned/april15_1month_k4_thresh10_nocache_v8.yml
-      # - label: "Target Day"
-      #   formatting_id: main_eval_oracle_thresh10
-      #   workload_config: *april15_workload_config
-      #   execution_config: exec:tuned/april15_oracle_k4_thresh10_nocache_v8.yml
-      
-
   - row: 0
     col: 1
     title: "May 27, κ=2"
@@ -137,43 +176,4 @@ main_content:
       #   formatting_id: main_eval_oracle_thresh10
       #   workload_config: *may27_workload_config
       #   execution_config: exec:tuned/may27_oracle_k2_thresh10_nocache_v8.yml
-      
-
-  - row: 1
-    col: 1
-    title: "April 15, κ=2"
-    show_legend: false
-    slo_objective_config:
-      slo_metric: binary
-      slo_threshold: 0.05
-    slo_resolver_config:
-      slo_s: 30.0
-      slo_dict_filename: "1778469201294_p100_k2.yml"
-    threshold_lines:
-      - value: 0.10
-        color: light_green
-    points:
-      - label: "No Past Data"
-        formatting_id: tuner_eval_base
-        workload_config: *april15_workload_config
-        execution_config: exec:handmade/main_eval_base_v8.yml
-        params:
-          TARGET_DATE: "2024-04-15"
-          KAPPA: 2
-      - label: "Past 1 Day"
-        formatting_id: tuner_eval_past1
-        workload_config: *april15_workload_config
-        execution_config: exec:tuned/april15_1day_k2_thresh10_nocache_v8.yml
-      - label: "Past 7 Days"
-        formatting_id: tuner_eval_past7
-        workload_config: *april15_workload_config
-        execution_config: exec:tuned/april15_1week_k2_thresh10_nocache_v8.yml
-      - label: "Past 30 Days"
-        formatting_id: tuner_eval_past30
-        workload_config: *april15_workload_config
-        execution_config: exec:tuned/april15_1month_k2_thresh10_nocache_v8.yml
-      # - label: "Target Day"
-      #   formatting_id: main_eval_oracle_thresh10
-      #   workload_config: *april15_workload_config
-      #   execution_config: exec:tuned/april15_oracle_k2_thresh10_nocache_v8.yml
       

@@ -106,6 +106,10 @@ FORMATTING = {
     "trigger_observed_violations": (Palette.light_red, "s"),
     "trigger_combined_violations": (Palette.light_green, "^"),
 
+    "robustness_noop": (Palette.light_gray, "o"),
+    "robustness_queue_horizontal": (Palette.light_blue, "h"),
+    "robustness_queue_add_ours": (Palette.light_red, "s"),
+    "robustness_combined_ours": (Palette.light_green, "^"),
 
     "main_eval_16_16": (Palette.light_gray, "h"),
     "main_eval_32": (Palette.light_gray, "o"),

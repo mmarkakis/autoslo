@@ -43,7 +43,7 @@ from autoslo.visualizations.spinup_timelines import (
 from autoslo.workload_execution.execution_result import ExecutionResult
 
 console = Console()
-_TABLE_PANEL_RE = re.compile(r"λ=([^,]+),\s*κ=([^,]+),\s*C=(.+)")
+_TABLE_PANEL_RE = re.compile(r"^(.+),\s*κ=([^,]+),\s*C=(.+)$")
 
 
 def _cluster_annotation(run_dir: Path) -> str | None:
@@ -236,7 +236,11 @@ def _save_points_csv(
 
 
 def _table_parse_panel(key: str) -> tuple[str, str, str]:
-    """Split a panel title of the form 'λ=X, κ=Y, C=Z' into 3 parts."""
+    """Split a panel title of the form '<workload>, κ=Y, C=Z' into 3 parts.
+
+    The workload portion (bound for the λ column) may itself contain commas
+    and parentheses, e.g. 'Burst (x=40, λ\\_high=0.5), κ=4, C=[8]'.
+    """
     match = _TABLE_PANEL_RE.match(key)
     if match:
         return (
