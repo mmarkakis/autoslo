@@ -1,0 +1,257 @@
+locals:
+  burst_workload: &burst_workload
+    workload_name: poisson_99_1_6_None_42_phased_99q0.1l_99q1.0l_99q0.1l_99q1.0l_99q0.1l_99q1.0l_strat
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  mixshift_workload: &mixshift_workload
+    workload_name: poisson_tsets_lightA_heavy_lightB_1_3_0.1_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  set1: &set1
+    KAPPA: 4
+    INITIAL_RPU: 8
+  set2: &set2
+    KAPPA: 4
+    INITIAL_RPU: 16
+  set3: &set3
+    KAPPA: 2
+    INITIAL_RPU: 8
+  set4: &set4
+    KAPPA: 2
+    INITIAL_RPU: 16
+
+
+
+main_content:
+
+  # no-op runs.
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: noop
+      AUTOSCALING_TRIGGER_POLICY: noop
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
+
+  # queue@32/horizontal runs.
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: duplicate_largest
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
+
+  # queue@32/add cluster w/ ours runs.
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: queue_depth
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0
+
+  # ours runs.
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set1
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set2
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set3
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *burst_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set4
+      OBSERVATION_WINDOW_S: 300.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set1
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set2
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set3
+      OBSERVATION_WINDOW_S: 600.0
+  - workload_config: *mixshift_workload
+    execution_config: exec:handmade/robustness_eval_v8.yml
+    params:
+      AUTOSCALING_POLICY: add_single_best_forward
+      AUTOSCALING_TRIGGER_POLICY: combined_violations
+      <<: *set4
+      OBSERVATION_WINDOW_S: 600.0

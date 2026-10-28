@@ -1,0 +1,440 @@
+locals:
+  burst_workload: &burst_workload
+    workload_name: poisson_99_1_6_None_42_phased_99q0.1l_99q1.0l_99q0.1l_99q1.0l_99q0.1l_99q1.0l_strat
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  mixshift_workload: &mixshift_workload
+    workload_name: poisson_tsets_lightA_heavy_lightB_1_3_0.1_42
+    target_date: "2026-01-01"
+    rescale_factor: 1
+  set1: &set1
+    KAPPA: 4
+    INITIAL_RPU: 8
+  set2: &set2
+    KAPPA: 4
+    INITIAL_RPU: 16
+  set3: &set3
+    KAPPA: 2
+    INITIAL_RPU: 8
+  set4: &set4
+    KAPPA: 2
+    INITIAL_RPU: 16
+  arrow: &arrow
+    base_label: "No-Op"
+    target_label: "Ours"
+
+
+main_content:
+
+  layout:
+    rows: 2
+    cols: 4
+    figsize: [16, 6]
+    shared_xlim: true
+    shared_ylim: true
+    show_target_region: false
+    annotate_with_cluster_sizes: false
+
+
+
+  panels:
+  - row: 0
+    col: 0
+    title: "Burst (λ_low=0.1, λ_high=1.0), κ=4, C=[8]"
+    show_legend: true
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set1
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set1
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set1
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set1
+          OBSERVATION_WINDOW_S: 300.0
+
+  - row: 0
+    col: 1
+    title: "Burst (λ_low=0.1, λ_high=1.0), κ=4, C=[16]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set2
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set2
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set2
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set2
+          OBSERVATION_WINDOW_S: 300.0
+
+  - row: 0
+    col: 2
+    title: "Burst (λ_low=0.1, λ_high=1.0), κ=2, C=[8]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set3
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set3
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set3
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set3
+          OBSERVATION_WINDOW_S: 300.0
+
+  - row: 0
+    col: 3
+    title: "Burst (λ_low=0.1, λ_high=1.0), κ=2, C=[16]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set4
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set4
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set4
+          OBSERVATION_WINDOW_S: 300.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *burst_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set4
+          OBSERVATION_WINDOW_S: 300.0
+
+  - row: 1
+    col: 0
+    title: "Mix-shift (Light A→Heavy→Light B, λ=0.1), κ=4, C=[8]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set1
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set1
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set1
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set1
+          OBSERVATION_WINDOW_S: 600.0
+
+  - row: 1
+    col: 1
+    title: "Mix-shift (Light A→Heavy→Light B, λ=0.1), κ=4, C=[16]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k4.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set2
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set2
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set2
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set2
+          OBSERVATION_WINDOW_S: 600.0
+
+  - row: 1
+    col: 2
+    title: "Mix-shift (Light A→Heavy→Light B, λ=0.1), κ=2, C=[8]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set3
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set3
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set3
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set3
+          OBSERVATION_WINDOW_S: 600.0
+
+  - row: 1
+    col: 3
+    title: "Mix-shift (Light A→Heavy→Light B, λ=0.1), κ=2, C=[16]"
+    show_legend: false
+    slo_objective_config:
+      slo_metric: binary
+      slo_threshold: 0.05
+    slo_resolver_config:
+      slo_s: 30.0
+      slo_dict_filename: "1778469201294_p100_k2.yml"
+    improvement_arrow: *arrow
+
+    points:
+      - label: "No-Op"
+        formatting_id: robustness_noop
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: noop
+          AUTOSCALING_TRIGGER_POLICY: noop
+          <<: *set4
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Horizontal"
+        formatting_id: robustness_queue_horizontal
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: duplicate_largest
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set4
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Queue@32/Add Cluster w/ Ours"
+        formatting_id: robustness_queue_add_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: queue_depth
+          <<: *set4
+          OBSERVATION_WINDOW_S: 600.0
+      - label: "Ours"
+        formatting_id: robustness_combined_ours
+        workload_config: *mixshift_workload
+        execution_config: exec:handmade/robustness_eval_v8.yml
+        params:
+          AUTOSCALING_POLICY: add_single_best_forward
+          AUTOSCALING_TRIGGER_POLICY: combined_violations
+          <<: *set4
+          OBSERVATION_WINDOW_S: 600.0
+
