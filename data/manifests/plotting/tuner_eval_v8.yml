@@ -19,6 +19,7 @@ main_content:
     shared_ylim: true
     show_target_region: false
     suppress_subplot_titles: true
+    table_vr_highlight: target
 
   panels:
   - row: 1
